@@ -160,13 +160,13 @@ with tab_data:
                     try:
                         os.environ["AZURE_SQL_CONNECTION_STRING"] = conn_str
                         from src.data.sql_loader import (
-                            load_all_data,
+                            load_all_data_from_sql,
                             get_table_mapping,
                             get_engine,
                         )
                         _engine = get_engine()
                         mapping = get_table_mapping(_engine)
-                        loaded = load_all_data(_engine, table_mapping=mapping)
+                        loaded = load_all_data_from_sql(_engine, table_mapping=mapping)
                         st.session_state["data"] = loaded
                         st.session_state["sql_table_mapping"] = mapping
                         st.session_state.pop("engine", None)
