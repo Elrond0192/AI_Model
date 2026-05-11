@@ -208,3 +208,49 @@ class TransferImpactOut(BaseModel):
     rating_delta: float
     adaptation_factor: float
     recommendation: str
+
+
+# ---------------------------------------------------------------------------
+# WordPress player card
+# ---------------------------------------------------------------------------
+
+class TeamFitSummary(BaseModel):
+    rank: int
+    team_name: str
+    league_name: str
+    predicted_rating: float
+
+
+class PlayerCardOut(BaseModel):
+    """Compact player snapshot intended for WordPress shortcodes / REST blocks."""
+    model_config = ConfigDict(from_attributes=True)
+
+    player_id: int
+    name: str
+    position: str
+    age: int
+    current_team: str
+    current_rating: Optional[float] = None
+    confidence_low: Optional[float] = None
+    confidence_high: Optional[float] = None
+    peak_rating: Optional[float] = None
+    peak_age: Optional[int] = None
+    top_teams: List[TeamFitSummary] = Field(default_factory=list)
+    generated_at: str = ""
+
+
+# ---------------------------------------------------------------------------
+# Chat
+# ---------------------------------------------------------------------------
+
+class ChatRequest(BaseModel):
+    message: str = Field(..., min_length=1, max_length=1000)
+    session_id: Optional[str] = None
+
+
+class ChatMessageResponse(BaseModel):
+    reply: str
+    session_id: str
+    intent: str
+    data: Dict[str, Any] = Field(default_factory=dict)
+    suggestions: List[str] = Field(default_factory=list)

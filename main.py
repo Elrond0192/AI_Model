@@ -2,9 +2,10 @@
 
 Usage:
     python main.py --mode generate-data
-    python main.py --mode train
-    python main.py --mode demo
-    python main.py --mode api [--host HOST] [--port PORT]
+    python main.py --mode train [--source {file|sql}]
+    python main.py --mode demo  [--source {file|sql}]
+    python main.py --mode api   [--host HOST] [--port PORT]
+    python main.py --mode export-wordpress [--source {file|sql}] [--out-dir DIR]
 """
 from __future__ import annotations
 import argparse
@@ -18,14 +19,44 @@ def parse_args(argv=None):
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
-        "--mode", choices=["generate-data", "train", "demo", "api"], required=True,
+        "--mode",
+        choices=["generate-data", "train", "demo", "api", "export-wordpress"],
+        required=True,
     )
-    parser.add_argument("--data-dir",  default="data/sample",   help="Data directory")
+    parser.add_argument("--data-dir",  default="data/sample",   help="Data directory (file source)")
     parser.add_argument("--model-dir", default="models_saved",  help="Model save directory")
     parser.add_argument("--host",      default="0.0.0.0",       help="API host")
     parser.add_argument("--port",      type=int, default=8000,  help="API port")
     parser.add_argument("--seed",      type=int, default=42,    help="RNG seed")
+    parser.add_argument(
+        "--source",
+        choices=["file", "sql"],
+        default="file",
+        help="Data source: 'file' (CSV, default) or 'sql' (Azure SQL Server)",
+    )
+    parser.add_argument(
+        "--out-dir",
+        default="wp_export",
+        help="Output directory for export-wordpress JSON files",
+    )
     return parser.parse_args(argv)
+
+
+def _load_data(args):
+    """Return data dict from SQL or CSV depending on --source flag."""
+    if args.source == "sql":
+        from src.data.sql_loader import load_all_data
+        print("[Data] Loading from Azure SQL Server …")
+        return load_all_data()
+    else:
+        from src.data.loader import load_all_data, data_exists
+        if not data_exists(args.data_dir):
+            print(
+                f"[ERROR] Data not found in '{args.data_dir}'. "
+                "Run --mode generate-data first."
+            )
+            sys.exit(1)
+        return load_all_data(args.data_dir)
 
 
 # ---------------------------------------------------------------------------
@@ -40,15 +71,11 @@ def mode_generate_data(args) -> None:
 
 
 def mode_train(args) -> None:
-    from src.data.loader import load_all_data, data_exists
     from src.models.ensemble import EnsembleModel
     print("=" * 60)
     print("  Training models …")
     print("=" * 60)
-    if not data_exists(args.data_dir):
-        print(f"[ERROR] Data not found in '{args.data_dir}'. Run --mode generate-data first.")
-        sys.exit(1)
-    data = load_all_data(args.data_dir)
+    data = _load_data(args)
     ensemble = EnsembleModel()
     ensemble.train(data)
     ensemble.save(args.model_dir)
@@ -56,7 +83,6 @@ def mode_train(args) -> None:
 
 
 def mode_demo(args) -> None:
-    from src.data.loader import load_all_data, data_exists
     from src.models.ensemble import EnsembleModel
     from src.scenarios.engine import WhatIfEngine
     from src.utils.helpers import format_prediction_output
@@ -65,11 +91,7 @@ def mode_demo(args) -> None:
     print("  Basketball Performance AI – Demo")
     print("=" * 60)
 
-    if not data_exists(args.data_dir):
-        print(f"[ERROR] Data not found in '{args.data_dir}'. Run --mode generate-data first.")
-        sys.exit(1)
-
-    data     = load_all_data(args.data_dir)
+    data     = _load_data(args)
     ensemble = EnsembleModel()
 
     if (Path(args.model_dir) / "performance_model.joblib").exists():
@@ -194,13 +216,109 @@ def mode_demo(args) -> None:
 
 
 def mode_api(args) -> None:
+    import os
     try:
         import uvicorn
     except ImportError:
         print("[ERROR] uvicorn not installed. Run: pip install uvicorn")
         sys.exit(1)
+    # Pass source and paths to the API via environment variables
+    os.environ.setdefault("DATA_SOURCE", args.source)
+    os.environ.setdefault("DATA_DIR",    args.data_dir)
+    os.environ.setdefault("MODEL_DIR",   args.model_dir)
     print(f"[API] Starting Basketball Performance AI on {args.host}:{args.port}")
     uvicorn.run("src.api.main:app", host=args.host, port=args.port, reload=False)
+
+
+def mode_export_wordpress(args) -> None:
+    """Export per-player JSON files ready for WordPress import."""
+    import json
+    from datetime import datetime, timezone
+    from src.models.ensemble import EnsembleModel
+    from src.scenarios.engine import WhatIfEngine
+
+    print("=" * 60)
+    print("  Exporting WordPress player cards …")
+    print("=" * 60)
+
+    data     = _load_data(args)
+    ensemble = EnsembleModel()
+
+    if (Path(args.model_dir) / "performance_model.joblib").exists():
+        ensemble.load(args.model_dir)
+    else:
+        print("[WARN] No trained models – training now …")
+        ensemble.train(data)
+        ensemble.save(args.model_dir)
+
+    engine      = WhatIfEngine(ensemble, data)
+    players_df  = data["players"]
+    team_dict   = data["team_dict"]
+    out_dir     = Path(args.out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    generated_at = datetime.now(timezone.utc).isoformat()
+
+    exported = 0
+    for _, row in players_df.iterrows():
+        pid = int(row["id"])
+        cur_tid = row.get("current_team_id")
+
+        current_rating = confidence_low = confidence_high = None
+        if cur_tid and int(cur_tid) in team_dict:
+            try:
+                pred            = engine.predict_in_team(pid, int(cur_tid))
+                current_rating  = pred.predicted_rating
+                confidence_low  = pred.confidence_low
+                confidence_high = pred.confidence_high
+            except Exception:
+                pass
+
+        peak_rating = peak_age = None
+        try:
+            peak        = engine.predict_peak(pid)
+            peak_rating = peak.peak_rating
+            peak_age    = peak.peak_age
+        except Exception:
+            pass
+
+        top_teams = []
+        try:
+            for f in engine.best_team_fit(pid, top_n=3):
+                top_teams.append({
+                    "rank":             f.rank,
+                    "team_name":        f.team_name,
+                    "league_name":      f.league_name,
+                    "predicted_rating": f.predicted_rating,
+                })
+        except Exception:
+            pass
+
+        card = {
+            "player_id":       pid,
+            "name":            str(row.get("name", "")),
+            "position":        str(row.get("position", "")),
+            "age":             int(row.get("age", 0)),
+            "current_team":    str(team_dict.get(int(cur_tid), {}).get("name", "—"))
+                               if cur_tid else "—",
+            "current_rating":  current_rating,
+            "confidence_low":  confidence_low,
+            "confidence_high": confidence_high,
+            "peak_rating":     peak_rating,
+            "peak_age":        peak_age,
+            "top_teams":       top_teams,
+            "generated_at":    generated_at,
+        }
+        out_file = out_dir / f"player_{pid}.json"
+        out_file.write_text(json.dumps(card, indent=2, ensure_ascii=False))
+        exported += 1
+
+    # Also write a combined file for bulk import
+    all_ids  = [int(r["id"]) for _, r in players_df.iterrows()]
+    manifest = {"player_ids": all_ids, "count": exported, "generated_at": generated_at}
+    (out_dir / "manifest.json").write_text(json.dumps(manifest, indent=2))
+
+    print(f"\n  Exported {exported} player cards to '{args.out_dir}/'")
+    print(f"  Manifest: {args.out_dir}/manifest.json")
 
 
 # ---------------------------------------------------------------------------
@@ -208,10 +326,11 @@ def mode_api(args) -> None:
 def main(argv=None):
     args = parse_args(argv)
     dispatch = {
-        "generate-data": mode_generate_data,
-        "train":         mode_train,
-        "demo":          mode_demo,
-        "api":           mode_api,
+        "generate-data":    mode_generate_data,
+        "train":            mode_train,
+        "demo":             mode_demo,
+        "api":              mode_api,
+        "export-wordpress": mode_export_wordpress,
     }
     dispatch[args.mode](args)
 
