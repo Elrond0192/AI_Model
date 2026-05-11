@@ -259,13 +259,13 @@ def test_discover_env_var_nonexistent_table_raises(monkeypatch):
 from urllib.parse import unquote_plus as _unquote_plus
 
 
-def _decode_odbc_connect(url: str) -> str:
-    """Extract and URL-decode the odbc_connect value from a SQLAlchemy URL."""
-    return _unquote_plus(url.split("odbc_connect=", 1)[1])
-
-
 class TestNormalizeConnectionString:
     """Tests for _normalize_connection_string."""
+
+    @staticmethod
+    def _decode_odbc_connect(url: str) -> str:
+        """Extract and URL-decode the odbc_connect value from a SQLAlchemy URL."""
+        return _unquote_plus(url.split("odbc_connect=", 1)[1])
 
     def test_sqlalchemy_url_returned_unchanged(self):
         """A proper SQLAlchemy URL must pass through without modification."""
@@ -290,7 +290,7 @@ class TestNormalizeConnectionString:
         )
         result = _normalize_connection_string(odbc)
         assert result.startswith("mssql+pyodbc:///?odbc_connect=")
-        decoded = _decode_odbc_connect(result)
+        decoded = self._decode_odbc_connect(result)
         assert "Driver={ODBC Driver 18 for SQL Server}" in decoded
         assert "Server=tcp:myserver.database.windows.net,1433" in decoded
 
@@ -307,7 +307,7 @@ class TestNormalizeConnectionString:
         )
         result = _normalize_connection_string(ado)
         assert result.startswith("mssql+pyodbc:///?odbc_connect=")
-        decoded = _decode_odbc_connect(result)
+        decoded = self._decode_odbc_connect(result)
         assert "SERVER=myserver.database.windows.net,1433" in decoded
         assert "DATABASE=mydb" in decoded
         assert "UID=myuser" in decoded
@@ -321,7 +321,7 @@ class TestNormalizeConnectionString:
             "User ID=u;Password=p;"
         )
         result = _normalize_connection_string(ado)
-        decoded = _decode_odbc_connect(result)
+        decoded = self._decode_odbc_connect(result)
         assert "SERVER=host.database.windows.net,1433" in decoded
         assert "tcp:" not in decoded
 
@@ -330,7 +330,7 @@ class TestNormalizeConnectionString:
         monkeypatch.delenv("AZURE_SQL_DRIVER", raising=False)
         ado = "Server=host;Initial Catalog=db;User ID=u;Password=p;"
         result = _normalize_connection_string(ado)
-        decoded = _decode_odbc_connect(result)
+        decoded = self._decode_odbc_connect(result)
         assert "DRIVER={ODBC Driver 18 for SQL Server}" in decoded
 
     def test_ado_net_custom_driver_from_env(self, monkeypatch):
@@ -338,5 +338,5 @@ class TestNormalizeConnectionString:
         monkeypatch.setenv("AZURE_SQL_DRIVER", "ODBC Driver 17 for SQL Server")
         ado = "Server=host;Initial Catalog=db;User ID=u;Password=p;"
         result = _normalize_connection_string(ado)
-        decoded = _decode_odbc_connect(result)
+        decoded = self._decode_odbc_connect(result)
         assert "DRIVER={ODBC Driver 17 for SQL Server}" in decoded

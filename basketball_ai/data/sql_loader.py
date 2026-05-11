@@ -117,7 +117,7 @@ def _normalize_connection_string(conn_str: str) -> str:
     s = conn_str.strip()
 
     # 1. Already a SQLAlchemy / generic URL  --------------------------------
-    if re.match(r"^\w[\w+.-]+://", s):
+    if re.match(r"^[a-zA-Z][\w+.-]*://", s):
         return s
 
     # Parse all key=value pairs (semicolon-separated, case-insensitive keys)
