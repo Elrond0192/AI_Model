@@ -18,18 +18,18 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException
 
-from src.api.schemas import PlayerCardOut, TeamFitSummary
+from basketball_ai.api.schemas import PlayerCardOut, TeamFitSummary
 
 router = APIRouter(prefix="/wordpress", tags=["wordpress"])
 
 
 def _get_engine():
-    from src.api.main import app_state
+    from basketball_ai.api.main import app_state
     return app_state.get("engine")
 
 
 def _get_data():
-    from src.api.main import app_state
+    from basketball_ai.api.main import app_state
     return app_state.get("data")
 
 

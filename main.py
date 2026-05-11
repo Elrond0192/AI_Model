@@ -45,11 +45,11 @@ def parse_args(argv=None):
 def _load_data(args):
     """Return data dict from SQL or CSV depending on --source flag."""
     if args.source == "sql":
-        from src.data.sql_loader import load_all_data
+        from basketball_ai.data.sql_loader import load_all_data
         print("[Data] Loading from Azure SQL Server …")
         return load_all_data()
     else:
-        from src.data.loader import load_all_data, data_exists
+        from basketball_ai.data.loader import load_all_data, data_exists
         if not data_exists(args.data_dir):
             print(
                 f"[ERROR] Data not found in '{args.data_dir}'. "
@@ -62,7 +62,7 @@ def _load_data(args):
 # ---------------------------------------------------------------------------
 
 def mode_generate_data(args) -> None:
-    from src.data.generator import generate_data
+    from basketball_ai.data.generator import generate_data
     print("=" * 60)
     print("  Generating synthetic basketball data …")
     print("=" * 60)
@@ -71,7 +71,7 @@ def mode_generate_data(args) -> None:
 
 
 def mode_train(args) -> None:
-    from src.models.ensemble import EnsembleModel
+    from basketball_ai.models.ensemble import EnsembleModel
     print("=" * 60)
     print("  Training models …")
     print("=" * 60)
@@ -83,9 +83,9 @@ def mode_train(args) -> None:
 
 
 def mode_demo(args) -> None:
-    from src.models.ensemble import EnsembleModel
-    from src.scenarios.engine import WhatIfEngine
-    from src.utils.helpers import format_prediction_output
+    from basketball_ai.models.ensemble import EnsembleModel
+    from basketball_ai.scenarios.engine import WhatIfEngine
+    from basketball_ai.utils.helpers import format_prediction_output
 
     print("=" * 60)
     print("  Basketball Performance AI – Demo")
@@ -227,15 +227,15 @@ def mode_api(args) -> None:
     os.environ.setdefault("DATA_DIR",    args.data_dir)
     os.environ.setdefault("MODEL_DIR",   args.model_dir)
     print(f"[API] Starting Basketball Performance AI on {args.host}:{args.port}")
-    uvicorn.run("src.api.main:app", host=args.host, port=args.port, reload=False)
+    uvicorn.run("basketball_ai.api.main:app", host=args.host, port=args.port, reload=False)
 
 
 def mode_export_wordpress(args) -> None:
     """Export per-player JSON files ready for WordPress import."""
     import json
     from datetime import datetime, timezone
-    from src.models.ensemble import EnsembleModel
-    from src.scenarios.engine import WhatIfEngine
+    from basketball_ai.models.ensemble import EnsembleModel
+    from basketball_ai.scenarios.engine import WhatIfEngine
 
     print("=" * 60)
     print("  Exporting WordPress player cards …")

@@ -27,14 +27,14 @@ import uuid
 
 from fastapi import APIRouter
 
-from src.api.schemas import ChatRequest, ChatMessageResponse
+from basketball_ai.api.schemas import ChatRequest, ChatMessageResponse
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
 
 def _get_chat_engine():
     """Lazily instantiate ChatEngine on first request and cache in app_state."""
-    from src.api.main import app_state
+    from basketball_ai.api.main import app_state
 
     ce = app_state.get("chat_engine")
     if ce is not None:
@@ -45,7 +45,7 @@ def _get_chat_engine():
     if engine is None or not data or not data.get("player_dict"):
         return None
 
-    from src.chat.engine import ChatEngine
+    from basketball_ai.chat.engine import ChatEngine
     ce = ChatEngine(engine, data)
     app_state["chat_engine"] = ce
     return ce

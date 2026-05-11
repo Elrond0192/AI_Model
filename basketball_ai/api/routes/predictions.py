@@ -6,18 +6,18 @@ from typing import List, Optional
 
 from fastapi import APIRouter, HTTPException, Query
 
-from src.api.schemas import PredictionOut, TrajectoryPointOut, PeakPredictionOut
+from basketball_ai.api.schemas import PredictionOut, TrajectoryPointOut, PeakPredictionOut
 
 router = APIRouter(prefix="/predictions", tags=["predictions"])
 
 
 def _get_engine():
-    from src.api.main import app_state
+    from basketball_ai.api.main import app_state
     return app_state["engine"]
 
 
 def _get_data():
-    from src.api.main import app_state
+    from basketball_ai.api.main import app_state
     return app_state["data"]
 
 

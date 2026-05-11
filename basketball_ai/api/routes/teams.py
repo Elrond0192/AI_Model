@@ -2,13 +2,13 @@
 from __future__ import annotations
 from typing import List, Optional
 from fastapi import APIRouter, HTTPException, Query
-from src.api.schemas import TeamOut, TeamAnalysisOut, PlayerOut
+from basketball_ai.api.schemas import TeamOut, TeamAnalysisOut, PlayerOut
 
 router = APIRouter(prefix="/teams", tags=["teams"])
 
 
 def _get_data():
-    from src.api.main import app_state
+    from basketball_ai.api.main import app_state
     return app_state["data"]
 
 

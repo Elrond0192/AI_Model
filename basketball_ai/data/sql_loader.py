@@ -1,7 +1,7 @@
 """Azure SQL Server data loader for the Basketball Performance AI.
 
 Provides the same ``load_all_data()`` interface as the file-based
-``src.data.loader`` module, but reads from an Azure SQL Server database
+``basketball_ai.data.loader`` module, but reads from an Azure SQL Server database
 instead of local CSV files.
 
 Configuration is read exclusively from environment variables (never
@@ -58,7 +58,7 @@ except ImportError:
 _MIN_OVERLAP = 0.5
 
 # For each logical dataset, the set of columns that *uniquely* identify it.
-# These are drawn from the dataclass definitions in src.data.models.
+# These are drawn from the dataclass definitions in basketball_ai.data.models.
 _REQUIRED_COLUMNS: Dict[str, List[str]] = {
     "leagues": [
         "id", "name", "country", "tier",
@@ -288,7 +288,7 @@ def load_all_data_from_sql(engine=None, table_mapping: Optional[Dict[str, str]] 
     overlap against known signatures.  Explicit overrides can be passed via
     *table_mapping* or via ``AZURE_SQL_TABLE_*`` environment variables.
 
-    Returns the same flat dict as ``src.data.loader.load_all_data()``:
+    Returns the same flat dict as ``basketball_ai.data.loader.load_all_data()``:
 
         leagues, teams, players, player_stats, team_player_relations
             – ``pd.DataFrame``
@@ -341,5 +341,5 @@ def load_all_data_from_sql(engine=None, table_mapping: Optional[Dict[str, str]] 
     }
 
 
-# Alias so callers can do: from src.data.sql_loader import load_all_data
+# Alias so callers can do: from basketball_ai.data.sql_loader import load_all_data
 load_all_data = load_all_data_from_sql

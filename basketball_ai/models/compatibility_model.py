@@ -13,8 +13,8 @@ import numpy as np
 from sklearn.neighbors import KNeighborsRegressor
 from sklearn.preprocessing import StandardScaler
 
-from src.features.team_features import compute_team_style_vector
-from src.data.models import Team
+from basketball_ai.features.team_features import compute_team_style_vector
+from basketball_ai.data.models import Team
 
 
 class CompatibilityModel:

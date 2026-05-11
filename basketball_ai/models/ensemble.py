@@ -16,12 +16,12 @@ from typing import Any, Dict, List, Optional
 
 import numpy as np
 
-from src.models.age_curve import age_performance_factor, PEAK_AGES
-from src.models.compatibility_model import CompatibilityModel
-from src.models.performance_model import PerformanceModel
-from src.features.player_features import compute_player_features
-from src.features.team_features import compute_team_features
-from src.features.context_features import compute_context_features
+from basketball_ai.models.age_curve import age_performance_factor, PEAK_AGES
+from basketball_ai.models.compatibility_model import CompatibilityModel
+from basketball_ai.models.performance_model import PerformanceModel
+from basketball_ai.features.player_features import compute_player_features
+from basketball_ai.features.team_features import compute_team_features
+from basketball_ai.features.context_features import compute_context_features
 
 
 @dataclass

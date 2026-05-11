@@ -12,7 +12,7 @@ from typing import Any, Dict, Optional
 
 import numpy as np
 
-from src.features.team_features import get_style_position_compat
+from basketball_ai.features.team_features import get_style_position_compat
 
 # ---------------------------------------------------------------------------
 # League adaptation

@@ -13,15 +13,15 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
-from src.chat.intent import Intent, detect_intent
-from src.chat.entities import (
+from basketball_ai.chat.intent import Intent, detect_intent
+from basketball_ai.chat.entities import (
     extract_number,
     find_all_players,
     find_all_teams,
     find_player,
     find_team,
 )
-from src.chat import session as _session
+from basketball_ai.chat import session as _session
 
 
 # ---------------------------------------------------------------------------

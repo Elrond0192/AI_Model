@@ -13,8 +13,8 @@ app_state: Dict[str, Any] = {}
 
 
 def _load_app_state() -> None:
-    from src.models.ensemble import EnsembleModel
-    from src.scenarios.engine import WhatIfEngine
+    from basketball_ai.models.ensemble import EnsembleModel
+    from basketball_ai.scenarios.engine import WhatIfEngine
 
     data_dir   = os.environ.get("DATA_DIR",   "data/sample")
     model_dir  = os.environ.get("MODEL_DIR",  "models_saved")
@@ -24,7 +24,7 @@ def _load_app_state() -> None:
     if data_source == "sql":
         print("[API] Loading data from Azure SQL Server …")
         try:
-            from src.data.sql_loader import load_all_data
+            from basketball_ai.data.sql_loader import load_all_data
             data = load_all_data()
         except Exception as exc:
             print(f"[API] ERROR loading SQL data: {exc}")
@@ -33,7 +33,7 @@ def _load_app_state() -> None:
             app_state["chat_engine"] = None
             return
     else:
-        from src.data.loader import load_all_data, data_exists
+        from basketball_ai.data.loader import load_all_data, data_exists
         if not data_exists(data_dir):
             print("[API] WARNING: data not found – run --mode generate-data first")
             app_state["data"]        = _empty_data()
@@ -116,12 +116,12 @@ def create_app() -> FastAPI:
         allow_methods=["*"], allow_headers=["*"],
     )
 
-    from src.api.routes.players     import router as players_router
-    from src.api.routes.teams       import router as teams_router
-    from src.api.routes.predictions import router as predictions_router
-    from src.api.routes.scenarios   import router as scenarios_router
-    from src.api.routes.chat        import router as chat_router
-    from src.api.routes.wordpress   import router as wordpress_router
+    from basketball_ai.api.routes.players     import router as players_router
+    from basketball_ai.api.routes.teams       import router as teams_router
+    from basketball_ai.api.routes.predictions import router as predictions_router
+    from basketball_ai.api.routes.scenarios   import router as scenarios_router
+    from basketball_ai.api.routes.chat        import router as chat_router
+    from basketball_ai.api.routes.wordpress   import router as wordpress_router
 
     prefix = "/api/v1"
     app.include_router(players_router,     prefix=prefix)

@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 import pandas as pd
 
-from src.data.models import Player, PlayerStats
+from basketball_ai.data.models import Player, PlayerStats
 
 # ---------------------------------------------------------------------------
 # Constants

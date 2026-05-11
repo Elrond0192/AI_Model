@@ -2,15 +2,15 @@
 from __future__ import annotations
 from typing import List, Optional
 from fastapi import APIRouter, HTTPException, Query
-from src.api.schemas import PlayerOut, PlayerStatOut, PlayerProfileOut
-from src.features.player_features import compute_form_score, compute_consistency_score, compute_career_trajectory
-from src.utils.helpers import position_group
+from basketball_ai.api.schemas import PlayerOut, PlayerStatOut, PlayerProfileOut
+from basketball_ai.features.player_features import compute_form_score, compute_consistency_score, compute_career_trajectory
+from basketball_ai.utils.helpers import position_group
 
 router = APIRouter(prefix="/players", tags=["players"])
 
 
 def _get_data():
-    from src.api.main import app_state
+    from basketball_ai.api.main import app_state
     return app_state["data"]
 
 

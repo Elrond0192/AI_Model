@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
-from src.data.models import League, Team, Player, PlayerStats, TeamPlayerRelation
+from basketball_ai.data.models import League, Team, Player, PlayerStats, TeamPlayerRelation
 
 DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "data", "sample")
 
