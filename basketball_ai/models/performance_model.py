@@ -6,7 +6,7 @@ per-36 stats, advanced metrics (PER, BPM, TS%, USG%), age, position.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, NamedTuple, Optional, Tuple
 
 import joblib
 import numpy as np
@@ -39,6 +39,83 @@ FEATURE_COLS: List[str] = [
     "career_trajectory",
     "age_vs_peak_age",
 ]
+
+# Non-metric identity/target columns to exclude from METRIC_CATALOG selection
+_IDENTITY_COLS = {"player_id", "season", "team_id", "league_id", "rating", "minutes_per_game"}
+
+
+class _MetricInfo(NamedTuple):
+    label: str
+    description: str
+    use_per36: bool
+    gruppo: str
+
+
+# Catalog of all possible player_stats columns with metadata
+METRIC_CATALOG: Dict[str, _MetricInfo] = {
+    "points":               _MetricInfo("Punti",               "Punti per partita",                          True,  "Attacco"),
+    "assists":              _MetricInfo("Assist",               "Assist per partita",                         True,  "Playmaking"),
+    "rebounds":             _MetricInfo("Rimbalzi totali",      "Rimbalzi per partita",                       True,  "Rimbalzi"),
+    "offensive_rebounds":   _MetricInfo("Rim. offensivi",       "Rimbalzi offensivi per partita",             True,  "Rimbalzi"),
+    "defensive_rebounds":   _MetricInfo("Rim. difensivi",       "Rimbalzi difensivi per partita",             True,  "Rimbalzi"),
+    "steals":               _MetricInfo("Palle rubate",         "Palle rubate per partita",                   True,  "Difesa"),
+    "blocks":               _MetricInfo("Stoppate",             "Stoppate per partita",                       True,  "Difesa"),
+    "turnovers":            _MetricInfo("Palle perse",          "Palle perse per partita",                    True,  "Efficienza"),
+    "fouls":                _MetricInfo("Falli",                "Falli per partita",                          True,  "Disciplina"),
+    "fg_pct":               _MetricInfo("FG%",                  "Percentuale tiri dal campo",                 False, "Efficienza"),
+    "three_point_pct":      _MetricInfo("3P%",                  "Percentuale tiri da tre punti",              False, "Efficienza"),
+    "three_point_attempts": _MetricInfo("3PA/36",               "Tentativi da tre per 36 minuti",             True,  "Attacco"),
+    "three_point_made":     _MetricInfo("3PM/36",               "Canestri da tre per 36 minuti",              True,  "Attacco"),
+    "free_throw_pct":       _MetricInfo("FT%",                  "Percentuale tiri liberi",                    False, "Efficienza"),
+    "free_throw_attempts":  _MetricInfo("FTA/36",               "Tiri liberi tentati per 36 minuti",          True,  "Efficienza"),
+    "per":                  _MetricInfo("PER",                  "Player Efficiency Rating",                   False, "Avanzate"),
+    "ts_pct":               _MetricInfo("TS%",                  "True Shooting Percentage",                   False, "Avanzate"),
+    "usg_pct":              _MetricInfo("USG%",                 "Usage Rate",                                 False, "Avanzate"),
+    "bpm":                  _MetricInfo("BPM",                  "Box Plus/Minus",                             False, "Avanzate"),
+    "vorp":                 _MetricInfo("VORP",                 "Value Over Replacement Player",              False, "Avanzate"),
+    "ws":                   _MetricInfo("Win Shares",           "Vittorie attribuite al giocatore",           False, "Avanzate"),
+    "ws_per_48":            _MetricInfo("WS/48",                "Win Shares per 48 minuti",                   False, "Avanzate"),
+    "obpm":                 _MetricInfo("OBPM",                 "Offensive Box Plus/Minus",                   False, "Avanzate"),
+    "dbpm":                 _MetricInfo("DBPM",                 "Defensive Box Plus/Minus",                   False, "Avanzate"),
+    "plus_minus":           _MetricInfo("+/-",                  "Plus/Minus grezzo",                          False, "Team"),
+    "net_rating":           _MetricInfo("Net Rating",           "Net rating in campo",                        False, "Team"),
+    "games_played":         _MetricInfo("Partite giocate",      "Numero di partite disputate",                False, "Utilizzo"),
+    "games_started":        _MetricInfo("Da titolare",          "Partite giocate da titolare",                False, "Utilizzo"),
+    "efg_pct":              _MetricInfo("eFG%",                 "Effective Field Goal Percentage",            False, "Efficienza"),
+    "two_point_pct":        _MetricInfo("2P%",                  "Percentuale tiri da due punti",              False, "Efficienza"),
+    "ast_pct":              _MetricInfo("AST%",                 "Assist Rate",                                False, "Playmaking"),
+    "reb_pct":              _MetricInfo("REB%",                 "Rebound Rate",                               False, "Rimbalzi"),
+    "tov_pct":              _MetricInfo("TOV%",                 "Turnover Rate",                              False, "Efficienza"),
+    "stl_pct":              _MetricInfo("STL%",                 "Steal Rate",                                 False, "Difesa"),
+    "blk_pct":              _MetricInfo("BLK%",                 "Block Rate",                                 False, "Difesa"),
+    "ortg":                 _MetricInfo("ORtg",                 "Offensive Rating per 100 possessi",          False, "Team"),
+    "drtg":                 _MetricInfo("DRtg",                 "Defensive Rating per 100 possessi",          False, "Team"),
+}
+
+# Columns that are already covered by the base FEATURE_COLS (per-36 computed)
+_BASE_COVERED_COLS = {"points", "assists", "rebounds", "steals", "blocks",
+                      "per", "ts_pct", "usg_pct", "bpm"}
+
+
+def get_available_metrics(player_stats_df: pd.DataFrame) -> List[str]:
+    """Return catalog metric columns present in *player_stats_df*.
+
+    Excludes identity/target columns, non-numeric columns, and columns already
+    fully covered by the base FEATURE_COLS set.
+    """
+    available: List[str] = []
+    numeric_cols = set(player_stats_df.select_dtypes(include=[np.number]).columns)
+    for col in METRIC_CATALOG:
+        if col in _IDENTITY_COLS:
+            continue
+        if col in _BASE_COVERED_COLS:
+            continue
+        if col not in player_stats_df.columns:
+            continue
+        if col not in numeric_cols:
+            continue
+        available.append(col)
+    return available
 
 # Encoding for all position strings (pure + hybrid)
 POSITION_ENCODING: Dict[str, int] = {
@@ -91,6 +168,7 @@ class PerformanceModel:
         age: int,
         position: str,
         player_stats_history: pd.DataFrame,
+        extra_metrics: List[str] = [],
     ) -> Dict[str, float]:
         """Build a feature row from a player-stats row."""
         mpg = float(stat_row.get("minutes_per_game", 0))
@@ -122,7 +200,7 @@ class PerformanceModel:
         pos_enc = float(POSITION_ENCODING.get(position, POSITION_ENCODING.get(_primary_pos(position), 0)))
         peak_age = _peak_age(position)
 
-        return {
+        row: Dict[str, float] = {
             "age":                float(age),
             "position_enc":       pos_enc,
             "pts_per_36":         per36("points"),
@@ -140,12 +218,57 @@ class PerformanceModel:
             "age_vs_peak_age":    float(age - peak_age),
         }
 
+        # Extra metrics requested by the caller
+        for col in extra_metrics:
+            info = METRIC_CATALOG.get(col)
+            if info is None:
+                continue
+            if col not in stat_row.index:
+                print(f"[PerformanceModel] Warning: colonna '{col}' non trovata in stat_row, uso 0.0")
+                if info.use_per36:
+                    row[f"{col}_per_36"] = 0.0
+                else:
+                    row[f"avg_{col}"] = 0.0
+                continue
+            if info.use_per36:
+                row[f"{col}_per_36"] = per36(col)
+            else:
+                # Use historical average if available, otherwise current value
+                if col in player_stats_history.columns:
+                    row[f"avg_{col}"] = float(np.mean(player_stats_history[col].dropna().tolist()) or stat_row.get(col, 0))
+                else:
+                    row[f"avg_{col}"] = float(stat_row.get(col, 0))
+
+        return row
+
     def prepare_features(
-        self, data: Dict[str, Any]
+        self, data: Dict[str, Any], extra_metrics: List[str] = []
     ) -> Tuple[pd.DataFrame, np.ndarray]:
-        """Build training (X, y) from all player-season data."""
+        """Build training (X, y) from all player-season data.
+
+        Args:
+            data: dict with keys ``player_stats`` and ``players``.
+            extra_metrics: additional columns from METRIC_CATALOG to include
+                as features (on top of the base FEATURE_COLS).
+        """
         player_stats = data["player_stats"]
         players      = data["players"]
+
+        # Determine the full feature column list for this run
+        extra_feature_names: List[str] = []
+        for col in extra_metrics:
+            info = METRIC_CATALOG.get(col)
+            if info is None:
+                continue
+            feat_name = f"{col}_per_36" if info.use_per36 else f"avg_{col}"
+            if feat_name not in extra_feature_names:
+                extra_feature_names.append(feat_name)
+
+        all_feature_names = FEATURE_COLS + extra_feature_names
+        self.feature_names = all_feature_names
+
+        if extra_metrics:
+            print(f"[PerformanceModel] Metriche extra ({len(extra_metrics)}): {extra_metrics}")
 
         birth_year_map: Dict[int, int] = {
             int(row["id"]): 2024 - int(row["age"])
@@ -177,7 +300,7 @@ class PerformanceModel:
                 if age < 14 or age > 45:
                     continue
                 history_so_far = grp[grp["season"] <= stat["season"]]
-                rows.append(self._build_row(stat, age, pos, history_so_far))
+                rows.append(self._build_row(stat, age, pos, history_so_far, extra_metrics=extra_metrics))
                 targets.append(float(stat["rating"]))
 
         X = pd.DataFrame(rows, columns=self.feature_names)
@@ -188,10 +311,15 @@ class PerformanceModel:
     # Public API
     # ------------------------------------------------------------------
 
-    def train(self, data: Dict[str, Any]) -> Dict[str, float]:
-        """Train the model and return RMSE metrics."""
+    def train(self, data: Dict[str, Any], extra_metrics: List[str] = []) -> Dict[str, float]:
+        """Train the model and return RMSE metrics.
+
+        Args:
+            data: dict with keys ``player_stats`` and ``players``.
+            extra_metrics: additional METRIC_CATALOG columns to include as features.
+        """
         print("[PerformanceModel] Building feature matrix …")
-        X, y = self.prepare_features(data)
+        X, y = self.prepare_features(data, extra_metrics=extra_metrics)
         print(f"[PerformanceModel] Training on {len(X):,} samples …")
 
         X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.15, random_state=42)

@@ -264,23 +264,73 @@ with tab_train:
     # -----------------------------------------------------------------------
     st.subheader("B · Addestra nuovo modello")
 
+    with st.expander("ℹ️ Guida agli iperparametri", expanded=False):
+        st.markdown("""
+| Parametro | Descrizione | Range consigliato |
+|---|---|---|
+| `n_estimators` | Numero di alberi XGBoost. Più è alto, più il modello è preciso ma lento. | 200–500 |
+| `max_depth` | Profondità massima di ogni albero. Valori alti = rischio overfitting. | 4–7 |
+| `learning_rate` | Velocità di apprendimento (eta). Bilanciare con n_estimators: più basso = più alberi necessari. | 0.01–0.1 |
+| `subsample` | Frazione dei campioni usata per ogni albero. Riduce overfitting. | 0.7–0.9 |
+| `colsample_bytree` | Frazione delle feature usata per ogni albero. Riduce la correlazione tra alberi. | 0.6–0.9 |
+| `min_child_weight` | Peso minimo dei campioni in una foglia. Aumentare se il dataset è piccolo. | 2–6 |
+| `reg_alpha (L1)` | Regolarizzazione L1: annulla feature poco rilevanti. | 0.0–0.5 |
+| `reg_lambda (L2)` | Regolarizzazione L2: riduce smoothly i pesi. | 0.5–2.0 |
+| `Validation split` | Frazione dei dati usata per la validazione (non per il training). | 0.10–0.20 |
+| `Random seed` | Seme per la riproducibilità dei risultati. | Qualsiasi intero |
+        """)
+
     col1, col2 = st.columns(2)
     with col1:
         st.markdown("**XGBoost**")
-        xgb_n_estimators = st.slider("n_estimators", 50, 1000, 300, step=50,    key="t_nest")
-        xgb_max_depth    = st.slider("max_depth",     2,   12,   5,             key="t_depth")
-        xgb_lr           = st.slider("learning_rate", 0.005, 0.3, 0.05,
-                                     step=0.005, format="%.3f",                key="t_lr")
-        xgb_subsample    = st.slider("subsample",     0.4, 1.0, 0.8, step=0.05, key="t_sub")
+        xgb_n_estimators = st.slider(
+            "n_estimators", 50, 1000, 300, step=50, key="t_nest",
+            help="Numero di alberi. Più è alto, più il modello è preciso ma lento. Range consigliato: 200–500.",
+        )
+        xgb_max_depth = st.slider(
+            "max_depth", 2, 12, 5, key="t_depth",
+            help="Profondità massima di ogni albero. Valori alti aumentano il rischio di overfitting. Range consigliato: 4–7.",
+        )
+        xgb_lr = st.slider(
+            "learning_rate", 0.005, 0.3, 0.05, step=0.005, format="%.3f", key="t_lr",
+            help="Velocità di apprendimento (eta). Valori bassi richiedono più alberi. Range consigliato: 0.01–0.1.",
+        )
+        xgb_subsample = st.slider(
+            "subsample", 0.4, 1.0, 0.8, step=0.05, key="t_sub",
+            help="Frazione dei campioni usata per addestrare ogni albero. Riduce overfitting. Range consigliato: 0.7–0.9.",
+        )
+        xgb_colsample = st.slider(
+            "colsample_bytree", 0.3, 1.0, 0.8, step=0.05, key="t_colsample",
+            help="Frazione delle feature usata per ogni albero. Riduce la correlazione tra alberi. Range consigliato: 0.6–0.9.",
+        )
+        xgb_min_child_weight = st.slider(
+            "min_child_weight", 1, 10, 3, key="t_mcw",
+            help="Peso minimo dei campioni in una foglia. Aumentare se il dataset è piccolo. Range consigliato: 2–6.",
+        )
     with col2:
+        st.markdown("**Regolarizzazione**")
+        xgb_reg_alpha = st.slider(
+            "reg_alpha (L1)", 0.0, 1.0, 0.1, step=0.05, key="t_alpha",
+            help="Regolarizzazione L1: annulla feature poco rilevanti. Range consigliato: 0.0–0.5.",
+        )
+        xgb_reg_lambda = st.slider(
+            "reg_lambda (L2)", 0.0, 3.0, 1.0, step=0.1, key="t_lambda",
+            help="Regolarizzazione L2: riduce smoothly i pesi. Range consigliato: 0.5–2.0.",
+        )
         st.markdown("**Generale**")
-        seed          = st.number_input("Random seed",         min_value=0, max_value=99999, value=42, key="t_seed")
-        test_size     = st.slider("Validation split",          0.05, 0.40, 0.15, step=0.05,            key="t_split")
-        model_dir_gui = st.text_input("Directory salvataggio", value="models_saved",                    key="t_dir")
+        seed = st.number_input(
+            "Random seed", min_value=0, max_value=99999, value=42, key="t_seed",
+            help="Seme per la riproducibilità dei risultati. Qualsiasi intero va bene.",
+        )
+        test_size = st.slider(
+            "Validation split", 0.05, 0.40, 0.15, step=0.05, key="t_split",
+            help="Frazione dei dati usata per la validazione. NON viene usata nel training. Range consigliato: 0.10–0.20.",
+        )
+        model_dir_gui = st.text_input("Directory salvataggio", value="models_saved", key="t_dir")
 
-    from basketball_ai.models.performance_model import FEATURE_COLS
+    from basketball_ai.models.performance_model import FEATURE_COLS, METRIC_CATALOG, get_available_metrics
     all_features = FEATURE_COLS.copy()
-    st.markdown("**Feature selection**")
+    st.markdown("**Feature selection (base)**")
     selected_features = st.multiselect(
         "Feature da includere (deseleziona per escludere)",
         options=all_features,
@@ -289,6 +339,56 @@ with tab_train:
     )
     if len(selected_features) < 3:
         st.warning("Seleziona almeno 3 feature.")
+
+    # -----------------------------------------------------------------------
+    # Metriche aggiuntive dal DB
+    # -----------------------------------------------------------------------
+    st.subheader("📊 Metriche disponibili dal DB")
+
+    _data_check = st.session_state.get("data")
+    if _data_check is None:
+        st.info("Carica prima i dati per vedere le metriche disponibili.")
+        extra_metrics: list = []
+    else:
+        _available_metrics = get_available_metrics(_data_check["player_stats"])
+        if not _available_metrics:
+            st.info("Nessuna metrica aggiuntiva trovata nelle colonne del dataset.")
+            extra_metrics = []
+        else:
+            st.success(f"✅ {len(_available_metrics)} metriche aggiuntive trovate nel dataset")
+
+            # Group metrics by gruppo
+            _groups: dict = {}
+            for col in _available_metrics:
+                g = METRIC_CATALOG[col].gruppo
+                _groups.setdefault(g, []).append(col)
+
+            # Render each group as an expander with two-column checkboxes
+            extra_metrics = []
+            _GROUP_ICONS = {
+                "Attacco": "⚔️", "Playmaking": "🎯", "Rimbalzi": "🏀",
+                "Difesa": "🛡️", "Efficienza": "📊", "Disciplina": "📋",
+                "Avanzate": "🔬", "Team": "👥", "Utilizzo": "📅",
+            }
+            for gruppo, group_cols in _groups.items():
+                icon = _GROUP_ICONS.get(gruppo, "📌")
+                with st.expander(
+                    f"{icon} {gruppo} ({len(group_cols)} metriche disponibili)",
+                    expanded=(gruppo == "Avanzate"),
+                ):
+                    gcols = st.columns(2)
+                    for i, col_name in enumerate(group_cols):
+                        info = METRIC_CATALOG[col_name]
+                        checked = gcols[i % 2].checkbox(
+                            f"**{info.label}** – {info.description}",
+                            value=True,
+                            key=f"metric_{col_name}",
+                        )
+                        if checked:
+                            extra_metrics.append(col_name)
+
+            if extra_metrics:
+                st.caption(f"🔧 {len(extra_metrics)} metriche extra selezionate per il training")
 
     if st.button("🚀 Avvia Training", type="primary", key="t_run"):
         if "data" not in st.session_state:
@@ -318,23 +418,35 @@ with tab_train:
                 progress.progress(10, text="Costruzione feature …")
 
                 perf_model = PerformanceModel()
-                perf_model.feature_names = selected_features
                 perf_model.model = XGBRegressor(
                     n_estimators=xgb_n_estimators,
                     max_depth=xgb_max_depth,
                     learning_rate=xgb_lr,
                     subsample=xgb_subsample,
-                    colsample_bytree=0.8,
-                    min_child_weight=3,
-                    reg_alpha=0.1,
-                    reg_lambda=1.0,
+                    colsample_bytree=xgb_colsample,
+                    min_child_weight=xgb_min_child_weight,
+                    reg_alpha=xgb_reg_alpha,
+                    reg_lambda=xgb_reg_lambda,
                     random_state=int(seed),
                     verbosity=0,
                 )
                 perf_model.scaler = StandardScaler()
 
-                X_full, y_full = perf_model.prepare_features(data_t)
-                X = X_full[selected_features]
+                X_full, y_full = perf_model.prepare_features(data_t, extra_metrics=extra_metrics)
+                all_selected = [f for f in selected_features if f in X_full.columns]
+                # Also include any extra-metric feature columns that were added
+                for col in extra_metrics:
+                    from basketball_ai.models.performance_model import METRIC_CATALOG as _MC
+                    _info = _MC.get(col)
+                    if _info is None:
+                        continue
+                    feat_name = f"{col}_per_36" if _info.use_per36 else f"avg_{col}"
+                    if feat_name in X_full.columns and feat_name not in all_selected:
+                        all_selected.append(feat_name)
+                perf_model.feature_names = all_selected
+                X = X_full[all_selected]
+                if extra_metrics:
+                    log(f"Metriche extra incluse ({len(extra_metrics)}): {', '.join(extra_metrics)}")
                 log(f"Feature matrix: {X.shape[0]:,} righe × {X.shape[1]} feature")
 
                 progress.progress(30, text="Training performance model …")
@@ -384,7 +496,7 @@ with tab_train:
                 st.session_state["ensemble"]         = ensemble
                 st.session_state["metrics"]          = metrics_dict
                 st.session_state["perf_model"]       = perf_model
-                st.session_state["selected_features"] = selected_features
+                st.session_state["selected_features"] = all_selected
                 st.session_state.pop("engine", None)
                 st.session_state.pop("chat_engine", None)
 
