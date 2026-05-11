@@ -126,14 +126,27 @@ with st.sidebar:
                 with st.spinner("Connecting to Azure SQL …"):
                     try:
                         os.environ["AZURE_SQL_CONNECTION_STRING"] = conn_str
-                        from src.data.sql_loader import load_all_data
-                        data = load_all_data()
+                        from src.data.sql_loader import (
+                            load_all_data,
+                            get_table_mapping,
+                            _get_engine,
+                        )
+                        _engine = _get_engine()
+                        mapping = get_table_mapping(_engine)
+                        data = load_all_data(_engine, table_mapping=mapping)
                         st.session_state["data"] = data
+                        st.session_state["sql_table_mapping"] = mapping
                         st.success(
                             f"Connected! {len(data['players']):,} players loaded."
                         )
                     except Exception as exc:
                         st.error(f"Connection failed: {exc}")
+
+        if "sql_table_mapping" in st.session_state:
+            with st.expander("🔍 Auto-detected table mapping", expanded=False):
+                for logical, actual in st.session_state["sql_table_mapping"].items():
+                    match_icon = "✅" if logical == actual else "🔀"
+                    st.write(f"{match_icon} **{logical}** → `{actual}`")
 
 # Retrieve data from session state
 if "data" not in st.session_state:
