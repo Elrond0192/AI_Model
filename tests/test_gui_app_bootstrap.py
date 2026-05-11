@@ -26,20 +26,20 @@ def _is_sys_path_insert(statement: ast.stmt) -> bool:
 
 def test_gui_app_bootstrap_adds_repo_root_to_sys_path():
     module = ast.parse(APP_PATH.read_text(encoding="utf-8"), filename=str(APP_PATH))
-    bootstrap_body = [module.body[0]]
+    statements_to_execute = [module.body[0]]
 
     index = 1
     if isinstance(module.body[index], ast.ImportFrom) and module.body[index].module == "__future__":
-        bootstrap_body.append(module.body[index])
+        statements_to_execute.append(module.body[index])
         index += 1
 
     for statement in module.body[index:]:
-        bootstrap_body.append(statement)
+        statements_to_execute.append(statement)
         if _is_sys_path_insert(statement):
             break
 
-    assert _is_sys_path_insert(bootstrap_body[-1])
-    bootstrap = ast.Module(body=bootstrap_body, type_ignores=[])
+    assert _is_sys_path_insert(statements_to_execute[-1])
+    bootstrap = ast.Module(body=statements_to_execute, type_ignores=[])
 
     original_sys_path = sys.path[:]
     sys.path[:] = [str(APP_PATH.parent)]
