@@ -103,6 +103,15 @@ def _read_table(engine, table: str) -> pd.DataFrame:
 
 
 # ---------------------------------------------------------------------------
+# Lazy import helper (avoids NameError when sqlalchemy is absent at import)
+# ---------------------------------------------------------------------------
+
+def _text(sql: str):
+    from sqlalchemy import text  # type: ignore
+    return text(sql)
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
@@ -172,12 +181,3 @@ def load_all_data_from_sql(engine=None) -> Dict[str, Any]:
 
 # Alias so callers can do: from src.data.sql_loader import load_all_data
 load_all_data = load_all_data_from_sql
-
-
-# ---------------------------------------------------------------------------
-# Lazy import helper (avoids NameError when sqlalchemy is absent at import)
-# ---------------------------------------------------------------------------
-
-def _text(sql: str):
-    from sqlalchemy import text  # type: ignore
-    return text(sql)

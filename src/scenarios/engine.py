@@ -425,7 +425,6 @@ class WhatIfEngine:
         profiles: List[LineupMemberProfile] = []
         for pid in lineup_player_ids:
             p_row = player_dict.get(int(pid), {})
-            pos   = str(p_row.get("name", "") and p_row.get("position", "PG"))
             pos   = str(p_row.get("position", "PG"))
             name  = str(p_row.get("name", f"Player {pid}"))
             try:

@@ -345,7 +345,6 @@ if "metrics" in st.session_state:
                 file_name="performance_model.joblib",
                 mime="application/octet-stream",
             )
-    compat_path = resolved_dir / "compatibility_model.joblib"
     if compat_path.exists():
         with open(compat_path, "rb") as f:
             st.download_button(
