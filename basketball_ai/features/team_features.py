@@ -9,7 +9,7 @@ from typing import Any, Dict, List, Optional
 
 import numpy as np
 
-from src.data.models import Team
+from basketball_ai.data.models import Team
 
 # ---------------------------------------------------------------------------
 # Style-vs-position compatibility table (all 10 positions incl. hybrids)

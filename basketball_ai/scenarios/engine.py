@@ -7,11 +7,11 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
-from src.models.ensemble import EnsembleModel, PredictionResult
-from src.models.age_curve import age_performance_factor, PEAK_AGES, peak_age_window
-from src.features.context_features import compute_context_features
-from src.features.player_features import compute_player_features
-from src.features.team_features import compute_team_features, get_style_position_compat
+from basketball_ai.models.ensemble import EnsembleModel, PredictionResult
+from basketball_ai.models.age_curve import age_performance_factor, PEAK_AGES, peak_age_window
+from basketball_ai.features.context_features import compute_context_features
+from basketball_ai.features.player_features import compute_player_features
+from basketball_ai.features.team_features import compute_team_features, get_style_position_compat
 
 
 # ---------------------------------------------------------------------------

@@ -6,7 +6,7 @@ from typing import List, Optional
 
 from fastapi import APIRouter, HTTPException, Query
 
-from src.api.schemas import (
+from basketball_ai.api.schemas import (
     WhatIfRequest,
     CompareRequest,
     TransferImpactRequest,
@@ -26,12 +26,12 @@ router = APIRouter(prefix="/scenarios", tags=["scenarios"])
 
 
 def _get_engine():
-    from src.api.main import app_state
+    from basketball_ai.api.main import app_state
     return app_state["engine"]
 
 
 def _get_data():
-    from src.api.main import app_state
+    from basketball_ai.api.main import app_state
     return app_state["data"]
 
 

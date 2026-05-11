@@ -341,5 +341,5 @@ def load_all_data_from_sql(engine=None, table_mapping: Optional[Dict[str, str]] 
     }
 
 
-# Alias so callers can do: from src.data.sql_loader import load_all_data
+# Alias so callers can do: from basketball_ai.data.sql_loader import load_all_data
 load_all_data = load_all_data_from_sql
