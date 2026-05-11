@@ -111,27 +111,46 @@ var BasketballChat = (function () {
 
     var sessionId = null;
 
-    // --- Build DOM --------------------------------------------------------
+    // --- Build DOM via DOM APIs (never innerHTML with untrusted values) ----
     container.classList.add("basketball-chat-widget");
-    container.innerHTML = [
-      '<div class="bball-header">',
-      '  <span class="bball-header__icon">🏀</span>',
-      '  <span class="bball-header__title">' + title + "</span>",
-      "</div>",
-      '<div class="bball-messages" id="' + elementId + '-messages"></div>',
-      '<div class="bball-suggestions" id="' + elementId + '-suggestions"></div>',
-      '<div class="bball-input-row">',
-      '  <input class="bball-input" id="' + elementId + '-input"',
-      '         type="text" placeholder="Ask about a player or team…"',
-      '         autocomplete="off" />',
-      '  <button class="bball-send" id="' + elementId + '-send">Send</button>',
-      "</div>",
-    ].join("\n");
 
-    var messagesEl    = document.getElementById(elementId + "-messages");
-    var suggestionsEl = document.getElementById(elementId + "-suggestions");
-    var inputEl       = document.getElementById(elementId + "-input");
-    var sendBtn       = document.getElementById(elementId + "-send");
+    // Header
+    var header = document.createElement("div");
+    header.className = "bball-header";
+    var icon = document.createElement("span");
+    icon.className = "bball-header__icon";
+    icon.textContent = "🏀";
+    var titleSpan = document.createElement("span");
+    titleSpan.className = "bball-header__title";
+    titleSpan.textContent = title;   // textContent: safe, no HTML injection
+    header.appendChild(icon);
+    header.appendChild(titleSpan);
+    container.appendChild(header);
+
+    // Messages area
+    var messagesEl = document.createElement("div");
+    messagesEl.className = "bball-messages";
+    container.appendChild(messagesEl);
+
+    // Suggestions area
+    var suggestionsEl = document.createElement("div");
+    suggestionsEl.className = "bball-suggestions";
+    container.appendChild(suggestionsEl);
+
+    // Input row
+    var inputRow = document.createElement("div");
+    inputRow.className = "bball-input-row";
+    var inputEl = document.createElement("input");
+    inputEl.className = "bball-input";
+    inputEl.type = "text";
+    inputEl.placeholder = "Ask about a player or team\u2026";
+    inputEl.autocomplete = "off";
+    var sendBtn = document.createElement("button");
+    sendBtn.className = "bball-send";
+    sendBtn.textContent = "Send";
+    inputRow.appendChild(inputEl);
+    inputRow.appendChild(sendBtn);
+    container.appendChild(inputRow);
 
     // --- Welcome message --------------------------------------------------
     appendMessage(

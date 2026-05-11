@@ -21,8 +21,27 @@ import pandas as pd
 import streamlit as st
 
 # ---------------------------------------------------------------------------
-# Page config
+# Helpers
 # ---------------------------------------------------------------------------
+
+_SHAP_SAMPLE_SIZE = 50
+
+
+def _safe_model_dir(user_input: str) -> Path:
+    """Sanitize a user-supplied directory path to prevent path traversal.
+
+    Only allows relative paths composed of safe components (no ``..``, no
+    leading ``/`` or ``\\``, no drive letters).  Falls back to the default
+    ``models_saved`` directory if the result would be empty.
+    """
+    raw = Path(user_input)
+    safe_parts = [
+        p for p in raw.parts
+        if p not in ("..", "/", "\\") and ":" not in p
+    ]
+    return Path(*safe_parts) if safe_parts else Path("models_saved")
+
+
 st.set_page_config(
     page_title="Basketball AI – Training GUI",
     page_icon="🏀",
@@ -238,10 +257,10 @@ if st.button("🚀 Start Training", type="primary"):
                 performance_model=perf_model,
                 compatibility_model=compat_model,
             )
-            Path(model_dir_gui).mkdir(parents=True, exist_ok=True)
-            ensemble.save(model_dir_gui)
-            log(f"Models saved to '{model_dir_gui}/'")
-
+            Path(_safe_model_dir(model_dir_gui)).mkdir(parents=True, exist_ok=True)
+            ensemble.save(str(_safe_model_dir(model_dir_gui)))
+            log(f"Models saved to '{_safe_model_dir(model_dir_gui)}/'")
+            st.session_state["model_dir"] = str(_safe_model_dir(model_dir_gui))
             progress.progress(100, text="Done!")
             st.session_state["ensemble"]   = ensemble
             st.session_state["metrics"]    = {
@@ -312,7 +331,12 @@ if "metrics" in st.session_state:
 
     # --- Download model ---------------------------------------------------
     st.subheader("Download trained model")
-    model_path = Path(model_dir_gui) / "performance_model.joblib"
+    # Use the actual save path from the training run, not the (possibly edited) input box
+    resolved_dir = Path(
+        st.session_state.get("model_dir", str(_safe_model_dir(model_dir_gui)))
+    )
+    model_path  = resolved_dir / "performance_model.joblib"
+    compat_path = resolved_dir / "compatibility_model.joblib"
     if model_path.exists():
         with open(model_path, "rb") as f:
             st.download_button(
@@ -321,7 +345,7 @@ if "metrics" in st.session_state:
                 file_name="performance_model.joblib",
                 mime="application/octet-stream",
             )
-    compat_path = Path(model_dir_gui) / "compatibility_model.joblib"
+    compat_path = resolved_dir / "compatibility_model.joblib"
     if compat_path.exists():
         with open(compat_path, "rb") as f:
             st.download_button(
