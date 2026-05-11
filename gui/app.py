@@ -129,9 +129,9 @@ with st.sidebar:
                         from src.data.sql_loader import (
                             load_all_data,
                             get_table_mapping,
-                            _get_engine,
+                            get_engine,
                         )
-                        _engine = _get_engine()
+                        _engine = get_engine()
                         mapping = get_table_mapping(_engine)
                         data = load_all_data(_engine, table_mapping=mapping)
                         st.session_state["data"] = data

@@ -127,8 +127,11 @@ def _build_connection_url() -> str:
     return f"mssql+pyodbc:///?odbc_connect={params}"
 
 
-def _get_engine():
-    """Return a SQLAlchemy engine, importing SQLAlchemy lazily."""
+def get_engine():
+    """Return a SQLAlchemy engine built from environment variables.
+
+    Lazily imports SQLAlchemy so the module remains importable without it.
+    """
     try:
         from sqlalchemy import create_engine  # type: ignore
     except ImportError as exc:
@@ -139,6 +142,10 @@ def _get_engine():
 
     url = _build_connection_url()
     return create_engine(url, pool_pre_ping=True)
+
+
+# Internal alias kept for backwards-compat with any internal callers.
+_get_engine = get_engine
 
 
 def _read_table(engine, table: str) -> pd.DataFrame:
@@ -159,15 +166,15 @@ def _get_db_schema(engine) -> Dict[str, List[str]]:
     return result
 
 
-def _score_table(actual_cols: List[str], signature: List[str]) -> float:
-    """Return the fraction of *signature* columns present in *actual_cols*.
+def _score_table(actual_cols: List[str], expected_columns: List[str]) -> float:
+    """Return the fraction of *expected_columns* present in *actual_cols*.
 
-    A score of 1.0 means every signature column was found; 0.0 means none.
+    A score of 1.0 means every expected column was found; 0.0 means none.
     Comparison is case-insensitive.
     """
     actual_lower = {c.lower() for c in actual_cols}
-    matches = sum(1 for s in signature if s.lower() in actual_lower)
-    return matches / len(signature) if signature else 0.0
+    matches = sum(1 for s in expected_columns if s.lower() in actual_lower)
+    return matches / len(expected_columns) if expected_columns else 0.0
 
 
 def _discover_table_mapping(engine) -> Dict[str, str]:
@@ -180,7 +187,7 @@ def _discover_table_mapping(engine) -> Dict[str, str]:
        ``AZURE_SQL_TABLE_<NAME>`` or a table whose name exactly matches
        the logical key, case-insensitively).
     2. If no exact match, scores every table in the DB by computing how
-       many of the dataset's signature columns are present.
+       many of the dataset's expected columns are present.
     3. Selects the table with the highest score, provided it meets the
        minimum overlap threshold (:data:`_MIN_OVERLAP`).
 
@@ -191,7 +198,7 @@ def _discover_table_mapping(engine) -> Dict[str, str]:
     table_names_lower = {t.lower(): t for t in schema}
     mapping: Dict[str, str] = {}
 
-    for logical, signature in _REQUIRED_COLUMNS.items():
+    for logical, expected_columns in _REQUIRED_COLUMNS.items():
         # 1. Explicit env-var override
         env_override = os.environ.get(_TABLE_ENV_VARS[logical], "").strip()
         if env_override:
@@ -212,15 +219,22 @@ def _discover_table_mapping(engine) -> Dict[str, str]:
         best_table: Optional[str] = None
         best_score = 0.0
         for table_name, cols in schema.items():
-            score = _score_table(cols, signature)
+            score = _score_table(cols, expected_columns)
             if score > best_score:
                 best_score = score
                 best_table = table_name
 
+        if not schema:
+            raise ValueError(
+                f"Could not find a suitable table for '{logical}': "
+                f"the database appears to have no visible tables. "
+                f"Set {_TABLE_ENV_VARS[logical]} to specify the table name explicitly."
+            )
         if best_table is None or best_score < _MIN_OVERLAP:
             raise ValueError(
                 f"Could not find a suitable table for '{logical}' "
-                f"(best score: {best_score:.0%}). "
+                f"(best candidate: '{best_table}', score: {best_score:.0%} "
+                f"— minimum required: {_MIN_OVERLAP:.0%}). "
                 f"Available tables: {sorted(schema)}. "
                 f"Set the environment variable {_TABLE_ENV_VARS[logical]} "
                 f"to specify the table name explicitly."
