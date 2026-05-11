@@ -4,11 +4,13 @@ Combines:
   1. XGBoost performance model (base rating)
   2. Age curve (trajectory adjustments)
   3. Compatibility model (style fit)
-  4. Contextual adjustments (league, role, spacing)
+  4. Contextual adjustments (league, role, spacing, adaptation)
 """
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -166,10 +168,21 @@ class EnsembleModel:
     # Persistence
     # ------------------------------------------------------------------
 
-    def save(self, directory: str = "models_saved") -> None:
+    def save(self, directory: str = "models_saved", metrics: Optional[Dict[str, float]] = None) -> None:
         Path(directory).mkdir(parents=True, exist_ok=True)
         self.perf_model.save(f"{directory}/performance_model.joblib")
         self.compat_model.save(f"{directory}/compatibility_model.joblib")
+
+        # Write human-readable metadata alongside the model files.
+        meta: Dict[str, Any] = {
+            "trained_at": datetime.now(timezone.utc).isoformat(),
+            "features":   self.perf_model.feature_names,
+        }
+        if metrics:
+            meta.update(metrics)
+        Path(directory, "metadata.json").write_text(
+            json.dumps(meta, indent=2), encoding="utf-8"
+        )
         print(f"[Ensemble] Models saved to {directory}/")
 
     def load(self, directory: str = "models_saved") -> None:

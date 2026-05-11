@@ -164,6 +164,13 @@ class WhatIfTeammatesRequest(BaseModel):
     season: int = 2024
 
 
+class WhatIfLineupRequest(BaseModel):
+    player_id: int
+    team_id: int
+    lineup_player_ids: List[int] = Field(..., min_length=1, max_length=4)
+    season: int = 2024
+
+
 class ScenarioOut(BaseModel):
     team_id: int
     team_name: str
@@ -208,6 +215,30 @@ class TransferImpactOut(BaseModel):
     rating_delta: float
     adaptation_factor: float
     recommendation: str
+
+
+class LineupMemberProfileOut(BaseModel):
+    player_id: int
+    player_name: str
+    position: str
+    predicted_rating: float
+    role: str
+    style_compat: float
+
+
+class LineupAnalysisOut(BaseModel):
+    player_id: int
+    player_name: str
+    team_id: int
+    predicted_rating: float
+    confidence_low: float
+    confidence_high: float
+    avg_lineup_rating: float
+    positions_covered: List[str]
+    missing_positions: List[str]
+    position_overlaps: Dict[str, int]
+    lineup_profiles: List[LineupMemberProfileOut]
+    explanation: str
 
 
 # ---------------------------------------------------------------------------
