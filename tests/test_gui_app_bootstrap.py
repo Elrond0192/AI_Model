@@ -11,6 +11,19 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 APP_PATH = REPO_ROOT / "gui" / "app.py"
 
 
+def _is_sys_path_insert(statement: ast.stmt) -> bool:
+    return (
+        isinstance(statement, ast.Expr)
+        and isinstance(statement.value, ast.Call)
+        and isinstance(statement.value.func, ast.Attribute)
+        and isinstance(statement.value.func.value, ast.Attribute)
+        and isinstance(statement.value.func.value.value, ast.Name)
+        and statement.value.func.value.value.id == "sys"
+        and statement.value.func.value.attr == "path"
+        and statement.value.func.attr == "insert"
+    )
+
+
 def test_gui_app_bootstrap_adds_repo_root_to_sys_path():
     module = ast.parse(APP_PATH.read_text(encoding="utf-8"), filename=str(APP_PATH))
     bootstrap_body = [module.body[0]]
@@ -22,19 +35,10 @@ def test_gui_app_bootstrap_adds_repo_root_to_sys_path():
 
     for statement in module.body[index:]:
         bootstrap_body.append(statement)
-        if (
-            isinstance(statement, ast.Expr)
-            and isinstance(statement.value, ast.Call)
-            and isinstance(statement.value.func, ast.Attribute)
-            and isinstance(statement.value.func.value, ast.Attribute)
-            and isinstance(statement.value.func.value.value, ast.Name)
-            and statement.value.func.value.value.id == "sys"
-            and statement.value.func.value.attr == "path"
-            and statement.value.func.attr == "insert"
-        ):
+        if _is_sys_path_insert(statement):
             break
 
-    assert isinstance(bootstrap_body[-1], ast.Expr)
+    assert _is_sys_path_insert(bootstrap_body[-1])
     bootstrap = ast.Module(body=bootstrap_body, type_ignores=[])
 
     original_sys_path = sys.path[:]
