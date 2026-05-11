@@ -4,7 +4,7 @@ Launch with:
     streamlit run gui/app.py
 
 Tabs:
-  1. 📂 Dati       – data source (CSV / Azure SQL) + interactive data browser
+  1. 📂 Dati       – data source (sub-tabs: CSV locale | Azure SQL Server) + interactive data browser
   2. 🏋️ Training    – load pre-trained model OR configure + run training; results
   3. 🎯 Predizioni  – predict player rating at any team + career trajectory
   4. 🔀 Scenari     – transfer impact, best-team fit, best players, lineup, teammates
@@ -89,14 +89,9 @@ tab_data, tab_train, tab_pred, tab_scen, tab_chat = st.tabs([
 with tab_data:
     st.header("📂 Sorgente dati")
 
-    source = st.radio(
-        "Scegli la sorgente",
-        ["CSV (locale)", "Azure SQL Server"],
-        horizontal=True,
-        key="data_source",
-    )
+    src_csv_tab, src_sql_tab = st.tabs(["📂 CSV (locale)", "🔌 Azure SQL Server"])
 
-    if source == "CSV (locale)":
+    with src_csv_tab:
         st.subheader("Carica i file CSV")
         uploaded = {
             "leagues":               st.file_uploader("leagues.csv",               type="csv", key="up_leagues"),
@@ -142,7 +137,7 @@ with tab_data:
                 f"{len(teams_df):,} squadre."
             )
 
-    else:  # Azure SQL Server
+    with src_sql_tab:
         st.subheader("Connessione Azure SQL")
         conn_str = st.text_input(
             "Connection string",
