@@ -1,150 +1,135 @@
-"""Context features: player–team fit, style compatibility, league adaptation."""
+"""Basketball context feature engineering.
 
+Computes player–team fit based on:
+  - Position-to-team-style compatibility
+  - Role opportunity (is there a starter slot available?)
+  - League adaptation factor (tier difference, same country bonus)
+  - Spacing fit (3pt shooter in pace-and-space team)
+"""
 from __future__ import annotations
 
 from typing import Any, Dict, Optional
 
 import numpy as np
 
+from src.features.team_features import get_style_position_compat
 
-# Formation → position fit scores
-_FORMATION_FIT: Dict[str, Dict[str, float]] = {
-    "GK": {"4-4-2": 1.0, "4-3-3": 1.0, "4-2-3-1": 1.0, "3-5-2": 1.0,
-           "3-4-3": 1.0, "5-3-2": 1.0, "4-5-1": 1.0, "4-1-4-1": 1.0},
-    "CB": {"4-4-2": 0.90, "4-3-3": 0.90, "4-2-3-1": 0.90, "3-5-2": 1.00,
-           "3-4-3": 1.00, "5-3-2": 1.00, "4-5-1": 0.85, "4-1-4-1": 0.88},
-    "FB": {"4-4-2": 0.90, "4-3-3": 0.95, "4-2-3-1": 0.95, "3-5-2": 0.85,
-           "3-4-3": 0.80, "5-3-2": 0.85, "4-5-1": 0.90, "4-1-4-1": 0.90},
-    "CM": {"4-4-2": 0.95, "4-3-3": 1.00, "4-2-3-1": 0.90, "3-5-2": 0.95,
-           "3-4-3": 0.90, "5-3-2": 0.90, "4-5-1": 0.95, "4-1-4-1": 0.95},
-    "AM": {"4-2-3-1": 1.00, "4-3-3": 0.90, "4-4-2": 0.85, "3-5-2": 0.85,
-           "3-4-3": 0.90, "5-3-2": 0.80, "4-5-1": 0.85, "4-1-4-1": 1.00},
-    "W":  {"4-3-3": 1.00, "4-2-3-1": 0.90, "3-4-3": 0.95, "4-4-2": 0.85,
-           "3-5-2": 0.80, "5-3-2": 0.85, "4-5-1": 0.85, "4-1-4-1": 0.90},
-    "ST": {"4-4-2": 1.00, "4-3-3": 0.95, "4-2-3-1": 0.95, "3-5-2": 0.95,
-           "3-4-3": 0.90, "5-3-2": 1.00, "4-5-1": 0.90, "4-1-4-1": 0.90},
-}
-
-# (playing_style, position) → style compatibility score
-_STYLE_COMPAT: Dict[str, Dict[str, float]] = {
-    "possession": {"GK": 0.75, "CB": 0.90, "FB": 0.85, "CM": 0.95,
-                   "AM": 0.90, "W": 0.80, "ST": 0.75},
-    "high_press": {"GK": 0.70, "CB": 0.80, "FB": 0.85, "CM": 0.90,
-                   "AM": 0.85, "W": 0.90, "ST": 0.90},
-    "counter":    {"GK": 0.80, "CB": 0.85, "FB": 0.88, "CM": 0.80,
-                   "AM": 0.78, "W": 0.92, "ST": 0.92},
-    "direct":     {"GK": 0.80, "CB": 0.88, "FB": 0.80, "CM": 0.75,
-                   "AM": 0.72, "W": 0.85, "ST": 0.90},
-}
-
-
-def compute_position_fit(position: str, formation: str, style: str) -> float:
-    """Return how well a position suits a formation+style."""
-    fits = _FORMATION_FIT.get(position, {})
-    base = fits.get(formation, 0.80)
-    style_boost = _STYLE_COMPAT.get(style, {}).get(position, 0.75) - 0.75
-    return float(np.clip(base + style_boost * 0.2, 0.0, 1.0))
-
+# ---------------------------------------------------------------------------
+# League adaptation
+# ---------------------------------------------------------------------------
 
 def compute_league_adaptation(
     from_tier: int,
     to_tier: int,
-    nationality_match: bool = False,
+    same_country: bool = False,
 ) -> float:
-    """Adaptation factor when moving between leagues.
+    """Return an adaptation multiplier when a player moves between leagues.
 
-    Moving up (higher tier) is harder; moving down is easier.
+    Moving *up* (lower tier number = tougher) incurs a penalty.
+    Moving *down* gives a small bonus. Same-country move eases adaptation.
     """
-    tier_diff = to_tier - from_tier  # negative = stepping up
+    tier_diff = to_tier - from_tier  # negative = moving to tougher league
     if tier_diff < 0:
-        # Moving to a tougher league
-        penalty = abs(tier_diff) * 0.06
-        factor = 1.0 - penalty
+        factor = 1.0 - abs(tier_diff) * 0.06
     else:
-        # Same tier or easier league
         factor = 1.0 + tier_diff * 0.02
 
-    if nationality_match:
-        factor += 0.02  # same country → easier adaptation
+    if same_country:
+        factor += 0.02
 
     return float(np.clip(factor, 0.70, 1.05))
 
+
+# ---------------------------------------------------------------------------
+# Context features
+# ---------------------------------------------------------------------------
 
 def compute_context_features(
     player_id: int,
     team_id: int,
     data: Dict[str, Any],
 ) -> Dict[str, float]:
-    """Compute player-team context features.
+    """Compute player–team context feature dictionary.
 
     Args:
-        player_id: Player identifier.
-        team_id: Target team identifier.
-        data: Loaded data dictionary.
+        player_id: Target player identifier.
+        team_id:   Target team identifier.
+        data:      Flat data dict from loader.load_all_data().
 
     Returns:
-        Dictionary of context feature floats.
+        Dict with keys: position_team_fit, style_compatibility,
+        role_opportunity, league_adaptation_factor, spacing_fit.
     """
-    player_dict = data["player_dict"]
-    team_dict = data["team_dict"]
-    league_dict = data["league_dict"]
-    team_player_relations = data["team_player_relations"]
-    players_df = data["players"]
+    player_row = data["player_dict"].get(int(player_id))
+    team_row   = data["team_dict"].get(int(team_id))
 
-    player = player_dict.get(int(player_id))
-    team = team_dict.get(int(team_id))
-
-    if player is None or team is None:
+    if player_row is None or team_row is None:
         return _default_context_features()
 
-    position = str(player.get("position", "CM"))
-    formation = str(team.get("formation", "4-3-3"))
-    style = str(team.get("playing_style", "possession"))
+    position = str(player_row.get("position", "PG"))
+    style    = str(team_row.get("playing_style", "motion_offense"))
 
-    position_fit = compute_position_fit(position, formation, style)
-    style_compat = _STYLE_COMPAT.get(style, {}).get(position, 0.75)
+    # 1. Style × position compatibility
+    style_compat = get_style_position_compat(style, position)
 
-    # Role opportunity: fewer starters at the same position → more opportunity
-    current_starters = team_player_relations[
-        (team_player_relations["team_id"] == team_id) &
-        (team_player_relations["season"] == 2024) &
-        (team_player_relations["role"] == "starter")
-    ]
-    if not current_starters.empty:
-        starter_ids = current_starters["player_id"].tolist()
-        same_pos_count = int(players_df[
-            (players_df["id"].isin(starter_ids)) &
-            (players_df["position"] == position)
-        ].shape[0])
+    # 2. Position fit: same as style_compat (basketball has no rigid formations)
+    position_fit = style_compat
+
+    # 3. Role opportunity: starters at same position on target team
+    rels_df = data["team_player_relations"]
+    players_df = data["players"]
+    starter_mask = (
+        (rels_df["team_id"] == int(team_id)) &
+        (rels_df["season"] == "2023-24") &
+        (rels_df["role"] == "starter")
+    )
+    starter_ids = rels_df[starter_mask]["player_id"].tolist()
+    primary_pos = position.split("/")[0]
+    if starter_ids:
+        # Count starters who share at least one position component
+        same_pos = players_df[
+            players_df["id"].isin(starter_ids) &
+            players_df["position"].str.contains(primary_pos, regex=False)
+        ]
+        same_pos_count = len(same_pos)
     else:
         same_pos_count = 0
-
     role_opportunity = float(np.clip(1.0 - same_pos_count * 0.18, 0.35, 1.0))
 
-    # League adaptation
-    from_league_id = int(player.get("current_league_id", 1))
-    to_league_id = int(team.get("league_id", 1))
-    from_league = league_dict.get(from_league_id, {})
-    to_league = league_dict.get(to_league_id, {})
+    # 4. League adaptation
+    from_league_id = player_row.get("current_league_id")
+    to_league_id   = int(team_row.get("league_id", 1))
+    from_league    = data["league_dict"].get(int(from_league_id) if from_league_id else 1, {})
+    to_league      = data["league_dict"].get(to_league_id, {})
     from_tier = int(from_league.get("tier", 1))
-    to_tier = int(to_league.get("tier", 1))
-    nat_match = (
-        from_league.get("country", "") == to_league.get("country", "")
-    )
-    adaptation = compute_league_adaptation(from_tier, to_tier, nat_match)
+    to_tier   = int(to_league.get("tier", 1))
+    same_country = (from_league.get("country", "") == to_league.get("country", ""))
+    adaptation = compute_league_adaptation(from_tier, to_tier, same_country)
+
+    # 5. Spacing fit: 3pt specialist in pace-and-space/motion_offense gets a bonus
+    spacing_fit = 0.5  # neutral
+    if style in ("pace_and_space", "motion_offense"):
+        # Check player's 3pt ability from latest stats
+        stats_df = data["player_stats"]
+        p_stats = stats_df[stats_df["player_id"] == int(player_id)].sort_values("season")
+        if not p_stats.empty:
+            tpp = float(p_stats.iloc[-1].get("three_point_pct", 0.33))
+            spacing_fit = float(np.clip(tpp / 0.40, 0, 1))
 
     return {
-        "position_team_fit": position_fit,
-        "style_compatibility": style_compat,
-        "role_opportunity": role_opportunity,
-        "league_adaptation_factor": adaptation,
+        "position_team_fit":      round(position_fit, 4),
+        "style_compatibility":    round(style_compat, 4),
+        "role_opportunity":       round(role_opportunity, 4),
+        "league_adaptation_factor": round(adaptation, 4),
+        "spacing_fit":            round(spacing_fit, 4),
     }
 
 
 def _default_context_features() -> Dict[str, float]:
     return {
-        "position_team_fit": 0.80,
-        "style_compatibility": 0.80,
-        "role_opportunity": 0.80,
-        "league_adaptation_factor": 1.0,
+        "position_team_fit":       0.80,
+        "style_compatibility":     0.80,
+        "role_opportunity":        0.80,
+        "league_adaptation_factor": 1.00,
+        "spacing_fit":             0.50,
     }

@@ -1,15 +1,10 @@
-"""XGBoost performance model: predicts player rating from engineered features.
+"""Basketball XGBoost performance model.
 
-Training pipeline:
-    1. Build (X, y) from all player-season rows via feature engineering.
-    2. Train XGBRegressor with early stopping.
-    3. Expose predict() and get_shap_values() methods.
-    4. Persist / load with joblib.
+Predicts player rating (0-10) from basketball-specific features:
+per-36 stats, advanced metrics (PER, BPM, TS%, USG%), age, position.
 """
-
 from __future__ import annotations
 
-import warnings
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -20,39 +15,53 @@ from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from xgboost import XGBRegressor
 
-# SHAP import (optional – degrade gracefully)
 try:
     import shap as _shap
     _SHAP_AVAILABLE = True
-except ImportError:  # pragma: no cover
+except ImportError:
     _SHAP_AVAILABLE = False
 
-# Feature columns used during training / inference (order matters for scaling)
+# Feature columns (order matters for scaling)
 FEATURE_COLS: List[str] = [
     "age",
     "position_enc",
-    "goals_per_90",
-    "assists_per_90",
-    "xG_per_90",
-    "xA_per_90",
-    "pass_accuracy",
-    "dribbles",
-    "tackles",
-    "interceptions",
-    "aerial_duels_won",
-    "progressive_passes",
-    "key_passes",
-    "minutes",
-    "matches_played",
+    "pts_per_36",
+    "ast_per_36",
+    "reb_per_36",
+    "stl_per_36",
+    "blk_per_36",
+    "avg_per",
+    "avg_ts_pct",
+    "avg_usg_pct",
+    "avg_bpm",
+    "form_score",
+    "consistency_score",
+    "career_trajectory",
+    "age_vs_peak_age",
 ]
+
+# Encoding for all position strings (pure + hybrid)
+POSITION_ENCODING: Dict[str, int] = {
+    "PG": 0, "SG": 1, "SF": 2, "PF": 3, "C": 4,
+    "PG/SG": 5, "SG/SF": 6, "SF/PF": 7, "PF/C": 8, "SG/PF": 9,
+}
+
+POSITIONAL_PEAK_AGES: Dict[str, int] = {
+    "PG": 26, "SG": 25, "SF": 26, "PF": 27, "C": 28,
+    "PG/SG": 25, "SG/SF": 25, "SF/PF": 26, "PF/C": 27, "SG/PF": 26,
+}
+
+
+def _primary_pos(pos: str) -> str:
+    return pos.split("/")[0]
+
+
+def _peak_age(pos: str) -> int:
+    return POSITIONAL_PEAK_AGES.get(pos, POSITIONAL_PEAK_AGES.get(_primary_pos(pos), 26))
 
 
 class PerformanceModel:
-    """XGBoost-based player rating predictor."""
-
-    POSITION_ENCODING: Dict[str, int] = {
-        "GK": 0, "CB": 1, "FB": 2, "CM": 3, "AM": 4, "W": 5, "ST": 6,
-    }
+    """XGBoost player rating predictor for basketball."""
 
     def __init__(self) -> None:
         self.model = XGBRegressor(
@@ -77,37 +86,67 @@ class PerformanceModel:
     # ------------------------------------------------------------------
 
     def _build_row(
-        self, stat_row: pd.Series, age_at_season: int, position: str
+        self,
+        stat_row: pd.Series,
+        age: int,
+        position: str,
+        player_stats_history: pd.DataFrame,
     ) -> Dict[str, float]:
         """Build a feature row from a player-stats row."""
-        total_min = float(stat_row.get("minutes", 0))
-        m90 = max(total_min / 90.0, 0.01)
+        mpg = float(stat_row.get("minutes_per_game", 0))
+        if mpg <= 0:
+            mpg = 1.0
+
+        def per36(col: str) -> float:
+            return float(stat_row.get(col, 0)) / mpg * 36
+
+        # Career stats up to this season
+        ratings = player_stats_history["rating"].tolist()
+        last3 = ratings[-3:]
+        weights = ([0.2, 0.3, 0.5] if len(last3) == 3
+                   else ([0.4, 0.6] if len(last3) == 2 else [1.0]))
+        form_score = sum(r * w for r, w in zip(last3, weights))
+        mean_r = float(np.mean(ratings)) if ratings else 6.5
+        std_r  = float(np.std(ratings))  if len(ratings) > 1 else 0.0
+        consistency = float(np.clip(1.0 - (std_r / mean_r) if mean_r > 0 else 0.0, 0, 1))
+        trajectory = (
+            float(np.polyfit(np.arange(len(ratings), dtype=float), ratings, 1)[0])
+            if len(ratings) >= 2 else 0.0
+        )
+
+        avg_per = float(np.mean(player_stats_history["per"].tolist())) if not player_stats_history.empty else float(stat_row.get("per", 12))
+        avg_ts  = float(np.mean(player_stats_history["ts_pct"].tolist())) if not player_stats_history.empty else float(stat_row.get("ts_pct", 0.52))
+        avg_usg = float(np.mean(player_stats_history["usg_pct"].tolist())) if not player_stats_history.empty else float(stat_row.get("usg_pct", 18))
+        avg_bpm = float(np.mean(player_stats_history["bpm"].tolist())) if not player_stats_history.empty else float(stat_row.get("bpm", -1))
+
+        pos_enc = float(POSITION_ENCODING.get(position, POSITION_ENCODING.get(_primary_pos(position), 0)))
+        peak_age = _peak_age(position)
+
         return {
-            "age": float(age_at_season),
-            "position_enc": float(self.POSITION_ENCODING.get(position, 3)),
-            "goals_per_90": float(stat_row.get("goals", 0)) / m90,
-            "assists_per_90": float(stat_row.get("assists", 0)) / m90,
-            "xG_per_90": float(stat_row.get("xG", 0)) / m90,
-            "xA_per_90": float(stat_row.get("xA", 0)) / m90,
-            "pass_accuracy": float(stat_row.get("pass_accuracy", 75)),
-            "dribbles": float(stat_row.get("dribbles", 1.0)),
-            "tackles": float(stat_row.get("tackles", 1.0)),
-            "interceptions": float(stat_row.get("interceptions", 0.5)),
-            "aerial_duels_won": float(stat_row.get("aerial_duels_won", 1.0)),
-            "progressive_passes": float(stat_row.get("progressive_passes", 2.0)),
-            "key_passes": float(stat_row.get("key_passes", 0.5)),
-            "minutes": total_min,
-            "matches_played": float(stat_row.get("matches_played", 20)),
+            "age":                float(age),
+            "position_enc":       pos_enc,
+            "pts_per_36":         per36("points"),
+            "ast_per_36":         per36("assists"),
+            "reb_per_36":         per36("rebounds"),
+            "stl_per_36":         per36("steals"),
+            "blk_per_36":         per36("blocks"),
+            "avg_per":            avg_per,
+            "avg_ts_pct":         avg_ts,
+            "avg_usg_pct":        avg_usg,
+            "avg_bpm":            avg_bpm,
+            "form_score":         form_score,
+            "consistency_score":  consistency,
+            "career_trajectory":  trajectory,
+            "age_vs_peak_age":    float(age - peak_age),
         }
 
     def prepare_features(
         self, data: Dict[str, Any]
     ) -> Tuple[pd.DataFrame, np.ndarray]:
-        """Build training feature matrix and target vector."""
+        """Build training (X, y) from all player-season data."""
         player_stats = data["player_stats"]
-        players = data["players"]
+        players      = data["players"]
 
-        # birth year lookup: age_in_2024 → birth_year = 2024 - age
         birth_year_map: Dict[int, int] = {
             int(row["id"]): 2024 - int(row["age"])
             for _, row in players.iterrows()
@@ -117,21 +156,29 @@ class PerformanceModel:
             for _, row in players.iterrows()
         }
 
-        rows: List[Dict[str, float]] = []
-        targets: List[float] = []
+        rows:    List[Dict[str, float]] = []
+        targets: List[float]            = []
 
-        for _, stat in player_stats.iterrows():
-            pid = int(stat["player_id"])
-            season = int(stat["season"])
-            by = birth_year_map.get(pid)
-            pos = position_map.get(pid, "CM")
+        for pid, grp in player_stats.groupby("player_id"):
+            grp = grp.sort_values("season")
+            pid = int(pid)
+            pos = position_map.get(pid, "PG")
+            by  = birth_year_map.get(pid)
             if by is None:
                 continue
-            age_s = season - by
-            if age_s < 14 or age_s > 45:
-                continue
-            rows.append(self._build_row(stat, age_s, pos))
-            targets.append(float(stat["rating"]))
+            for idx, stat in grp.iterrows():
+                season_str = str(stat["season"])
+                # approximate year from season string like "2023-24"
+                try:
+                    year = int(season_str.split("-")[0])
+                except Exception:
+                    year = 2024
+                age = year - by
+                if age < 14 or age > 45:
+                    continue
+                history_so_far = grp[grp["season"] <= stat["season"]]
+                rows.append(self._build_row(stat, age, pos, history_so_far))
+                targets.append(float(stat["rating"]))
 
         X = pd.DataFrame(rows, columns=self.feature_names)
         y = np.array(targets, dtype=float)
@@ -142,33 +189,19 @@ class PerformanceModel:
     # ------------------------------------------------------------------
 
     def train(self, data: Dict[str, Any]) -> Dict[str, float]:
-        """Train the model on all available player-season data.
-
-        Returns:
-            Dict with 'train_rmse' and 'val_rmse'.
-        """
+        """Train the model and return RMSE metrics."""
         print("[PerformanceModel] Building feature matrix …")
         X, y = self.prepare_features(data)
         print(f"[PerformanceModel] Training on {len(X):,} samples …")
 
-        X_train, X_val, y_train, y_val = train_test_split(
-            X, y, test_size=0.15, random_state=42
-        )
-
+        X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.15, random_state=42)
         X_tr_sc = self.scaler.fit_transform(X_train)
         X_va_sc = self.scaler.transform(X_val)
 
-        self.model.fit(
-            X_tr_sc, y_train,
-            eval_set=[(X_va_sc, y_val)],
-            verbose=False,
-        )
+        self.model.fit(X_tr_sc, y_train, eval_set=[(X_va_sc, y_val)], verbose=False)
 
-        y_pred_tr = self.model.predict(X_tr_sc)
-        y_pred_va = self.model.predict(X_va_sc)
-        train_rmse = float(np.sqrt(np.mean((y_pred_tr - y_train) ** 2)))
-        val_rmse = float(np.sqrt(np.mean((y_pred_va - y_val) ** 2)))
-
+        train_rmse = float(np.sqrt(np.mean((self.model.predict(X_tr_sc) - y_train) ** 2)))
+        val_rmse   = float(np.sqrt(np.mean((self.model.predict(X_va_sc) - y_val) ** 2)))
         self.is_trained = True
         print(f"[PerformanceModel] Train RMSE={train_rmse:.4f}  Val RMSE={val_rmse:.4f}")
         return {"train_rmse": train_rmse, "val_rmse": val_rmse}
@@ -176,21 +209,15 @@ class PerformanceModel:
     def predict_from_features(self, feature_dict: Dict[str, float]) -> float:
         """Predict rating from an already-engineered feature dict."""
         if not self.is_trained:
-            return 6.5
-        row = pd.DataFrame([[feature_dict.get(c, 0.0) for c in self.feature_names]],
-                           columns=self.feature_names)
+            return float(np.clip(feature_dict.get("form_score", 6.5), 4.0, 10.0))
+        row = pd.DataFrame(
+            [[feature_dict.get(c, 0.0) for c in self.feature_names]],
+            columns=self.feature_names,
+        )
         scaled = self.scaler.transform(row)
-        return float(np.clip(self.model.predict(scaled)[0], 4.0, 10.0))
-
-    def predict_from_stat_row(
-        self, stat_row: pd.Series, age: int, position: str
-    ) -> float:
-        """Convenience wrapper used by the ensemble."""
-        feat = self._build_row(stat_row, age, position)
-        return self.predict_from_features(feat)
+        return float(np.clip(self.model.predict(scaled)[0], 3.5, 10.0))
 
     def get_shap_values(self, feature_dict: Dict[str, float]) -> Dict[str, float]:
-        """Return SHAP feature attributions (requires shap package)."""
         if not self.is_trained or not _SHAP_AVAILABLE:
             return {}
         try:
@@ -203,37 +230,28 @@ class PerformanceModel:
             scaled = self.scaler.transform(row)
             sv = self._shap_explainer.shap_values(scaled)
             return {name: float(sv[0][i]) for i, name in enumerate(self.feature_names)}
-        except Exception:  # pragma: no cover
+        except Exception:
             return {}
 
     def feature_importances(self) -> Dict[str, float]:
-        """Return XGBoost feature importances (gain)."""
         if not self.is_trained:
             return {}
-        imp = self.model.feature_importances_
-        return dict(zip(self.feature_names, imp.tolist()))
+        return dict(zip(self.feature_names, self.model.feature_importances_.tolist()))
 
     # ------------------------------------------------------------------
     # Persistence
     # ------------------------------------------------------------------
 
     def save(self, path: str) -> None:
-        """Serialise model to disk with joblib."""
         Path(path).parent.mkdir(parents=True, exist_ok=True)
-        payload = {
-            "model": self.model,
-            "scaler": self.scaler,
-            "feature_names": self.feature_names,
-        }
-        joblib.dump(payload, path)
+        joblib.dump({"model": self.model, "scaler": self.scaler, "feature_names": self.feature_names}, path)
         print(f"[PerformanceModel] Saved to {path}")
 
     def load(self, path: str) -> None:
-        """Deserialise model from disk."""
         payload = joblib.load(path)
-        self.model = payload["model"]
-        self.scaler = payload["scaler"]
+        self.model         = payload["model"]
+        self.scaler        = payload["scaler"]
         self.feature_names = payload["feature_names"]
-        self.is_trained = True
+        self.is_trained    = True
         self._shap_explainer = None
         print(f"[PerformanceModel] Loaded from {path}")

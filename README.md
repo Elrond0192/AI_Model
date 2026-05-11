@@ -1,19 +1,26 @@
-# AI_Model — Football Player Performance Prediction System
+# AI_Model — Basketball Player Performance Prediction System
 
-A production-quality AI system for predicting football (soccer) player performance, built with XGBoost, KNN compatibility modelling, and a FastAPI REST backend.
+A professional-grade AI system for estimating basketball player performance
+across leagues and teams, with full **What-If scenario analysis**.
+
+Built with XGBoost, KNN compatibility modelling, and a FastAPI REST backend.
 
 ---
 
 ## Features
 
-- **Synthetic data generator** — 20 leagues, 380 teams, 5 200 players, 10 seasons of stats
-- **Feature engineering** — form score, consistency, per-90 metrics, career trajectory, age-vs-peak
-- **XGBoost regressor** — predicts season rating from 15 engineered features; SHAP explanations included
-- **KNN compatibility model** — scores a player's fit to a team's tactical style vector
-- **Ensemble** — combines base rating, league-tier factor, and tactical context into a final prediction with confidence intervals
-- **What-if scenario engine** — trajectory, transfer impact, peak prediction, best-team-fit, and more
-- **FastAPI REST API** — full CRUD + prediction endpoints under `/api/v1`
-- **77 pytest tests** — feature, model, and API coverage
+| Capability | Details |
+|---|---|
+| **Synthetic data generator** | 20 leagues (NBA, EuroLeague, ACB, Lega Basket, …), 300 teams, 5 000 players, 5 seasons of per-game & advanced stats |
+| **Mixed / hybrid positions** | PG, SG, SF, PF, C, PG/SG, SG/SF, SF/PF, PF/C, SG/PF — full support |
+| **Feature engineering** | Per-36 stats, PER, BPM, TS%, USG%, form score, consistency, age-vs-peak, versatility, playmaking & defensive scores |
+| **XGBoost performance model** | 15-feature regressor; SHAP explanations available |
+| **KNN compatibility model** | Scores player-team style fit using 6-d basketball style vectors |
+| **Asymmetric age curves** | Position-specific peak ages with faster post-peak decline for guards vs bigs |
+| **Ensemble prediction** | XGBoost base × age-curve ratio × style compatibility × league tier × context adjustments |
+| **What-If engine** | Trajectory, transfer impact, peak prediction, best-team-fit, teammate quality scenarios |
+| **FastAPI REST API** | Full CRUD + prediction endpoints under `/api/v1`, Pydantic v2 validated |
+| **73 pytest tests** | Feature engineering, model, and API endpoint coverage |
 
 ---
 
@@ -23,99 +30,112 @@ A production-quality AI system for predicting football (soccer) player performan
 # 1. Install dependencies
 pip install -r requirements.txt
 
-# 2. Generate synthetic dataset
+# 2. Generate synthetic basketball dataset
 python main.py --mode generate-data
 
 # 3. Train models
 python main.py --mode train
 
-# 4. Run demo (CLI predictions & scenarios)
+# 4. Run interactive demo
 python main.py --mode demo
 
-# 5. Run tests
-python -m pytest tests/ -v
-
-# 6. Start REST API
-python main.py --mode api        # http://127.0.0.1:8000
-```
-
----
-
-## Project structure
-
-```
-AI_Model/
-├── main.py                     # CLI entry-point (generate-data | train | demo | api)
-├── requirements.txt
-├── data/sample/                # Generated CSVs (auto-created)
-├── models_saved/               # Trained model files (auto-created)
-├── notebooks/exploration.ipynb
-├── src/
-│   ├── data/
-│   │   ├── generator.py        # Synthetic data generation
-│   │   ├── loader.py           # CSV → DataFrames + lookup dicts
-│   │   └── models.py           # Dataclasses: Player, Team, League …
-│   ├── features/
-│   │   ├── player_features.py  # form, consistency, per-90, trajectory
-│   │   ├── team_features.py    # style vector, tier factor, similarity
-│   │   └── context_features.py # position fit, style compat, adaptation
-│   ├── models/
-│   │   ├── age_curve.py        # Asymmetric Gaussian peak curve
-│   │   ├── performance_model.py# XGBRegressor + StandardScaler
-│   │   ├── compatibility_model.py # KNeighborsRegressor on style vectors
-│   │   └── ensemble.py         # Combines all signals → PredictionResult
-│   ├── scenarios/
-│   │   └── engine.py           # WhatIfEngine: 8 scenario methods
-│   └── api/
-│       ├── main.py             # FastAPI app with lifespan
-│       ├── schemas.py          # Pydantic v2 request/response models
-│       └── routes/             # players | teams | predictions | scenarios
-└── tests/
-    ├── test_features.py
-    ├── test_models.py
-    └── test_api.py
+# 5. Start REST API server
+python main.py --mode api
 ```
 
 ---
 
 ## REST API overview
 
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/api/v1/players` | List players (filter by position / age) |
-| GET | `/api/v1/players/{id}` | Player profile |
-| GET | `/api/v1/players/{id}/stats` | Season statistics |
-| GET | `/api/v1/teams` | List teams |
-| GET | `/api/v1/teams/{id}/analysis` | Team squad analysis |
-| POST | `/api/v1/predictions/player/{id}/team/{tid}` | Predict rating |
-| GET | `/api/v1/predictions/player/{id}/trajectory` | Age trajectory |
-| GET | `/api/v1/predictions/player/{id}/peak` | Peak prediction |
-| POST | `/api/v1/scenarios/what-if` | Custom what-if scenario |
-| GET | `/api/v1/scenarios/best-teams/{id}` | Top team fits |
-| GET | `/api/v1/scenarios/best-players/{tid}` | Top players for a team |
-| POST | `/api/v1/scenarios/compare` | Compare multiple scenarios |
-| POST | `/api/v1/scenarios/transfer-impact` | Transfer impact simulation |
-| POST | `/api/v1/scenarios/what-if-teammates` | Teammate quality effect |
+Base URL: `http://localhost:8000/api/v1`
 
-Interactive docs available at `http://127.0.0.1:8000/docs` once the API is running.
+### Players
+| Method | Endpoint | Description |
+|---|---|---|
+| GET | `/players` | List players (filter by position, nationality, age) |
+| GET | `/players/{id}` | Get player details |
+| GET | `/players/{id}/stats` | All season stats for a player |
+| GET | `/players/{id}/profile` | Enriched profile (form, consistency, trajectory) |
+
+### Teams
+| Method | Endpoint | Description |
+|---|---|---|
+| GET | `/teams` | List teams (filter by league, tier, style) |
+| GET | `/teams/{id}` | Get team details |
+| GET | `/teams/{id}/roster` | Current roster |
+| GET | `/teams/{id}/analysis` | Squad stats + style strengths |
+
+### Predictions
+| Method | Endpoint | Description |
+|---|---|---|
+| POST | `/predictions/player/{id}/team/{id}` | Predict player rating at team |
+| GET | `/predictions/player/{id}/trajectory` | Age-trajectory projection |
+| GET | `/predictions/player/{id}/peak` | Career peak prediction |
+
+### What-If Scenarios
+| Method | Endpoint | Description |
+|---|---|---|
+| POST | `/scenarios/what-if` | Predict performance in a specific team |
+| GET | `/scenarios/best-teams/{player_id}` | Top-N teams for a player |
+| GET | `/scenarios/best-players/{team_id}` | Top-N players for a team |
+| POST | `/scenarios/compare` | Compare performance across multiple teams |
+| POST | `/scenarios/transfer-impact` | Simulate transfer performance delta |
+| POST | `/scenarios/what-if-teammates` | What if teammates had a different quality? |
 
 ---
 
-## Ensemble prediction formula
+## Architecture
 
 ```
-adjusted = base_rating × compat_mult × league_factor × ctx_mult
+src/
+├── data/
+│   ├── models.py          # Dataclasses: League, Team, Player, PlayerStats, ...
+│   ├── generator.py       # Synthetic basketball data generator
+│   └── loader.py          # CSV loaders + load_all_data() dict API
+├── features/
+│   ├── player_features.py # Per-36, PER, BPM, form, consistency, age-vs-peak
+│   ├── team_features.py   # 6-d style vector, teammate quality
+│   └── context_features.py# Position-style fit, role opportunity, league adaptation
+├── models/
+│   ├── age_curve.py       # Asymmetric Gaussian age curves per position
+│   ├── performance_model.py # XGBoost rating predictor
+│   ├── compatibility_model.py # KNN style compatibility
+│   └── ensemble.py        # Prediction pipeline
+├── scenarios/
+│   └── engine.py          # WhatIfEngine: trajectory, transfer, peak, best-fit
+├── api/
+│   ├── main.py            # FastAPI app factory + lifespan
+│   ├── schemas.py         # Pydantic v2 request/response models
+│   └── routes/            # players, teams, predictions, scenarios
+└── utils/
+    └── helpers.py         # Formatting, position grouping, normalization
 ```
-
-- **base_rating** — XGBoost prediction (captures age, position, per-90 stats)
-- **compat_mult** — KNN compatibility score remapped to [0.90, 1.10]
-- **league_factor** — tier-1 → 1.00, tier-5 → 0.86 (harder leagues are a bigger test)
-- **ctx_mult** — tactical context (position fit × style × role × adaptation) → [0.95, 1.05]
-- For **trajectory** projections: `base_rating` is additionally scaled by the age-curve ratio `target_af / current_af`
 
 ---
 
-## Requirements
+## Basketball positions supported
 
-- Python 3.10+
-- See `requirements.txt` for full dependency list (XGBoost, scikit-learn, FastAPI, pandas, NumPy, SHAP, …)
+Pure: `PG · SG · SF · PF · C`  
+Hybrid: `PG/SG · SG/SF · SF/PF · PF/C · SG/PF`
+
+All positions have their own:
+- Peak age (guards peak 24-26, wings 26, bigs 27-28)
+- Age curve width (bigs develop & decline more slowly)
+- Style-position compatibility matrix
+- Per-36 stat generation distributions
+
+---
+
+## Playing styles
+
+`pace_and_space · pick_and_roll · isolation · defensive · motion_offense · post_up`
+
+Each style has a full compatibility matrix across all 10 positions.
+
+---
+
+## Running tests
+
+```bash
+pytest tests/ -q
+```

@@ -211,5 +211,33 @@ def generate_and_save():
     players.to_csv(f"{out}/players.csv",index=False)
     print(f"Done. leagues={len(leagues)}, teams={len(teams)}, players={len(players)}, stats={len(stats)}, rels={len(rels)}")
 
-if __name__=="__main__":
+def generate_data(output_dir: str = "data/sample", seed: int = 42) -> None:
+    """Public entry point called by CLI and tests."""
+    random.seed(seed)
+    np.random.seed(seed)
+    os.makedirs(output_dir, exist_ok=True)
+    print("Generating leagues...")
+    leagues = generate_leagues()
+    leagues.to_csv(f"{output_dir}/leagues.csv", index=False)
+    print("Generating teams...")
+    teams = generate_teams(leagues)
+    teams.to_csv(f"{output_dir}/teams.csv", index=False)
+    print("Generating players...")
+    players = generate_players(5000)
+    players.to_csv(f"{output_dir}/players.csv", index=False)
+    print("Generating player stats...")
+    stats = generate_player_stats(players, teams)
+    stats.to_csv(f"{output_dir}/player_stats.csv", index=False)
+    print("Generating team-player relations...")
+    rels = generate_team_player_relations(players, teams, stats)
+    rels.to_csv(f"{output_dir}/team_player_relations.csv", index=False)
+    # update player current team/league
+    latest = stats.sort_values("season").groupby("player_id").last().reset_index()
+    players["current_team_id"]   = players["id"].map(dict(zip(latest["player_id"], latest["team_id"])))
+    players["current_league_id"] = players["id"].map(dict(zip(latest["player_id"], latest["league_id"])))
+    players.to_csv(f"{output_dir}/players.csv", index=False)
+    print(f"Done. leagues={len(leagues)}, teams={len(teams)}, players={len(players)}, stats={len(stats)}, rels={len(rels)}")
+
+
+if __name__ == "__main__":
     generate_and_save()

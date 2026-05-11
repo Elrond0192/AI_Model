@@ -1,15 +1,8 @@
-"""Pydantic v2 schemas for all API request / response types."""
-
+"""Pydantic v2 schemas for the Basketball Performance AI API."""
 from __future__ import annotations
-
 from typing import Any, Dict, List, Optional
-
 from pydantic import BaseModel, ConfigDict, Field
 
-
-# ---------------------------------------------------------------------------
-# Base
-# ---------------------------------------------------------------------------
 
 class APIResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -25,35 +18,39 @@ class PlayerOut(BaseModel):
     id: int
     name: str
     age: int
-    position: str
+    position: str          # e.g. "PG", "PF/C", "SG/SF"
     nationality: str
-    foot: str
-    height: float
-    weight: float
-    current_team_id: int
-    current_league_id: int
+    height_cm: Optional[float] = None
+    weight_kg: Optional[float] = None
+    dominant_hand: Optional[str] = None
+    current_team_id: Optional[int] = None
+    current_league_id: Optional[int] = None
 
 
 class PlayerStatOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     player_id: int
-    season: int
+    season: str
     team_id: int
     league_id: int
-    goals: float
+    games_played: int
+    minutes_per_game: float
+    points: float
+    rebounds: float
     assists: float
-    matches_played: int
-    minutes: float
-    pass_accuracy: float
-    dribbles: float
-    tackles: float
-    interceptions: float
-    aerial_duels_won: float
+    steals: float
+    blocks: float
+    turnovers: float
+    fg_pct: float
+    three_point_pct: float
+    ft_pct: float
+    per: float
+    ts_pct: float
+    usg_pct: float
+    bpm: float
+    vorp: float
+    win_shares: float
     rating: float
-    xG: float
-    xA: float
-    progressive_passes: float
-    key_passes: float
 
 
 class PlayerProfileOut(BaseModel):
@@ -76,12 +73,14 @@ class TeamOut(BaseModel):
     id: int
     name: str
     league_id: int
-    playing_style: str
+    playing_style: str    # pace_and_space|pick_and_roll|isolation|defensive|motion_offense|post_up
     formation: str
-    avg_possession: float
-    pressing_intensity: float
-    defensive_line: float
-    passing_tempo: float
+    pace: float
+    offensive_rating: float
+    defensive_rating: float
+    three_point_attempt_rate: float
+    assists_per_game: float
+    star_player_usage: float
     league_tier: int
 
 

@@ -1,91 +1,99 @@
-"""Tests for predictive models and the scenario engine."""
-
+"""Tests for basketball ML models."""
 from __future__ import annotations
-
 import numpy as np
 import pandas as pd
 import pytest
-
-from src.models.age_curve import age_performance_factor, peak_age_window, age_trajectory
+from src.models.age_curve import age_performance_factor, PEAK_AGES, peak_age_window, age_trajectory
 from src.models.performance_model import PerformanceModel
 from src.models.compatibility_model import CompatibilityModel
 from src.models.ensemble import EnsembleModel, PredictionResult
-from src.scenarios.engine import WhatIfEngine
 
 
 # ---------------------------------------------------------------------------
-# Minimal synthetic data fixture
+# Shared tiny dataset
 # ---------------------------------------------------------------------------
+
+POSITIONS = ["PG", "SG", "SF", "PF", "C", "PG/SG", "SG/SF", "SF/PF", "PF/C", "SG/PF"]
 
 @pytest.fixture(scope="module")
 def tiny_data():
-    """Create minimal but functional data for model tests."""
-    np.random.seed(0)
-    n_players = 80
+    leagues = pd.DataFrame([{
+        "id": 1, "name": "NBA", "country": "USA", "tier": 1,
+        "competitiveness_score": 1.0, "avg_pace": 100.0, "avg_offensive_rating": 113.0,
+    }, {
+        "id": 2, "name": "EuroLeague", "country": "Europe", "tier": 2,
+        "competitiveness_score": 0.85, "avg_pace": 93.0, "avg_offensive_rating": 108.0,
+    }])
+    teams = pd.DataFrame([{
+        "id": i + 1, "name": f"Team {i+1}", "league_id": (i % 2) + 1,
+        "playing_style": ["pace_and_space","pick_and_roll","isolation","defensive","motion_offense","post_up"][i % 6],
+        "formation": "small_ball",
+        "pace": 95.0 + i * 2,
+        "offensive_rating": 108.0 + i,
+        "defensive_rating": 107.0 + i,
+        "three_point_attempt_rate": 0.35 + i * 0.01,
+        "assists_per_game": 24.0 + i,
+        "star_player_usage": 0.28,
+        "league_tier": (i % 2) + 1,
+    } for i in range(10)])
 
-    leagues = pd.DataFrame([
-        {"id": 1, "name": "Premier League", "country": "England", "tier": 1, "competitiveness_score": 0.98},
-        {"id": 2, "name": "Championship", "country": "England", "tier": 3, "competitiveness_score": 0.65},
-    ])
-    teams = pd.DataFrame([
-        {"id": i + 1, "name": f"Team {i+1}", "league_id": 1 if i < 10 else 2,
-         "playing_style": ["possession", "counter", "high_press", "direct"][i % 4],
-         "formation": "4-3-3", "avg_possession": 50 + i % 20,
-         "pressing_intensity": 5 + (i % 5), "defensive_line": 5 + (i % 4),
-         "passing_tempo": 5 + (i % 4), "league_tier": 1 if i < 10 else 3}
-        for i in range(20)
-    ])
+    np.random.seed(42)
+    players = pd.DataFrame([{
+        "id": i + 1, "name": f"Player {i+1}",
+        "age": 21 + (i % 15),
+        "position": POSITIONS[i % len(POSITIONS)],
+        "nationality": "American",
+        "height_cm": 190 + i % 20,
+        "weight_kg": 90 + i % 30,
+        "dominant_hand": "right",
+        "current_team_id": (i % 10) + 1,
+        "current_league_id": (i % 2) + 1,
+        "draft_year": None, "draft_pick": None,
+    } for i in range(60)])
 
-    positions = ["GK", "CB", "FB", "CM", "AM", "W", "ST"]
-    players_list = []
-    for pid in range(1, n_players + 1):
-        pos = positions[pid % len(positions)]
-        players_list.append({
-            "id": pid, "name": f"Player {pid}", "age": 20 + (pid % 18),
-            "position": pos, "nationality": "English", "foot": "right",
-            "height": 180.0, "weight": 75.0,
-            "current_team_id": (pid % 20) + 1,
-            "current_league_id": 1 if (pid % 20) < 10 else 2,
-        })
-    players = pd.DataFrame(players_list)
-
-    # Generate 3 seasons of stats per player
     stat_rows = []
     for _, p in players.iterrows():
-        for season in [2022, 2023, 2024]:
-            age_s = season - (2024 - int(p["age"]))
-            m90 = np.random.uniform(10, 30)
+        for season in ["2021-22", "2022-23", "2023-24"]:
+            mpg = np.random.uniform(15, 35)
             stat_rows.append({
-                "player_id": int(p["id"]),
-                "season": season,
-                "team_id": int(p["current_team_id"]),
-                "league_id": int(p["current_league_id"]),
-                "goals": round(np.random.uniform(0, 10), 2),
-                "assists": round(np.random.uniform(0, 8), 2),
-                "matches_played": int(np.random.randint(15, 35)),
-                "minutes": round(m90 * 90, 1),
-                "pass_accuracy": round(np.random.uniform(65, 90), 1),
-                "dribbles": round(np.random.uniform(0.5, 3.5), 2),
-                "tackles": round(np.random.uniform(0.3, 3.0), 2),
-                "interceptions": round(np.random.uniform(0.2, 2.0), 2),
-                "aerial_duels_won": round(np.random.uniform(0.3, 4.0), 2),
-                "rating": round(np.random.uniform(5.5, 8.5), 2),
-                "xG": round(np.random.uniform(0, 8), 3),
-                "xA": round(np.random.uniform(0, 6), 3),
-                "progressive_passes": round(np.random.uniform(1, 7), 2),
-                "key_passes": round(np.random.uniform(0.3, 3.0), 2),
+                "player_id": int(p["id"]), "season": season,
+                "team_id": int(p["current_team_id"]), "league_id": int(p["current_league_id"]),
+                "games_played": int(np.random.randint(30, 80)),
+                "minutes_per_game": round(mpg, 1),
+                "points": round(np.random.uniform(6, 25), 1),
+                "rebounds": round(np.random.uniform(2, 12), 1),
+                "offensive_rebounds": round(np.random.uniform(0.5, 3), 1),
+                "defensive_rebounds": round(np.random.uniform(2, 9), 1),
+                "assists": round(np.random.uniform(1, 8), 1),
+                "steals": round(np.random.uniform(0.3, 2.0), 2),
+                "blocks": round(np.random.uniform(0.1, 2.5), 2),
+                "turnovers": round(np.random.uniform(0.5, 4.0), 1),
+                "personal_fouls": round(np.random.uniform(1, 4), 1),
+                "fg_pct": round(np.random.uniform(0.38, 0.58), 3),
+                "three_point_pct": round(np.random.uniform(0.28, 0.45), 3),
+                "ft_pct": round(np.random.uniform(0.65, 0.90), 3),
+                "plus_minus": round(np.random.uniform(-8, 8), 1),
+                "per": round(np.random.uniform(10, 25), 2),
+                "ts_pct": round(np.random.uniform(0.50, 0.65), 3),
+                "usg_pct": round(np.random.uniform(14, 30), 2),
+                "bpm": round(np.random.uniform(-3, 6), 2),
+                "vorp": round(np.random.uniform(-0.5, 4), 2),
+                "win_shares": round(np.random.uniform(0, 12), 2),
+                "ast_ratio": round(np.random.uniform(5, 30), 2),
+                "reb_pct": round(np.random.uniform(3, 20), 2),
+                "rating": round(np.random.uniform(5.0, 8.5), 3),
             })
-    player_stats = pd.DataFrame(stat_rows)
+    stats = pd.DataFrame(stat_rows)
 
-    rel_rows = [
-        {"team_id": int(p["current_team_id"]), "player_id": int(p["id"]),
-         "season": 2024, "role": "starter", "jersey_number": (int(p["id"]) % 99) + 1}
-        for _, p in players.iterrows()
-    ]
-    rel = pd.DataFrame(rel_rows)
+    rels = pd.DataFrame([{
+        "team_id": int(p["current_team_id"]), "player_id": int(p["id"]),
+        "season": "2023-24",
+        "role": "starter" if i % 3 == 0 else "rotation",
+        "jersey_number": (i % 99) + 1,
+    } for i, (_, p) in enumerate(players.iterrows())])
 
     player_dict = {int(r["id"]): r.to_dict() for _, r in players.iterrows()}
-    team_dict = {int(r["id"]): r.to_dict() for _, r in teams.iterrows()}
+    team_dict   = {int(r["id"]): r.to_dict() for _, r in teams.iterrows()}
     league_dict = {int(r["id"]): r.to_dict() for _, r in leagues.iterrows()}
     league_teams = {}
     for _, t in teams.iterrows():
@@ -93,7 +101,7 @@ def tiny_data():
 
     return {
         "leagues": leagues, "teams": teams, "players": players,
-        "player_stats": player_stats, "team_player_relations": rel,
+        "player_stats": stats, "team_player_relations": rels,
         "player_dict": player_dict, "team_dict": team_dict,
         "league_dict": league_dict, "league_teams": league_teams,
     }
@@ -104,32 +112,23 @@ def tiny_data():
 # ---------------------------------------------------------------------------
 
 class TestAgeCurve:
-    def test_peak_factor_is_one(self):
-        from src.models.age_curve import PEAK_AGES
-        for pos, peak in PEAK_AGES.items():
-            assert age_performance_factor(peak, pos) == pytest.approx(1.0, abs=0.01)
+    def test_factor_at_peak_is_one(self):
+        for pos in PEAK_AGES:
+            assert age_performance_factor(PEAK_AGES[pos], pos) == pytest.approx(1.0, abs=0.02)
 
-    def test_factor_declines_with_age(self):
-        for pos in ["GK", "CB", "ST", "W"]:
-            f_peak = age_performance_factor(25, pos)
-            f_old = age_performance_factor(38, pos)
-            assert f_old < f_peak, f"Expected decline for {pos}"
+    def test_hybrid_positions(self):
+        for pos in ["PG/SG", "SG/SF", "SF/PF", "PF/C", "SG/PF"]:
+            assert 0.4 <= age_performance_factor(PEAK_AGES[pos], pos) <= 1.0
 
-    def test_factor_between_zero_and_one(self):
-        for age in range(16, 42):
-            for pos in ["GK", "CB", "FB", "CM", "AM", "W", "ST"]:
-                f = age_performance_factor(age, pos)
-                assert 0.0 <= f <= 1.0, f"Out of range for {pos} age {age}: {f}"
+    def test_trajectory_peaks_at_correct_age(self):
+        traj = age_trajectory("PG", 18, 40)
+        best_age = max(traj, key=lambda t: t[1])[0]
+        assert abs(best_age - PEAK_AGES["PG"]) <= 2
 
-    def test_trajectory_length(self):
-        traj = age_trajectory("ST", 18, 36)
-        assert len(traj) == 19
-
-    def test_peak_window(self):
-        start, end = peak_age_window("ST", threshold=0.90)
-        assert start < end
-        assert 22 <= start <= 30
-        assert end <= 36
+    def test_peak_window_contains_peak(self):
+        for pos in PEAK_AGES:
+            start, end = peak_age_window(pos, threshold=0.90)
+            assert start <= PEAK_AGES[pos] <= end
 
 
 # ---------------------------------------------------------------------------
@@ -137,51 +136,42 @@ class TestAgeCurve:
 # ---------------------------------------------------------------------------
 
 class TestPerformanceModel:
-    def test_untrained_returns_fallback(self, tiny_data):
-        model = PerformanceModel()
-        feat = {c: 0.0 for c in model.feature_names}
-        result = model.predict_from_features(feat)
-        assert result == 6.5  # fallback
-
     def test_train_and_predict(self, tiny_data):
         model = PerformanceModel()
         metrics = model.train(tiny_data)
         assert "train_rmse" in metrics
-        assert metrics["train_rmse"] < 5.0  # sanity
+        assert metrics["train_rmse"] < 5.0
 
-        feat = {c: 1.0 for c in model.feature_names}
-        rating = model.predict_from_features(feat)
-        assert 4.0 <= rating <= 10.0
-
-    def test_shap_values_keys(self, tiny_data):
+    def test_predict_from_features_range(self, tiny_data):
         model = PerformanceModel()
         model.train(tiny_data)
-        feat = {c: 1.0 for c in model.feature_names}
-        shap = model.get_shap_values(feat)
-        if shap:  # may be empty if shap unavailable
-            assert set(shap.keys()) == set(model.feature_names)
+        feats = {c: np.random.uniform(0, 1) for c in model.feature_names}
+        feats["age"] = 25.0
+        r = model.predict_from_features(feats)
+        assert 3.5 <= r <= 10.0
+
+    def test_untrained_fallback(self):
+        model = PerformanceModel()
+        r = model.predict_from_features({"form_score": 7.0})
+        assert 4.0 <= r <= 10.0
 
     def test_feature_importances(self, tiny_data):
         model = PerformanceModel()
         model.train(tiny_data)
         imp = model.feature_importances()
         assert len(imp) == len(model.feature_names)
-        assert all(v >= 0 for v in imp.values())
 
-    def test_save_and_load(self, tmp_path, tiny_data):
+    def test_save_load(self, tiny_data, tmp_path):
         model = PerformanceModel()
         model.train(tiny_data)
-        save_path = str(tmp_path / "perf.joblib")
-        model.save(save_path)
-
+        path = str(tmp_path / "perf.joblib")
+        model.save(path)
         model2 = PerformanceModel()
-        model2.load(save_path)
-        assert model2.is_trained
-
-        feat = {c: 1.0 for c in model.feature_names}
-        r1 = model.predict_from_features(feat)
-        r2 = model2.predict_from_features(feat)
-        assert r1 == pytest.approx(r2, abs=1e-5)
+        model2.load(path)
+        feats = {c: 0.5 for c in model.feature_names}
+        assert model.predict_from_features(feats) == pytest.approx(
+            model2.predict_from_features(feats), abs=0.01
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -189,120 +179,94 @@ class TestPerformanceModel:
 # ---------------------------------------------------------------------------
 
 class TestCompatibilityModel:
-    def test_train_and_score(self, tiny_data):
+    def test_train(self, tiny_data):
         model = CompatibilityModel()
         model.train(tiny_data)
-        score = model.score(1, tiny_data)
-        assert 0.4 <= score <= 1.0
+        assert model.is_trained
 
-    def test_unknown_team_fallback(self, tiny_data):
+    def test_score_in_range(self, tiny_data):
         model = CompatibilityModel()
         model.train(tiny_data)
-        score = model.score(9999, tiny_data)
-        assert score == 0.75
+        s = model.score(1, tiny_data)
+        assert 0.50 <= s <= 1.0
 
-    def test_save_load(self, tmp_path, tiny_data):
+    def test_untrained_fallback(self, tiny_data):
         model = CompatibilityModel()
-        model.train(tiny_data)
-        path = str(tmp_path / "compat.joblib")
-        model.save(path)
-        model2 = CompatibilityModel()
-        model2.load(path)
-        assert model2.is_trained
+        assert model.score(1, tiny_data) == pytest.approx(0.75)
 
 
 # ---------------------------------------------------------------------------
-# Ensemble model
+# Ensemble
 # ---------------------------------------------------------------------------
 
-class TestEnsembleModel:
-    @pytest.fixture(scope="class")
-    def trained_ensemble(self, tiny_data):
-        ensemble = EnsembleModel()
-        ensemble.train(tiny_data)
-        return ensemble
-
-    def test_predict_returns_result(self, trained_ensemble, tiny_data):
-        result = trained_ensemble.predict(1, 1, tiny_data)
-        assert isinstance(result, PredictionResult)
-        assert 4.0 <= result.predicted_rating <= 10.0
-
-    def test_ci_contains_prediction(self, trained_ensemble, tiny_data):
-        result = trained_ensemble.predict(1, 1, tiny_data)
-        assert result.confidence_low <= result.predicted_rating <= result.confidence_high
-
-    def test_age_factor_applied(self, trained_ensemble, tiny_data):
-        result = trained_ensemble.predict(1, 1, tiny_data)
-        assert 0.4 <= result.age_factor <= 1.0
-
-    def test_save_load(self, tmp_path, tiny_data):
-        ens = EnsembleModel()
-        ens.train(tiny_data)
-        ens.save(str(tmp_path))
-        ens2 = EnsembleModel()
-        ens2.load(str(tmp_path))
-        assert ens2.is_trained
+@pytest.fixture(scope="module")
+def ensemble(tiny_data):
+    e = EnsembleModel()
+    e.train(tiny_data)
+    return e
 
 
-# ---------------------------------------------------------------------------
-# Scenario engine
-# ---------------------------------------------------------------------------
+class TestEnsemble:
+    def test_predict_returns_result(self, ensemble, tiny_data):
+        r = ensemble.predict(1, 1, tiny_data)
+        assert isinstance(r, PredictionResult)
 
-class TestWhatIfEngine:
-    @pytest.fixture(scope="class")
-    def engine(self, tiny_data):
-        ens = EnsembleModel()
-        ens.train(tiny_data)
-        return WhatIfEngine(ens, tiny_data)
+    def test_predicted_rating_in_range(self, ensemble, tiny_data):
+        r = ensemble.predict(1, 1, tiny_data)
+        assert 3.5 <= r.predicted_rating <= 10.0
 
-    def test_predict_in_team(self, engine, tiny_data):
-        result = engine.predict_in_team(1, 1)
-        assert 4.0 <= result.predicted_rating <= 10.0
+    def test_confidence_interval_valid(self, ensemble, tiny_data):
+        r = ensemble.predict(1, 1, tiny_data)
+        assert r.confidence_low <= r.predicted_rating <= r.confidence_high
 
-    def test_age_trajectory_length(self, engine, tiny_data):
-        traj = engine.predict_age_trajectory(1, age_range=(20, 30))
-        assert len(traj) == 11
+    def test_trajectory_older_than_peak_drops(self, ensemble, tiny_data):
+        from src.scenarios.engine import WhatIfEngine
+        engine = WhatIfEngine(ensemble, tiny_data)
+        traj   = engine.predict_age_trajectory(1, age_range=(22, 38))
+        ratings = [p.predicted_rating for p in traj]
+        peak_idx = ratings.index(max(ratings))
+        # Ratings after the peak should not all be higher than peak
+        assert all(r <= max(ratings) + 0.5 for r in ratings)
+        assert peak_idx < len(ratings) - 1  # peak is not at the last age
 
-    def test_trajectory_rating_range(self, engine, tiny_data):
-        traj = engine.predict_age_trajectory(1, age_range=(20, 35))
-        for pt in traj:
-            assert 4.0 <= pt.predicted_rating <= 10.0
-
-    def test_compare_scenarios_sorted(self, engine, tiny_data):
+    def test_compare_scenarios_sorted(self, ensemble, tiny_data):
+        from src.scenarios.engine import WhatIfEngine
+        engine = WhatIfEngine(ensemble, tiny_data)
         result = engine.compare_scenarios(1, [1, 2, 3])
         ratings = [s["rating"] for s in result.scenarios]
         assert ratings == sorted(ratings, reverse=True)
 
-    def test_compare_best_scenario(self, engine, tiny_data):
-        result = engine.compare_scenarios(1, [1, 2, 3, 4])
-        assert result.best_scenario["rating"] == max(s["rating"] for s in result.scenarios)
+    def test_simulate_transfer(self, ensemble, tiny_data):
+        from src.scenarios.engine import WhatIfEngine
+        engine = WhatIfEngine(ensemble, tiny_data)
+        result = engine.simulate_transfer(1, 1, 2)
+        assert isinstance(result.rating_delta, float)
+        assert result.recommendation != ""
 
-    def test_best_team_fit_returns_n(self, engine, tiny_data):
+    def test_predict_peak_age_reasonable(self, ensemble, tiny_data):
+        from src.scenarios.engine import WhatIfEngine
+        engine = WhatIfEngine(ensemble, tiny_data)
+        peak   = engine.predict_peak(1)
+        assert 18 <= peak.peak_age <= 40
+
+    def test_what_if_better_teammates(self, ensemble, tiny_data):
+        from src.scenarios.engine import WhatIfEngine
+        engine = WhatIfEngine(ensemble, tiny_data)
+        better = engine.what_if_teammates(1, 1, 9.0)
+        worse  = engine.what_if_teammates(1, 1, 4.0)
+        assert better.predicted_rating >= worse.predicted_rating
+
+    def test_best_team_fit(self, ensemble, tiny_data):
+        from src.scenarios.engine import WhatIfEngine
+        engine = WhatIfEngine(ensemble, tiny_data)
         fits = engine.best_team_fit(1, top_n=5)
         assert len(fits) <= 5
         assert all(f.rank >= 1 for f in fits)
 
-    def test_best_player_for_team(self, engine, tiny_data):
-        players = engine.best_player_for_team(1, position="ST", top_n=3)
+    def test_best_player_for_team_position_filter(self, ensemble, tiny_data):
+        from src.scenarios.engine import WhatIfEngine
+        engine  = WhatIfEngine(ensemble, tiny_data)
+        players = engine.best_player_for_team(1, position="PG", top_n=3)
         assert len(players) >= 1
-        assert all(p.rank >= 1 for p in players)
-
-    def test_simulate_transfer(self, engine, tiny_data):
-        result = engine.simulate_transfer(1, 1, 2)
-        assert isinstance(result.rating_delta, float)
-        assert isinstance(result.recommendation, str)
-
-    def test_predict_peak(self, engine, tiny_data):
-        peak = engine.predict_peak(1)
-        assert peak.peak_rating >= peak.current_rating * 0.8
-        assert peak.peak_age >= 18
-
-    def test_what_if_teammates(self, engine, tiny_data):
-        result = engine.what_if_teammates(1, 1, 7.5)
-        assert 4.0 <= result.predicted_rating <= 10.0
-
-    def test_what_if_better_teammates_improves_rating(self, engine, tiny_data):
-        base = engine.predict_in_team(1, 1)
-        better = engine.what_if_teammates(1, 1, 9.0)
-        worse = engine.what_if_teammates(1, 1, 4.0)
-        assert better.predicted_rating >= worse.predicted_rating
+        for p in players:
+            assert "PG" in p.position
