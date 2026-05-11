@@ -11,12 +11,15 @@ from src.api.schemas import (
     CompareRequest,
     TransferImpactRequest,
     WhatIfTeammatesRequest,
+    WhatIfLineupRequest,
     PredictionOut,
     CompareOut,
     ScenarioOut,
     TeamFitOut,
     PlayerFitOut,
     TransferImpactOut,
+    LineupMemberProfileOut,
+    LineupAnalysisOut,
 )
 
 router = APIRouter(prefix="/scenarios", tags=["scenarios"])
@@ -158,3 +161,41 @@ def what_if_teammates(req: WhatIfTeammatesRequest):
         req.hypothetical_avg_rating, req.season,
     )
     return PredictionOut(**result.__dict__)
+
+
+@router.post("/what-if-lineup", response_model=LineupAnalysisOut)
+def what_if_lineup(req: WhatIfLineupRequest):
+    """Predict player performance with a specific named 5-man lineup."""
+    engine = _get_engine()
+    data = _get_data()
+    if req.player_id not in data["player_dict"]:
+        raise HTTPException(status_code=404, detail="Player not found")
+    if req.team_id not in data["team_dict"]:
+        raise HTTPException(status_code=404, detail="Team not found")
+    result = engine.what_if_lineup(
+        req.player_id, req.team_id, req.lineup_player_ids, req.season
+    )
+    return LineupAnalysisOut(
+        player_id=result.player_id,
+        player_name=result.player_name,
+        team_id=result.team_id,
+        predicted_rating=result.predicted_rating,
+        confidence_low=result.confidence_low,
+        confidence_high=result.confidence_high,
+        avg_lineup_rating=result.avg_lineup_rating,
+        positions_covered=result.positions_covered,
+        missing_positions=result.missing_positions,
+        position_overlaps=result.position_overlaps,
+        lineup_profiles=[
+            LineupMemberProfileOut(
+                player_id=p.player_id,
+                player_name=p.player_name,
+                position=p.position,
+                predicted_rating=p.predicted_rating,
+                role=p.role,
+                style_compat=p.style_compat,
+            )
+            for p in result.lineup_profiles
+        ],
+        explanation=result.explanation,
+    )
