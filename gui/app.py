@@ -50,7 +50,7 @@ def _require_engine(data):
         st.info("👈 Vai al tab **🏋️ Training** per caricare o addestrare un modello.")
         return None
     if "engine" not in st.session_state:
-        from src.scenarios.engine import WhatIfEngine
+        from basketball_ai.scenarios.engine import WhatIfEngine
         st.session_state["engine"] = WhatIfEngine(ensemble, data)
     return st.session_state["engine"]
 
@@ -159,7 +159,7 @@ with tab_data:
                 with st.spinner("Connessione ad Azure SQL …"):
                     try:
                         os.environ["AZURE_SQL_CONNECTION_STRING"] = conn_str
-                        from src.data.sql_loader import (
+                        from basketball_ai.data.sql_loader import (
                             load_all_data_from_sql,
                             get_table_mapping,
                             get_engine,
@@ -237,7 +237,7 @@ with tab_train:
             st.error(f"File modello non trovati in '{resolved}/'")
         else:
             try:
-                from src.models.ensemble import EnsembleModel
+                from basketball_ai.models.ensemble import EnsembleModel
                 ens = EnsembleModel()
                 ens.load(str(resolved))
                 st.session_state["ensemble"] = ens
@@ -276,7 +276,7 @@ with tab_train:
         test_size     = st.slider("Validation split",          0.05, 0.40, 0.15, step=0.05,            key="t_split")
         model_dir_gui = st.text_input("Directory salvataggio", value="models_saved",                    key="t_dir")
 
-    from src.models.performance_model import FEATURE_COLS
+    from basketball_ai.models.performance_model import FEATURE_COLS
     all_features = FEATURE_COLS.copy()
     st.markdown("**Feature selection**")
     selected_features = st.multiselect(
@@ -304,9 +304,9 @@ with tab_train:
                 log_area.code("\n".join(log_lines[-30:]), language="text")
 
             try:
-                from src.models.performance_model import PerformanceModel
-                from src.models.compatibility_model import CompatibilityModel
-                from src.models.ensemble import EnsembleModel
+                from basketball_ai.models.performance_model import PerformanceModel
+                from basketball_ai.models.compatibility_model import CompatibilityModel
+                from basketball_ai.models.ensemble import EnsembleModel
                 from sklearn.model_selection import train_test_split
                 import sklearn.metrics as skm
                 from xgboost import XGBRegressor
@@ -831,7 +831,7 @@ with tab_chat:
 
             # Lazy ChatEngine construction
             if "chat_engine" not in st.session_state:
-                from src.chat.engine import ChatEngine
+                from basketball_ai.chat.engine import ChatEngine
                 st.session_state["chat_engine"] = ChatEngine(engine_c, data_c)
 
             chat_engine = st.session_state["chat_engine"]
@@ -991,7 +991,7 @@ with st.sidebar:
                 with st.spinner("Connecting to Azure SQL …"):
                     try:
                         os.environ["AZURE_SQL_CONNECTION_STRING"] = conn_str
-                        from src.data.sql_loader import (
+                        from basketball_ai.data.sql_loader import (
                             load_all_data,
                             get_table_mapping,
                             get_engine,
@@ -1042,7 +1042,7 @@ with col2:
     model_dir_gui = st.text_input("Model save directory", value="models_saved")
 
 st.subheader("Feature selection")
-from src.models.performance_model import FEATURE_COLS
+from basketball_ai.models.performance_model import FEATURE_COLS
 all_features = FEATURE_COLS.copy()
 selected_features = st.multiselect(
     "Include features (deselect to exclude)",
@@ -1070,9 +1070,9 @@ if st.button("🚀 Start Training", type="primary"):
             log_area.code("\n".join(log_lines[-30:]), language="text")
 
         try:
-            from src.models.performance_model import PerformanceModel
-            from src.models.compatibility_model import CompatibilityModel
-            from src.models.ensemble import EnsembleModel
+            from basketball_ai.models.performance_model import PerformanceModel
+            from basketball_ai.models.compatibility_model import CompatibilityModel
+            from basketball_ai.models.ensemble import EnsembleModel
             from sklearn.model_selection import train_test_split
             import sklearn.metrics as skm
 
