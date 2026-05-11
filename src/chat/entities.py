@@ -83,6 +83,37 @@ def find_all_teams(
     return found
 
 
+def find_all_players(
+    text: str,
+    player_dict: Dict[int, dict],
+    max_n: int = 6,
+) -> List[Tuple[int, str]]:
+    """Find ALL player name mentions in *text*, ordered by their position in the string.
+
+    Used for lineup/quintetto intent where the message contains several player names,
+    e.g. *"Player X in Team Y with Player A, Player B, Player C and Player D"*.
+
+    Returns up to *max_n* ``(player_id, player_name)`` pairs, de-duplicated.
+    """
+    names: Dict[int, str] = {pid: str(d.get("name", "")) for pid, d in player_dict.items()}
+    low_text = _norm(text)
+
+    # Each entry: (player_id, player_name, first_occurrence_index)
+    found: list[tuple[int, str, int]] = []
+    seen_pids: set[int] = set()
+
+    for pid, name in names.items():
+        if not _norm(name):
+            continue
+        idx = low_text.find(_norm(name))
+        if idx >= 0 and pid not in seen_pids:
+            found.append((pid, name, idx))
+            seen_pids.add(pid)
+
+    found.sort(key=lambda x: x[2])
+    return [(pid, name) for pid, name, _ in found[:max_n]]
+
+
 def extract_number(text: str) -> Optional[float]:
     """Return the first numeric value found in *text*, or None."""
     m = re.search(r"\d+(?:\.\d+)?", text)

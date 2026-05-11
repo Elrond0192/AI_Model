@@ -14,6 +14,7 @@ class Intent(str, Enum):
     TRAJECTORY   = "trajectory"     # "What's X's career arc?"
     PEAK         = "peak"           # "When will X peak?"
     TRANSFER     = "transfer"       # "What if X moved from A to B?"
+    LINEUP       = "lineup"         # "Player X at team Y with lineup [A, B, C, D]"
     COMPARE      = "compare"        # "Compare X across teams"
     BEST_TEAMS   = "best_teams"     # "Best teams for X?"
     BEST_PLAYERS = "best_players"   # "Best players for team Y?"
@@ -29,6 +30,18 @@ _RULES: list[tuple[Intent, re.Pattern[str]]] = [
         Intent.TRANSFER,
         re.compile(
             r"\btransfer|traded?|moved?\s+from\b|from\s+\S+\s+to\s",
+            re.IGNORECASE,
+        ),
+    ),
+    # LINEUP must come BEFORE TEAMMATES to capture "with [named players]" first
+    (
+        Intent.LINEUP,
+        re.compile(
+            r"\blineup\b|quintett[oi]\b|starting[\s_]five\b|formazione\b"
+            r"|roster\s+with\b"
+            r"|composto\s+d[ai]\b|composed?\s+(of|by|with)\b"
+            r"|\bwith\b.+\band\b.+\b(at|in|on)\b"   # "with A and B at team"
+            r"|\b(at|in|on)\b.+\bwith\b.+\band\b",   # "at team with A and B"
             re.IGNORECASE,
         ),
     ),

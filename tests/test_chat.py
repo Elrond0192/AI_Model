@@ -268,6 +268,106 @@ class TestChatEngine:
         assert resp.intent == "teammates"
         assert "8.5" in resp.reply or "adjusted" in resp.reply.lower()
 
+    # ------------------------------------------------------------------
+    # Lineup / quintetto
+    # ------------------------------------------------------------------
+
+    def test_lineup_intent_detected(self):
+        from src.chat.intent import detect_intent, Intent
+        assert detect_intent(
+            "What if Player 1 played at Team 1 with Player 2, Player 3 and Player 4?"
+        ) == Intent.LINEUP
+
+    def test_lineup_intent_keyword(self):
+        from src.chat.intent import detect_intent, Intent
+        assert detect_intent("lineup Player 1 Team 1") == Intent.LINEUP
+
+    def test_lineup_intent_quintetto(self):
+        from src.chat.intent import detect_intent, Intent
+        assert detect_intent("quintetto con Player 1 in Team 2") == Intent.LINEUP
+
+    def test_lineup_does_not_trigger_on_transfer(self):
+        from src.chat.intent import detect_intent, Intent
+        # Transfer must still win over lineup when "moved from … to" is present
+        intent = detect_intent("What if Player 1 moved from Team 1 to Team 2?")
+        assert intent == Intent.TRANSFER
+
+    def test_find_all_players(self, minimal_data):
+        from src.chat.entities import find_all_players
+        results = find_all_players(
+            "Player 1, Player 2 and Player 3 in Team 1",
+            minimal_data["player_dict"],
+        )
+        ids = [r[0] for r in results]
+        assert 1 in ids
+        assert 2 in ids
+        assert 3 in ids
+
+    def test_find_all_players_deduplicates(self, minimal_data):
+        from src.chat.entities import find_all_players
+        results = find_all_players(
+            "Player 1 Player 1 Player 1",
+            minimal_data["player_dict"],
+        )
+        ids = [r[0] for r in results]
+        assert ids.count(1) == 1
+
+    def test_lineup_engine_basic(self, trained_engine, minimal_data):
+        result = trained_engine.what_if_lineup(1, 1, [2, 3, 4])
+        assert result.player_id == 1
+        assert result.team_id == 1
+        assert 3.5 <= result.predicted_rating <= 10.0
+        assert isinstance(result.lineup_profiles, list)
+        assert len(result.lineup_profiles) == 3
+
+    def test_lineup_engine_position_coverage(self, trained_engine, minimal_data):
+        # Players 1-5 cover PG, SG, SF, PF, C by construction (positions cycle)
+        result = trained_engine.what_if_lineup(1, 1, [2, 3, 4, 5])
+        assert isinstance(result.positions_covered, list)
+        assert isinstance(result.missing_positions, list)
+        # covered + missing = 5 standard positions
+        all_std = set(result.positions_covered) | set(result.missing_positions)
+        assert all_std.issubset({"PG", "SG", "SF", "PF", "C"})
+
+    def test_lineup_engine_profiles_have_roles(self, trained_engine, minimal_data):
+        result = trained_engine.what_if_lineup(1, 1, [2, 3, 4])
+        for p in result.lineup_profiles:
+            assert p.role in {
+                "Playmaker", "Primary Scorer", "Defender",
+                "3pt Specialist", "Paint Scorer / Big", "Two-way / Role Player",
+            }
+            assert 0.0 <= p.style_compat <= 1.0
+
+    def test_lineup_engine_empty_lineup(self, trained_engine, minimal_data):
+        # Empty lineup → still returns a valid result, avg falls back to 6.0
+        result = trained_engine.what_if_lineup(1, 1, [])
+        assert 3.5 <= result.predicted_rating <= 10.0
+        assert result.lineup_profiles == []
+
+    def test_lineup_chat_dispatch(self, chat_engine):
+        resp = chat_engine.process(
+            "What if Player 1 played at Team 1 with Player 2, Player 3 and Player 4?"
+        )
+        assert resp.intent == "lineup"
+        assert "Player 1" in resp.reply
+        assert "Team 1" in resp.reply
+        assert "Predicted rating" in resp.reply
+        assert "lineup_profiles" in resp.data
+
+    def test_lineup_chat_missing_teammates(self, chat_engine):
+        import uuid
+        resp = chat_engine.process(
+            "lineup Player 1 at Team 1",
+            str(uuid.uuid4()),
+        )
+        # Should ask the user to name the other players
+        assert resp.intent == "lineup"
+        assert "name" in resp.reply.lower() or "please" in resp.reply.lower()
+
+    def test_help_mentions_lineup(self, chat_engine):
+        resp = chat_engine.process("help")
+        assert "lineup" in resp.reply.lower() or "quintetto" in resp.reply.lower()
+
 
 # ---------------------------------------------------------------------------
 # Chat API endpoint

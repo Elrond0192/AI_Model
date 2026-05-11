@@ -1,6 +1,7 @@
 """Basketball What-If scenario engine."""
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -9,7 +10,8 @@ import numpy as np
 from src.models.ensemble import EnsembleModel, PredictionResult
 from src.models.age_curve import age_performance_factor, PEAK_AGES, peak_age_window
 from src.features.context_features import compute_context_features
-from src.features.team_features import compute_team_features
+from src.features.player_features import compute_player_features
+from src.features.team_features import compute_team_features, get_style_position_compat
 
 
 # ---------------------------------------------------------------------------
@@ -76,6 +78,38 @@ class PeakPrediction:
     peak_rating: float
     seasons_to_peak: int
     peak_window: Tuple[int, int]
+
+
+# ---------------------------------------------------------------------------
+# Lineup analysis types
+# ---------------------------------------------------------------------------
+
+@dataclass
+class LineupMemberProfile:
+    """Individual profile of one lineup member within a specific team context."""
+    player_id: int
+    player_name: str
+    position: str
+    predicted_rating: float
+    role: str            # e.g. "Primary Scorer", "Playmaker", "Defender", "3pt Specialist"
+    style_compat: float  # style × position compatibility with the target team
+
+
+@dataclass
+class LineupAnalysisResult:
+    """Result of a what-if lineup scenario."""
+    player_id: int
+    player_name: str
+    team_id: int
+    predicted_rating: float
+    confidence_low: float
+    confidence_high: float
+    avg_lineup_rating: float
+    positions_covered: List[str]
+    missing_positions: List[str]
+    position_overlaps: Dict[str, int]   # position → count (only when > 1)
+    lineup_profiles: List[LineupMemberProfile]
+    explanation: str
 
 
 # ---------------------------------------------------------------------------
@@ -334,4 +368,131 @@ class WhatIfEngine:
                 f"| Teammate δ: {tm_delta:+.3f} "
                 f"(hypothetical avg={hypothetical_avg_rating:.1f} vs actual={current_tm:.1f})"
             ),
+        )
+
+    # ------------------------------------------------------------------
+    # Helpers for lineup analysis
+    # ------------------------------------------------------------------
+
+    _ALL_POSITIONS: frozenset = frozenset({"PG", "SG", "SF", "PF", "C"})
+
+    @staticmethod
+    def _assign_role(player_feats: Dict[str, Any]) -> str:
+        """Heuristic role label from computed player features."""
+        pm   = float(player_feats.get("playmaking_score", 0.0))
+        df   = float(player_feats.get("defensive_score", 0.0))
+        usg  = float(player_feats.get("avg_usg_pct", 0.0))
+        prof = str(player_feats.get("scoring_profile", "efficient_scorer"))
+        if pm > 0.35:
+            return "Playmaker"
+        if df > 4.0:
+            return "Defender"
+        if prof == "3pt_specialist":
+            return "3pt Specialist"
+        if usg > 24:
+            return "Primary Scorer"
+        if prof == "paint_scorer":
+            return "Paint Scorer / Big"
+        return "Two-way / Role Player"
+
+    def what_if_lineup(
+        self,
+        player_id: int,
+        team_id: int,
+        lineup_player_ids: List[int],
+        season: int = 2024,
+    ) -> LineupAnalysisResult:
+        """Predict player X's performance in team Y with a specific named lineup.
+
+        Args:
+            player_id:         The target player (player X).
+            team_id:           The target team (team Y).
+            lineup_player_ids: The other 4 (or fewer) named lineup members.
+
+        The method:
+          1. Predicts each named lineup member's rating at team Y.
+          2. Computes position coverage and role distribution for the full 5-man unit.
+          3. Overrides the ``avg_teammate_rating`` feature with the computed lineup average.
+          4. Re-runs the ensemble model and returns a rich ``LineupAnalysisResult``.
+        """
+        player_dict = self.data["player_dict"]
+        team_dict   = self.data["team_dict"]
+        target_name = str(player_dict.get(int(player_id), {}).get("name", f"Player {player_id}"))
+        team_row    = team_dict.get(int(team_id), {})
+        team_style  = str(team_row.get("playing_style", "motion_offense"))
+
+        # --- 1. Profile each lineup member --------------------------------
+        profiles: List[LineupMemberProfile] = []
+        for pid in lineup_player_ids:
+            p_row = player_dict.get(int(pid), {})
+            pos   = str(p_row.get("name", "") and p_row.get("position", "PG"))
+            pos   = str(p_row.get("position", "PG"))
+            name  = str(p_row.get("name", f"Player {pid}"))
+            try:
+                pred = self.ensemble.predict(pid, team_id, self.data, season)
+                r    = pred.predicted_rating
+            except Exception:
+                r = 6.0
+            p_feats    = compute_player_features(pid, self.data)
+            role       = self._assign_role(p_feats)
+            style_compat = get_style_position_compat(team_style, pos)
+            profiles.append(LineupMemberProfile(
+                player_id=pid, player_name=name, position=pos,
+                predicted_rating=round(r, 3), role=role,
+                style_compat=round(style_compat, 3),
+            ))
+
+        # --- 2. Position coverage (all 5 slots incl. target player) ------
+        target_pos = str(player_dict.get(int(player_id), {}).get("position", "PG"))
+        all_positions = [target_pos] + [p.position for p in profiles]
+        pos_counter: Counter = Counter()
+        for pos in all_positions:
+            for component in pos.split("/"):
+                pos_counter[component] += 1
+
+        covered      = [p for p in self._ALL_POSITIONS if p in pos_counter]
+        missing      = [p for p in sorted(self._ALL_POSITIONS) if p not in pos_counter]
+        overlaps     = {p: cnt for p, cnt in pos_counter.items() if cnt > 1}
+
+        # --- 3. Compute lineup avg rating (excluding target player) -------
+        avg_lineup = (
+            float(np.mean([p.predicted_rating for p in profiles]))
+            if profiles else 6.0
+        )
+
+        # --- 4. Predict target player with overridden teammate avg --------
+        base_pred  = self.ensemble.predict(player_id, team_id, self.data, season)
+        team_feats = compute_team_features(team_id, self.data, exclude_player_id=player_id)
+        current_tm = team_feats["avg_teammate_rating"]
+        tm_delta   = (avg_lineup - current_tm) * 0.08
+        adjusted   = float(np.clip(base_pred.predicted_rating + tm_delta, 3.5, 10.0))
+
+        # --- 5. Build explanation -----------------------------------------
+        role_parts = [f"{p.player_name} ({p.position}, {p.role})" for p in profiles]
+        miss_str   = ", ".join(missing) if missing else "none"
+        over_str   = (
+            ", ".join(f"{p}×{c}" for p, c in overlaps.items())
+            if overlaps else "none"
+        )
+        explanation = (
+            f"Lineup avg rating: {avg_lineup:.2f}  "
+            f"(actual roster avg: {current_tm:.2f}, δ={tm_delta:+.3f})  |  "
+            f"Missing positions: {miss_str}  |  "
+            f"Position overlaps: {over_str}  |  "
+            f"Members: {'; '.join(role_parts) if role_parts else 'none specified'}"
+        )
+
+        return LineupAnalysisResult(
+            player_id=player_id,
+            player_name=target_name,
+            team_id=team_id,
+            predicted_rating=round(adjusted, 3),
+            confidence_low=round(max(1.0, adjusted - 0.5), 3),
+            confidence_high=round(min(10.0, adjusted + 0.5), 3),
+            avg_lineup_rating=round(avg_lineup, 3),
+            positions_covered=sorted(covered),
+            missing_positions=sorted(missing),
+            position_overlaps=overlaps,
+            lineup_profiles=profiles,
+            explanation=explanation,
         )

@@ -16,6 +16,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from src.chat.intent import Intent, detect_intent
 from src.chat.entities import (
     extract_number,
+    find_all_players,
     find_all_teams,
     find_player,
     find_team,
@@ -49,10 +50,18 @@ Here are some things you can ask me:
 • **Career peak** – *"When will [player] reach their peak?"*
 • **Age trajectory** – *"Show me [player]'s career arc"*
 • **Transfer impact** – *"What if [player] moved from [team A] to [team B]?"*
+• **Lineup / Quintetto** – *"What if [player] played at [team] with [A], [B], [C] and [D]?"*
 • **Best team fit** – *"Best teams for [player]?"*
 • **Best player for team** – *"Best players for [team]?"*
 • **Compare scenarios** – *"Compare [player] across teams"*
 • **Teammate quality** – *"What if [player] had elite teammates?"*
+
+For the **lineup** question I will analyse:
+  – Predicted rating of each named teammate at that team
+  – Position coverage (PG / SG / SF / PF / C) and any gaps or overlaps
+  – Role of each player (Playmaker, Primary Scorer, Defender, 3pt Specialist, …)
+  – Style compatibility of each position with the team's playing style
+  – Overall adjusted rating for [player] with that specific lineup
 
 Just mention player and team names and I'll use the trained AI model to answer.\
 """
@@ -136,7 +145,8 @@ class ChatEngine:
         ld_ = self.data["league_dict"]
 
         # --- Resolve entities; fall back to session context ----------
-        player_hit  = find_player(message, pd_)
+        all_players = find_all_players(message, pd_)
+        player_hit  = all_players[0] if all_players else find_player(message, pd_)
         team_hit    = find_team(message, td_)
         all_teams   = find_all_teams(message, td_)
 
@@ -355,6 +365,61 @@ class ChatEngine:
                 return reply, {"players": _to_dict(players)}, suggestions
             except Exception as exc:
                 return f"Could not find best players ({exc}).", {}, []
+
+        # --- LINEUP (quintetto) -----------------------------------------
+        if intent == Intent.LINEUP:
+            if not player_id:
+                return self._need_player(), {}, []
+            if not team_id:
+                return self._need_team(player_name), {}, []
+            # Lineup members = all named players EXCEPT the target player itself
+            lineup_ids = [pid for pid, _ in all_players if pid != player_id]
+            if not lineup_ids:
+                return (
+                    f"Please name the other players in the lineup.\n"
+                    f"Example: *What if {player_name} played at {team_name} "
+                    f"with [Player A], [Player B], [Player C] and [Player D]?*",
+                    {},
+                    [],
+                )
+            try:
+                res = self.engine.what_if_lineup(player_id, team_id, lineup_ids)
+                # --- Build reply ---
+                lines = [
+                    f"**Lineup analysis: {player_name} at {team_name}**\n",
+                    f"Predicted rating : **{res.predicted_rating:.2f} / 10**",
+                    f"Confidence       : [{res.confidence_low:.2f} – {res.confidence_high:.2f}]",
+                    f"Lineup avg rating: {res.avg_lineup_rating:.2f}",
+                    "",
+                    f"**Position coverage**: {', '.join(res.positions_covered) or 'none resolved'}",
+                ]
+                if res.missing_positions:
+                    lines.append(
+                        f"⚠️ Missing positions: **{', '.join(res.missing_positions)}**"
+                        f" — lineup may lack coverage there"
+                    )
+                if res.position_overlaps:
+                    overlap_str = ", ".join(
+                        f"{p} (×{c})" for p, c in res.position_overlaps.items()
+                    )
+                    lines.append(f"⚠️ Position overlaps: {overlap_str}")
+                lines.append("")
+                lines.append("**Lineup members**")
+                lines.append(f"{'Player':<28} {'Pos':<8} {'Role':<22} {'Rating':>6} {'Style fit':>9}")
+                lines.append("─" * 80)
+                for p in res.lineup_profiles:
+                    lines.append(
+                        f"{p.player_name:<28} {p.position:<8} {p.role:<22} "
+                        f"{p.predicted_rating:>6.2f} {p.style_compat:>9.2f}"
+                    )
+                reply = "\n".join(lines)
+                return reply, _to_dict(res), [
+                    f"Best teams for {player_name}?",
+                    f"When will {player_name} peak?",
+                    f"Compare {player_name} across teams",
+                ]
+            except Exception as exc:
+                return f"Lineup analysis failed ({exc}).", {}, []
 
         # --- TEAMMATES --------------------------------------------------
         if intent == Intent.TEAMMATES:
