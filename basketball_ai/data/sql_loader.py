@@ -37,6 +37,7 @@ AZURE_SQL_TABLE_PLAYER_STATS, AZURE_SQL_TABLE_TEAM_PLAYER_RELATIONS
 from __future__ import annotations
 
 import os
+import re
 from typing import Any, Dict, List, Optional
 from urllib.parse import quote_plus
 
@@ -96,11 +97,95 @@ _TABLE_ENV_VARS: Dict[str, str] = {
 # Internal helpers
 # ---------------------------------------------------------------------------
 
+def _normalize_connection_string(conn_str: str) -> str:
+    """Convert various SQL Server connection string formats to a SQLAlchemy URL.
+
+    Accepts three input formats and normalizes them all to a SQLAlchemy
+    ``mssql+pyodbc://`` URL:
+
+    1. **SQLAlchemy URL** – already contains ``://``.  Returned unchanged.
+    2. **ODBC connection string** – contains a ``Driver=`` key (e.g. the string
+       shown by the Azure Portal "ODBC" tab).  Wrapped using the
+       ``odbc_connect`` query-string parameter so that SQLAlchemy passes it
+       straight through to pyodbc.
+    3. **ADO.NET connection string** – the format shown by the Azure Portal
+       "ADO.NET" tab, e.g.
+       ``Server=tcp:host,1433;Initial Catalog=db;User ID=u;Password=p;…``.
+       Parsed and converted to an ODBC string (adding a default driver when
+       none is specified), then wrapped as in case 2.
+    """
+    s = conn_str.strip()
+
+    # 1. Already a SQLAlchemy / generic URL  --------------------------------
+    if re.match(r"^\w[\w+.-]+://", s):
+        return s
+
+    # Parse all key=value pairs (semicolon-separated, case-insensitive keys)
+    pairs: Dict[str, str] = {}
+    for part in s.split(";"):
+        part = part.strip()
+        if "=" in part:
+            key, _, val = part.partition("=")
+            pairs[key.strip().lower()] = val.strip()
+
+    # 2. ODBC string – has an explicit Driver= key  -------------------------
+    if "driver" in pairs:
+        return f"mssql+pyodbc:///?odbc_connect={quote_plus(s)}"
+
+    # 3. ADO.NET string – map well-known key aliases to ODBC names  ---------
+    server = (
+        pairs.get("server")
+        or pairs.get("data source")
+        or pairs.get("addr")
+        or pairs.get("address")
+        or pairs.get("network address")
+        or ""
+    ).strip()
+    # Strip the optional "tcp:" prefix that Azure Portal adds
+    server = re.sub(r"^tcp:", "", server)
+
+    database = (
+        pairs.get("initial catalog")
+        or pairs.get("database")
+        or ""
+    ).strip()
+
+    uid = (
+        pairs.get("user id")
+        or pairs.get("uid")
+        or pairs.get("user")
+        or ""
+    ).strip()
+
+    pwd = (
+        pairs.get("password")
+        or pairs.get("pwd")
+        or ""
+    ).strip()
+
+    encrypt = pairs.get("encrypt", "yes")
+    trust_cert = pairs.get("trustservercertificate", "no")
+    timeout = pairs.get("connection timeout", "30")
+    driver = os.environ.get("AZURE_SQL_DRIVER", "ODBC Driver 18 for SQL Server")
+
+    odbc_str = (
+        f"DRIVER={{{driver}}};"
+        f"SERVER={server};"
+        f"DATABASE={database};"
+        f"UID={uid};"
+        f"PWD={pwd};"
+        f"Encrypt={encrypt};"
+        f"TrustServerCertificate={trust_cert};"
+        f"Connection Timeout={timeout};"
+    )
+    return f"mssql+pyodbc:///?odbc_connect={quote_plus(odbc_str)}"
+
+
 def _build_connection_url() -> str:
     """Build a SQLAlchemy connection URL from environment variables."""
-    url = os.environ.get("AZURE_SQL_CONNECTION_STRING", "").strip()
-    if url:
-        return url
+    raw = os.environ.get("AZURE_SQL_CONNECTION_STRING", "").strip()
+    if raw:
+        return _normalize_connection_string(raw)
 
     server   = os.environ.get("AZURE_SQL_SERVER", "")
     database = os.environ.get("AZURE_SQL_DATABASE", "")

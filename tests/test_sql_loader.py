@@ -8,9 +8,10 @@ import os
 
 import pytest
 
-from src.data.sql_loader import (
+from basketball_ai.data.sql_loader import (
     _MIN_OVERLAP,
     _REQUIRED_COLUMNS,
+    _normalize_connection_string,
     _score_table,
 )
 
@@ -117,7 +118,7 @@ def _create_standard_tables(conn):
 
 def test_discover_standard_names():
     """Exact-name matching (step 2) resolves all five tables."""
-    from src.data.sql_loader import _discover_table_mapping
+    from basketball_ai.data.sql_loader import _discover_table_mapping
 
     engine = _make_engine()
     with engine.connect() as conn:
@@ -134,7 +135,7 @@ def test_discover_standard_names():
 def test_discover_alternate_names():
     """Scored fallback (step 3) picks the right table when names differ."""
     from sqlalchemy import text
-    from src.data.sql_loader import _discover_table_mapping
+    from basketball_ai.data.sql_loader import _discover_table_mapping
 
     engine = _make_engine()
     with engine.connect() as conn:
@@ -180,7 +181,7 @@ def test_discover_alternate_names():
 def test_discover_env_var_override(monkeypatch):
     """AZURE_SQL_TABLE_<NAME> env-var takes precedence over auto-discovery."""
     from sqlalchemy import text
-    from src.data.sql_loader import _discover_table_mapping
+    from basketball_ai.data.sql_loader import _discover_table_mapping
 
     engine = _make_engine()
     with engine.connect() as conn:
@@ -225,7 +226,7 @@ def test_discover_env_var_override(monkeypatch):
 def test_discover_missing_table_raises():
     """ValueError is raised when no table meets the overlap threshold."""
     from sqlalchemy import text
-    from src.data.sql_loader import _discover_table_mapping
+    from basketball_ai.data.sql_loader import _discover_table_mapping
 
     engine = _make_engine()
     with engine.connect() as conn:
@@ -240,7 +241,7 @@ def test_discover_missing_table_raises():
 def test_discover_env_var_nonexistent_table_raises(monkeypatch):
     """ValueError is raised when an env-var override points to a missing table."""
     from sqlalchemy import text
-    from src.data.sql_loader import _discover_table_mapping
+    from basketball_ai.data.sql_loader import _discover_table_mapping
 
     engine = _make_engine()
     with engine.connect() as conn:
@@ -249,3 +250,93 @@ def test_discover_env_var_nonexistent_table_raises(monkeypatch):
     monkeypatch.setenv("AZURE_SQL_TABLE_LEAGUES", "does_not_exist")
     with pytest.raises(ValueError, match="does_not_exist"):
         _discover_table_mapping(engine)
+
+
+# ---------------------------------------------------------------------------
+# _normalize_connection_string
+# ---------------------------------------------------------------------------
+
+from urllib.parse import unquote_plus as _unquote_plus
+
+
+def _decode_odbc_connect(url: str) -> str:
+    """Extract and URL-decode the odbc_connect value from a SQLAlchemy URL."""
+    return _unquote_plus(url.split("odbc_connect=", 1)[1])
+
+
+class TestNormalizeConnectionString:
+    """Tests for _normalize_connection_string."""
+
+    def test_sqlalchemy_url_returned_unchanged(self):
+        """A proper SQLAlchemy URL must pass through without modification."""
+        url = (
+            "mssql+pyodbc://user:pass@server.database.windows.net/db"
+            "?driver=ODBC+Driver+18+for+SQL+Server"
+        )
+        assert _normalize_connection_string(url) == url
+
+    def test_sqlalchemy_url_with_odbc_connect_unchanged(self):
+        """A SQLAlchemy URL that already uses odbc_connect is left intact."""
+        url = "mssql+pyodbc:///?odbc_connect=Driver%3D%7BODBC+Driver+18%7D%3B"
+        assert _normalize_connection_string(url) == url
+
+    def test_odbc_string_with_driver_wrapped(self):
+        """An ODBC string (with Driver=) is wrapped via odbc_connect."""
+        odbc = (
+            "Driver={ODBC Driver 18 for SQL Server};"
+            "Server=tcp:myserver.database.windows.net,1433;"
+            "Database=mydb;Uid=myuser;Pwd=mypass;"
+            "Encrypt=yes;TrustServerCertificate=no;Connection Timeout=30;"
+        )
+        result = _normalize_connection_string(odbc)
+        assert result.startswith("mssql+pyodbc:///?odbc_connect=")
+        decoded = _decode_odbc_connect(result)
+        assert "Driver={ODBC Driver 18 for SQL Server}" in decoded
+        assert "Server=tcp:myserver.database.windows.net,1433" in decoded
+
+    def test_ado_net_string_converted(self):
+        """An ADO.NET connection string is parsed and converted to a SQLAlchemy URL."""
+        ado = (
+            "Server=tcp:myserver.database.windows.net,1433;"
+            "Initial Catalog=mydb;"
+            "User ID=myuser;"
+            "Password=mypass;"
+            "Encrypt=True;"
+            "TrustServerCertificate=False;"
+            "Connection Timeout=30;"
+        )
+        result = _normalize_connection_string(ado)
+        assert result.startswith("mssql+pyodbc:///?odbc_connect=")
+        decoded = _decode_odbc_connect(result)
+        assert "SERVER=myserver.database.windows.net,1433" in decoded
+        assert "DATABASE=mydb" in decoded
+        assert "UID=myuser" in decoded
+        assert "PWD=mypass" in decoded
+
+    def test_ado_net_tcp_prefix_stripped(self):
+        """The 'tcp:' prefix added by Azure Portal is removed from SERVER=."""
+        ado = (
+            "Server=tcp:host.database.windows.net,1433;"
+            "Initial Catalog=db;"
+            "User ID=u;Password=p;"
+        )
+        result = _normalize_connection_string(ado)
+        decoded = _decode_odbc_connect(result)
+        assert "SERVER=host.database.windows.net,1433" in decoded
+        assert "tcp:" not in decoded
+
+    def test_ado_net_default_driver_injected(self, monkeypatch):
+        """When AZURE_SQL_DRIVER is not set a default driver is used."""
+        monkeypatch.delenv("AZURE_SQL_DRIVER", raising=False)
+        ado = "Server=host;Initial Catalog=db;User ID=u;Password=p;"
+        result = _normalize_connection_string(ado)
+        decoded = _decode_odbc_connect(result)
+        assert "DRIVER={ODBC Driver 18 for SQL Server}" in decoded
+
+    def test_ado_net_custom_driver_from_env(self, monkeypatch):
+        """AZURE_SQL_DRIVER env-var is used as the driver name for ADO.NET strings."""
+        monkeypatch.setenv("AZURE_SQL_DRIVER", "ODBC Driver 17 for SQL Server")
+        ado = "Server=host;Initial Catalog=db;User ID=u;Password=p;"
+        result = _normalize_connection_string(ado)
+        decoded = _decode_odbc_connect(result)
+        assert "DRIVER={ODBC Driver 17 for SQL Server}" in decoded
