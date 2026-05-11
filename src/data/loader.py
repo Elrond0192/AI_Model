@@ -1,64 +1,79 @@
-"""Data loader: reads CSV files and builds lookup structures."""
-
-from __future__ import annotations
-
-from pathlib import Path
-from typing import Any, Dict, List, Optional
-
+"""Basketball data loader."""
 import pandas as pd
+from typing import List, Optional, Dict
+from src.data.models import League, Team, Player, PlayerStats, TeamPlayerRelation
 
+DATA_DIR = "/home/runner/work/AI_Model/AI_Model/data/sample"
 
-def load_all_data(data_dir: str = "data/sample") -> Dict[str, Any]:
-    """Load all CSV files and return a unified data dictionary.
+def load_leagues() -> List[League]:
+    df = pd.read_csv(f"{DATA_DIR}/leagues.csv")
+    return [League(**r) for r in df.to_dict("records")]
 
-    Returns a dict with keys:
-        leagues, teams, players, player_stats, team_player_relations
-        league_dict, team_dict, player_dict  (id → row dict)
-        league_teams  (league_id → list of team_ids)
-    """
-    base = Path(data_dir)
+def load_teams() -> List[Team]:
+    df = pd.read_csv(f"{DATA_DIR}/teams.csv")
+    return [Team(**r) for r in df.to_dict("records")]
 
-    leagues = pd.read_csv(base / "leagues.csv")
-    teams = pd.read_csv(base / "teams.csv")
-    players = pd.read_csv(base / "players.csv")
-    player_stats = pd.read_csv(base / "player_stats.csv")
-    team_player_relations = pd.read_csv(base / "team_player_relations.csv")
+def load_players() -> List[Player]:
+    df = pd.read_csv(f"{DATA_DIR}/players.csv")
+    results = []
+    for r in df.to_dict("records"):
+        r["current_team_id"] = None if pd.isna(r.get("current_team_id")) else int(r["current_team_id"])
+        r["current_league_id"] = None if pd.isna(r.get("current_league_id")) else int(r["current_league_id"])
+        r["draft_year"] = None if pd.isna(r.get("draft_year")) else int(r["draft_year"])
+        r["draft_pick"] = None if pd.isna(r.get("draft_pick")) else int(r["draft_pick"])
+        results.append(Player(**r))
+    return results
 
-    # Build fast lookup dicts
-    league_dict: Dict[int, Dict] = {
-        int(row["id"]): row.to_dict() for _, row in leagues.iterrows()
-    }
-    team_dict: Dict[int, Dict] = {
-        int(row["id"]): row.to_dict() for _, row in teams.iterrows()
-    }
-    player_dict: Dict[int, Dict] = {
-        int(row["id"]): row.to_dict() for _, row in players.iterrows()
-    }
+def load_player_stats() -> List[PlayerStats]:
+    df = pd.read_csv(f"{DATA_DIR}/player_stats.csv")
+    return [PlayerStats(**r) for r in df.to_dict("records")]
 
-    # league_id → [team_id, ...]
-    league_teams: Dict[int, List[int]] = {}
-    for _, row in teams.iterrows():
-        lid = int(row["league_id"])
-        league_teams.setdefault(lid, []).append(int(row["id"]))
+def load_team_player_relations() -> List[TeamPlayerRelation]:
+    df = pd.read_csv(f"{DATA_DIR}/team_player_relations.csv")
+    return [TeamPlayerRelation(**r) for r in df.to_dict("records")]
 
-    return {
-        "leagues": leagues,
-        "teams": teams,
-        "players": players,
-        "player_stats": player_stats,
-        "team_player_relations": team_player_relations,
-        "league_dict": league_dict,
-        "team_dict": team_dict,
-        "player_dict": player_dict,
-        "league_teams": league_teams,
-    }
+class DataStore:
+    def __init__(self):
+        self.leagues: List[League] = []
+        self.teams: List[Team] = []
+        self.players: List[Player] = []
+        self.player_stats: List[PlayerStats] = []
+        self.relations: List[TeamPlayerRelation] = []
+        self._league_map: Dict[int, League] = {}
+        self._team_map: Dict[int, Team] = {}
+        self._player_map: Dict[int, Player] = {}
 
+    def load(self):
+        self.leagues = load_leagues()
+        self.teams = load_teams()
+        self.players = load_players()
+        self.player_stats = load_player_stats()
+        self.relations = load_team_player_relations()
+        self._league_map = {l.id: l for l in self.leagues}
+        self._team_map = {t.id: t for t in self.teams}
+        self._player_map = {p.id: p for p in self.players}
 
-def data_exists(data_dir: str = "data/sample") -> bool:
-    """Return True if all required CSV files are present."""
-    base = Path(data_dir)
-    required = [
-        "leagues.csv", "teams.csv", "players.csv",
-        "player_stats.csv", "team_player_relations.csv",
-    ]
-    return all((base / f).exists() for f in required)
+    def get_league(self, lid: int) -> Optional[League]:
+        return self._league_map.get(lid)
+
+    def get_team(self, tid: int) -> Optional[Team]:
+        return self._team_map.get(tid)
+
+    def get_player(self, pid: int) -> Optional[Player]:
+        return self._player_map.get(pid)
+
+    def get_player_stats(self, pid: int) -> List[PlayerStats]:
+        return [s for s in self.player_stats if s.player_id == pid]
+
+    def get_team_players(self, tid: int, season: str = "2023-24") -> List[Player]:
+        rels = [r for r in self.relations if r.team_id == tid and r.season == season]
+        return [self._player_map[r.player_id] for r in rels if r.player_id in self._player_map]
+
+_store: Optional[DataStore] = None
+
+def get_store() -> DataStore:
+    global _store
+    if _store is None:
+        _store = DataStore()
+        _store.load()
+    return _store

@@ -1,181 +1,114 @@
-"""Player-level feature engineering for the performance model."""
-
-from __future__ import annotations
-
-from typing import Any, Dict, List, Optional
-
+"""Basketball player feature engineering."""
+from typing import List, Dict, Any
 import numpy as np
-import pandas as pd
+from src.data.models import Player, PlayerStats
 
-PEAK_AGES: Dict[str, int] = {
-    "GK": 31, "CB": 29, "FB": 26, "CM": 28, "AM": 27, "W": 25, "ST": 27,
+POSITIONAL_PEAK_AGES = {
+    "PG": 26, "SG": 25, "SF": 26, "PF": 27, "C": 28,
+    "PG/SG": 25, "SG/SF": 25, "SF/PF": 26, "PF/C": 27, "SG/PF": 26,
 }
 
-POSITION_ENCODING: Dict[str, int] = {
-    "GK": 0, "CB": 1, "FB": 2, "CM": 3, "AM": 4, "W": 5, "ST": 6,
-}
+def _primary_pos(pos: str) -> str:
+    return pos.split("/")[0]
 
-
-def _safe_div(a: float, b: float, default: float = 0.0) -> float:
-    return a / b if b > 0 else default
-
-
-def compute_form_score(history: pd.DataFrame) -> float:
-    """Weighted average of last 3 seasons (most recent = highest weight)."""
-    recent = history.tail(3)
-    if recent.empty:
-        return 6.0
-    n = len(recent)
-    raw_weights = np.array([0.2, 0.3, 0.5][:n])
-    weights = raw_weights / raw_weights.sum()
-    return float(np.average(recent["rating"].values, weights=weights))
-
-
-def compute_consistency_score(history: pd.DataFrame) -> float:
-    """1 / (1 + std_dev) of ratings – higher = more consistent."""
-    if len(history) < 2:
-        return 0.5
-    return float(1.0 / (1.0 + history["rating"].std()))
-
-
-def compute_per90(history: pd.DataFrame) -> Dict[str, float]:
-    """Per-90-minute stats averaged over available history."""
-    total_min = history["minutes"].sum()
-    if total_min < 1:
-        return {"goals_per_90": 0.0, "assists_per_90": 0.0,
-                "xG_per_90": 0.0, "xA_per_90": 0.0}
-    m90 = total_min / 90.0
-    return {
-        "goals_per_90": float(history["goals"].sum() / m90),
-        "assists_per_90": float(history["assists"].sum() / m90),
-        "xG_per_90": float(history["xG"].sum() / m90),
-        "xA_per_90": float(history["xA"].sum() / m90),
-    }
-
-
-def compute_technical_score(row: pd.Series) -> float:
-    """Composite score from pass_accuracy, dribbles, key_passes."""
-    pa = float(row.get("pass_accuracy", 75)) / 100.0
-    dr = min(float(row.get("dribbles", 1.0)) / 5.0, 1.0)
-    kp = min(float(row.get("key_passes", 0.5)) / 3.0, 1.0)
-    return float(pa * 0.4 + dr * 0.3 + kp * 0.3)
-
-
-def compute_defensive_score(row: pd.Series) -> float:
-    """Composite score from tackles, interceptions, aerial duels won."""
-    tk = min(float(row.get("tackles", 1.0)) / 5.0, 1.0)
-    ic = min(float(row.get("interceptions", 0.5)) / 3.0, 1.0)
-    ae = min(float(row.get("aerial_duels_won", 1.0)) / 6.0, 1.0)
-    return float(tk * 0.4 + ic * 0.3 + ae * 0.3)
-
-
-def compute_career_trajectory(history: pd.DataFrame) -> float:
-    """Slope of rating over the last 4 seasons (positive = improving)."""
-    last_4 = history.tail(4)
-    if len(last_4) < 2:
+def _per36(stat: float, mpg: float) -> float:
+    if mpg <= 0:
         return 0.0
-    x = np.arange(len(last_4), dtype=float)
-    slope = float(np.polyfit(x, last_4["rating"].values.astype(float), 1)[0])
-    return slope
+    return float(stat / mpg * 36)
 
+def compute_player_features(player: Player, stats_history: List[PlayerStats]) -> Dict[str, Any]:
+    """Compute basketball feature vector for a player given their stats history."""
+    if not stats_history:
+        return _empty_features(player)
 
-def compute_age_vs_peak(age: int, position: str) -> float:
-    """Current age relative to positional peak (negative = still growing)."""
-    return float(age - PEAK_AGES.get(position, 27))
+    stats_history = sorted(stats_history, key=lambda s: s.season)
+    ratings = [s.rating for s in stats_history]
+    last3 = stats_history[-3:]
+    weights = [0.5, 0.3, 0.2][:len(last3)][::-1]
+    total_w = sum(weights)
+    form_score = sum(s.rating * w for s, w in zip(last3, weights)) / total_w if total_w else ratings[-1]
 
+    mean_r = float(np.mean(ratings))
+    std_r = float(np.std(ratings))
+    consistency_score = 1.0 - (std_r / mean_r) if mean_r > 0 else 0.0
+    consistency_score = float(np.clip(consistency_score, 0.0, 1.0))
 
-def compute_player_features(
-    player_id: int,
-    data: Dict[str, Any],
-    season: int = 2024,
-    target_age: Optional[int] = None,
-) -> Dict[str, float]:
-    """Compute all player-level features for model inference.
+    latest = stats_history[-1]
+    mpg = latest.minutes_per_game if latest.minutes_per_game > 0 else 1.0
+    pts_per_36 = _per36(latest.points, mpg)
+    ast_per_36 = _per36(latest.assists, mpg)
+    reb_per_36 = _per36(latest.rebounds, mpg)
+    stl_per_36 = _per36(latest.steals, mpg)
+    blk_per_36 = _per36(latest.blocks, mpg)
 
-    Args:
-        player_id: Player identifier.
-        data: Loaded data dictionary from loader.load_all_data().
-        season: Reference season for "current" context.
-        target_age: Override age for trajectory projections.
+    avg_per = float(np.mean([s.per for s in stats_history]))
+    avg_ts_pct = float(np.mean([s.ts_pct for s in stats_history]))
+    avg_usg_pct = float(np.mean([s.usg_pct for s in stats_history]))
+    avg_bpm = float(np.mean([s.bpm for s in stats_history]))
+    peak_rating = float(max(ratings))
 
-    Returns:
-        Feature dictionary with float values.
-    """
-    player_dict = data["player_dict"]
-    player_stats = data["player_stats"]
+    if len(ratings) >= 2:
+        xs = np.arange(len(ratings), dtype=float)
+        career_trajectory = float(np.polyfit(xs, ratings, 1)[0])
+    else:
+        career_trajectory = 0.0
 
-    player = player_dict.get(player_id)
-    if player is None:
-        return _default_player_features()
+    peak_age = POSITIONAL_PEAK_AGES.get(player.position, POSITIONAL_PEAK_AGES.get(_primary_pos(player.position), 26))
+    age_vs_peak_age = player.age - peak_age
 
-    age = target_age if target_age is not None else int(player.get("age", 27))
-    position = str(player.get("position", "CM"))
+    # scoring profile
+    if latest.three_point_pct > 0.37 and latest.usg_pct < 22:
+        scoring_profile = "3pt_specialist"
+    elif latest.fg_pct > 0.55:
+        scoring_profile = "paint_scorer"
+    elif avg_usg_pct > 25:
+        scoring_profile = "volume_scorer"
+    else:
+        scoring_profile = "efficient_scorer"
 
-    history = player_stats[player_stats["player_id"] == player_id].sort_values("season")
-    pre_history = history[history["season"] < season]
-    if pre_history.empty:
-        pre_history = history
+    playmaking_score = ast_per_36 / avg_usg_pct if avg_usg_pct > 0 else 0.0
 
-    form_score = compute_form_score(pre_history)
-    consistency = compute_consistency_score(pre_history)
-    per90 = compute_per90(pre_history)
+    defensive_score = float(np.clip(
+        stl_per_36 * 1.5 + blk_per_36 * 1.2, 0, 10
+    ))
 
-    last_row = pre_history.iloc[-1] if not pre_history.empty else history.iloc[-1]
-    tech = compute_technical_score(last_row)
-    dfn = compute_defensive_score(last_row)
-    peak_rating = float(history["rating"].max()) if not history.empty else 6.5
-    trajectory = compute_career_trajectory(pre_history)
-    age_vs_peak = compute_age_vs_peak(age, position)
+    norms = []
+    for v, mx in [(pts_per_36, 40), (ast_per_36, 15), (reb_per_36, 20), (stl_per_36, 4), (blk_per_36, 5)]:
+        norms.append(v / mx if mx > 0 else 0)
+    versatility_score = float(1.0 - np.std(norms))
+    versatility_score = float(np.clip(versatility_score, 0, 1))
 
     return {
-        "form_score": form_score,
-        "consistency_score": consistency,
-        "goals_per_90": per90["goals_per_90"],
-        "assists_per_90": per90["assists_per_90"],
-        "xG_per_90": per90["xG_per_90"],
-        "xA_per_90": per90["xA_per_90"],
-        "technical_score": tech,
-        "defensive_score": dfn,
-        "peak_rating": peak_rating,
-        "career_trajectory": trajectory,
-        "age_vs_peak": age_vs_peak,
-        "pass_accuracy": float(last_row.get("pass_accuracy", 75.0)),
-        "dribbles": float(last_row.get("dribbles", 1.0)),
-        "tackles": float(last_row.get("tackles", 1.0)),
-        "interceptions": float(last_row.get("interceptions", 0.5)),
-        "aerial_duels_won": float(last_row.get("aerial_duels_won", 1.0)),
-        "progressive_passes": float(last_row.get("progressive_passes", 2.0)),
-        "key_passes": float(last_row.get("key_passes", 0.5)),
-        "minutes": float(last_row.get("minutes", 1500.0)),
-        "matches_played": float(last_row.get("matches_played", 20)),
-        "age": float(age),
-        "position_enc": float(POSITION_ENCODING.get(position, 3)),
+        "form_score": round(form_score, 4),
+        "consistency_score": round(consistency_score, 4),
+        "pts_per_36": round(pts_per_36, 2),
+        "ast_per_36": round(ast_per_36, 2),
+        "reb_per_36": round(reb_per_36, 2),
+        "stl_per_36": round(stl_per_36, 2),
+        "blk_per_36": round(blk_per_36, 2),
+        "avg_per": round(avg_per, 2),
+        "avg_ts_pct": round(avg_ts_pct, 4),
+        "avg_usg_pct": round(avg_usg_pct, 2),
+        "avg_bpm": round(avg_bpm, 2),
+        "peak_rating": round(peak_rating, 4),
+        "career_trajectory": round(career_trajectory, 4),
+        "age_vs_peak_age": age_vs_peak_age,
+        "positional_peak_age": peak_age,
+        "scoring_profile": scoring_profile,
+        "playmaking_score": round(playmaking_score, 4),
+        "defensive_score": round(defensive_score, 4),
+        "versatility_score": round(versatility_score, 4),
     }
 
-
-def _default_player_features() -> Dict[str, float]:
-    """Return neutral features for an unknown player (cold-start)."""
+def _empty_features(player: Player) -> Dict[str, Any]:
+    peak_age = POSITIONAL_PEAK_AGES.get(player.position, POSITIONAL_PEAK_AGES.get(_primary_pos(player.position), 26))
     return {
-        "form_score": 6.5,
-        "consistency_score": 0.5,
-        "goals_per_90": 0.0,
-        "assists_per_90": 0.0,
-        "xG_per_90": 0.0,
-        "xA_per_90": 0.0,
-        "technical_score": 0.5,
-        "defensive_score": 0.5,
-        "peak_rating": 6.5,
-        "career_trajectory": 0.0,
-        "age_vs_peak": 0.0,
-        "pass_accuracy": 75.0,
-        "dribbles": 1.0,
-        "tackles": 1.0,
-        "interceptions": 0.5,
-        "aerial_duels_won": 1.0,
-        "progressive_passes": 2.0,
-        "key_passes": 0.5,
-        "minutes": 1500.0,
-        "matches_played": 20.0,
-        "age": 25.0,
-        "position_enc": 3.0,
+        "form_score": 5.0, "consistency_score": 0.5,
+        "pts_per_36": 10.0, "ast_per_36": 2.0, "reb_per_36": 4.0,
+        "stl_per_36": 1.0, "blk_per_36": 0.5,
+        "avg_per": 12.0, "avg_ts_pct": 0.52, "avg_usg_pct": 18.0, "avg_bpm": -1.0,
+        "peak_rating": 5.0, "career_trajectory": 0.0,
+        "age_vs_peak_age": player.age - peak_age, "positional_peak_age": peak_age,
+        "scoring_profile": "efficient_scorer", "playmaking_score": 0.1,
+        "defensive_score": 1.0, "versatility_score": 0.5,
     }

@@ -1,84 +1,87 @@
-"""Data models (dataclasses) for the football performance prediction system."""
+"""Basketball data models using Python dataclasses.
 
-from __future__ import annotations
-
-from dataclasses import dataclass, field
-from typing import Optional
-
-
-@dataclass
-class Player:
-    """Represents a football player."""
-
-    id: int
-    name: str
-    age: int
-    position: str        # GK / CB / FB / CM / AM / W / ST
-    nationality: str
-    foot: str            # right / left / both
-    height: float        # cm
-    weight: float        # kg
-    current_team_id: int
-    current_league_id: int
-
-
-@dataclass
-class PlayerStats:
-    """Season statistics for a single player."""
-
-    player_id: int
-    season: int
-    team_id: int
-    league_id: int
-    goals: float
-    assists: float
-    matches_played: int
-    minutes: float
-    pass_accuracy: float        # 0–100 %
-    dribbles: float             # per 90
-    tackles: float              # per 90
-    interceptions: float        # per 90
-    aerial_duels_won: float     # per 90
-    rating: float               # 0–10
-    xG: float
-    xA: float
-    progressive_passes: float   # per 90
-    key_passes: float           # per 90
-
-
-@dataclass
-class Team:
-    """Represents a football club."""
-
-    id: int
-    name: str
-    league_id: int
-    playing_style: str      # possession / counter / high_press / direct
-    formation: str
-    avg_possession: float   # %
-    pressing_intensity: float   # 0–10
-    defensive_line: float       # 0–10
-    passing_tempo: float        # 0–10
-    league_tier: int
-
+Positions support single and hybrid roles:
+  Pure:   PG, SG, SF, PF, C
+  Hybrid: PG/SG, SG/SF, SF/PF, PF/C, SG/PF (stretch), PG/SF (wing-guard)
+"""
+from dataclasses import dataclass
+from typing import Optional, List
 
 @dataclass
 class League:
-    """Represents a football league / competition."""
-
     id: int
     name: str
     country: str
-    tier: int                       # 1–5
-    competitiveness_score: float    # 0–1
+    tier: int
+    competitiveness_score: float
+    avg_pace: float
+    avg_offensive_rating: float
 
+@dataclass
+class Team:
+    id: int
+    name: str
+    league_id: int
+    playing_style: str
+    formation: str
+    pace: float
+    offensive_rating: float
+    defensive_rating: float
+    three_point_attempt_rate: float
+    assists_per_game: float
+    star_player_usage: float
+    league_tier: int
+
+@dataclass
+class Player:
+    id: int
+    name: str
+    age: int
+    position: str
+    nationality: str
+    height_cm: int
+    weight_kg: int
+    dominant_hand: str
+    current_team_id: Optional[int]
+    current_league_id: Optional[int]
+    draft_year: Optional[int]
+    draft_pick: Optional[int]
+
+@dataclass
+class PlayerStats:
+    player_id: int
+    season: str
+    team_id: int
+    league_id: int
+    games_played: int
+    minutes_per_game: float
+    points: float
+    rebounds: float
+    offensive_rebounds: float
+    defensive_rebounds: float
+    assists: float
+    steals: float
+    blocks: float
+    turnovers: float
+    personal_fouls: float
+    fg_pct: float
+    three_point_pct: float
+    ft_pct: float
+    plus_minus: float
+    per: float
+    ts_pct: float
+    usg_pct: float
+    bpm: float
+    vorp: float
+    win_shares: float
+    ast_ratio: float
+    reb_pct: float
+    rating: float
 
 @dataclass
 class TeamPlayerRelation:
-    """A player's role at a club in a specific season."""
-
     team_id: int
     player_id: int
-    season: int
-    role: str           # starter / rotation / bench
+    season: str
+    role: str
     jersey_number: int
