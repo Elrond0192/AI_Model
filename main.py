@@ -2,9 +2,10 @@
 
 Usage:
     python main.py --mode generate-data
-    python main.py --mode train
-    python main.py --mode demo
-    python main.py --mode api [--host HOST] [--port PORT]
+    python main.py --mode train [--source {file|sql}]
+    python main.py --mode demo  [--source {file|sql}]
+    python main.py --mode api   [--host HOST] [--port PORT]
+    python main.py --mode export-wordpress [--source {file|sql}] [--out-dir DIR]
 """
 from __future__ import annotations
 import argparse
@@ -18,13 +19,26 @@ def parse_args(argv=None):
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
-        "--mode", choices=["generate-data", "train", "demo", "api"], required=True,
+        "--mode",
+        choices=["generate-data", "train", "demo", "api", "export-wordpress"],
+        required=True,
     )
-    parser.add_argument("--data-dir",  default="data/sample",   help="Data directory")
+    parser.add_argument("--data-dir",  default="data/sample",   help="Data directory (file source)")
     parser.add_argument("--model-dir", default="models_saved",  help="Model save directory")
     parser.add_argument("--host",      default="0.0.0.0",       help="API host")
     parser.add_argument("--port",      type=int, default=8000,  help="API port")
     parser.add_argument("--seed",      type=int, default=42,    help="RNG seed")
+    parser.add_argument(
+        "--source",
+        choices=["file", "sql"],
+        default="file",
+        help="Data source: 'file' (CSV, default) or 'sql' (Azure SQL Server)",
+    )
+    parser.add_argument(
+        "--out-dir",
+        default="wp_export",
+        help="Output directory for export-wordpress JSON files",
+    )
     return parser.parse_args(argv)
 
 
