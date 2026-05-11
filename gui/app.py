@@ -346,7 +346,7 @@ with tab_train:
     st.subheader("📊 Metriche disponibili dal DB")
 
     _data_check = st.session_state.get("data")
-    if _data_check is None:
+    if _data_check is None or "player_stats" not in _data_check:
         st.info("Carica prima i dati per vedere le metriche disponibili.")
         extra_metrics: list = []
     else:
@@ -434,10 +434,12 @@ with tab_train:
 
                 X_full, y_full = perf_model.prepare_features(data_t, extra_metrics=extra_metrics)
                 all_selected = [f for f in selected_features if f in X_full.columns]
+                excluded = [f for f in selected_features if f not in X_full.columns]
+                if excluded:
+                    log(f"Feature escluse (non presenti): {', '.join(excluded)}")
                 # Also include any extra-metric feature columns that were added
                 for col in extra_metrics:
-                    from basketball_ai.models.performance_model import METRIC_CATALOG as _MC
-                    _info = _MC.get(col)
+                    _info = METRIC_CATALOG.get(col)
                     if _info is None:
                         continue
                     feat_name = f"{col}_per_36" if _info.use_per36 else f"avg_{col}"

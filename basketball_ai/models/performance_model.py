@@ -224,7 +224,7 @@ class PerformanceModel:
             if info is None:
                 continue
             if col not in stat_row.index:
-                print(f"[PerformanceModel] Warning: colonna '{col}' non trovata in stat_row, uso 0.0")
+                print(f"[PerformanceModel] Warning: column '{col}' not found in stat_row, using 0.0")
                 if info.use_per36:
                     row[f"{col}_per_36"] = 0.0
                 else:
@@ -235,7 +235,8 @@ class PerformanceModel:
             else:
                 # Use historical average if available, otherwise current value
                 if col in player_stats_history.columns:
-                    row[f"avg_{col}"] = float(np.mean(player_stats_history[col].dropna().tolist()) or stat_row.get(col, 0))
+                    vals = player_stats_history[col].dropna().tolist()
+                    row[f"avg_{col}"] = float(np.mean(vals)) if vals else float(stat_row.get(col, 0))
                 else:
                     row[f"avg_{col}"] = float(stat_row.get(col, 0))
 
