@@ -399,12 +399,40 @@ def _discover_league_seasons(engine) -> List[tuple]:
         return []
 
 
+def _discover_normalized_name_tags(engine, league_seasons: List[tuple]) -> set:
+    """Return the set of ``"<league>_<season>"`` tags whose Anagrafiche player
+    table contains the ``NormalizedPlayerName`` column.
+
+    A single ``INFORMATION_SCHEMA.COLUMNS`` query is used so only one round-trip
+    to the database is required regardless of how many leagues are loaded.
+    """
+    if not league_seasons:
+        return set()
+    tags = [f"{l}_{s}" for l, s in league_seasons]
+    placeholders = ", ".join(f"'{t}'" for t in tags)
+    sql = (
+        "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.COLUMNS "
+        "WHERE TABLE_SCHEMA = 'Anagrafiche' "
+        "AND COLUMN_NAME = 'NormalizedPlayerName' "
+        f"AND TABLE_NAME IN ({placeholders})"
+    )
+    try:
+        df = _execute_query(engine, sql)
+        return set(df["TABLE_NAME"].str.strip().tolist())
+    except Exception:
+        return set()
+
+
 def _get_table_queries(engine=None) -> Dict[str, str]:
     """Return SQL queries for all logical tables.
 
     When *engine* is supplied and the dynamic query path is enabled, leagues
     and seasons are discovered from Anagrafiche schema table names and queries
     are built dynamically (one UNION ALL branch per league/season).
+
+    Also discovers which player tables contain a ``NormalizedPlayerName`` column
+    and passes that information to the query builder so the generated SQL can
+    prefer it over the raw ``PlayerName``.
 
     Falls back to the static TABLE_QUERIES dict (empty by default).
     """
@@ -415,7 +443,8 @@ def _get_table_queries(engine=None) -> Dict[str, str]:
     if engine is not None and _use_query_path(engine):
         league_seasons = _discover_league_seasons(engine)
         if league_seasons and hasattr(schema_mapping, "get_table_queries"):
-            return schema_mapping.get_table_queries(league_seasons)
+            tags_with_normalized = _discover_normalized_name_tags(engine, league_seasons)
+            return schema_mapping.get_table_queries(league_seasons, tags_with_normalized)
     return getattr(schema_mapping, "TABLE_QUERIES", {})
 
 
@@ -625,6 +654,29 @@ def load_all_data_from_sql(engine=None, table_mapping: Optional[Dict[str, str]] 
     players_df = _load_logical("players")
     stats_df = _load_logical("player_stats")
     rels_df = _load_logical("team_player_relations")
+
+    # Recompute league avg_pace and avg_offensive_rating from real team data
+    # so that each league reflects its actual teams rather than a global default.
+    if (
+        not teams_df.empty
+        and "league_id" in teams_df.columns
+        and not leagues_df.empty
+        and "id" in leagues_df.columns
+    ):
+        pace_col = "pace" if "pace" in teams_df.columns else None
+        ortg_col = "offensive_rating" if "offensive_rating" in teams_df.columns else None
+        for league_id, group in teams_df.groupby("league_id"):
+            mask = leagues_df["id"] == league_id
+            if not mask.any():
+                continue
+            if pace_col:
+                avg_pace = pd.to_numeric(group[pace_col], errors="coerce").mean()
+                if pd.notna(avg_pace):
+                    leagues_df.loc[mask, "avg_pace"] = avg_pace
+            if ortg_col:
+                avg_ortg = pd.to_numeric(group[ortg_col], errors="coerce").mean()
+                if pd.notna(avg_ortg):
+                    leagues_df.loc[mask, "avg_offensive_rating"] = avg_ortg
 
     for col in ["current_team_id", "current_league_id", "draft_year", "draft_pick"]:
         if col in players_df.columns:

@@ -183,12 +183,17 @@ LEFT JOIN (
 ) AS s ON CAST(t.Id AS nvarchar(100)) = s.team_id AND s.rn = 1"""
 
 
-def _players_block(league: str, season: str) -> str:
+def _players_block(league: str, season: str, has_normalized_name: bool = False) -> str:
     tag = f"{league}_{season}"
+    name_expr = (
+        "ISNULL(NULLIF(p.NormalizedPlayerName, ''), p.PlayerName)"
+        if has_normalized_name
+        else "p.PlayerName"
+    )
     return f"""
 SELECT
     CAST(p.Id AS nvarchar(100)) AS id,
-    p.PlayerName AS name,
+    {name_expr} AS name,
     ISNULL(CAST(adv.Age AS int), 0) AS age,
     ISNULL(adv.Position, p.Pos) AS position,
     ISNULL(p.Nat, '') AS nationality,
@@ -308,19 +313,36 @@ LEFT JOIN Anagrafiche.{tag} AS p
     ON CAST(b.Id AS nvarchar(100)) = CAST(p.Id AS nvarchar(100))"""
 
 
-def get_table_queries(league_seasons: List[tuple]) -> Dict[str, str]:
+def get_table_queries(
+    league_seasons: List[tuple],
+    tags_with_normalized_name: Optional[set] = None,
+) -> Dict[str, str]:
     """Build SQL queries for all discovered (league, season) pairs.
 
     Each logical table becomes a UNION ALL across all discovered leagues.
     The leagues query returns one row per unique (league, season) pair found
     by scanning Anagrafiche schema table names — no dependency on
     Configuration.Championship_ids.
+
+    Parameters
+    ----------
+    league_seasons:
+        List of ``(league_id, season)`` tuples discovered from the database.
+    tags_with_normalized_name:
+        Optional set of ``"<league>_<season>"`` tags whose Anagrafiche player
+        table contains the ``NormalizedPlayerName`` column.  When a tag is in
+        this set the generated SQL prefers ``NormalizedPlayerName`` over the
+        raw ``PlayerName``.
     """
     if not league_seasons:
         return {}
 
+    _norm_tags = tags_with_normalized_name or set()
     teams_sql = "\nUNION ALL\n".join(_teams_block(l, s) for l, s in league_seasons)
-    players_sql = "\nUNION ALL\n".join(_players_block(l, s) for l, s in league_seasons)
+    players_sql = "\nUNION ALL\n".join(
+        _players_block(l, s, has_normalized_name=(f"{l}_{s}" in _norm_tags))
+        for l, s in league_seasons
+    )
 
     cte_parts = ",\n".join(_player_stats_cte(l, s) for l, s in league_seasons)
     stats_selects = "\nUNION ALL\n".join(_player_stats_select(l, s) for l, s in league_seasons)
