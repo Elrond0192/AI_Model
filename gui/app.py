@@ -28,6 +28,26 @@ from basketball_ai.data.loader import _to_int
 # Helpers
 # ---------------------------------------------------------------------------
 
+_ENV_PATH = Path(__file__).parent.parent / ".env"
+
+
+def _save_to_env(key: str, value: str) -> None:
+    """Write or update a single KEY=value line in the project .env file."""
+    if _ENV_PATH.exists():
+        lines = _ENV_PATH.read_text(encoding="utf-8").splitlines(keepends=True)
+    else:
+        lines = []
+    updated = False
+    for i, line in enumerate(lines):
+        stripped = line.lstrip()
+        if stripped.startswith(f"{key}=") or stripped.startswith(f"{key} ="):
+            lines[i] = f"{key}={value}\n"
+            updated = True
+            break
+    if not updated:
+        lines.append(f"{key}={value}\n")
+    _ENV_PATH.write_text("".join(lines), encoding="utf-8")
+
 def _safe_model_dir(user_input: str) -> Path:
     """Sanitize a user-supplied directory path to prevent path traversal."""
     raw = Path(user_input)
@@ -271,6 +291,14 @@ with tab_data:
                 "?driver=ODBC+Driver+18+for+SQL+Server"
             ),
         )
+        _save_cs_col, _save_cs_btn_col = st.columns([3, 1])
+        _save_cs = _save_cs_col.checkbox(
+            "💾 Salva nel file `.env`",
+            value=False,
+            key="save_conn_to_env",
+            help="Sovrascrive `AZURE_SQL_CONNECTION_STRING` nel file `.env` del progetto.",
+        )
+
         if st.button("🔌 Connetti e carica dati SQL", type="primary"):
             if not conn_str.strip():
                 st.error("Inserisci la connection string.")
@@ -278,6 +306,9 @@ with tab_data:
                 with st.spinner("Connessione ad Azure SQL …"):
                     try:
                         os.environ["AZURE_SQL_CONNECTION_STRING"] = conn_str
+                        if _save_cs:
+                            _save_to_env("AZURE_SQL_CONNECTION_STRING", conn_str)
+                            st.toast("✅ Connection string salvata nel file `.env`", icon="💾")
                         # Apply any column-mapping overrides saved in the Mapping tab
                         for env_key, val in st.session_state.get("mapping_env_overrides", {}).items():
                             if val:
