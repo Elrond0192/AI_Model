@@ -11,6 +11,7 @@ import pytest
 from basketball_ai.data.sql_loader import (
     _MIN_OVERLAP,
     _REQUIRED_COLUMNS,
+    _normalize_identifier,
     _normalize_connection_string,
     _score_table,
     _is_transient_connection_error,
@@ -20,6 +21,14 @@ from basketball_ai.data.sql_loader import (
 # ---------------------------------------------------------------------------
 # _score_table
 # ---------------------------------------------------------------------------
+
+
+def test_normalize_identifier_handles_decimal_hex_and_text():
+    assert _normalize_identifier("42") == 42
+    assert _normalize_identifier("0000009B") == 155
+    assert _normalize_identifier("0x9B") == 155
+    assert _normalize_identifier(" player-001 ") == "player-001"
+    assert _normalize_identifier(7.0) == 7
 
 def test_score_table_full_match():
     actual = [

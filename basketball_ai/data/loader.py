@@ -12,6 +12,22 @@ import pandas as pd
 
 from basketball_ai.data.models import League, Team, Player, PlayerStats, TeamPlayerRelation
 
+
+def _to_int(value) -> int:
+    """Convert value to int, handling decimal numbers, floats, and hex strings (e.g. '0000009B')."""
+    if isinstance(value, str):
+        v = value.strip()
+        if v.startswith(("0x", "0X")):
+            return int(v, 16)
+        try:
+            return int(v, 10)
+        except ValueError:
+            return int(v, 16)  # fallback: try hex (e.g. '0000009B')
+    if isinstance(value, float):
+        return int(value)
+    return int(value)
+
+
 DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "data", "sample")
 
 
@@ -33,10 +49,10 @@ def load_players(data_dir: str = DATA_DIR) -> List[Player]:
     df = pd.read_csv(f"{data_dir}/players.csv")
     results = []
     for r in df.to_dict("records"):
-        r["current_team_id"] = None if pd.isna(r.get("current_team_id")) else int(r["current_team_id"])
-        r["current_league_id"] = None if pd.isna(r.get("current_league_id")) else int(r["current_league_id"])
-        r["draft_year"] = None if pd.isna(r.get("draft_year")) else int(r["draft_year"])
-        r["draft_pick"] = None if pd.isna(r.get("draft_pick")) else int(r["draft_pick"])
+        r["current_team_id"] = None if pd.isna(r.get("current_team_id")) else _to_int(r["current_team_id"])
+        r["current_league_id"] = None if pd.isna(r.get("current_league_id")) else _to_int(r["current_league_id"])
+        r["draft_year"] = None if pd.isna(r.get("draft_year")) else _to_int(r["draft_year"])
+        r["draft_pick"] = None if pd.isna(r.get("draft_pick")) else _to_int(r["draft_pick"])
         results.append(Player(**r))
     return results
 
@@ -126,13 +142,13 @@ def load_all_data(data_dir: str) -> Dict[str, Any]:
         if col in players_df.columns:
             players_df[col] = players_df[col].where(players_df[col].notna(), other=None)
 
-    league_dict: Dict[int, dict] = {int(r["id"]): r.to_dict() for _, r in leagues_df.iterrows()}
-    team_dict:   Dict[int, dict] = {int(r["id"]): r.to_dict() for _, r in teams_df.iterrows()}
-    player_dict: Dict[int, dict] = {int(r["id"]): r.to_dict() for _, r in players_df.iterrows()}
+    league_dict: Dict[int, dict] = {_to_int(r["id"]): r.to_dict() for _, r in leagues_df.iterrows()}
+    team_dict:   Dict[int, dict] = {_to_int(r["id"]): r.to_dict() for _, r in teams_df.iterrows()}
+    player_dict: Dict[int, dict] = {_to_int(r["id"]): r.to_dict() for _, r in players_df.iterrows()}
 
     league_teams: Dict[int, List[int]] = {}
     for _, t in teams_df.iterrows():
-        league_teams.setdefault(int(t["league_id"]), []).append(int(t["id"]))
+        league_teams.setdefault(_to_int(t["league_id"]), []).append(_to_int(t["id"]))
 
     return {
         "leagues": leagues_df,
