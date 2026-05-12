@@ -21,10 +21,53 @@ try:
 except ImportError:
     _SHAP_AVAILABLE = False
 
+# Competition-type encoding used as a training feature and prediction context
+COMPETITION_ENCODING: Dict[str, int] = {
+    "RS": 0,          # Regular Season
+    "PO": 1,          # Playoffs
+    "CUP": 2,         # Cup competition
+    "SUPERCUP": 3,    # Super Cup / preseason
+}
+
+
+def compute_po_features(player_stats_df: "pd.DataFrame") -> Dict[str, float]:
+    """Return competition-specific features for a player from their full stats DataFrame.
+
+    Args:
+        player_stats_df: Rows from ``player_stats`` for a single player.
+
+    Returns:
+        Dict with keys ``po_vs_rs_delta`` (mean PO rating − mean RS rating; 0.0 if
+        one side is missing) and ``po_games_played`` (total PO games played).
+    """
+    if "competition" not in player_stats_df.columns:
+        return {"po_vs_rs_delta": 0.0, "po_games_played": 0.0}
+
+    rs_hist = player_stats_df[player_stats_df["competition"] == "RS"]
+    po_hist = player_stats_df[player_stats_df["competition"] == "PO"]
+
+    rs_mean = float(rs_hist["rating"].mean()) if not rs_hist.empty else np.nan
+    po_mean = float(po_hist["rating"].mean()) if not po_hist.empty else np.nan
+
+    if not (np.isnan(rs_mean) or np.isnan(po_mean)):
+        po_vs_rs_delta = po_mean - rs_mean
+    else:
+        po_vs_rs_delta = 0.0
+
+    po_gp = (
+        float(po_hist["games_played"].sum())
+        if (not po_hist.empty and "games_played" in po_hist.columns)
+        else 0.0
+    )
+
+    return {"po_vs_rs_delta": po_vs_rs_delta, "po_games_played": po_gp}
+
+
 # Feature columns (order matters for scaling)
 FEATURE_COLS: List[str] = [
     "age",
     "position_enc",
+    "competition_enc",
     "pts_per_36",
     "ast_per_36",
     "reb_per_36",
@@ -38,6 +81,8 @@ FEATURE_COLS: List[str] = [
     "consistency_score",
     "career_trajectory",
     "age_vs_peak_age",
+    "po_vs_rs_delta",
+    "po_games_played",
 ]
 
 # Non-metric identity/target columns to exclude from METRIC_CATALOG selection
@@ -203,6 +248,9 @@ class PerformanceModel:
         row: Dict[str, float] = {
             "age":                float(age),
             "position_enc":       pos_enc,
+            "competition_enc":    float(COMPETITION_ENCODING.get(
+                str(stat_row.get("competition", "RS")), 0
+            )),
             "pts_per_36":         per36("points"),
             "ast_per_36":         per36("assists"),
             "reb_per_36":         per36("rebounds"),
@@ -217,6 +265,11 @@ class PerformanceModel:
             "career_trajectory":  trajectory,
             "age_vs_peak_age":    float(age - peak_age),
         }
+
+        # PO vs RS delta and PO games played from historical data
+        po_feats = compute_po_features(player_stats_history)
+        row["po_vs_rs_delta"]  = po_feats["po_vs_rs_delta"]
+        row["po_games_played"] = po_feats["po_games_played"]
 
         # Extra metrics requested by the caller
         for col in extra_metrics:

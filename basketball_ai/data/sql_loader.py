@@ -54,6 +54,12 @@ try:
 except ImportError:
     pass
 
+from basketball_ai.data.loader import (
+    _derive_playing_style,
+    _compute_star_player_usage,
+    _fill_current_team_league,
+)
+
 
 # ---------------------------------------------------------------------------
 # Signature columns used for auto-discovery
@@ -692,6 +698,13 @@ def load_all_data_from_sql(engine=None, table_mapping: Optional[Dict[str, str]] 
     for col in ["current_team_id", "current_league_id", "draft_year", "draft_pick"]:
         if col in players_df.columns:
             players_df[col] = players_df[col].where(players_df[col].notna(), other=None)
+
+    # Enrich teams: derive playing_style and star_player_usage from actual stats
+    _derive_playing_style(teams_df)
+    _compute_star_player_usage(teams_df, stats_df)
+
+    # Fill missing current_team_id / current_league_id from most recent stats
+    _fill_current_team_league(players_df, stats_df)
 
     league_dict: Dict[Any, dict] = {
         _normalize_identifier(r["id"]): r.to_dict() for _, r in leagues_df.iterrows()

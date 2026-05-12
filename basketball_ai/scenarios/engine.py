@@ -125,10 +125,18 @@ class WhatIfEngine:
 
     # ------------------------------------------------------------------
     def predict_in_team(
-        self, player_id: int, target_team_id: int, season: int = 2024
+        self, player_id: int, target_team_id: int, season: int = 2024,
+        competition: str = "RS",
     ) -> PredictionResult:
-        """Predict how a player would perform at a given team."""
-        return self.ensemble.predict(player_id, target_team_id, self.data, season)
+        """Predict how a player would perform at a given team.
+
+        Args:
+            competition: Competition context – "RS" (Regular Season), "PO"
+                         (Playoffs), "CUP", or "SUPERCUP".
+        """
+        return self.ensemble.predict(
+            player_id, target_team_id, self.data, season, competition=competition
+        )
 
     # ------------------------------------------------------------------
     def predict_age_trajectory(
@@ -169,6 +177,7 @@ class WhatIfEngine:
     # ------------------------------------------------------------------
     def compare_scenarios(
         self, player_id: int, team_ids: List[int], season: int = 2024,
+        competition: str = "RS",
     ) -> ComparisonResult:
         """Compare player performance across multiple team scenarios."""
         team_dict   = self.data["team_dict"]
@@ -176,13 +185,15 @@ class WhatIfEngine:
 
         scenarios = []
         for tid in team_ids:
-            pred   = self.ensemble.predict(player_id, tid, self.data, season)
+            pred   = self.ensemble.predict(player_id, tid, self.data, season,
+                                           competition=competition)
             team   = team_dict.get(int(tid), {})
             league = league_dict.get(int(team.get("league_id", 1)), {})
             scenarios.append({
                 "team_id":        tid,
                 "team_name":      str(team.get("name", f"Team {tid}")),
                 "league_name":    str(league.get("name", "Unknown")),
+                "competition":    competition,
                 "rating":         pred.predicted_rating,
                 "confidence_low": pred.confidence_low,
                 "confidence_high": pred.confidence_high,
@@ -278,11 +289,14 @@ class WhatIfEngine:
 
     # ------------------------------------------------------------------
     def simulate_transfer(
-        self, player_id: int, from_team_id: int, to_team_id: int, season: int = 2024,
+        self, player_id: int, from_team_id: int, to_team_id: int,
+        season: int = 2024, competition: str = "RS",
     ) -> TransferImpactResult:
         """Simulate the performance impact of a transfer between two teams."""
-        pred_before = self.ensemble.predict(player_id, from_team_id, self.data, season)
-        pred_after  = self.ensemble.predict(player_id, to_team_id,   self.data, season)
+        pred_before = self.ensemble.predict(player_id, from_team_id, self.data, season,
+                                            competition=competition)
+        pred_after  = self.ensemble.predict(player_id, to_team_id,   self.data, season,
+                                            competition=competition)
         ctx   = compute_context_features(player_id, to_team_id, self.data)
         delta = pred_after.predicted_rating - pred_before.predicted_rating
 
