@@ -13,6 +13,7 @@ from basketball_ai.data.sql_loader import (
     _REQUIRED_COLUMNS,
     _normalize_connection_string,
     _score_table,
+    _is_transient_connection_error,
 )
 
 
@@ -340,3 +341,158 @@ class TestNormalizeConnectionString:
         result = _normalize_connection_string(ado)
         decoded = self._decode_odbc_connect(result)
         assert "DRIVER={ODBC Driver 17 for SQL Server}" in decoded
+
+    def test_ado_net_default_timeout(self, monkeypatch):
+        """Default Connection Timeout is 60 s when not specified in the string."""
+        monkeypatch.delenv("AZURE_SQL_CONNECT_TIMEOUT", raising=False)
+        ado = "Server=host;Initial Catalog=db;User ID=u;Password=p;"
+        result = _normalize_connection_string(ado)
+        decoded = self._decode_odbc_connect(result)
+        assert "Connection Timeout=60" in decoded
+
+    def test_ado_net_custom_timeout_from_env(self, monkeypatch):
+        """AZURE_SQL_CONNECT_TIMEOUT env-var overrides the default timeout."""
+        monkeypatch.setenv("AZURE_SQL_CONNECT_TIMEOUT", "90")
+        ado = "Server=host;Initial Catalog=db;User ID=u;Password=p;"
+        result = _normalize_connection_string(ado)
+        decoded = self._decode_odbc_connect(result)
+        assert "Connection Timeout=90" in decoded
+
+    def test_ado_net_timeout_from_string_takes_precedence(self, monkeypatch):
+        """Connection Timeout in the ADO.NET string overrides the env-var default."""
+        monkeypatch.setenv("AZURE_SQL_CONNECT_TIMEOUT", "90")
+        ado = "Server=host;Initial Catalog=db;User ID=u;Password=p;Connection Timeout=45;"
+        result = _normalize_connection_string(ado)
+        decoded = self._decode_odbc_connect(result)
+        assert "Connection Timeout=45" in decoded
+
+
+# ---------------------------------------------------------------------------
+# _is_transient_connection_error
+# ---------------------------------------------------------------------------
+
+class TestIsTransientConnectionError:
+    """Tests for _is_transient_connection_error."""
+
+    def test_08001_sqlstate_recognised(self):
+        assert _is_transient_connection_error(Exception("('08001', 'TCP timeout')"))
+
+    def test_timeout_keyword_recognised(self):
+        assert _is_transient_connection_error(Exception("Connection timeout expired"))
+
+    def test_case_insensitive_timeout(self):
+        assert _is_transient_connection_error(Exception("Login Timeout"))
+
+    def test_unrelated_error_not_transient(self):
+        assert not _is_transient_connection_error(Exception("42000: syntax error"))
+
+    def test_permission_error_not_transient(self):
+        assert not _is_transient_connection_error(Exception("28000: login failed"))
+
+
+# ---------------------------------------------------------------------------
+# get_engine retry logic
+# ---------------------------------------------------------------------------
+
+class TestGetEngineRetry:
+    """Tests for the retry loop in get_engine.
+
+    These tests use a real SQLite in-memory engine and patch the connect()
+    method so that no real SQL Server is required.
+    """
+
+    @staticmethod
+    def _make_engine(fail_times: int = 0, error_msg: str = "('08001', 'TCP timeout')"):
+        """Return a SQLite engine whose first *fail_times* connect() calls raise *error_msg*.
+
+        Failures are raised as ``sqlalchemy.exc.OperationalError`` to match
+        what get_engine() now catches.
+        """
+        from sqlalchemy import create_engine
+        from sqlalchemy.exc import OperationalError
+        engine = create_engine("sqlite:///:memory:")
+        _original_connect = engine.connect
+        calls: list = []
+
+        class _FakeConn:
+            def __enter__(self):
+                calls.append(1)
+                if len(calls) <= fail_times:
+                    raise OperationalError(error_msg, params=None, orig=Exception(error_msg))
+                return _original_connect().__enter__()
+
+            def __exit__(self, *args):
+                return False
+
+        engine.connect = lambda: _FakeConn()  # type: ignore[method-assign]
+        return engine
+
+    def test_returns_engine_on_first_success(self, monkeypatch):
+        """get_engine returns immediately when the first connection succeeds."""
+        monkeypatch.setattr("basketball_ai.data.sql_loader._build_connection_url",
+                            lambda: "sqlite:///:memory:")
+        monkeypatch.setattr("time.sleep", lambda _: None)
+
+        engine = self._make_engine(fail_times=0)
+
+        import sqlalchemy as _sa
+        monkeypatch.setattr(_sa, "create_engine", lambda *a, **kw: engine)
+
+        from basketball_ai.data.sql_loader import get_engine
+        result = get_engine(max_retries=3, retry_delay=0)
+        assert result is engine
+
+    def test_retries_on_transient_error_then_succeeds(self, monkeypatch):
+        """Engine is returned after retrying a transient 08001 error."""
+        monkeypatch.setattr("basketball_ai.data.sql_loader._build_connection_url",
+                            lambda: "sqlite:///:memory:")
+        slept: list = []
+        monkeypatch.setattr("time.sleep", lambda d: slept.append(d))
+
+        engine = self._make_engine(fail_times=1, error_msg="('08001', 'TCP timeout')")
+
+        import sqlalchemy as _sa
+        monkeypatch.setattr(_sa, "create_engine", lambda *a, **kw: engine)
+
+        from basketball_ai.data.sql_loader import get_engine
+        result = get_engine(max_retries=3, retry_delay=5.0)
+        assert result is engine
+        assert len(slept) == 1, "Expected exactly one sleep() between retry attempts"
+
+    def test_no_retry_on_non_transient_error(self, monkeypatch):
+        """Non-transient errors are raised immediately without retry."""
+        monkeypatch.setattr("basketball_ai.data.sql_loader._build_connection_url",
+                            lambda: "sqlite:///:memory:")
+        slept: list = []
+        monkeypatch.setattr("time.sleep", lambda d: slept.append(d))
+
+        engine = self._make_engine(fail_times=99, error_msg="28000: login failed")
+
+        import sqlalchemy as _sa
+        monkeypatch.setattr(_sa, "create_engine", lambda *a, **kw: engine)
+
+        from basketball_ai.data.sql_loader import get_engine
+        with pytest.raises(Exception, match="28000"):
+            get_engine(max_retries=3, retry_delay=5.0)
+        assert len(slept) == 0, "Non-transient errors should not trigger a sleep/retry"
+
+    def test_all_retries_exhausted_raises(self, monkeypatch):
+        """Exception is re-raised after all retry attempts are exhausted."""
+        monkeypatch.setattr("basketball_ai.data.sql_loader._build_connection_url",
+                            lambda: "sqlite:///:memory:")
+        monkeypatch.setattr("time.sleep", lambda _: None)
+
+        engine = self._make_engine(fail_times=99, error_msg="('08001', 'persistent timeout')")
+
+        import sqlalchemy as _sa
+        monkeypatch.setattr(_sa, "create_engine", lambda *a, **kw: engine)
+
+        from basketball_ai.data.sql_loader import get_engine
+        with pytest.raises(Exception, match="08001"):
+            get_engine(max_retries=2, retry_delay=0)
+
+    def test_invalid_max_retries_raises(self):
+        """A max_retries value less than 1 raises ValueError immediately."""
+        from basketball_ai.data.sql_loader import get_engine
+        with pytest.raises(ValueError, match="max_retries must be >= 1"):
+            get_engine(max_retries=0)

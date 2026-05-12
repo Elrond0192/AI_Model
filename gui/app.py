@@ -177,7 +177,20 @@ with tab_data:
                         st.session_state.pop("chat_engine", None)
                         st.success(f"✅ Connesso! {len(loaded['players']):,} giocatori caricati.")
                     except Exception as exc:
-                        st.error(f"Connessione fallita: {exc}")
+                        err_str = str(exc)
+                        if "08001" in err_str or "timeout" in err_str.lower():
+                            st.error(
+                                f"Connessione fallita (timeout): {exc}\n\n"
+                                "**Suggerimenti:**\n"
+                                "- Verifica che il server Azure SQL sia attivo e non in pausa.\n"
+                                "- Se usi il tier **Serverless**, il database impiega 60–90 s per "
+                                "riattivarsi: aumenta `AZURE_SQL_CONNECT_TIMEOUT` (es. `90`) nel file `.env` "
+                                "e riprova.\n"
+                                "- Controlla che l'indirizzo del server, le credenziali e il firewall "
+                                "Azure consentano la connessione dal tuo IP."
+                            )
+                        else:
+                            st.error(f"Connessione fallita: {exc}")
 
         if "sql_table_mapping" in st.session_state:
             with st.expander("🔍 Mapping tabelle auto-rilevato", expanded=False):
