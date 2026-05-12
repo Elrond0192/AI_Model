@@ -470,7 +470,15 @@ def _normalize_identifier(value: Any) -> Any:
         except Exception:
             pass
     if isinstance(value, str):
-        return value.strip()
+        v = value.strip()
+        # Try to convert pure-numeric or hex strings to int
+        try:
+            return int(v, 10)
+        except ValueError:
+            try:
+                return int(v, 16)
+            except ValueError:
+                return v
     if isinstance(value, float) and value.is_integer():
         return int(value)
     return value
