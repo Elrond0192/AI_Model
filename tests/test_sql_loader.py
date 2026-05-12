@@ -13,6 +13,7 @@ from basketball_ai.data.sql_loader import (
     _REQUIRED_COLUMNS,
     _normalize_connection_string,
     _score_table,
+    _is_transient_connection_error,
 )
 
 
@@ -340,3 +341,50 @@ class TestNormalizeConnectionString:
         result = _normalize_connection_string(ado)
         decoded = self._decode_odbc_connect(result)
         assert "DRIVER={ODBC Driver 17 for SQL Server}" in decoded
+
+    def test_ado_net_default_timeout(self, monkeypatch):
+        """Default Connection Timeout is 60 s when not specified in the string."""
+        monkeypatch.delenv("AZURE_SQL_CONNECT_TIMEOUT", raising=False)
+        ado = "Server=host;Initial Catalog=db;User ID=u;Password=p;"
+        result = _normalize_connection_string(ado)
+        decoded = self._decode_odbc_connect(result)
+        assert "Connection Timeout=60" in decoded
+
+    def test_ado_net_custom_timeout_from_env(self, monkeypatch):
+        """AZURE_SQL_CONNECT_TIMEOUT env-var overrides the default timeout."""
+        monkeypatch.setenv("AZURE_SQL_CONNECT_TIMEOUT", "90")
+        ado = "Server=host;Initial Catalog=db;User ID=u;Password=p;"
+        result = _normalize_connection_string(ado)
+        decoded = self._decode_odbc_connect(result)
+        assert "Connection Timeout=90" in decoded
+
+    def test_ado_net_timeout_from_string_takes_precedence(self, monkeypatch):
+        """Connection Timeout in the ADO.NET string overrides the env-var default."""
+        monkeypatch.setenv("AZURE_SQL_CONNECT_TIMEOUT", "90")
+        ado = "Server=host;Initial Catalog=db;User ID=u;Password=p;Connection Timeout=45;"
+        result = _normalize_connection_string(ado)
+        decoded = self._decode_odbc_connect(result)
+        assert "Connection Timeout=45" in decoded
+
+
+# ---------------------------------------------------------------------------
+# _is_transient_connection_error
+# ---------------------------------------------------------------------------
+
+class TestIsTransientConnectionError:
+    """Tests for _is_transient_connection_error."""
+
+    def test_08001_sqlstate_recognised(self):
+        assert _is_transient_connection_error(Exception("('08001', 'TCP timeout')"))
+
+    def test_timeout_keyword_recognised(self):
+        assert _is_transient_connection_error(Exception("Connection timeout expired"))
+
+    def test_case_insensitive_timeout(self):
+        assert _is_transient_connection_error(Exception("Login Timeout"))
+
+    def test_unrelated_error_not_transient(self):
+        assert not _is_transient_connection_error(Exception("42000: syntax error"))
+
+    def test_permission_error_not_transient(self):
+        assert not _is_transient_connection_error(Exception("28000: login failed"))

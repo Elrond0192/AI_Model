@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import os
 import re
+import time
 from typing import Any, Dict, List, Optional
 from urllib.parse import quote_plus
 
@@ -250,7 +251,8 @@ def _normalize_connection_string(conn_str: str) -> str:
     _bool_map = {"true": "yes", "false": "no", "1": "yes", "0": "no"}
     encrypt = _bool_map.get(pairs.get("encrypt", "yes").lower(), pairs.get("encrypt", "yes"))
     trust_cert = _bool_map.get(pairs.get("trustservercertificate", "no").lower(), pairs.get("trustservercertificate", "no"))
-    timeout = pairs.get("connection timeout", "30")
+    _default_timeout = os.environ.get("AZURE_SQL_CONNECT_TIMEOUT", "60")
+    timeout = pairs.get("connection timeout") or _default_timeout
     driver = os.environ.get("AZURE_SQL_DRIVER", "ODBC Driver 18 for SQL Server")
 
     odbc_str = (
@@ -286,24 +288,39 @@ def _build_connection_url() -> str:
             "AZURE_SQL_USERNAME, AZURE_SQL_PASSWORD."
         )
 
+    _timeout = os.environ.get("AZURE_SQL_CONNECT_TIMEOUT", "60")
     params = quote_plus(
         f"DRIVER={{{driver}}};"
         f"SERVER={server};"
         f"DATABASE={database};"
         f"UID={username};"
         f"PWD={password};"
-        "Encrypt=yes;TrustServerCertificate=no;Connection Timeout=30;"
+        f"Encrypt=yes;TrustServerCertificate=no;Connection Timeout={_timeout};"
     )
     return f"mssql+pyodbc:///?odbc_connect={params}"
 
 
-def get_engine():
+def _is_transient_connection_error(exc: Exception) -> bool:
+    """Return True for transient network/login errors that are worth retrying.
+
+    Covers the pyodbc / SQLAlchemy ``08001`` state (TCP timeout, login timeout)
+    that occurs when Azure SQL Serverless is waking from auto-pause.
+    """
+    msg = str(exc)
+    return "08001" in msg or "timeout" in msg.lower()
+
+
+def get_engine(max_retries: int = 3, retry_delay: float = 15.0):
     """Return a SQLAlchemy engine built from environment variables.
 
     Lazily imports SQLAlchemy so the module remains importable without it.
+
+    On transient connection failures (sqlstate ``08001``, e.g. Azure SQL
+    Serverless waking from auto-pause) the function retries up to
+    *max_retries* times, waiting *retry_delay* seconds between attempts.
     """
     try:
-        from sqlalchemy import create_engine  # type: ignore
+        from sqlalchemy import create_engine, text  # type: ignore
     except ImportError as exc:
         raise ImportError(
             "SQLAlchemy is required for SQL data loading. "
@@ -311,7 +328,22 @@ def get_engine():
         ) from exc
 
     url = _build_connection_url()
-    return create_engine(url, pool_pre_ping=True)
+    engine = create_engine(url, pool_pre_ping=True)
+
+    last_exc: Exception = RuntimeError("No connection attempt made")
+    for attempt in range(1, max_retries + 1):
+        try:
+            with engine.connect() as conn:
+                conn.execute(text("SELECT 1"))
+            return engine
+        except Exception as exc:  # noqa: BLE001
+            last_exc = exc
+            if attempt < max_retries and _is_transient_connection_error(exc):
+                time.sleep(retry_delay)
+            else:
+                break
+
+    raise last_exc
 
 
 # Internal alias kept for backwards-compat with any internal callers.
