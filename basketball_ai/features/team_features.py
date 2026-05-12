@@ -11,6 +11,24 @@ import numpy as np
 
 from basketball_ai.data.models import Team
 
+
+def _normalize_id(value):
+    """Normalize an ID to int when possible, keep as-is for non-numeric strings."""
+    if value is None:
+        return None
+    if isinstance(value, float):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    v = str(value).strip()
+    try:
+        return int(v, 10)
+    except (ValueError, TypeError):
+        try:
+            return int(v, 16)
+        except (ValueError, TypeError):
+            return v
+
 # ---------------------------------------------------------------------------
 # Style-vs-position compatibility table (all 10 positions incl. hybrids)
 # ---------------------------------------------------------------------------
@@ -132,7 +150,7 @@ def compute_team_features(
     exclude_player_id: Optional[int] = None,
 ) -> Dict[str, float]:
     """Dict-based wrapper: looks up team from data dict."""
-    team_row = data["team_dict"].get(int(team_id))
+    team_row = data["team_dict"].get(_normalize_id(team_id))
     if team_row is None:
         return _default_team_features()
 
@@ -146,7 +164,7 @@ def compute_team_features(
 
     # Teammate quality
     season_col = "season"
-    rel_mask = (rels_df["team_id"] == int(team_id)) & (rels_df[season_col] == "2023-24")
+    rel_mask = (rels_df["team_id"] == _normalize_id(team_id)) & (rels_df[season_col] == "2023-24")
     roster_ids = set(rels_df[rel_mask]["player_id"].tolist())
     if exclude_player_id is not None:
         roster_ids.discard(exclude_player_id)

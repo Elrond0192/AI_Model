@@ -8,6 +8,24 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 
 from basketball_ai.models.ensemble import EnsembleModel, PredictionResult
+
+
+def _normalize_id(value: Any) -> Any:
+    """Normalize an ID to int when possible, keep as-is for non-numeric strings like 'GRC1'."""
+    if value is None:
+        return None
+    if isinstance(value, float):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    v = str(value).strip()
+    try:
+        return int(v, 10)
+    except (ValueError, TypeError):
+        try:
+            return int(v, 16)
+        except (ValueError, TypeError):
+            return v
 from basketball_ai.models.age_curve import age_performance_factor, PEAK_AGES, peak_age_window
 from basketball_ai.features.context_features import compute_context_features
 from basketball_ai.features.player_features import compute_player_features
@@ -199,13 +217,13 @@ class WhatIfEngine:
         season_base: int = 2024,
     ) -> List[TrajectoryPoint]:
         """Return rating predictions across an age range."""
-        player      = self.data["player_dict"].get(int(player_id), {})
+        player      = self.data["player_dict"].get(_normalize_id(player_id), {})
         current_age = int(player.get("age", 25))
         position    = str(player.get("position", "PG"))
 
         if team_id is None:
             ct = player.get("current_team_id")
-            team_id = int(ct) if ct else 1
+            team_id = _normalize_id(ct) if ct else 1
 
         lo, hi = age_range if age_range else (
             max(18, current_age - 4), min(40, current_age + 8)
@@ -239,8 +257,8 @@ class WhatIfEngine:
         for tid in team_ids:
             pred   = self.ensemble.predict(player_id, tid, self.data, season,
                                            competition=competition)
-            team   = team_dict.get(int(tid), {})
-            league = league_dict.get(int(team.get("league_id", 1)), {})
+            team   = team_dict.get(_normalize_id(tid), {})
+            league = league_dict.get(_normalize_id(team.get("league_id")), {})
             scenarios.append({
                 "team_id":        tid,
                 "team_name":      str(team.get("name", f"Team {tid}")),
@@ -275,12 +293,12 @@ class WhatIfEngine:
 
         results: List[TeamFitResult] = []
         for _, row in candidate.iterrows():
-            tid = int(row["id"])
+            tid = _normalize_id(row["id"])
             try:
                 pred   = self.ensemble.predict(player_id, tid, self.data, season)
                 ctx    = compute_context_features(player_id, tid, self.data)
                 team   = team_dict.get(tid, {})
-                league = league_dict.get(int(row["league_id"]), {})
+                league = league_dict.get(_normalize_id(row["league_id"]), {})
                 results.append(TeamFitResult(
                     team_id=tid,
                     team_name=str(team.get("name", f"Team {tid}")),
@@ -319,10 +337,10 @@ class WhatIfEngine:
 
         results: List[PlayerFitResult] = []
         for _, row in sample.iterrows():
-            pid = int(row["id"])
+            pid = _normalize_id(row["id"])
             try:
                 pred     = self.ensemble.predict(pid, team_id, self.data, season)
-                cur_team = team_dict.get(int(row.get("current_team_id") or 0), {})
+                cur_team = team_dict.get(_normalize_id(row.get("current_team_id")), {})
                 results.append(PlayerFitResult(
                     player_id=pid,
                     player_name=str(row["name"]),
@@ -375,14 +393,14 @@ class WhatIfEngine:
     # ------------------------------------------------------------------
     def predict_peak(self, player_id: int, team_id: Optional[int] = None) -> PeakPrediction:
         """Predict a player's career peak rating."""
-        player      = self.data["player_dict"].get(int(player_id), {})
+        player      = self.data["player_dict"].get(_normalize_id(player_id), {})
         current_age = int(player.get("age", 25))
         position    = str(player.get("position", "PG"))
         name        = str(player.get("name", f"Player {player_id}"))
 
         if team_id is None:
             ct = player.get("current_team_id")
-            team_id = int(ct) if ct else 1
+            team_id = _normalize_id(ct) if ct else 1
 
         traj = self.predict_age_trajectory(player_id, age_range=(18, 40), team_id=team_id)
         if not traj:
@@ -483,14 +501,14 @@ class WhatIfEngine:
         """
         player_dict = self.data["player_dict"]
         team_dict   = self.data["team_dict"]
-        target_name = str(player_dict.get(int(player_id), {}).get("name", f"Player {player_id}"))
-        team_row    = team_dict.get(int(team_id), {})
+        target_name = str(player_dict.get(_normalize_id(player_id), {}).get("name", f"Player {player_id}"))
+        team_row    = team_dict.get(_normalize_id(team_id), {})
         team_style  = str(team_row.get("playing_style", "motion_offense"))
 
         # --- 1. Profile each lineup member --------------------------------
         profiles: List[LineupMemberProfile] = []
         for pid in lineup_player_ids:
-            p_row = player_dict.get(int(pid), {})
+            p_row = player_dict.get(_normalize_id(pid), {})
             pos   = str(p_row.get("position", "PG"))
             name  = str(p_row.get("name", f"Player {pid}"))
             try:
@@ -508,7 +526,7 @@ class WhatIfEngine:
             ))
 
         # --- 2. Position coverage (all 5 slots incl. target player) ------
-        target_pos = str(player_dict.get(int(player_id), {}).get("position", "PG"))
+        target_pos = str(player_dict.get(_normalize_id(player_id), {}).get("position", "PG"))
         all_positions = [target_pos] + [p.position for p in profiles]
         pos_counter: Counter = Counter()
         for pos in all_positions:
@@ -605,12 +623,12 @@ class WhatIfEngine:
         """Compute a comprehensive synergy score for a set of players."""
         player_dict = self.data["player_dict"]
         team_dict   = self.data["team_dict"]
-        team_row    = team_dict.get(int(team_id), {})
+        team_row    = team_dict.get(_normalize_id(team_id), {})
         team_style  = str(team_row.get("playing_style", "motion_offense"))
 
         profiles: List[Dict[str, Any]] = []
         for pid in player_ids:
-            p_row = player_dict.get(int(pid), {})
+            p_row = player_dict.get(_normalize_id(pid), {})
             pos   = str(p_row.get("position", "PG"))
             name  = str(p_row.get("name", f"Player {pid}"))
             try:
@@ -743,7 +761,7 @@ class WhatIfEngine:
         players_df  = self.data["players"]
         player_dict = self.data["player_dict"]
         team_dict   = self.data["team_dict"]
-        target_name = str(player_dict.get(int(target_player_id), {}).get(
+        target_name = str(player_dict.get(_normalize_id(target_player_id), {}).get(
             "name", f"Player {target_player_id}"
         ))
 
@@ -751,8 +769,8 @@ class WhatIfEngine:
         sample = players_df.sample(min(700, len(players_df)), random_state=42)
         all_scored: List[Dict[str, Any]] = []
         for _, row in sample.iterrows():
-            pid = int(row["id"])
-            if pid == int(target_player_id):
+            pid = _normalize_id(row["id"])
+            if pid == _normalize_id(target_player_id):
                 continue
             pos  = str(row.get("position", "PG"))
             name = str(row.get("name", f"Player {pid}"))
@@ -762,7 +780,7 @@ class WhatIfEngine:
                 role      = self._classify_role_advanced(p_feats, pos)
                 cur_tid   = row.get("current_team_id")
                 cur_team  = str(team_dict.get(
-                    int(cur_tid) if cur_tid else 0, {}
+                    _normalize_id(cur_tid) if cur_tid else None, {}
                 ).get("name", "Unknown"))
                 all_scored.append({
                     "player_id":       pid,
@@ -773,7 +791,7 @@ class WhatIfEngine:
                     "current_team":    cur_team,
                     "style_compat":    round(
                         get_style_position_compat(
-                            str(team_dict.get(int(team_id), {}).get("playing_style", "")), pos
+                            str(team_dict.get(_normalize_id(team_id), {}).get("playing_style", "")), pos
                         ), 3
                     ),
                 })
@@ -804,7 +822,7 @@ class WhatIfEngine:
         avg_r = float(np.mean([p["predicted_rating"] for p in optimal])) if optimal else 0.0
 
         return LineupByRolesResult(
-            target_player_id=int(target_player_id),
+            target_player_id=_normalize_id(target_player_id),
             target_player_name=target_name,
             team_id=team_id,
             season=season,

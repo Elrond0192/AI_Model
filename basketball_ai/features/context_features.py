@@ -14,6 +14,24 @@ import numpy as np
 
 from basketball_ai.features.team_features import get_style_position_compat
 
+
+def _normalize_id(value):
+    """Normalize an ID to int when possible, keep as-is for non-numeric strings like 'GRC1'."""
+    if value is None:
+        return None
+    if isinstance(value, float):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    v = str(value).strip()
+    try:
+        return int(v, 10)
+    except (ValueError, TypeError):
+        try:
+            return int(v, 16)
+        except (ValueError, TypeError):
+            return v
+
 # ---------------------------------------------------------------------------
 # League adaptation
 # ---------------------------------------------------------------------------
@@ -60,8 +78,8 @@ def compute_context_features(
         Dict with keys: position_team_fit, style_compatibility,
         role_opportunity, league_adaptation_factor, spacing_fit.
     """
-    player_row = data["player_dict"].get(int(player_id))
-    team_row   = data["team_dict"].get(int(team_id))
+    player_row = data["player_dict"].get(_normalize_id(player_id))
+    team_row   = data["team_dict"].get(_normalize_id(team_id))
 
     if player_row is None or team_row is None:
         return _default_context_features()
@@ -98,8 +116,8 @@ def compute_context_features(
 
     # 4. League adaptation
     from_league_id = player_row.get("current_league_id")
-    to_league_id   = int(team_row.get("league_id", 1))
-    from_league    = data["league_dict"].get(int(from_league_id) if from_league_id else 1, {})
+    to_league_id   = _normalize_id(team_row.get("league_id"))
+    from_league    = data["league_dict"].get(_normalize_id(from_league_id), {})
     to_league      = data["league_dict"].get(to_league_id, {})
     from_tier = int(from_league.get("tier", 1))
     to_tier   = int(to_league.get("tier", 1))

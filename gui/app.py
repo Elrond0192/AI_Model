@@ -823,7 +823,11 @@ with tab_pred:
                 _auto_t = _auto_team_for_player(
                     sel_player_id, data_p, int(pred_season), sel_competition
                 )
-                if _auto_t is not None and "pred_team" not in st.session_state:
+                # Apply staged auto-team selection from previous run (button click)
+                if "_pred_team_stage" in st.session_state:
+                    st.session_state["pred_team"] = st.session_state["_pred_team_stage"]
+                    del st.session_state["_pred_team_stage"]
+                elif _auto_t is not None and "pred_team" not in st.session_state:
                     st.session_state["pred_team"] = _auto_t
 
                 srch_pt = st.text_input("🔍 Cerca squadra", key="_s_pred_team",
@@ -852,7 +856,7 @@ with tab_pred:
                     else:
                         if st.button(f"🤖 Usa squadra auto-rilevata: {_auto_name}",
                                      key="pred_auto_team"):
-                            st.session_state["pred_team"] = _auto_t
+                            st.session_state["_pred_team_stage"] = _auto_t
                             st.rerun()
 
             if st.button("🔮 Predici", type="primary", key="pred_run"):

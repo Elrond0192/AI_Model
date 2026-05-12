@@ -14,6 +14,24 @@ import pandas as pd
 
 from basketball_ai.data.models import Player, PlayerStats
 
+
+def _normalize_id(value):
+    """Normalize an ID to int when possible, keep as-is for non-numeric strings."""
+    if value is None:
+        return None
+    if isinstance(value, float):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    v = str(value).strip()
+    try:
+        return int(v, 10)
+    except (ValueError, TypeError):
+        try:
+            return int(v, 16)
+        except (ValueError, TypeError):
+            return v
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -153,7 +171,7 @@ def compute_player_features(
     Looks up player and their stats from the flat `data` dict, then
     delegates to compute_player_features_from_objects().
     """
-    player_row = data["player_dict"].get(int(player_id), {})
+    player_row = data["player_dict"].get(_normalize_id(player_id), {})
     stats_df   = data["player_stats"]
 
     # Build a minimal Player object
@@ -161,7 +179,7 @@ def compute_player_features(
     age = int(player_row.get("age", 26)) if target_age is None else int(target_age)
 
     player = Player(
-        id=int(player_id),
+        id=_normalize_id(player_id),
         name=str(player_row.get("name", "")),
         age=age,
         position=pos,
@@ -176,7 +194,7 @@ def compute_player_features(
     )
 
     # Filter stats for this player
-    mask = stats_df["player_id"] == int(player_id)
+    mask = stats_df["player_id"] == _normalize_id(player_id)
     if season is not None:
         # include only seasons up to the target season
         mask = mask & (stats_df["season"] <= str(season))
