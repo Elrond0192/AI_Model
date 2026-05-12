@@ -4,7 +4,7 @@ Positions support single and hybrid roles:
   Pure:   PG, SG, SF, PF, C
   Hybrid: PG/SG, SG/SF, SF/PF, PF/C, SG/PF (stretch), PG/SF (wing-guard)
 """
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional, List
 
 @dataclass
@@ -31,6 +31,8 @@ class Team:
     assists_per_game: float
     star_player_usage: float
     league_tier: int
+    short_name: str = field(default="")
+    net_rtg: float = field(default=0.0)
 
 @dataclass
 class Player:
@@ -77,6 +79,15 @@ class PlayerStats:
     ast_ratio: float
     reb_pct: float
     rating: float
+    ortg: float = field(default=0.0)
+    drtg: float = field(default=0.0)
+    net_rtg: float = field(default=0.0)
+    ruolo_offensivo: str = field(default="")
+    ruolo_difensivo: str = field(default="")
+    ruolo_combinato: str = field(default="")
+    on_net_rtg: float = field(default=0.0)
+    off_net_rtg: float = field(default=0.0)
+    net_rtg_diff: float = field(default=0.0)
 
 @dataclass
 class TeamPlayerRelation:

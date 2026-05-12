@@ -33,7 +33,7 @@ class CompatibilityModel:
     def _team_style_vector(self, team_row: Dict) -> np.ndarray:
         """Build 6-d style vector from a team row dict."""
         try:
-            team = Team(**{k: team_row[k] for k in Team.__dataclass_fields__})
+            team = Team(**{k: team_row.get(k) for k in Team.__dataclass_fields__})
             return compute_team_style_vector(team)
         except Exception:
             pace  = float(team_row.get("pace", 97))

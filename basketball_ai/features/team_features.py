@@ -137,7 +137,7 @@ def compute_team_features(
         return _default_team_features()
 
     try:
-        team = Team(**{k: team_row[k] for k in Team.__dataclass_fields__})
+        team = Team(**{k: team_row.get(k) for k in Team.__dataclass_fields__})
     except Exception:
         return _default_team_features()
 

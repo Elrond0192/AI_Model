@@ -92,6 +92,90 @@ _TABLE_ENV_VARS: Dict[str, str] = {
     "team_player_relations": "AZURE_SQL_TABLE_TEAM_PLAYER_RELATIONS",
 }
 
+# ---------------------------------------------------------------------------
+# Column-mapping configuration — delegated to schema_mapping.py
+# ---------------------------------------------------------------------------
+# The authoritative mapping lives in basketball_ai/data/schema_mapping.py.
+# That file is the single place to add/edit column mappings with full docs.
+# Here we only keep the env-var name registry and the thin helpers that
+# merge env-var / GUI overrides on top of the schema_mapping defaults.
+
+# Env-var names for per-logical column-rename overrides.
+_COLUMN_RENAME_ENV_VARS: Dict[str, str] = {
+    "leagues":               "AZURE_SQL_COLUMN_RENAMES_LEAGUES",
+    "teams":                 "AZURE_SQL_COLUMN_RENAMES_TEAMS",
+    "players":               "AZURE_SQL_COLUMN_RENAMES_PLAYERS",
+    "player_stats":          "AZURE_SQL_COLUMN_RENAMES_PLAYER_STATS",
+    "team_player_relations": "AZURE_SQL_COLUMN_RENAMES_TEAM_PLAYER_RELATIONS",
+}
+
+
+def _get_column_renames(logical: str) -> Dict[str, str]:
+    """Return column rename map for *logical*.
+
+    Priority (highest first):
+    1. AZURE_SQL_COLUMN_RENAMES_<LOGICAL> env var (set by GUI or .env)
+    2. schema_mapping.get_rename_map() defaults
+    """
+    try:
+        from basketball_ai.data.schema_mapping import get_rename_map as _sm_renames
+        renames = _sm_renames(logical)
+    except ImportError:
+        renames = {}
+
+    env_key = _COLUMN_RENAME_ENV_VARS.get(logical, "")
+    raw = os.environ.get(env_key, "").strip()
+    if raw:
+        # Env-var overrides replace the whole map (GUI saved explicit pairs)
+        renames = {}
+        for pair in raw.split(","):
+            pair = pair.strip()
+            if ":" in pair:
+                src, _, dst = pair.partition(":")
+                renames[src.strip()] = dst.strip()
+    return renames
+
+
+def _apply_column_mapping(df: "pd.DataFrame", logical: str) -> "pd.DataFrame":
+    """Rename columns, apply computed derivations, fill missing defaults.
+
+    Delegates to schema_mapping.py for all configuration; falls back to
+    safe no-ops when the module is unavailable.
+
+    Steps:
+    1. Rename DB columns to logical names (case-insensitive).
+    2. Apply compute functions (age from BirthDate, per-game stats, etc.).
+    3. Inject default values for any expected column still missing.
+    """
+    # 1. Rename
+    renames = _get_column_renames(logical)
+    col_lower = {c.lower(): c for c in df.columns}
+    rename_map = {
+        col_lower[src.lower()]: dst
+        for src, dst in renames.items()
+        if src.lower() in col_lower and col_lower[src.lower()] != dst
+    }
+    if rename_map:
+        df = df.rename(columns=rename_map)
+
+    # 2. Computed columns (via schema_mapping)
+    try:
+        from basketball_ai.data.schema_mapping import apply_computes as _sm_computes
+        df = _sm_computes(df, logical)
+    except ImportError:
+        pass
+
+    # 3. Defaults (via schema_mapping)
+    try:
+        from basketball_ai.data.schema_mapping import get_defaults as _sm_defaults
+        for col, default in _sm_defaults(logical).items():
+            if col not in df.columns:
+                df[col] = default
+    except ImportError:
+        pass
+
+    return df
+
 
 # ---------------------------------------------------------------------------
 # Internal helpers
@@ -163,8 +247,9 @@ def _normalize_connection_string(conn_str: str) -> str:
         or ""
     ).strip()
 
-    encrypt = pairs.get("encrypt", "yes")
-    trust_cert = pairs.get("trustservercertificate", "no")
+    _bool_map = {"true": "yes", "false": "no", "1": "yes", "0": "no"}
+    encrypt = _bool_map.get(pairs.get("encrypt", "yes").lower(), pairs.get("encrypt", "yes"))
+    trust_cert = _bool_map.get(pairs.get("trustservercertificate", "no").lower(), pairs.get("trustservercertificate", "no"))
     timeout = pairs.get("connection timeout", "30")
     driver = os.environ.get("AZURE_SQL_DRIVER", "ODBC Driver 18 for SQL Server")
 
@@ -234,58 +319,156 @@ _get_engine = get_engine
 
 
 def _read_table(engine, table: str) -> pd.DataFrame:
-    """Read a full table and return a DataFrame."""
+    """Read a full table and return a DataFrame.
+
+    *table* may be a plain name or a ``schema.table`` qualified name.
+    """
     with engine.connect() as conn:
+        if "." in table:
+            schema, tname = table.split(".", 1)
+            return pd.read_sql_table(tname, conn, schema=schema)
         return pd.read_sql_table(table, conn)
 
 
+def _execute_query(engine, sql: str) -> pd.DataFrame:
+    """Execute a SQL query and return a DataFrame."""
+    with engine.connect() as conn:
+        return pd.read_sql(sql, conn)
+
+
+def _discover_league_seasons(engine) -> List[tuple]:
+    """Discover (league_id, season) pairs from Anagrafiche schema table names.
+
+    Returns e.g. [('ITA1', '2024'), ('GRC1', '2024')] based on tables like
+    Anagrafiche.ITA1_2024, Anagrafiche.GRC1_2024 found in the database.
+    """
+    try:
+        from basketball_ai.data import schema_mapping
+        df = _execute_query(engine, schema_mapping.LEAGUES_DISCOVERY_QUERY)
+        return [(str(r["id"]).strip(), str(r["season"]).strip()) for _, r in df.iterrows()]
+    except Exception:
+        return []
+
+
+def _get_table_queries(engine=None) -> Dict[str, str]:
+    """Return SQL queries for all logical tables.
+
+    When *engine* is supplied and the dynamic query path is enabled, leagues
+    and seasons are discovered from Anagrafiche schema table names and queries
+    are built dynamically (one UNION ALL branch per league/season).
+
+    Falls back to the static TABLE_QUERIES dict (empty by default).
+    """
+    try:
+        from basketball_ai.data import schema_mapping
+    except ImportError:
+        return {}
+    if engine is not None and _use_query_path(engine):
+        league_seasons = _discover_league_seasons(engine)
+        if league_seasons and hasattr(schema_mapping, "get_table_queries"):
+            return schema_mapping.get_table_queries(league_seasons)
+    return getattr(schema_mapping, "TABLE_QUERIES", {})
+
+
+def _use_query_path(engine=None) -> bool:
+    enabled = os.environ.get("AZURE_SQL_USE_QUERIES", "false").strip().lower() in {"1", "true", "yes", "on"}
+    if not enabled:
+        return False
+    dialect_name = getattr(getattr(engine, "dialect", None), "name", "").lower() if engine is not None else ""
+    return dialect_name != "sqlite"
+
+
+def _should_use_query(logical: str, engine=None, table_queries: Optional[Dict[str, str]] = None) -> bool:
+    if table_queries is not None:
+        return logical in table_queries
+    return _use_query_path(engine) and logical in _get_table_queries(engine)
+
+
+def _normalize_identifier(value: Any) -> Any:
+    if pd.isna(value):
+        return None
+    if hasattr(value, "item") and not isinstance(value, (str, bytes)):
+        try:
+            value = value.item()
+        except Exception:
+            pass
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    return value
+
+
 def _get_db_schema(engine) -> Dict[str, List[str]]:
-    """Return a mapping of {table_name: [column_names]} for every table
-    visible in the current database / schema."""
+    """Return a mapping of {schema.table: [column_names]} for every table
+    visible in the current database across all non-system schemas."""
     from sqlalchemy import inspect as _inspect  # type: ignore
     inspector = _inspect(engine)
     result: Dict[str, List[str]] = {}
-    for table_name in inspector.get_table_names():
-        cols = [c["name"] for c in inspector.get_columns(table_name)]
-        result[table_name] = cols
+    # Collect all schemas; fall back to default schema only
+    try:
+        schemas = inspector.get_schema_names()
+    except Exception:
+        schemas = [None]
+    _system = {"sys", "information_schema", "guest", "db_owner",
+               "db_accessadmin", "db_securityadmin", "db_ddladmin",
+               "db_backupoperator", "db_datareader", "db_datawriter",
+               "db_denydatareader", "db_denydatawriter"}
+    dialect_name = getattr(getattr(engine, "dialect", None), "name", "").lower()
+    for schema in schemas:
+        if schema and schema.lower() in _system:
+            continue
+        try:
+            table_names = inspector.get_table_names(schema=schema)
+        except Exception:
+            continue
+        for table_name in table_names:
+            try:
+                cols = [c["name"] for c in inspector.get_columns(table_name, schema=schema)]
+            except Exception:
+                cols = []
+            if dialect_name == "sqlite" and schema in {None, "main"}:
+                qualified = table_name
+            else:
+                qualified = f"{schema}.{table_name}" if schema else table_name
+            result[qualified] = cols
     return result
 
 
-def _score_table(actual_cols: List[str], expected_columns: List[str]) -> float:
+def _score_table(actual_cols: List[str], expected_columns: List[str],
+                 rename_map: Optional[Dict[str, str]] = None) -> float:
     """Return the fraction of *expected_columns* present in *actual_cols*.
 
     A score of 1.0 means every expected column was found; 0.0 means none.
-    Comparison is case-insensitive.
+    Comparison is case-insensitive.  When *rename_map* is provided, actual
+    column names are first translated to their logical equivalents before
+    matching.
     """
     actual_lower = {c.lower() for c in actual_cols}
+    if rename_map:
+        rename_lower = {k.lower(): v.lower() for k, v in rename_map.items()}
+        actual_lower = {rename_lower.get(c, c) for c in actual_lower}
     matches = sum(1 for s in expected_columns if s.lower() in actual_lower)
     return matches / len(expected_columns) if expected_columns else 0.0
 
 
-def _discover_table_mapping(engine) -> Dict[str, str]:
-    """Inspect the connected database and return a mapping of
-    ``{logical_name: actual_table_name}`` for the five required datasets.
+def _discover_table_mapping(engine, table_queries: Optional[Dict[str, str]] = None) -> Dict[str, str]:
+    """Inspect the connected database and return a mapping of logical names
+    to physical tables for datasets that still use direct table reads.
 
-    For each logical dataset the function:
-
-    1. Checks whether an explicit override exists (environment variable
-       ``AZURE_SQL_TABLE_<NAME>`` or a table whose name exactly matches
-       the logical key, case-insensitively).
-    2. If no exact match, scores every table in the DB by computing how
-       many of the dataset's expected columns are present.
-    3. Selects the table with the highest score, provided it meets the
-       minimum overlap threshold (:data:`_MIN_OVERLAP`).
-
-    Raises :class:`ValueError` if no suitable table can be found for any
-    of the required datasets.
+    Query-backed datasets (present in *table_queries*) are skipped.
     """
     schema = _get_db_schema(engine)
     table_names_lower = {t.lower(): t for t in schema}
     mapping: Dict[str, str] = {}
 
     for logical, expected_columns in _REQUIRED_COLUMNS.items():
-        # 1. Explicit env-var override
+        if table_queries and logical in table_queries:
+            continue
+
         env_override = os.environ.get(_TABLE_ENV_VARS[logical], "").strip()
+        if getattr(getattr(engine, "dialect", None), "name", "").lower() == "sqlite" and "." in env_override:
+            env_override = ""
         if env_override:
             if env_override not in schema:
                 raise ValueError(
@@ -295,16 +478,15 @@ def _discover_table_mapping(engine) -> Dict[str, str]:
             mapping[logical] = env_override
             continue
 
-        # 2. Exact case-insensitive match on the logical name
         if logical.lower() in table_names_lower:
             mapping[logical] = table_names_lower[logical.lower()]
             continue
 
-        # 3. Score all tables and pick the best
+        renames = _get_column_renames(logical)
         best_table: Optional[str] = None
         best_score = 0.0
         for table_name, cols in schema.items():
-            score = _score_table(cols, expected_columns)
+            score = _score_table(cols, expected_columns, rename_map=renames)
             if score > best_score:
                 best_score = score
                 best_table = table_name
@@ -366,63 +548,65 @@ def get_table_mapping(engine=None) -> Dict[str, str]:
 
 
 def load_all_data_from_sql(engine=None, table_mapping: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
-    """Load all basketball data from Azure SQL Server.
-
-    Automatically discovers which tables in the database correspond to the
-    five required datasets by inspecting the schema and scoring column
-    overlap against known signatures.  Explicit overrides can be passed via
-    *table_mapping* or via ``AZURE_SQL_TABLE_*`` environment variables.
-
-    Returns the same flat dict as ``basketball_ai.data.loader.load_all_data()``:
-
-        leagues, teams, players, player_stats, team_player_relations
-            – ``pd.DataFrame``
-        league_dict, team_dict, player_dict
-            – ``{id: row_dict}``
-        league_teams
-            – ``{league_id: [team_ids]}``
-    """
+    """Load all basketball data from Azure SQL Server."""
     if engine is None:
         engine = _get_engine()
 
-    if table_mapping is None:
-        table_mapping = _discover_table_mapping(engine)
+    # Discover queries once — this also runs league/season discovery from table names.
+    table_queries = _get_table_queries(engine)
 
-    leagues_df = _read_table(engine, table_mapping["leagues"])
-    teams_df   = _read_table(engine, table_mapping["teams"])
-    players_df = _read_table(engine, table_mapping["players"])
-    stats_df   = _read_table(engine, table_mapping["player_stats"])
-    rels_df    = _read_table(engine, table_mapping["team_player_relations"])
+    resolved_mapping: Dict[str, str] = dict(table_mapping or {})
+    needed_tables = [
+        logical
+        for logical in _REQUIRED_COLUMNS
+        if logical not in table_queries and logical not in resolved_mapping
+    ]
+    if needed_tables:
+        discovered = _discover_table_mapping(engine, table_queries)
+        for logical in needed_tables:
+            resolved_mapping[logical] = discovered[logical]
 
-    # Normalise nullable int columns (same logic as the file loader)
+    def _load_logical(logical: str) -> pd.DataFrame:
+        if logical in table_queries:
+            return _execute_query(engine, table_queries[logical])
+        return _apply_column_mapping(_read_table(engine, resolved_mapping[logical]), logical)
+
+    leagues_df = _load_logical("leagues")
+    teams_df = _load_logical("teams")
+    players_df = _load_logical("players")
+    stats_df = _load_logical("player_stats")
+    rels_df = _load_logical("team_player_relations")
+
     for col in ["current_team_id", "current_league_id", "draft_year", "draft_pick"]:
         if col in players_df.columns:
             players_df[col] = players_df[col].where(players_df[col].notna(), other=None)
 
-    league_dict: Dict[int, dict] = {
-        int(r["id"]): r.to_dict() for _, r in leagues_df.iterrows()
+    league_dict: Dict[Any, dict] = {
+        _normalize_identifier(r["id"]): r.to_dict() for _, r in leagues_df.iterrows()
     }
-    team_dict: Dict[int, dict] = {
-        int(r["id"]): r.to_dict() for _, r in teams_df.iterrows()
+    team_dict: Dict[Any, dict] = {
+        _normalize_identifier(r["id"]): r.to_dict() for _, r in teams_df.iterrows()
     }
-    player_dict: Dict[int, dict] = {
-        int(r["id"]): r.to_dict() for _, r in players_df.iterrows()
+    player_dict: Dict[Any, dict] = {
+        _normalize_identifier(r["id"]): r.to_dict() for _, r in players_df.iterrows()
     }
 
-    league_teams: Dict[int, List[int]] = {}
+    league_teams: Dict[Any, List[Any]] = {}
     for _, t in teams_df.iterrows():
-        league_teams.setdefault(int(t["league_id"]), []).append(int(t["id"]))
+        league_id = _normalize_identifier(t["league_id"])
+        team_id = _normalize_identifier(t["id"])
+        league_teams.setdefault(league_id, []).append(team_id)
 
     return {
-        "leagues":               leagues_df,
-        "teams":                 teams_df,
-        "players":               players_df,
-        "player_stats":          stats_df,
+        "leagues": leagues_df,
+        "teams": teams_df,
+        "players": players_df,
+        "player_stats": stats_df,
         "team_player_relations": rels_df,
-        "league_dict":           league_dict,
-        "team_dict":             team_dict,
-        "player_dict":           player_dict,
-        "league_teams":          league_teams,
+        "league_dict": league_dict,
+        "team_dict": team_dict,
+        "player_dict": player_dict,
+        "league_teams": league_teams,
     }
 
 

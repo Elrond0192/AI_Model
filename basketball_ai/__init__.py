@@ -1,1 +1,1 @@
-"""Basketball Performance AI System."""
+"""FastAPI application and routes."""

@@ -74,12 +74,13 @@ st.title("🏀 Basketball Performance AI")
 # Tabs
 # ---------------------------------------------------------------------------
 
-tab_data, tab_train, tab_pred, tab_scen, tab_chat = st.tabs([
+tab_data, tab_train, tab_pred, tab_scen, tab_chat, tab_mapping = st.tabs([
     "📂 Dati",
     "🏋️ Training",
     "🎯 Predizioni",
     "🔀 Scenari",
     "💬 Chat",
+    "🗺️ Mapping",
 ])
 
 # ===========================================================================
@@ -156,6 +157,12 @@ with tab_data:
                 with st.spinner("Connessione ad Azure SQL …"):
                     try:
                         os.environ["AZURE_SQL_CONNECTION_STRING"] = conn_str
+                        # Apply any column-mapping overrides saved in the Mapping tab
+                        for env_key, val in st.session_state.get("mapping_env_overrides", {}).items():
+                            if val:
+                                os.environ[env_key] = val
+                            else:
+                                os.environ.pop(env_key, None)
                         from basketball_ai.data.sql_loader import (
                             load_all_data_from_sql,
                             get_table_mapping,
@@ -996,3 +1003,163 @@ with tab_chat:
                 st.rerun()
 
 
+# ===========================================================================
+# TAB 6 – MAPPING
+# ===========================================================================
+
+with tab_mapping:
+    st.header("🗺️ Mapping colonne DB → Modello")
+    st.markdown(
+        "Configura la corrispondenza tra le colonne del **database reale** e i campi "
+        "attesi dal modello. Modifica la colonna **DB Column** con il nome esatto della "
+        "colonna nel tuo database. Le modifiche vengono applicate al prossimo caricamento SQL."
+    )
+
+    try:
+        from basketball_ai.data.schema_mapping import ALL_TABLES, ColumnDef
+        _mapping_available = True
+    except ImportError:
+        st.error("schema_mapping.py non trovato. Assicurati che il file esista in basketball_ai/data/.")
+        _mapping_available = False
+
+    # Env-var names per tabella (devono coincidere con sql_loader)
+    _MAPPING_ENV_VARS = {
+        "leagues":               "AZURE_SQL_COLUMN_RENAMES_LEAGUES",
+        "teams":                 "AZURE_SQL_COLUMN_RENAMES_TEAMS",
+        "players":               "AZURE_SQL_COLUMN_RENAMES_PLAYERS",
+        "player_stats":          "AZURE_SQL_COLUMN_RENAMES_PLAYER_STATS",
+        "team_player_relations": "AZURE_SQL_COLUMN_RENAMES_TEAM_PLAYER_RELATIONS",
+    }
+    _TABLE_LABELS = {
+        "leagues":               "🏅 Leghe  (Configuration.Championship_ids)",
+        "teams":                 "🏆 Squadre  (Anagrafiche.Team_*)",
+        "players":               "👥 Giocatori  (Anagrafiche.*)",
+        "player_stats":          "📊 Statistiche giocatori  (Analisi.AdvancedStats_Player_*)",
+        "team_player_relations": "🔗 Relazioni giocatore-squadra  (Anagrafiche.*)",
+    }
+
+    if _mapping_available:
+        # Initialise session state with current env-var values on first load
+        if "mapping_env_overrides" not in st.session_state:
+            st.session_state["mapping_env_overrides"] = {
+                ev: os.environ.get(ev, "")
+                for ev in _MAPPING_ENV_VARS.values()
+            }
+
+        # Parse current env-var overrides into {logical: {db_col: logical_col}}
+        def _parse_overrides(env_val: str) -> dict:
+            result = {}
+            for pair in env_val.split(","):
+                pair = pair.strip()
+                if ":" in pair:
+                    src, _, dst = pair.partition(":")
+                    result[src.strip()] = dst.strip()
+            return result
+
+        any_changed = False
+
+        for logical, col_defs in ALL_TABLES.items():
+            env_key = _MAPPING_ENV_VARS[logical]
+            current_overrides = _parse_overrides(
+                st.session_state["mapping_env_overrides"].get(env_key, "")
+            )
+
+            # Build display dataframe
+            rows = []
+            for cd in col_defs:
+                # DB column: prefer saved override (by logical_col), then schema default
+                db_col_val = ""
+                for db_c, log_c in current_overrides.items():
+                    if log_c == cd.logical_col:
+                        db_col_val = db_c
+                        break
+                if not db_col_val and cd.db_col:
+                    db_col_val = cd.db_col
+
+                rows.append({
+                    "Campo modello": cd.logical_col,
+                    "Colonna DB": db_col_val,
+                    "Default (se assente)": str(cd.default) if cd.default is not None else "",
+                    "Derivata": "✓" if cd.compute is not None else "",
+                    "Descrizione": cd.description,
+                })
+
+            df_mapping = pd.DataFrame(rows)
+
+            with st.expander(_TABLE_LABELS.get(logical, logical), expanded=False):
+                st.caption(
+                    "• **Campo modello** — nome interno usato dall'applicazione (non modificare).  \n"
+                    "• **Colonna DB** — nome esatto della colonna nel database (modifica qui).  \n"
+                    "• **Default** — valore usato se la colonna è assente nel DB.  \n"
+                    "• **Derivata** — ✓ indica una colonna calcolata automaticamente (es. per-game stats)."
+                )
+
+                edited_df = st.data_editor(
+                    df_mapping,
+                    key=f"mapping_editor_{logical}",
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        "Campo modello": st.column_config.TextColumn(
+                            "Campo modello", disabled=True, width="medium"
+                        ),
+                        "Colonna DB": st.column_config.TextColumn(
+                            "Colonna DB", width="medium",
+                            help="Nome esatto della colonna nel tuo database."
+                        ),
+                        "Default (se assente)": st.column_config.TextColumn(
+                            "Default", disabled=True, width="small"
+                        ),
+                        "Derivata": st.column_config.TextColumn(
+                            "Derivata", disabled=True, width="small"
+                        ),
+                        "Descrizione": st.column_config.TextColumn(
+                            "Descrizione", disabled=True, width="large"
+                        ),
+                    },
+                )
+
+                # Check if anything was edited
+                if not edited_df["Colonna DB"].equals(df_mapping["Colonna DB"]):
+                    any_changed = True
+
+                # Store edited mapping back to session state
+                pairs = []
+                for _, row in edited_df.iterrows():
+                    db_c = str(row["Colonna DB"]).strip()
+                    log_c = str(row["Campo modello"]).strip()
+                    if db_c and log_c and db_c != log_c:
+                        pairs.append(f"{db_c}:{log_c}")
+                st.session_state["mapping_env_overrides"][env_key] = ",".join(pairs)
+
+        st.divider()
+        col_save, col_reset, col_info = st.columns([2, 2, 6])
+
+        with col_save:
+            if st.button("💾 Salva e applica mapping", type="primary", key="mapping_save"):
+                for env_key, val in st.session_state["mapping_env_overrides"].items():
+                    if val:
+                        os.environ[env_key] = val
+                    else:
+                        os.environ.pop(env_key, None)
+                st.success(
+                    "✅ Mapping salvato. Torna al tab **📂 Dati** e ricarica i dati SQL "
+                    "per applicare le modifiche."
+                )
+
+        with col_reset:
+            if st.button("↩️ Ripristina default", key="mapping_reset"):
+                st.session_state.pop("mapping_env_overrides", None)
+                for ev in _MAPPING_ENV_VARS.values():
+                    os.environ.pop(ev, None)
+                st.rerun()
+
+        with col_info:
+            if any_changed:
+                st.info("⚠️ Hai modifiche non salvate — premi **Salva e applica mapping**.")
+
+        # Show current env-var values for debugging
+        with st.expander("🔧 Variabili d'ambiente correnti (debug)", expanded=False):
+            for logical, env_key in _MAPPING_ENV_VARS.items():
+                val = os.environ.get(env_key, "")
+                st.code(f"{env_key}={val or '(non impostata)'}", language="bash")
