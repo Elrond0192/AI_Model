@@ -403,22 +403,21 @@ def _discover_normalized_name_tags(engine, league_seasons: List[tuple]) -> set:
     """Return the set of ``"<league>_<season>"`` tags whose Anagrafiche player
     table contains the ``NormalizedPlayerName`` column.
 
-    A single ``INFORMATION_SCHEMA.COLUMNS`` query is used so only one round-trip
-    to the database is required regardless of how many leagues are loaded.
+    Queries ``INFORMATION_SCHEMA.COLUMNS`` with a fully static SQL string (no
+    user-controlled values interpolated) and filters the results in Python, so
+    there is no risk of SQL injection.
     """
     if not league_seasons:
         return set()
-    tags = [f"{l}_{s}" for l, s in league_seasons]
-    placeholders = ", ".join(f"'{t}'" for t in tags)
     sql = (
         "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.COLUMNS "
         "WHERE TABLE_SCHEMA = 'Anagrafiche' "
-        "AND COLUMN_NAME = 'NormalizedPlayerName' "
-        f"AND TABLE_NAME IN ({placeholders})"
+        "AND COLUMN_NAME = 'NormalizedPlayerName'"
     )
     try:
         df = _execute_query(engine, sql)
-        return set(df["TABLE_NAME"].str.strip().tolist())
+        known_tags = {f"{l}_{s}" for l, s in league_seasons}
+        return set(df["TABLE_NAME"].str.strip().tolist()) & known_tags
     except Exception:
         return set()
 
@@ -663,20 +662,24 @@ def load_all_data_from_sql(engine=None, table_mapping: Optional[Dict[str, str]] 
         and not leagues_df.empty
         and "id" in leagues_df.columns
     ):
-        pace_col = "pace" if "pace" in teams_df.columns else None
-        ortg_col = "offensive_rating" if "offensive_rating" in teams_df.columns else None
+        def _col_mean(group: "pd.DataFrame", col: str) -> "Optional[float]":
+            if col not in group.columns:
+                return None
+            val = pd.to_numeric(group[col], errors="coerce").mean()
+            return val if pd.notna(val) else None
+
+        _league_stat_cols = [
+            ("pace", "avg_pace"),
+            ("offensive_rating", "avg_offensive_rating"),
+        ]
         for league_id, group in teams_df.groupby("league_id"):
             mask = leagues_df["id"] == league_id
             if not mask.any():
                 continue
-            if pace_col:
-                avg_pace = pd.to_numeric(group[pace_col], errors="coerce").mean()
-                if pd.notna(avg_pace):
-                    leagues_df.loc[mask, "avg_pace"] = avg_pace
-            if ortg_col:
-                avg_ortg = pd.to_numeric(group[ortg_col], errors="coerce").mean()
-                if pd.notna(avg_ortg):
-                    leagues_df.loc[mask, "avg_offensive_rating"] = avg_ortg
+            for src_col, dst_col in _league_stat_cols:
+                val = _col_mean(group, src_col)
+                if val is not None:
+                    leagues_df.loc[mask, dst_col] = val
 
     for col in ["current_team_id", "current_league_id", "draft_year", "draft_pick"]:
         if col in players_df.columns:
