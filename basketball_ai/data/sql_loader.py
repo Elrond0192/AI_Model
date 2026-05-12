@@ -36,11 +36,14 @@ AZURE_SQL_TABLE_PLAYER_STATS, AZURE_SQL_TABLE_TEAM_PLAYER_RELATIONS
 """
 from __future__ import annotations
 
+import logging
 import os
 import re
 import time
 from typing import Any, Dict, List, Optional
 from urllib.parse import quote_plus
+
+_logger = logging.getLogger(__name__)
 
 import pandas as pd
 
@@ -252,7 +255,8 @@ def _normalize_connection_string(conn_str: str) -> str:
     encrypt = _bool_map.get(pairs.get("encrypt", "yes").lower(), pairs.get("encrypt", "yes"))
     trust_cert = _bool_map.get(pairs.get("trustservercertificate", "no").lower(), pairs.get("trustservercertificate", "no"))
     _default_timeout = os.environ.get("AZURE_SQL_CONNECT_TIMEOUT", "60")
-    timeout = pairs.get("connection timeout") or _default_timeout
+    _raw_timeout = pairs.get("connection timeout")
+    timeout = _raw_timeout if _raw_timeout is not None else _default_timeout
     driver = os.environ.get("AZURE_SQL_DRIVER", "ODBC Driver 18 for SQL Server")
 
     odbc_str = (
@@ -330,7 +334,7 @@ def get_engine(max_retries: int = 3, retry_delay: float = 15.0):
     url = _build_connection_url()
     engine = create_engine(url, pool_pre_ping=True)
 
-    last_exc: Exception = RuntimeError("No connection attempt made")
+    last_exc: Optional[Exception] = None
     for attempt in range(1, max_retries + 1):
         try:
             with engine.connect() as conn:
@@ -339,10 +343,17 @@ def get_engine(max_retries: int = 3, retry_delay: float = 15.0):
         except Exception as exc:  # noqa: BLE001
             last_exc = exc
             if attempt < max_retries and _is_transient_connection_error(exc):
+                _logger.warning(
+                    "Transient connection error (attempt %d/%d): %s — retrying in %.0f s …",
+                    attempt, max_retries, exc, retry_delay,
+                )
                 time.sleep(retry_delay)
             else:
                 break
 
+    if last_exc is None:
+        # max_retries <= 0: no attempts were made, return the engine as-is.
+        return engine
     raise last_exc
 
 
