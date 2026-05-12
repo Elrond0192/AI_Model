@@ -357,8 +357,10 @@ def get_engine(max_retries: int = 3, retry_delay: float = 15.0):
             else:
                 break
 
-    assert last_exc is not None  # loop always runs at least once (max_retries >= 1)
-    raise last_exc
+    # Reaching here means the loop broke due to an exception.
+    # last_exc is always set because max_retries >= 1 (validated above) and
+    # every iteration that reaches the except clause sets last_exc.
+    raise last_exc  # type: ignore[misc]
 
 
 # Internal alias kept for backwards-compat with any internal callers.

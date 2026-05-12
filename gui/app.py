@@ -184,7 +184,7 @@ with tab_data:
                                 "**Suggerimenti:**\n"
                                 "- Verifica che il server Azure SQL sia attivo e non in pausa.\n"
                                 "- Se usi il tier **Serverless**, il database impiega 60–90 s per "
-                                "riattivarsi: imposta `AZURE_SQL_CONNECT_TIMEOUT=90` nel file `.env` "
+                                "riattivarsi: aumenta `AZURE_SQL_CONNECT_TIMEOUT` (es. `90`) nel file `.env` "
                                 "e riprova.\n"
                                 "- Controlla che l'indirizzo del server, le credenziali e il firewall "
                                 "Azure consentano la connessione dal tuo IP."

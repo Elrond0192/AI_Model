@@ -415,13 +415,13 @@ class TestGetEngineRetry:
         calls: list = []
 
         class _FakeConn:
-            def __enter__(self_inner):
+            def __enter__(self):
                 calls.append(1)
                 if len(calls) <= fail_times:
                     raise OperationalError(error_msg, params=None, orig=Exception(error_msg))
                 return _original_connect().__enter__()
 
-            def __exit__(self_inner, *args):
+            def __exit__(self, *args):
                 return False
 
         engine.connect = lambda: _FakeConn()  # type: ignore[method-assign]
