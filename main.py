@@ -125,8 +125,8 @@ def mode_demo(args) -> None:
 
     print("\n─── Demo 1: Performance in different teams ──────────────────")
     for player_row in chosen[:2]:
-        pid     = int(player_row["id"])
-        cur_tid = int(player_row["current_team_id"]) if player_row.get("current_team_id") else 1
+        pid     = _to_int(player_row["id"])
+        cur_tid = _to_int(player_row["current_team_id"]) if player_row.get("current_team_id") else 1
         compare_tids = [cur_tid] + tier1_teams.sample(4, random_state=42)["id"].tolist()
         compare_tids = list(dict.fromkeys(compare_tids))[:5]
         result  = engine.compare_scenarios(pid, compare_tids)
@@ -148,7 +148,7 @@ def mode_demo(args) -> None:
         young = players_df[players_df["age"] <= 23]
     if not young.empty:
         yr  = young.sample(1, random_state=7).iloc[0]
-        pid = int(yr["id"])
+        pid = _to_int(yr["id"])
         traj = engine.predict_age_trajectory(pid, age_range=(int(yr["age"]), min(int(yr["age"]) + 12, 40)))
         print(f"\n  Player: {yr['name']}  (age {yr['age']}, pos {yr['position']})")
         print(f"  {'Age':>4}  {'Season':>6}  {'Rating':>8}  {'CI':>15}")
@@ -161,10 +161,10 @@ def mode_demo(args) -> None:
     print("\n─── Demo 3: Transfer impact simulation ─────────────────────")
     if chosen:
         player_row = chosen[0]
-        pid      = int(player_row["id"])
-        from_tid = int(player_row["current_team_id"]) if player_row.get("current_team_id") else 1
+        pid      = _to_int(player_row["id"])
+        from_tid = _to_int(player_row["current_team_id"]) if player_row.get("current_team_id") else 1
         to_t     = tier1_teams.sample(1, random_state=5).iloc[0]
-        to_tid   = int(to_t["id"])
+        to_tid   = _to_int(to_t["id"])
         transfer = engine.simulate_transfer(pid, from_tid, to_tid)
         from_name = team_dict.get(from_tid, {}).get("name", f"Team {from_tid}")
         to_name   = team_dict.get(to_tid,   {}).get("name", f"Team {to_tid}")
@@ -179,7 +179,7 @@ def mode_demo(args) -> None:
     # --- Demo 4: Peak prediction -----------------------------------------
     print("\n─── Demo 4: Career peak prediction ─────────────────────────")
     for player_row in chosen[:2]:
-        pid  = int(player_row["id"])
+        pid  = _to_int(player_row["id"])
         peak = engine.predict_peak(pid)
         print(f"\n  {peak.player_name:<35}  age {peak.current_age}, pos {player_row['position']}")
         print(f"    Current rating  : {peak.current_rating:.3f}")
@@ -191,7 +191,7 @@ def mode_demo(args) -> None:
     print("\n─── Demo 5: Best team fit ───────────────────────────────────")
     if chosen:
         player_row = chosen[0]
-        pid  = int(player_row["id"])
+        pid  = _to_int(player_row["id"])
         fits = engine.best_team_fit(pid, top_n=5)
         print(f"\n  Best teams for {player_row['name']} ({player_row['position']}):")
         for f in fits:
@@ -201,8 +201,8 @@ def mode_demo(args) -> None:
     print("\n─── Demo 6: What-If teammates ───────────────────────────────")
     if chosen:
         player_row = chosen[0]
-        pid      = int(player_row["id"])
-        cur_tid  = int(player_row["current_team_id"]) if player_row.get("current_team_id") else 1
+        pid      = _to_int(player_row["id"])
+        cur_tid  = _to_int(player_row["current_team_id"]) if player_row.get("current_team_id") else 1
         base     = engine.predict_in_team(pid, cur_tid)
         better   = engine.what_if_teammates(pid, cur_tid, 8.5)
         worse    = engine.what_if_teammates(pid, cur_tid, 5.5)

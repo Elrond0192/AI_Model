@@ -31,7 +31,7 @@ TABLE_TEAMS: List[ColumnDef] = [
     ColumnDef("TeamName", "name", "Full team name."),
     ColumnDef("ShortName", "short_name", "Short team name.", default=""),
     ColumnDef("Competition", "league_id", "Competition code from team stats.", default="RS"),
-    ColumnDef(None, "playing_style", "Default playing style.", default="balanced"),
+    ColumnDef(None, "playing_style", "Derived from team stats (pace/3PA/assists/DRtg).", default=None),
     ColumnDef(None, "formation", "Default formation.", default=""),
     ColumnDef("Pace", "pace", "Team pace from Analisi.AdvancedStatsTeam_*.", default=75.0),
     ColumnDef("ORtg", "offensive_rating", "Team offensive rating.", default=110.0),
@@ -50,7 +50,7 @@ TABLE_TEAMS: List[ColumnDef] = [
         default=0.0,
         compute=lambda df: _compute_team_assists_per_game(df),
     ),
-    ColumnDef(None, "star_player_usage", "Default star player usage.", default=0.25),
+    ColumnDef(None, "star_player_usage", "Max usg_pct/100 of team's top player.", default=None),
     ColumnDef(None, "league_tier", "Default league tier.", default=1),
     ColumnDef("NetRtg", "net_rtg", "Team net rating.", default=0.0),
 ]
@@ -160,14 +160,14 @@ SELECT
     t.TeamName AS name,
     ISNULL(t.ShortName, t.TeamName) AS short_name,
     '{league}' AS league_id,
-    'balanced' AS playing_style,
+    CAST(NULL AS nvarchar(20)) AS playing_style,
     '' AS formation,
     ISNULL(CAST(s.Pace AS float), 75.0) AS pace,
     ISNULL(CAST(s.ORtg AS float), 110.0) AS offensive_rating,
     ISNULL(CAST(s.DRtg AS float), 110.0) AS defensive_rating,
     ISNULL(CAST(s.[3Fga] AS float) / NULLIF(CAST(s.[2Fga] + s.[3Fga] AS float), 0.0), 0.0) AS three_point_attempt_rate,
     ISNULL(CAST(s.Ast AS float) / NULLIF(CAST(s.Min AS float) / 40.0, 0.0), 0.0) AS assists_per_game,
-    CAST(0.25 AS float) AS star_player_usage,
+    CAST(NULL AS float) AS star_player_usage,
     CAST(1 AS int) AS league_tier,
     ISNULL(CAST(s.NetRtg AS float), 0.0) AS net_rtg
 FROM Anagrafiche.Team_{tag} AS t
@@ -297,7 +297,8 @@ def _player_stats_select(league: str, season: str) -> str:
 FROM Analisi.AdvancedStats_Player_{tag} AS s
 LEFT JOIN {slug}_box  AS b ON CAST(s.Id AS nvarchar(100)) = b.player_id AND b.rn = 1
 LEFT JOIN {slug}_roles AS r ON CAST(s.Id AS nvarchar(100)) = r.player_id AND r.rn = 1
-LEFT JOIN {slug}_onoff AS o ON CAST(s.Id AS nvarchar(100)) = o.player_id AND o.rn = 1"""
+LEFT JOIN {slug}_onoff AS o ON CAST(s.Id AS nvarchar(100)) = o.player_id AND o.rn = 1
+WHERE s.Competition NOT IN ('TOT')"""
 
 
 def _team_player_relations_block(league: str, season: str) -> str:

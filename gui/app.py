@@ -104,6 +104,10 @@ with tab_data:
         all_uploaded = all(v is not None for v in uploaded.values())
         if st.button("📥 Carica dati CSV", disabled=not all_uploaded, type="primary"):
             with st.spinner("Caricamento file CSV …"):
+                from basketball_ai.data.loader import (
+                    _to_int, _derive_playing_style,
+                    _compute_star_player_usage, _fill_current_team_league,
+                )
                 leagues_df = pd.read_csv(uploaded["leagues"])
                 teams_df   = pd.read_csv(uploaded["teams"])
                 players_df = pd.read_csv(uploaded["players"])
@@ -114,12 +118,25 @@ with tab_data:
                     if col in players_df.columns:
                         players_df[col] = players_df[col].where(players_df[col].notna(), other=None)
 
-                league_dict = {int(r["id"]): r.to_dict() for _, r in leagues_df.iterrows()}
-                team_dict   = {int(r["id"]): r.to_dict() for _, r in teams_df.iterrows()}
-                player_dict = {int(r["id"]): r.to_dict() for _, r in players_df.iterrows()}
+                # Convert hex IDs in stats and relations DataFrames
+                for col in ["player_id", "team_id", "league_id"]:
+                    if col in stats_df.columns:
+                        stats_df[col] = stats_df[col].apply(lambda v: None if pd.isna(v) else _to_int(v))
+                for col in ["team_id", "player_id"]:
+                    if col in rels_df.columns:
+                        rels_df[col] = rels_df[col].apply(lambda v: None if pd.isna(v) else _to_int(v))
+
+                # Enrich teams and fill missing player current team/league
+                _derive_playing_style(teams_df)
+                _compute_star_player_usage(teams_df, stats_df)
+                _fill_current_team_league(players_df, stats_df)
+
+                league_dict = {_to_int(r["id"]): r.to_dict() for _, r in leagues_df.iterrows()}
+                team_dict   = {_to_int(r["id"]): r.to_dict() for _, r in teams_df.iterrows()}
+                player_dict = {_to_int(r["id"]): r.to_dict() for _, r in players_df.iterrows()}
                 league_teams: dict = {}
                 for _, t in teams_df.iterrows():
-                    league_teams.setdefault(int(t["league_id"]), []).append(int(t["id"]))
+                    league_teams.setdefault(_to_int(t["league_id"]), []).append(_to_int(t["id"]))
 
                 st.session_state["data"] = {
                     "leagues": leagues_df, "teams": teams_df,

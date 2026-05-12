@@ -32,6 +32,159 @@ DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "data", "sample")
 
 
 # ---------------------------------------------------------------------------
+# Post-load enrichment helpers (reused by both CSV and SQL loaders)
+# ---------------------------------------------------------------------------
+
+# Percentile boundaries used by _derive_playing_style
+_STYLE_HI_PCTILE = 0.65   # "high" threshold  (top 35 %)
+_STYLE_LO_PCTILE = 0.35   # "low"  threshold  (bottom 35 %)
+_STYLE_MED_PCTILE = 0.50  # median threshold
+
+# Minimum playing-time thresholds used by _compute_star_player_usage
+_STAR_MIN_GAMES = 10
+_STAR_MIN_MPG = 12.0
+
+def _derive_playing_style(teams_df: pd.DataFrame) -> None:
+    """Classify each team's playing style from its stats.  Modifies *teams_df* in-place.
+
+    Classification is percentile-based so it adapts to any dataset scale:
+
+    ┌─────────────────┬──────────────────────────────────────────────────────┐
+    │ Style           │ Criteria (all relative to team population)           │
+    ├─────────────────┼──────────────────────────────────────────────────────┤
+    │ pace_and_space  │ pace ≥ p65  AND  3PA-rate ≥ p65                      │
+    │ defensive       │ DRtg ≤ p35 (good defence)  AND  pace ≤ p35          │
+    │ motion_offense  │ assists ≥ p65  AND  3PA-rate ≥ p50                   │
+    │ pick_and_roll   │ assists ≥ p65  AND  3PA-rate < p50                   │
+    │ post_up         │ 3PA-rate ≤ p35                                        │
+    │ isolation       │ fallback (star-driven, low assists)                   │
+    └─────────────────┴──────────────────────────────────────────────────────┘
+    """
+    if teams_df.empty:
+        return
+    required = ["pace", "three_point_attempt_rate", "assists_per_game", "defensive_rating"]
+    if not all(c in teams_df.columns for c in required):
+        return
+
+    pace = pd.to_numeric(teams_df["pace"],                    errors="coerce").fillna(75.0)
+    tpar = pd.to_numeric(teams_df["three_point_attempt_rate"], errors="coerce").fillna(0.35)
+    apg  = pd.to_numeric(teams_df["assists_per_game"],         errors="coerce").fillna(22.0)
+    drtg = pd.to_numeric(teams_df["defensive_rating"],         errors="coerce").fillna(110.0)
+
+    n = len(teams_df)
+    if n < 4:
+        # Too few teams for meaningful percentile splits; keep existing values
+        return
+
+    pace_hi  = pace.quantile(_STYLE_HI_PCTILE)
+    pace_lo  = pace.quantile(_STYLE_LO_PCTILE)
+    tpar_hi  = tpar.quantile(_STYLE_HI_PCTILE)
+    tpar_med = tpar.quantile(_STYLE_MED_PCTILE)
+    tpar_lo  = tpar.quantile(_STYLE_LO_PCTILE)
+    apg_hi   = apg.quantile(_STYLE_HI_PCTILE)
+    drtg_lo  = drtg.quantile(_STYLE_LO_PCTILE)  # lower DRtg = better defence
+
+    styles = []
+    for p, t, a, d in zip(pace, tpar, apg, drtg):
+        if p >= pace_hi and t >= tpar_hi:
+            styles.append("pace_and_space")
+        elif d <= drtg_lo and p <= pace_lo:
+            styles.append("defensive")
+        elif a >= apg_hi and t >= tpar_med:
+            styles.append("motion_offense")
+        elif a >= apg_hi:
+            styles.append("pick_and_roll")
+        elif t <= tpar_lo:
+            styles.append("post_up")
+        else:
+            styles.append("isolation")
+
+    teams_df["playing_style"] = styles
+
+
+def _compute_star_player_usage(teams_df: pd.DataFrame, stats_df: pd.DataFrame) -> None:
+    """Set *star_player_usage* on *teams_df* from player statistics.  In-place.
+
+    The "star player" is the player with the highest ``usg_pct`` among those
+    with meaningful playing time (≥ 10 games **and** ≥ 12 min/game).
+    ``star_player_usage`` is stored as a 0–1 fraction (``usg_pct / 100``),
+    clipped to [0.10, 0.60].
+    """
+    if teams_df.empty or stats_df.empty:
+        return
+    if not {"team_id", "usg_pct"}.issubset(stats_df.columns):
+        return
+
+    s = stats_df.copy()
+    for col in ["usg_pct", "games_played", "minutes_per_game"]:
+        if col in s.columns:
+            s[col] = pd.to_numeric(s[col], errors="coerce").fillna(0.0)
+        else:
+            s[col] = 0.0
+
+    qualified = s[(s["games_played"] >= _STAR_MIN_GAMES) & (s["minutes_per_game"] >= _STAR_MIN_MPG)]
+    if qualified.empty:
+        qualified = s  # fallback: no filtering
+
+    # Normalise team_id to int for grouping
+    qualified = qualified.copy()
+    qualified["_tid"] = qualified["team_id"].apply(
+        lambda v: _to_int(v) if pd.notna(v) else None
+    )
+    team_star = (
+        qualified[qualified["_tid"].notna()]
+        .groupby("_tid")["usg_pct"]
+        .max()
+        .div(100.0)
+        .clip(0.10, 0.60)
+    )
+
+    if "id" not in teams_df.columns:
+        return
+
+    def _lookup(raw_id: Any) -> float:
+        try:
+            return float(team_star.get(_to_int(raw_id), 0.25))
+        except Exception:
+            return 0.25
+
+    teams_df["star_player_usage"] = teams_df["id"].apply(_lookup)
+
+
+def _fill_current_team_league(players_df: pd.DataFrame, stats_df: pd.DataFrame) -> None:
+    """Derive *current_team_id* / *current_league_id* from the most recent
+    season's stats for players where those fields are null.  In-place.
+    """
+    if players_df.empty or stats_df.empty:
+        return
+    if not {"player_id", "team_id", "season"}.issubset(stats_df.columns):
+        return
+    if "id" not in players_df.columns:
+        return
+
+    s = stats_df.copy()
+    s["_pid"] = s["player_id"].apply(lambda v: _to_int(v) if pd.notna(v) else None)
+    latest = s[s["_pid"].notna()].sort_values("season").groupby("_pid").last().reset_index()
+    pid_team   = dict(zip(latest["_pid"], latest["team_id"]))
+    pid_league = dict(zip(latest["_pid"], latest["league_id"])) if "league_id" in latest.columns else {}
+
+    def _resolve(raw_id: Any, mapping: dict) -> Any:
+        try:
+            return mapping.get(_to_int(raw_id))
+        except Exception:
+            return None
+
+    for col, mapping in [("current_team_id", pid_team), ("current_league_id", pid_league)]:
+        if col not in players_df.columns or not mapping:
+            continue
+        null_mask = players_df[col].isna()
+        if null_mask.any():
+            players_df.loc[null_mask, col] = players_df.loc[null_mask, "id"].apply(
+                lambda v: _resolve(v, mapping)
+            )
+
+
+# ---------------------------------------------------------------------------
 # Low-level loaders
 # ---------------------------------------------------------------------------
 
@@ -165,6 +318,13 @@ def load_all_data(data_dir: str) -> Dict[str, Any]:
     for col in ["team_id", "player_id"]:
         if col in rels_df.columns:
             rels_df[col] = rels_df[col].apply(lambda v: None if pd.isna(v) else _to_int(v))
+
+    # Enrich teams: derive playing_style and star_player_usage from actual stats
+    _derive_playing_style(teams_df)
+    _compute_star_player_usage(teams_df, stats_df)
+
+    # Fill missing current_team_id / current_league_id from most recent stats
+    _fill_current_team_league(players_df, stats_df)
 
     league_dict: Dict[int, dict] = {_to_int(r["id"]): r.to_dict() for _, r in leagues_df.iterrows()}
     team_dict:   Dict[int, dict] = {_to_int(r["id"]): r.to_dict() for _, r in teams_df.iterrows()}
