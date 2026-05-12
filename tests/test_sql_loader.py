@@ -403,8 +403,13 @@ class TestGetEngineRetry:
 
     @staticmethod
     def _make_engine(fail_times: int = 0, error_msg: str = "('08001', 'TCP timeout')"):
-        """Return a SQLite engine whose first *fail_times* connect() calls raise *error_msg*."""
+        """Return a SQLite engine whose first *fail_times* connect() calls raise *error_msg*.
+
+        Failures are raised as ``sqlalchemy.exc.OperationalError`` to match
+        what get_engine() now catches.
+        """
         from sqlalchemy import create_engine
+        from sqlalchemy.exc import OperationalError
         engine = create_engine("sqlite:///:memory:")
         _original_connect = engine.connect
         calls: list = []
@@ -413,7 +418,7 @@ class TestGetEngineRetry:
             def __enter__(self_inner):
                 calls.append(1)
                 if len(calls) <= fail_times:
-                    raise Exception(error_msg)
+                    raise OperationalError(error_msg, params=None, orig=Exception(error_msg))
                 return _original_connect().__enter__()
 
             def __exit__(self_inner, *args):
@@ -485,3 +490,9 @@ class TestGetEngineRetry:
         from basketball_ai.data.sql_loader import get_engine
         with pytest.raises(Exception, match="08001"):
             get_engine(max_retries=2, retry_delay=0)
+
+    def test_invalid_max_retries_raises(self):
+        """A max_retries value less than 1 raises ValueError immediately."""
+        from basketball_ai.data.sql_loader import get_engine
+        with pytest.raises(ValueError, match="max_retries must be >= 1"):
+            get_engine(max_retries=0)

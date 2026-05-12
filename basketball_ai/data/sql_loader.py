@@ -313,7 +313,6 @@ def _is_transient_connection_error(exc: Exception) -> bool:
     msg = str(exc)
     return "08001" in msg or "timeout" in msg.lower()
 
-
 def get_engine(max_retries: int = 3, retry_delay: float = 15.0):
     """Return a SQLAlchemy engine built from environment variables.
 
@@ -322,9 +321,15 @@ def get_engine(max_retries: int = 3, retry_delay: float = 15.0):
     On transient connection failures (sqlstate ``08001``, e.g. Azure SQL
     Serverless waking from auto-pause) the function retries up to
     *max_retries* times, waiting *retry_delay* seconds between attempts.
+
+    Raises ``ValueError`` if *max_retries* is less than 1.
     """
+    if max_retries < 1:
+        raise ValueError(f"max_retries must be >= 1, got {max_retries}")
+
     try:
         from sqlalchemy import create_engine, text  # type: ignore
+        from sqlalchemy.exc import OperationalError as _OpError  # type: ignore
     except ImportError as exc:
         raise ImportError(
             "SQLAlchemy is required for SQL data loading. "
@@ -340,9 +345,10 @@ def get_engine(max_retries: int = 3, retry_delay: float = 15.0):
             with engine.connect() as conn:
                 conn.execute(text("SELECT 1"))
             return engine
-        except Exception as exc:  # noqa: BLE001
+        except _OpError as exc:
             last_exc = exc
-            if attempt < max_retries and _is_transient_connection_error(exc):
+            is_last_attempt = attempt == max_retries
+            if not is_last_attempt and _is_transient_connection_error(exc):
                 _logger.warning(
                     "Transient connection error (attempt %d/%d): %s — retrying in %.0f s …",
                     attempt, max_retries, exc, retry_delay,
@@ -351,9 +357,7 @@ def get_engine(max_retries: int = 3, retry_delay: float = 15.0):
             else:
                 break
 
-    if last_exc is None:
-        # max_retries <= 0: no attempts were made, return the engine as-is.
-        return engine
+    assert last_exc is not None  # loop always runs at least once (max_retries >= 1)
     raise last_exc
 
 
