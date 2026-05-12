@@ -86,6 +86,7 @@ def mode_demo(args) -> None:
     from basketball_ai.models.ensemble import EnsembleModel
     from basketball_ai.scenarios.engine import WhatIfEngine
     from basketball_ai.utils.helpers import format_prediction_output
+    from basketball_ai.data.loader import _to_int
 
     print("=" * 60)
     print("  Basketball Performance AI – Demo")

@@ -42,7 +42,12 @@ def load_leagues(data_dir: str = DATA_DIR) -> List[League]:
 
 def load_teams(data_dir: str = DATA_DIR) -> List[Team]:
     df = pd.read_csv(f"{data_dir}/teams.csv")
-    return [Team(**r) for r in df.to_dict("records")]
+    results = []
+    for r in df.to_dict("records"):
+        r["id"] = _to_int(r["id"])
+        r["league_id"] = _to_int(r["league_id"])
+        results.append(Team(**r))
+    return results
 
 
 def load_players(data_dir: str = DATA_DIR) -> List[Player]:
@@ -59,12 +64,23 @@ def load_players(data_dir: str = DATA_DIR) -> List[Player]:
 
 def load_player_stats(data_dir: str = DATA_DIR) -> List[PlayerStats]:
     df = pd.read_csv(f"{data_dir}/player_stats.csv")
-    return [PlayerStats(**r) for r in df.to_dict("records")]
+    results = []
+    for r in df.to_dict("records"):
+        r["player_id"] = _to_int(r["player_id"])
+        r["team_id"] = _to_int(r["team_id"])
+        r["league_id"] = _to_int(r["league_id"])
+        results.append(PlayerStats(**r))
+    return results
 
 
 def load_team_player_relations(data_dir: str = DATA_DIR) -> List[TeamPlayerRelation]:
     df = pd.read_csv(f"{data_dir}/team_player_relations.csv")
-    return [TeamPlayerRelation(**r) for r in df.to_dict("records")]
+    results = []
+    for r in df.to_dict("records"):
+        r["team_id"] = _to_int(r["team_id"])
+        r["player_id"] = _to_int(r["player_id"])
+        results.append(TeamPlayerRelation(**r))
+    return results
 
 
 # ---------------------------------------------------------------------------
@@ -141,6 +157,14 @@ def load_all_data(data_dir: str) -> Dict[str, Any]:
     for col in ["current_team_id", "current_league_id", "draft_year", "draft_pick"]:
         if col in players_df.columns:
             players_df[col] = players_df[col].where(players_df[col].notna(), other=None)
+
+    # Convert hex ID columns in stats_df and rels_df
+    for col in ["player_id", "team_id", "league_id"]:
+        if col in stats_df.columns:
+            stats_df[col] = stats_df[col].apply(lambda v: None if pd.isna(v) else _to_int(v))
+    for col in ["team_id", "player_id"]:
+        if col in rels_df.columns:
+            rels_df[col] = rels_df[col].apply(lambda v: None if pd.isna(v) else _to_int(v))
 
     league_dict: Dict[int, dict] = {_to_int(r["id"]): r.to_dict() for _, r in leagues_df.iterrows()}
     team_dict:   Dict[int, dict] = {_to_int(r["id"]): r.to_dict() for _, r in teams_df.iterrows()}
