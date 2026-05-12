@@ -22,6 +22,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 import numpy as np
 import pandas as pd
 import streamlit as st
+from basketball_ai.data.loader import _to_int
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -58,8 +59,107 @@ def _require_engine(data):
 
 
 # ---------------------------------------------------------------------------
-# Page config
+# Helpers – searchable selectors and auto-detection
 # ---------------------------------------------------------------------------
+
+def _player_search_select(
+    label: str,
+    opts: dict,
+    key: str,
+    container=None,
+    placeholder: str = "Digita nome o posizione…",
+):
+    """Render a search text_input + filtered selectbox for player selection."""
+    ctx = container or st
+    srch = ctx.text_input(
+        "🔍 Cerca giocatore",
+        key=f"_s_{key}",
+        placeholder=placeholder,
+        label_visibility="collapsed",
+    )
+    q = srch.strip().lower()
+    filtered = {k: v for k, v in opts.items() if q in v.lower()} if q else opts
+    if not filtered:
+        ctx.caption(f"_Nessun risultato per «{srch}»_")
+        filtered = opts
+    curr = st.session_state.get(key)
+    if curr not in filtered and filtered:
+        st.session_state[key] = next(iter(filtered))
+    return ctx.selectbox(
+        label,
+        list(filtered.keys()),
+        format_func=lambda x: filtered.get(x, str(x)),
+        key=key,
+    )
+
+
+def _team_search_select(
+    label: str,
+    opts: dict,
+    key: str,
+    container=None,
+):
+    """Render a search text_input + filtered selectbox for team selection."""
+    ctx = container or st
+    srch = ctx.text_input(
+        "🔍 Cerca squadra",
+        key=f"_s_{key}",
+        placeholder="Nome squadra…",
+        label_visibility="collapsed",
+    )
+    q = srch.strip().lower()
+    filtered = {k: v for k, v in opts.items() if q in v.lower()} if q else opts
+    if not filtered:
+        ctx.caption(f"_Nessun risultato per «{srch}»_")
+        filtered = opts
+    curr = st.session_state.get(key)
+    if curr not in filtered and filtered:
+        st.session_state[key] = next(iter(filtered))
+    return ctx.selectbox(
+        label,
+        list(filtered.keys()),
+        format_func=lambda x: filtered.get(x, str(x)),
+        key=key,
+    )
+
+
+def _auto_team_for_player(
+    player_id,
+    data: dict,
+    season: int,
+    competition: str = "RS",
+):
+    """Return the team_id the player played for in the given season/competition."""
+    if player_id is None:
+        return None
+    try:
+        stats    = data["player_stats"]
+        pid      = int(player_id)
+        sea      = str(season)
+        mask_pid = stats["player_id"] == pid
+        mask_sea = (
+            stats["season"].astype(str).str.startswith(sea)
+            | stats["season"].astype(str).str.startswith(f"{season - 1}-")
+        )
+        mask_comp = stats["competition"] == competition
+        sub = stats[mask_pid & mask_sea & mask_comp]
+        if sub.empty:
+            sub = stats[mask_pid & mask_sea]
+        if sub.empty:
+            sub = stats[mask_pid]
+        if sub.empty:
+            row = data["player_dict"].get(pid, {})
+            ct  = row.get("current_team_id")
+            return int(ct) if ct else None
+        latest = sub.sort_values("season").iloc[-1]
+        tid    = latest.get("team_id")
+        if tid is not None and not (isinstance(tid, float) and np.isnan(tid)):
+            return int(tid)
+    except Exception:
+        pass
+    return None
+
+
 
 st.set_page_config(
     page_title="Basketball Performance AI",
@@ -249,7 +349,7 @@ with tab_data:
                         lambda col: col.astype(str).str.contains(search, case=False, na=False)
                     ).any(axis=1)
                     df_show = df_show[mask]
-                st.dataframe(df_show, use_container_width=True)
+                st.dataframe(df_show, width='stretch')
                 st.caption(f"{len(df_show):,} righe")
 
 
@@ -535,6 +635,7 @@ with tab_train:
                 st.session_state["metrics"]          = metrics_dict
                 st.session_state["perf_model"]       = perf_model
                 st.session_state["selected_features"] = all_selected
+                st.session_state["extra_metrics"]    = extra_metrics
                 st.session_state.pop("engine", None)
                 st.session_state.pop("chat_engine", None)
 
@@ -575,16 +676,20 @@ with tab_train:
                 import shap as _shap
                 st.subheader("SHAP Feature Importance (campione)")
                 if "data" in st.session_state:
-                    feat_names = st.session_state.get("selected_features", FEATURE_COLS)
-                    X_sample, _ = perf_model_r.prepare_features(st.session_state["data"])
-                    available   = [f for f in feat_names if f in X_sample.columns]
-                    X_sample    = X_sample[available].head(50)
+                    saved_extra = st.session_state.get("extra_metrics", [])
+                    X_full, _   = perf_model_r.prepare_features(st.session_state["data"], extra_metrics=saved_extra)
+                    feat_names  = perf_model_r.feature_names
+                    # Fill any extra-metric columns not produced by prepare_features with 0
+                    for fn in feat_names:
+                        if fn not in X_full.columns:
+                            X_full[fn] = 0.0
+                    X_sample = X_full[feat_names].head(50)
                     X_sc        = perf_model_r.scaler.transform(X_sample)
                     explainer   = _shap.TreeExplainer(perf_model_r.model)
                     shap_vals   = explainer.shap_values(X_sc)
                     mean_shap   = np.abs(shap_vals).mean(axis=0)
                     shap_df = (
-                        pd.DataFrame({"feature": available, "mean_|shap|": mean_shap})
+                        pd.DataFrame({"feature": feat_names, "mean_|shap|": mean_shap})
                         .sort_values("mean_|shap|", ascending=False)
                     )
                     st.bar_chart(shap_df.set_index("feature")["mean_|shap|"])
@@ -622,35 +727,34 @@ with tab_pred:
             teams_df_p   = data_p["teams"]
 
             player_opts_p = {
-                int(r["id"]): f"{r['name']} ({r['position']}, {r['age']}a)"
+                _to_int(r["id"]): f"{r['name']} ({r['position']}, {r['age']}a)"
                 for _, r in players_df_p.iterrows()
             }
             team_opts_p = {
-                int(r["id"]): str(r["name"])
+                _to_int(r["id"]): str(r["name"])
                 for _, r in teams_df_p.iterrows()
             }
 
-            # --- Single prediction ----------------------------------------
+            # on_change callback: auto-detect team when player or context changes
+            def _auto_team_pred_cb():
+                pid  = st.session_state.get("pred_player")
+                _d   = st.session_state.get("data")
+                if pid and _d:
+                    auto = _auto_team_for_player(
+                        pid, _d,
+                        int(st.session_state.get("pred_season", 2024)),
+                        st.session_state.get("pred_competition", "RS"),
+                    )
+                    if auto is not None:
+                        st.session_state["pred_team"] = auto
+
+            # --- Context selectors first (season + competition) -----------
             st.subheader("🔮 Predici rating")
-            pc1, pc2 = st.columns(2)
-            with pc1:
-                sel_player_id = st.selectbox(
-                    "🏀 Giocatore",
-                    options=list(player_opts_p.keys()),
-                    format_func=lambda x: player_opts_p[x],
-                    key="pred_player",
-                )
-            with pc2:
-                sel_team_id = st.selectbox(
-                    "🏆 Squadra",
-                    options=list(team_opts_p.keys()),
-                    format_func=lambda x: team_opts_p[x],
-                    key="pred_team",
-                )
             pred_c1, pred_c2 = st.columns(2)
             with pred_c1:
                 pred_season = st.number_input(
-                    "Stagione", min_value=2000, max_value=2040, value=2024, key="pred_season"
+                    "Stagione", min_value=2000, max_value=2040, value=2024,
+                    key="pred_season", on_change=_auto_team_pred_cb,
                 )
             with pred_c2:
                 sel_competition = st.selectbox(
@@ -658,11 +762,67 @@ with tab_pred:
                     options=["RS", "PO", "CUP", "SUPERCUP"],
                     index=0,
                     key="pred_competition",
-                    help=(
-                        "**RS** = Regular Season  |  **PO** = Playoff  |  "
-                        "**CUP** = Coppa  |  **SUPERCUP** = Supercoppa"
-                    ),
+                    on_change=_auto_team_pred_cb,
+                    help="**RS** = Regular Season  |  **PO** = Playoff  |  **CUP** = Coppa  |  **SUPERCUP** = Supercoppa",
                 )
+
+            # --- Player + team selectors ----------------------------------
+            pc1, pc2 = st.columns(2)
+            with pc1:
+                srch_pp = st.text_input("🔍 Cerca giocatore", key="_s_pred_player",
+                                        placeholder="Nome, posizione…",
+                                        label_visibility="collapsed")
+                _filt_pp = ({k: v for k, v in player_opts_p.items()
+                             if srch_pp.strip().lower() in v.lower()}
+                            if srch_pp.strip() else player_opts_p)
+                if not _filt_pp:
+                    st.caption(f"_Nessun risultato per «{srch_pp}»_")
+                    _filt_pp = player_opts_p
+                _curr_pp = st.session_state.get("pred_player")
+                if _curr_pp not in _filt_pp and _filt_pp:
+                    st.session_state["pred_player"] = next(iter(_filt_pp))
+                sel_player_id = st.selectbox(
+                    "🏀 Giocatore", list(_filt_pp.keys()),
+                    format_func=lambda x: _filt_pp.get(x, str(x)),
+                    key="pred_player", on_change=_auto_team_pred_cb,
+                )
+
+            with pc2:
+                # Auto-detect team
+                _auto_t = _auto_team_for_player(
+                    sel_player_id, data_p, int(pred_season), sel_competition
+                )
+                if _auto_t is not None and "pred_team" not in st.session_state:
+                    st.session_state["pred_team"] = _auto_t
+
+                srch_pt = st.text_input("🔍 Cerca squadra", key="_s_pred_team",
+                                        placeholder="Nome squadra…",
+                                        label_visibility="collapsed")
+                _filt_pt = ({k: v for k, v in team_opts_p.items()
+                             if srch_pt.strip().lower() in v.lower()}
+                            if srch_pt.strip() else team_opts_p)
+                if not _filt_pt:
+                    st.caption(f"_Nessun risultato per «{srch_pt}»_")
+                    _filt_pt = team_opts_p
+                _curr_pt = st.session_state.get("pred_team")
+                if _curr_pt not in _filt_pt and _filt_pt:
+                    st.session_state["pred_team"] = next(iter(_filt_pt))
+                sel_team_id = st.selectbox(
+                    "🏆 Squadra",
+                    list(_filt_pt.keys()),
+                    format_func=lambda x: _filt_pt.get(x, str(x)),
+                    key="pred_team",
+                )
+                # Show auto-detection info
+                if _auto_t is not None:
+                    _auto_name = team_opts_p.get(_auto_t, str(_auto_t))
+                    if _auto_t == sel_team_id:
+                        st.caption(f"🤖 Squadra auto-rilevata: **{_auto_name}**")
+                    else:
+                        if st.button(f"🤖 Usa squadra auto-rilevata: {_auto_name}",
+                                     key="pred_auto_team"):
+                            st.session_state["pred_team"] = _auto_t
+                            st.rerun()
 
             if st.button("🔮 Predici", type="primary", key="pred_run"):
                 try:
@@ -688,7 +848,7 @@ with tab_pred:
                             result.context_adjustment,
                         ],
                     })
-                    st.dataframe(breakdown_df, use_container_width=True, hide_index=True)
+                    st.dataframe(breakdown_df, width='stretch', hide_index=True)
                     st.caption(f"_{result.explanation}_")
 
                     if result.shap_values:
@@ -709,21 +869,57 @@ with tab_pred:
 
             # --- Trajectory -----------------------------------------------
             st.subheader("📈 Traiettoria per età")
+
+            def _auto_team_traj_cb():
+                pid = st.session_state.get("traj_player")
+                _d  = st.session_state.get("data")
+                if pid and _d:
+                    auto = _auto_team_for_player(pid, _d, 2024, "RS")
+                    if auto is not None:
+                        st.session_state["traj_team"] = auto
+
             tr1, tr2 = st.columns(2)
             with tr1:
+                srch_tp = st.text_input("🔍 Cerca giocatore", key="_s_traj_player",
+                                        placeholder="Nome, posizione…",
+                                        label_visibility="collapsed")
+                _filt_tp = ({k: v for k, v in player_opts_p.items()
+                             if srch_tp.strip().lower() in v.lower()}
+                            if srch_tp.strip() else player_opts_p)
+                if not _filt_tp:
+                    _filt_tp = player_opts_p
+                _curr_tp = st.session_state.get("traj_player")
+                if _curr_tp not in _filt_tp and _filt_tp:
+                    st.session_state["traj_player"] = next(iter(_filt_tp))
                 traj_player = st.selectbox(
-                    "Giocatore",
-                    options=list(player_opts_p.keys()),
-                    format_func=lambda x: player_opts_p[x],
-                    key="traj_player",
+                    "Giocatore", list(_filt_tp.keys()),
+                    format_func=lambda x: _filt_tp.get(x, str(x)),
+                    key="traj_player", on_change=_auto_team_traj_cb,
                 )
             with tr2:
+                # Auto-detect team for trajectory
+                _auto_tr = _auto_team_for_player(traj_player, data_p, 2024, "RS")
+                if _auto_tr is not None and "traj_team" not in st.session_state:
+                    st.session_state["traj_team"] = _auto_tr
+                srch_tt = st.text_input("🔍 Cerca squadra", key="_s_traj_team",
+                                        placeholder="Nome squadra…",
+                                        label_visibility="collapsed")
+                _filt_tt = ({k: v for k, v in team_opts_p.items()
+                             if srch_tt.strip().lower() in v.lower()}
+                            if srch_tt.strip() else team_opts_p)
+                if not _filt_tt:
+                    _filt_tt = team_opts_p
+                _curr_tt = st.session_state.get("traj_team")
+                if _curr_tt not in _filt_tt and _filt_tt:
+                    st.session_state["traj_team"] = next(iter(_filt_tt))
                 traj_team = st.selectbox(
-                    "Squadra (contesto)",
-                    options=list(team_opts_p.keys()),
-                    format_func=lambda x: team_opts_p[x],
+                    "Squadra (contesto)", list(_filt_tt.keys()),
+                    format_func=lambda x: _filt_tt.get(x, str(x)),
                     key="traj_team",
                 )
+                if _auto_tr is not None and _auto_tr == traj_team:
+                    st.caption(f"🤖 Squadra auto-rilevata: **{team_opts_p.get(_auto_tr, '')}**")
+
             ta1, ta2 = st.columns(2)
             age_from = ta1.number_input("Età da", min_value=16, max_value=44, value=18, key="traj_from")
             age_to   = ta2.number_input("Età a",  min_value=17, max_value=45, value=38, key="traj_to")
@@ -749,9 +945,11 @@ with tab_pred:
                         ]).set_index("Età")
                         st.line_chart(traj_df[["Rating", "CI basso", "CI alto"]])
                         with st.expander("Dati completi traiettoria", expanded=False):
-                            st.dataframe(traj_df, use_container_width=True)
+                            st.dataframe(traj_df, width='stretch')
                     except Exception as exc:
                         st.error(f"Errore traiettoria: {exc}")
+
+
 
 
 # ===========================================================================
@@ -764,17 +962,54 @@ with tab_scen:
     if data_s is not None:
         engine_s = _require_engine(data_s)
         if engine_s is not None:
+            from basketball_ai.scenarios.engine import ADVANCED_ROLES
+            import numpy as np
+
             players_df_s = data_s["players"]
             teams_df_s   = data_s["teams"]
 
             player_opts_s = {
-                int(r["id"]): f"{r['name']} ({r['position']})"
+                _to_int(r["id"]): f"{r['name']} ({r['position']})"
                 for _, r in players_df_s.iterrows()
             }
             team_opts_s = {
-                int(r["id"]): str(r["name"])
+                _to_int(r["id"]): str(r["name"])
                 for _, r in teams_df_s.iterrows()
             }
+
+            def _make_player_selectbox(label, key, exclude_id=None, container=None):
+                ctx = container or st
+                opts = {k: v for k, v in player_opts_s.items() if k != exclude_id}
+                q_raw = ctx.text_input("🔍 Cerca giocatore", key=f"_s_{key}",
+                                       placeholder="Nome o posizione…",
+                                       label_visibility="collapsed")
+                q = q_raw.strip().lower()
+                filtered = {k: v for k, v in opts.items() if q in v.lower()} if q else opts
+                if not filtered:
+                    ctx.caption(f"_Nessun risultato per «{q_raw}»_"); filtered = opts
+                curr = st.session_state.get(key)
+                if curr not in filtered and filtered:
+                    st.session_state[key] = next(iter(filtered))
+                return ctx.selectbox(label, list(filtered.keys()),
+                                     format_func=lambda x: filtered.get(x, str(x)),
+                                     key=key)
+
+            def _make_team_selectbox(label, key, container=None):
+                ctx = container or st
+                q_raw = ctx.text_input("🔍 Cerca squadra", key=f"_s_{key}",
+                                       placeholder="Nome squadra…",
+                                       label_visibility="collapsed")
+                q = q_raw.strip().lower()
+                filtered = ({k: v for k, v in team_opts_s.items() if q in v.lower()}
+                            if q else team_opts_s)
+                if not filtered:
+                    ctx.caption(f"_Nessun risultato per «{q_raw}»_"); filtered = team_opts_s
+                curr = st.session_state.get(key)
+                if curr not in filtered and filtered:
+                    st.session_state[key] = next(iter(filtered))
+                return ctx.selectbox(label, list(filtered.keys()),
+                                     format_func=lambda x: filtered.get(x, str(x)),
+                                     key=key)
 
             scen_tabs = st.tabs([
                 "🔁 Trasferimento",
@@ -787,22 +1022,20 @@ with tab_scen:
             # ---- Transfer -------------------------------------------------
             with scen_tabs[0]:
                 st.subheader("🔁 Simulazione trasferimento")
-                tr_player = st.selectbox(
-                    "Giocatore", list(player_opts_s.keys()),
-                    format_func=lambda x: player_opts_s[x], key="tr_player",
-                )
+                tr_player = _make_player_selectbox("Giocatore", "tr_player")
+                tr_season = st.number_input("Stagione", 2000, 2040, 2024, key="tr_season")
                 tr_c1, tr_c2 = st.columns(2)
-                from_t = tr_c1.selectbox(
-                    "Da squadra", list(team_opts_s.keys()),
-                    format_func=lambda x: team_opts_s[x], key="tr_from",
-                )
-                to_t = tr_c2.selectbox(
-                    "A squadra", list(team_opts_s.keys()),
-                    format_func=lambda x: team_opts_s[x], key="tr_to",
-                )
-                tr_season = st.number_input(
-                    "Stagione", 2000, 2040, 2024, key="tr_season"
-                )
+                with tr_c1:
+                    # Auto-detect current team
+                    _auto_from = _auto_team_for_player(tr_player, data_s, int(tr_season), "RS")
+                    if _auto_from is not None and "tr_from" not in st.session_state:
+                        st.session_state["tr_from"] = _auto_from
+                    from_t = _make_team_selectbox("Da squadra", "tr_from", container=tr_c1)
+                    if _auto_from is not None and _auto_from == from_t:
+                        tr_c1.caption(f"🤖 Auto-rilevata: **{team_opts_s.get(_auto_from, '')}**")
+                with tr_c2:
+                    to_t = _make_team_selectbox("A squadra", "tr_to", container=tr_c2)
+
                 if st.button("🔁 Simula trasferimento", type="primary", key="tr_run"):
                     if from_t == to_t:
                         st.warning("Seleziona due squadre diverse.")
@@ -815,8 +1048,7 @@ with tab_scen:
                             tm1, tm2, tm3 = st.columns(3)
                             tm1.metric("Rating attuale",             f"{res.rating_before:.2f}")
                             tm2.metric("Rating dopo trasferimento",  f"{res.rating_after:.2f}")
-                            tm3.metric("Variazione",
-                                       f"{sign}{res.rating_delta:.2f}",
+                            tm3.metric("Variazione", f"{sign}{res.rating_delta:.2f}",
                                        delta=round(res.rating_delta, 3))
                             st.info(f"**Verdetto:** {res.recommendation}")
                         except Exception as exc:
@@ -825,10 +1057,7 @@ with tab_scen:
             # ---- Best teams -----------------------------------------------
             with scen_tabs[1]:
                 st.subheader("🏆 Migliori squadre per un giocatore")
-                bt_player = st.selectbox(
-                    "Giocatore", list(player_opts_s.keys()),
-                    format_func=lambda x: player_opts_s[x], key="bt_player",
-                )
+                bt_player = _make_player_selectbox("Giocatore", "bt_player")
                 bt_n      = st.slider("Top N squadre", 3, 20, 10, key="bt_n")
                 bt_season = st.number_input("Stagione", 2000, 2040, 2024, key="bt_season")
                 if st.button("🏆 Trova migliori squadre", type="primary", key="bt_run"):
@@ -844,17 +1073,14 @@ with tab_scen:
                             "Compatibilità":  round(f.compatibility_score, 3),
                             "Fit posizione":  round(f.position_fit, 3),
                         } for f in fits])
-                        st.dataframe(bt_df, use_container_width=True, hide_index=True)
+                        st.dataframe(bt_df, width='stretch', hide_index=True)
                     except Exception as exc:
                         st.error(f"Errore: {exc}")
 
             # ---- Best players ---------------------------------------------
             with scen_tabs[2]:
                 st.subheader("👥 Migliori giocatori per una squadra")
-                bp_team = st.selectbox(
-                    "Squadra", list(team_opts_s.keys()),
-                    format_func=lambda x: team_opts_s[x], key="bp_team",
-                )
+                bp_team = _make_team_selectbox("Squadra", "bp_team")
                 bp_pos  = st.selectbox(
                     "Posizione (opzionale)",
                     ["Tutte", "PG", "SG", "SF", "PF", "C"],
@@ -878,83 +1104,225 @@ with tab_scen:
                             "Squadra attuale": p.current_team,
                             "Rating predetto": round(p.predicted_rating, 3),
                         } for p in players_fit])
-                        st.dataframe(bp_df, use_container_width=True, hide_index=True)
+                        st.dataframe(bp_df, width='stretch', hide_index=True)
                     except Exception as exc:
                         st.error(f"Errore: {exc}")
 
             # ---- Lineup ---------------------------------------------------
             with scen_tabs[3]:
-                st.subheader("📋 Analisi quintetto")
-                lu_player = st.selectbox(
-                    "Giocatore target", list(player_opts_s.keys()),
-                    format_func=lambda x: player_opts_s[x], key="lu_player",
-                )
-                lu_team = st.selectbox(
-                    "Squadra", list(team_opts_s.keys()),
-                    format_func=lambda x: team_opts_s[x], key="lu_team",
-                )
-                other_opts = {k: v for k, v in player_opts_s.items() if k != lu_player}
-                lu_lineup = st.multiselect(
-                    "Compagni di quintetto (1–4 giocatori)",
-                    options=list(other_opts.keys()),
-                    format_func=lambda x: other_opts.get(x, str(x)),
-                    max_selections=4,
-                    key="lu_lineup",
-                )
+                st.subheader("📋 Costruttore quintetto")
+
+                # Shared selectors for both modes
+                lu_player = _make_player_selectbox("🏀 Giocatore target", "lu_player")
+                lu_team   = _make_team_selectbox("🏆 Squadra contesto", "lu_team")
                 lu_season = st.number_input("Stagione", 2000, 2040, 2024, key="lu_season")
-                if st.button("📋 Analizza quintetto", type="primary", key="lu_run"):
-                    if not lu_lineup:
-                        st.warning("Seleziona almeno un compagno di quintetto.")
-                    else:
-                        try:
-                            res = engine_s.what_if_lineup(
-                                lu_player, lu_team, lu_lineup, season=int(lu_season)
-                            )
-                            lm1, lm2, lm3 = st.columns(3)
-                            lm1.metric("Rating predetto", f"{res.predicted_rating:.2f} / 10")
-                            lm2.metric("Media lineup",    f"{res.avg_lineup_rating:.2f}")
-                            lm3.metric("Confidenza",
-                                       f"[{res.confidence_low:.2f}–{res.confidence_high:.2f}]")
 
-                            st.subheader("Copertura posizioni")
-                            lp1, lp2 = st.columns(2)
-                            lp1.success(
-                                f"Coperte: {', '.join(res.positions_covered) or 'nessuna'}"
-                            )
-                            if res.missing_positions:
-                                lp2.warning(
-                                    f"Mancanti: {', '.join(res.missing_positions)}"
-                                )
-                            if res.position_overlaps:
-                                overlaps_str = ", ".join(
-                                    f"{p}×{c}" for p, c in res.position_overlaps.items()
-                                )
-                                st.warning(f"Sovrapposizioni: {overlaps_str}")
+                # Mode switcher
+                lu_mode = st.radio(
+                    "Modalità costruzione quintetto",
+                    ["🎯 Per giocatori", "📋 Per ruoli avanzati"],
+                    horizontal=True, key="lu_mode",
+                )
 
-                            st.subheader("Profili dei componenti")
-                            lu_df = pd.DataFrame([{
-                                "Giocatore":      p.player_name,
-                                "Posizione":      p.position,
-                                "Ruolo":          p.role,
-                                "Rating predetto": p.predicted_rating,
-                                "Style fit":      p.style_compat,
-                            } for p in res.lineup_profiles])
-                            st.dataframe(lu_df, use_container_width=True, hide_index=True)
-                            st.caption(f"_{res.explanation}_")
-                        except Exception as exc:
-                            st.error(f"Errore analisi quintetto: {exc}")
+                if lu_mode == "🎯 Per giocatori":
+                    # ---- Manual mode: pick teammates ----------------------
+                    with st.expander("ℹ️ Ruoli disponibili", expanded=False):
+                        for r_key, r_desc in ADVANCED_ROLES.items():
+                            st.markdown(f"**{r_key}** — {r_desc}")
+
+                    other_opts = {k: v for k, v in player_opts_s.items() if k != lu_player}
+                    # Search for multiselect
+                    lu_search = st.text_input("🔍 Filtra compagni", key="_s_lu_lineup",
+                                             placeholder="Nome o posizione…",
+                                             label_visibility="collapsed")
+                    q_lu = lu_search.strip().lower()
+                    filtered_lu = ({k: v for k, v in other_opts.items()
+                                    if q_lu in v.lower()} if q_lu else other_opts)
+                    lu_lineup = st.multiselect(
+                        "Compagni di quintetto (1–4 giocatori)",
+                        options=list(filtered_lu.keys()),
+                        format_func=lambda x: filtered_lu.get(x, str(x)),
+                        max_selections=4,
+                        key="lu_lineup",
+                    )
+
+                    if st.button("📋 Analizza quintetto", type="primary", key="lu_run"):
+                        if not lu_lineup:
+                            st.warning("Seleziona almeno un compagno di quintetto.")
+                        else:
+                            try:
+                                res = engine_s.what_if_lineup(
+                                    lu_player, lu_team, lu_lineup, season=int(lu_season)
+                                )
+                                lm1, lm2, lm3 = st.columns(3)
+                                lm1.metric("Rating predetto", f"{res.predicted_rating:.2f} / 10")
+                                lm2.metric("Media lineup",    f"{res.avg_lineup_rating:.2f}")
+                                lm3.metric("Confidenza",
+                                           f"[{res.confidence_low:.2f}–{res.confidence_high:.2f}]")
+
+                                st.subheader("Copertura posizioni")
+                                lp1, lp2 = st.columns(2)
+                                lp1.success(
+                                    f"Coperte: {', '.join(res.positions_covered) or 'nessuna'}"
+                                )
+                                if res.missing_positions:
+                                    lp2.warning(
+                                        f"Mancanti: {', '.join(res.missing_positions)}"
+                                    )
+                                if res.position_overlaps:
+                                    overlaps_str = ", ".join(
+                                        f"{p}×{c}" for p, c in res.position_overlaps.items()
+                                    )
+                                    st.warning(f"Sovrapposizioni: {overlaps_str}")
+
+                                st.subheader("Profili dei componenti")
+                                lu_df = pd.DataFrame([{
+                                    "Giocatore":      p.player_name,
+                                    "Posizione":      p.position,
+                                    "Ruolo":          p.role,
+                                    "Rating predetto": p.predicted_rating,
+                                    "Style fit":      p.style_compat,
+                                } for p in res.lineup_profiles])
+                                st.dataframe(lu_df, width='stretch', hide_index=True)
+                                st.caption(f"_{res.explanation}_")
+
+                                # Synergy analysis
+                                all_ids = [lu_player] + list(lu_lineup)
+                                if len(all_ids) >= 2:
+                                    with st.spinner("Calcolando sinergia…"):
+                                        syn = engine_s.compute_lineup_synergy(
+                                            all_ids, lu_team, season=int(lu_season)
+                                        )
+                                    st.divider()
+                                    st.subheader("⚡ Analisi sinergia")
+                                    s1, s2, s3, s4 = st.columns(4)
+                                    s1.metric("Sinergia complessiva", f"{syn.overall_synergy:.1f} / 10")
+                                    s2.metric("Diversità ruoli",     f"{syn.role_diversity_score:.0%}")
+                                    s3.metric("Bilanc. offensivo",   f"{syn.offensive_balance:.0%}")
+                                    s4.metric("Score difensivo",     f"{syn.defensive_score:.1f}")
+                                    st.info(f"📊 {syn.summary}")
+                                    if syn.missing_roles:
+                                        st.warning(f"⚠️ Ruoli mancanti: {', '.join(syn.missing_roles)}")
+
+                                    st.markdown("**Distribuzione ruoli avanzati**")
+                                    for role, names in syn.role_distribution.items():
+                                        st.markdown(f"- **{role}**: {', '.join(names)}")
+
+                                    if syn.pairwise_compat:
+                                        with st.expander("🤝 Compatibilità a coppie", expanded=False):
+                                            pw_df = pd.DataFrame(
+                                                [(pair, f"{score:.0%}")
+                                                 for pair, score in syn.pairwise_compat.items()],
+                                                columns=["Coppia", "Compatibilità"],
+                                            )
+                                            st.dataframe(pw_df, width='stretch', hide_index=True)
+
+                            except Exception as exc:
+                                st.error(f"Errore analisi quintetto: {exc}")
+
+                else:
+                    # ---- Role-based mode ----------------------------------
+                    st.markdown("Seleziona i **ruoli** dei compagni che vuoi attorno al giocatore target.")
+                    with st.expander("ℹ️ Descrizione ruoli avanzati", expanded=True):
+                        for r_key, r_desc in ADVANCED_ROLES.items():
+                            st.markdown(f"**{r_key}** — {r_desc}")
+
+                    desired_roles = st.multiselect(
+                        "🎭 Ruoli desiderati (fino a 4)",
+                        options=list(ADVANCED_ROLES.keys()),
+                        default=list(ADVANCED_ROLES.keys())[:3],
+                        max_selections=4,
+                        key="lu_roles",
+                        format_func=lambda x: x,
+                    )
+                    top_n_role = st.slider("Candidati per ruolo", 3, 10, 5, key="lu_top_n")
+
+                    if st.button("🔍 Trova quintetto per ruoli", type="primary", key="lu_roles_run"):
+                        if not desired_roles:
+                            st.warning("Seleziona almeno un ruolo.")
+                        else:
+                            with st.spinner("Analizzando i migliori candidati per ogni ruolo…"):
+                                try:
+                                    result_r = engine_s.best_lineup_by_roles(
+                                        lu_player, lu_team,
+                                        desired_roles=desired_roles,
+                                        season=int(lu_season),
+                                        top_n_per_role=int(top_n_role),
+                                    )
+
+                                    st.success(
+                                        f"✅ Quintetto ottimale per **{result_r.target_player_name}** "
+                                        f"— Rating medio: **{result_r.estimated_avg_rating:.2f}**"
+                                    )
+
+                                    # Show optimal lineup
+                                    if result_r.optimal_lineup:
+                                        opt_df = pd.DataFrame([{
+                                            "Ruolo target":    p["target_role"],
+                                            "Giocatore":       p["player_name"],
+                                            "Posizione":       p["position"],
+                                            "Squadra attuale": p["current_team"],
+                                            "Rating predetto": p["predicted_rating"],
+                                            "Ruolo classificato": p["role"],
+                                        } for p in result_r.optimal_lineup])
+                                        st.dataframe(opt_df, width='stretch', hide_index=True)
+
+                                    # Per-role candidates
+                                    st.divider()
+                                    st.subheader("📋 Candidati per ruolo")
+                                    for rc in result_r.role_candidates:
+                                        with st.expander(
+                                            f"**{rc.role}** — {rc.description}", expanded=False
+                                        ):
+                                            if rc.candidates:
+                                                cand_df = pd.DataFrame([{
+                                                    "Giocatore":       c["player_name"],
+                                                    "Posizione":       c["position"],
+                                                    "Squadra":         c["current_team"],
+                                                    "Rating predetto": c["predicted_rating"],
+                                                } for c in rc.candidates])
+                                                st.dataframe(cand_df, width='stretch',
+                                                             hide_index=True)
+                                            else:
+                                                st.caption("Nessun candidato trovato per questo ruolo.")
+
+                                    # Synergy of optimal lineup
+                                    opt_ids = [lu_player] + [p["player_id"]
+                                                              for p in result_r.optimal_lineup]
+                                    if len(opt_ids) >= 2:
+                                        with st.spinner("Calcolando sinergia quintetto ottimale…"):
+                                            syn_r = engine_s.compute_lineup_synergy(
+                                                opt_ids, lu_team, season=int(lu_season)
+                                            )
+                                        st.divider()
+                                        st.subheader("⚡ Sinergia quintetto ottimale")
+                                        sr1, sr2, sr3, sr4 = st.columns(4)
+                                        sr1.metric("Sinergia complessiva", f"{syn_r.overall_synergy:.1f} / 10")
+                                        sr2.metric("Diversità ruoli",     f"{syn_r.role_diversity_score:.0%}")
+                                        sr3.metric("Bilanc. offensivo",   f"{syn_r.offensive_balance:.0%}")
+                                        sr4.metric("Score difensivo",     f"{syn_r.defensive_score:.1f}")
+                                        st.info(f"📊 {syn_r.summary}")
+                                        if syn_r.missing_roles:
+                                            st.warning(
+                                                f"⚠️ Ruoli mancanti: {', '.join(syn_r.missing_roles)}"
+                                            )
+                                        if syn_r.pairwise_compat:
+                                            with st.expander("🤝 Compatibilità a coppie", expanded=False):
+                                                pwr_df = pd.DataFrame(
+                                                    [(pair, f"{score:.0%}")
+                                                     for pair, score in syn_r.pairwise_compat.items()],
+                                                    columns=["Coppia", "Compatibilità"],
+                                                )
+                                                st.dataframe(pwr_df, width='stretch', hide_index=True)
+
+                                except Exception as exc:
+                                    st.error(f"Errore ricerca per ruoli: {exc}")
 
             # ---- Teammates ------------------------------------------------
             with scen_tabs[4]:
                 st.subheader("🤝 Scenario compagni ipotetici")
-                tm_player = st.selectbox(
-                    "Giocatore", list(player_opts_s.keys()),
-                    format_func=lambda x: player_opts_s[x], key="tm_player",
-                )
-                tm_team = st.selectbox(
-                    "Squadra", list(team_opts_s.keys()),
-                    format_func=lambda x: team_opts_s[x], key="tm_team",
-                )
+                tm_player = _make_player_selectbox("Giocatore", "tm_player")
+                tm_team   = _make_team_selectbox("Squadra", "tm_team")
                 tm_avg    = st.slider(
                     "Rating medio ipotetico dei compagni", 4.0, 10.0, 7.5,
                     step=0.1, key="tm_avg",
@@ -978,6 +1346,8 @@ with tab_scen:
                                    delta=round(delta, 3))
                     except Exception as exc:
                         st.error(f"Errore: {exc}")
+
+
 
 
 # ===========================================================================
@@ -1146,7 +1516,7 @@ with tab_mapping:
                 edited_df = st.data_editor(
                     df_mapping,
                     key=f"mapping_editor_{logical}",
-                    use_container_width=True,
+                    width='stretch',
                     hide_index=True,
                     column_config={
                         "Campo modello": st.column_config.TextColumn(

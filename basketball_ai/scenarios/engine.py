@@ -113,6 +113,58 @@ class LineupAnalysisResult:
 
 
 # ---------------------------------------------------------------------------
+# Advanced role taxonomy
+# ---------------------------------------------------------------------------
+
+ADVANCED_ROLES: Dict[str, str] = {
+    "🎯 Playmaker":         "Palleggiatore primario – controlla il possesso (AST% alto)",
+    "⚡ Scorer primario":   "Prima opzione offensiva (USG% > 25, tanti punti)",
+    "🏹 Specialista 3pt":  "Spacer / tiratore da tre – allunga il campo",
+    "🛡️ Difensore":        "Difensore d'élite (STL+BLK elevati, aggressivo)",
+    "💪 Pivot / Big":       "Presenza nella pittura – rimbalzista e finalizzatore",
+    "🔄 Ala tuttofare":     "Ala versatile – contribuisce in attacco e difesa",
+    "📊 Role Player":       "Giocatore di ruolo – efficiente, USG basso",
+    "🎭 Stretch Big":       "Lungo che tira da tre – allarga il campo",
+}
+
+
+@dataclass
+class LineupSynergyResult:
+    """Comprehensive synergy analysis for a multi-player lineup."""
+    overall_synergy: float            # 0–10 composite score
+    role_diversity_score: float       # 0–1
+    positional_balance: float         # 0–1
+    offensive_balance: float          # 0–1
+    defensive_score: float            # 0–10
+    style_compat: float               # 0–1
+    role_distribution: Dict[str, List[str]]
+    missing_roles: List[str]
+    synergy_bonus: float              # rating boost (0–0.4)
+    pairwise_compat: Dict[str, float]
+    summary: str
+
+
+@dataclass
+class RoleCandidateResult:
+    """Top candidates for a specific role."""
+    role: str
+    description: str
+    candidates: List[Dict[str, Any]]
+
+
+@dataclass
+class LineupByRolesResult:
+    """Result of role-based lineup search."""
+    target_player_id: int
+    target_player_name: str
+    team_id: int
+    season: int
+    role_candidates: List[RoleCandidateResult]
+    optimal_lineup: List[Dict[str, Any]]
+    estimated_avg_rating: float
+
+
+# ---------------------------------------------------------------------------
 # Engine
 # ---------------------------------------------------------------------------
 
@@ -509,3 +561,255 @@ class WhatIfEngine:
             lineup_profiles=profiles,
             explanation=explanation,
         )
+
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _classify_role_advanced(player_feats: Dict[str, Any], position: str) -> str:
+        """More granular role classification using ADVANCED_ROLES taxonomy."""
+        pm   = float(player_feats.get("playmaking_score", 0.0))
+        df   = float(player_feats.get("defensive_score", 0.0))
+        usg  = float(player_feats.get("avg_usg_pct", 0.0))
+        prof = str(player_feats.get("scoring_profile", "efficient_scorer"))
+        pts  = float(player_feats.get("pts_per_36", 0.0))
+        ast  = float(player_feats.get("ast_per_36", 0.0))
+        stl  = float(player_feats.get("stl_per_36", 0.0))
+        blk  = float(player_feats.get("blk_per_36", 0.0))
+        ver  = float(player_feats.get("versatility_score", 0.0))
+        primary = position.split("/")[0]
+
+        if pm > 0.35 or ast > 7.0:
+            return "🎯 Playmaker"
+        if primary in ("PF", "C") and prof == "3pt_specialist":
+            return "🎭 Stretch Big"
+        if primary in ("PF", "C") and prof == "paint_scorer":
+            return "💪 Pivot / Big"
+        if primary in ("PF", "C") and usg < 22:
+            return "💪 Pivot / Big"
+        if (stl + blk) > 3.2 or df > 4.5:
+            return "🛡️ Difensore"
+        if usg > 24 or pts > 22:
+            return "⚡ Scorer primario"
+        if prof == "3pt_specialist":
+            return "🏹 Specialista 3pt"
+        if primary in ("SF", "SG") and ver > 0.45 and df > 2.0:
+            return "🔄 Ala tuttofare"
+        return "📊 Role Player"
+
+    # ------------------------------------------------------------------
+    def compute_lineup_synergy(
+        self,
+        player_ids: List[int],
+        team_id: int,
+        season: int = 2024,
+    ) -> LineupSynergyResult:
+        """Compute a comprehensive synergy score for a set of players."""
+        player_dict = self.data["player_dict"]
+        team_dict   = self.data["team_dict"]
+        team_row    = team_dict.get(int(team_id), {})
+        team_style  = str(team_row.get("playing_style", "motion_offense"))
+
+        profiles: List[Dict[str, Any]] = []
+        for pid in player_ids:
+            p_row = player_dict.get(int(pid), {})
+            pos   = str(p_row.get("position", "PG"))
+            name  = str(p_row.get("name", f"Player {pid}"))
+            try:
+                pred   = self.ensemble.predict(pid, team_id, self.data, season)
+                rating = pred.predicted_rating
+            except Exception:
+                rating = 6.0
+            p_feats  = compute_player_features(pid, self.data)
+            role     = self._classify_role_advanced(p_feats, pos)
+            style_c  = get_style_position_compat(team_style, pos)
+            profiles.append({
+                "pid": pid, "name": name, "pos": pos, "rating": rating,
+                "role": role, "style_compat": style_c, "feats": p_feats,
+            })
+
+        # 1. Role diversity
+        unique_roles = {p["role"] for p in profiles}
+        role_diversity_score = float(np.clip(len(unique_roles) / max(1, min(len(profiles), 5)), 0, 1))
+        role_dist: Dict[str, List[str]] = {}
+        for p in profiles:
+            role_dist.setdefault(p["role"], []).append(p["name"])
+        key_roles_needed = {"🎯 Playmaker", "🛡️ Difensore"}
+        missing_roles = sorted(key_roles_needed - unique_roles)
+
+        # 2. Positional balance
+        pos_set: set = set()
+        for p in profiles:
+            for comp in p["pos"].split("/"):
+                pos_set.add(comp)
+        all_5 = {"PG", "SG", "SF", "PF", "C"}
+        positional_balance = float(len(pos_set & all_5) / 5.0)
+
+        # 3. Offensive balance (USG distribution + spacing)
+        usgs    = [float(p["feats"].get("avg_usg_pct", 18.0)) for p in profiles]
+        total   = sum(usgs)
+        mx_usg  = max(usgs) if usgs else 18.0
+        spacers = sum(1 for p in profiles
+                      if p["feats"].get("scoring_profile", "") == "3pt_specialist")
+        usg_ok  = (50 <= total <= 135) and mx_usg <= 38
+        offensive_balance = float(np.clip(
+            (1.0 if usg_ok else 0.65) * (1.0 + min(spacers, 3) * 0.08), 0, 1
+        ))
+
+        # 4. Defensive score
+        defensive_score = float(np.clip(
+            sum(float(p["feats"].get("defensive_score", 2.0)) for p in profiles)
+            / max(1, len(profiles)) * 2, 0, 10
+        ))
+
+        # 5. Style compatibility (avg)
+        style_compat = float(np.mean([p["style_compat"] for p in profiles])) if profiles else 0.5
+
+        # 6. Pairwise role compatibility
+        _ROLE_COMPAT: Dict[tuple, float] = {
+            ("🎯 Playmaker", "🏹 Specialista 3pt"):   0.92,
+            ("🎯 Playmaker", "💪 Pivot / Big"):        0.88,
+            ("🎯 Playmaker", "🎭 Stretch Big"):        0.90,
+            ("🎯 Playmaker", "⚡ Scorer primario"):    0.82,
+            ("⚡ Scorer primario", "🛡️ Difensore"):   0.85,
+            ("🏹 Specialista 3pt", "💪 Pivot / Big"):  0.80,
+            ("🛡️ Difensore", "📊 Role Player"):       0.75,
+            ("🔄 Ala tuttofare", "🎯 Playmaker"):      0.80,
+            ("🎭 Stretch Big", "🎯 Playmaker"):        0.88,
+            ("🎭 Stretch Big", "⚡ Scorer primario"):  0.82,
+        }
+        pairwise: Dict[str, float] = {}
+        for i in range(len(profiles)):
+            for j in range(i + 1, len(profiles)):
+                a, b  = profiles[i], profiles[j]
+                pair  = tuple(sorted([a["role"], b["role"]]))
+                base  = _ROLE_COMPAT.get(pair, 0.55)
+                pos_a = set(a["pos"].split("/"))
+                pos_b = set(b["pos"].split("/"))
+                adj   = 0.08 if not (pos_a & pos_b) else -0.05
+                pairwise[f"{a['name']} – {b['name']}"] = float(np.clip(base + adj, 0, 1))
+
+        # 7. Overall synergy (0–10, weighted composite)
+        overall = float(np.clip(
+            role_diversity_score  * 3.0
+            + positional_balance  * 2.5
+            + offensive_balance   * 2.0
+            + (defensive_score / 10.0) * 1.5
+            + style_compat        * 1.0,
+            0, 10,
+        ))
+        synergy_bonus = float(np.clip(overall / 25.0, 0.0, 0.4))
+
+        parts: List[str] = []
+        if missing_roles:
+            parts.append(f"⚠️ Ruoli mancanti: {', '.join(missing_roles)}")
+        if spacers >= 2:
+            parts.append(f"✅ {spacers} tiratori da 3 (ottimo spacing)")
+        if positional_balance >= 1.0:
+            parts.append("✅ Quintetto completo")
+        if overall >= 7.0:
+            parts.append("⭐ Alta sinergia")
+
+        return LineupSynergyResult(
+            overall_synergy=round(overall, 2),
+            role_diversity_score=round(role_diversity_score, 2),
+            positional_balance=round(positional_balance, 2),
+            offensive_balance=round(offensive_balance, 2),
+            defensive_score=round(defensive_score, 2),
+            style_compat=round(style_compat, 2),
+            role_distribution=role_dist,
+            missing_roles=missing_roles,
+            synergy_bonus=round(synergy_bonus, 3),
+            pairwise_compat={k: round(v, 2) for k, v in pairwise.items()},
+            summary=" | ".join(parts) if parts else "Quintetto equilibrato",
+        )
+
+    # ------------------------------------------------------------------
+    def best_lineup_by_roles(
+        self,
+        target_player_id: int,
+        team_id: int,
+        desired_roles: List[str],
+        season: int = 2024,
+        top_n_per_role: int = 5,
+    ) -> LineupByRolesResult:
+        """Find the best players for each desired role around a target player.
+
+        Args:
+            target_player_id: The focal player.
+            team_id:          Context team for predictions.
+            desired_roles:    List of role keys from ADVANCED_ROLES.
+            season:           Season for predictions.
+            top_n_per_role:   How many candidates per role to return.
+        """
+        players_df  = self.data["players"]
+        player_dict = self.data["player_dict"]
+        team_dict   = self.data["team_dict"]
+        target_name = str(player_dict.get(int(target_player_id), {}).get(
+            "name", f"Player {target_player_id}"
+        ))
+
+        # Sample players (cap for performance)
+        sample = players_df.sample(min(700, len(players_df)), random_state=42)
+        all_scored: List[Dict[str, Any]] = []
+        for _, row in sample.iterrows():
+            pid = int(row["id"])
+            if pid == int(target_player_id):
+                continue
+            pos  = str(row.get("position", "PG"))
+            name = str(row.get("name", f"Player {pid}"))
+            try:
+                pred      = self.ensemble.predict(pid, team_id, self.data, season)
+                p_feats   = compute_player_features(pid, self.data)
+                role      = self._classify_role_advanced(p_feats, pos)
+                cur_tid   = row.get("current_team_id")
+                cur_team  = str(team_dict.get(
+                    int(cur_tid) if cur_tid else 0, {}
+                ).get("name", "Unknown"))
+                all_scored.append({
+                    "player_id":       pid,
+                    "player_name":     name,
+                    "position":        pos,
+                    "predicted_rating": round(pred.predicted_rating, 3),
+                    "role":            role,
+                    "current_team":    cur_team,
+                    "style_compat":    round(
+                        get_style_position_compat(
+                            str(team_dict.get(int(team_id), {}).get("playing_style", "")), pos
+                        ), 3
+                    ),
+                })
+            except Exception:
+                continue
+
+        # Build per-role candidate lists
+        role_candidates: List[RoleCandidateResult] = []
+        for role in desired_roles:
+            matches = [p for p in all_scored if p["role"] == role]
+            matches.sort(key=lambda p: p["predicted_rating"], reverse=True)
+            role_candidates.append(RoleCandidateResult(
+                role=role,
+                description=ADVANCED_ROLES.get(role, ""),
+                candidates=matches[:top_n_per_role],
+            ))
+
+        # Optimal lineup: best unique player per role (greedy)
+        used: set = set()
+        optimal: List[Dict[str, Any]] = []
+        for rc in role_candidates:
+            for cand in rc.candidates:
+                if cand["player_id"] not in used:
+                    optimal.append({**cand, "target_role": rc.role})
+                    used.add(cand["player_id"])
+                    break
+
+        avg_r = float(np.mean([p["predicted_rating"] for p in optimal])) if optimal else 0.0
+
+        return LineupByRolesResult(
+            target_player_id=int(target_player_id),
+            target_player_name=target_name,
+            team_id=team_id,
+            season=season,
+            role_candidates=role_candidates,
+            optimal_lineup=optimal,
+            estimated_avg_rating=round(avg_r, 3),
+        )
+

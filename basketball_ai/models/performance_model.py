@@ -15,6 +15,8 @@ from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from xgboost import XGBRegressor
 
+from basketball_ai.data.loader import _to_int
+
 try:
     import shap as _shap
     _SHAP_AVAILABLE = True
@@ -319,17 +321,18 @@ class PerformanceModel:
                 extra_feature_names.append(feat_name)
 
         all_feature_names = FEATURE_COLS + extra_feature_names
-        self.feature_names = all_feature_names
+        # Note: self.feature_names is NOT set here; the caller (train() or GUI) sets it.
 
         if extra_metrics:
             print(f"[PerformanceModel] Metriche extra ({len(extra_metrics)}): {extra_metrics}")
 
         birth_year_map: Dict[int, int] = {
-            int(row["id"]): 2024 - int(row["age"])
+            _to_int(row["id"]): 2024 - int(row["age"])
             for _, row in players.iterrows()
+            if row.get("age") is not None and not (isinstance(row.get("age"), float) and np.isnan(row["age"]))
         }
         position_map: Dict[int, str] = {
-            int(row["id"]): str(row["position"])
+            _to_int(row["id"]): str(row["position"])
             for _, row in players.iterrows()
         }
 
@@ -338,7 +341,7 @@ class PerformanceModel:
 
         for pid, grp in player_stats.groupby("player_id"):
             grp = grp.sort_values("season")
-            pid = int(pid)
+            pid = _to_int(pid)
             pos = position_map.get(pid, "PG")
             by  = birth_year_map.get(pid)
             if by is None:
@@ -357,7 +360,7 @@ class PerformanceModel:
                 rows.append(self._build_row(stat, age, pos, history_so_far, extra_metrics=extra_metrics))
                 targets.append(float(stat["rating"]))
 
-        X = pd.DataFrame(rows, columns=self.feature_names)
+        X = pd.DataFrame(rows, columns=all_feature_names)
         y = np.array(targets, dtype=float)
         return X, y
 
@@ -374,6 +377,7 @@ class PerformanceModel:
         """
         print("[PerformanceModel] Building feature matrix …")
         X, y = self.prepare_features(data, extra_metrics=extra_metrics)
+        self.feature_names = list(X.columns)
         print(f"[PerformanceModel] Training on {len(X):,} samples …")
 
         X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.15, random_state=42)
@@ -392,11 +396,12 @@ class PerformanceModel:
         """Predict rating from an already-engineered feature dict."""
         if not self.is_trained:
             return float(np.clip(feature_dict.get("form_score", 6.5), 4.0, 10.0))
-        row = pd.DataFrame(
-            [[feature_dict.get(c, 0.0) for c in self.feature_names]],
-            columns=self.feature_names,
-        )
-        scaled = self.scaler.transform(row)
+        # Use numpy array to bypass sklearn feature-name validation; values are
+        # ordered to match self.feature_names (= scaler fit order), so scaling
+        # is correct even when extra-metric keys are absent from feature_dict
+        # (they default to 0.0 via .get).
+        arr = np.array([[feature_dict.get(c, 0.0) for c in self.feature_names]], dtype=float)
+        scaled = self.scaler.transform(arr)
         return float(np.clip(self.model.predict(scaled)[0], 3.5, 10.0))
 
     def get_shap_values(self, feature_dict: Dict[str, float]) -> Dict[str, float]:
@@ -405,11 +410,8 @@ class PerformanceModel:
         try:
             if self._shap_explainer is None:
                 self._shap_explainer = _shap.TreeExplainer(self.model)
-            row = pd.DataFrame(
-                [[feature_dict.get(c, 0.0) for c in self.feature_names]],
-                columns=self.feature_names,
-            )
-            scaled = self.scaler.transform(row)
+            arr = np.array([[feature_dict.get(c, 0.0) for c in self.feature_names]], dtype=float)
+            scaled = self.scaler.transform(arr)
             sv = self._shap_explainer.shap_values(scaled)
             return {name: float(sv[0][i]) for i, name in enumerate(self.feature_names)}
         except Exception:

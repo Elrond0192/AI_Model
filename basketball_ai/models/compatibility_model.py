@@ -10,11 +10,13 @@ from typing import Any, Dict, List, Optional
 
 import joblib
 import numpy as np
+import pandas as pd
 from sklearn.neighbors import KNeighborsRegressor
 from sklearn.preprocessing import StandardScaler
 
 from basketball_ai.features.team_features import compute_team_style_vector
 from basketball_ai.data.models import Team
+from basketball_ai.data.loader import _to_int
 
 
 class CompatibilityModel:
@@ -68,12 +70,14 @@ class CompatibilityModel:
         y_vals: List[float]      = []
 
         for _, stat in player_stats.iterrows():
-            tid  = int(stat["team_id"])
+            if pd.isna(stat["team_id"]) or pd.isna(stat["player_id"]):
+                continue
+            tid  = _to_int(stat["team_id"])
             team = team_dict.get(tid)
             if team is None:
                 continue
             sv   = self._team_style_vector(team)
-            pid  = int(stat["player_id"])
+            pid  = _to_int(stat["player_id"])
             p_mean = player_mean.get(pid, 6.5)
             compat = float(np.clip((float(stat["rating"]) - p_mean + 1.5) / 3.0, 0.0, 1.0))
             X_rows.append(sv)
