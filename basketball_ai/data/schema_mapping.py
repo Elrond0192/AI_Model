@@ -82,7 +82,7 @@ TABLE_PLAYER_STATS: List[ColumnDef] = [
     ColumnDef("Id", "player_id", "Player identifier from season advanced stats."),
     ColumnDef(None, "season", "Static season label.", default="2024"),
     ColumnDef("TeamId", "team_id", "Most recent team identifier from Boxscore.*.", default=None),
-    ColumnDef("Competition", "league_id", "Competition code from season stats.", default="RS"),
+    ColumnDef("Competition", "competition", "Competition code from season stats.", default="RS"),
     ColumnDef("Games", "games_played", "Games played.", default=0),
     ColumnDef("Min", "minutes_per_game", "Minutes per game.", default=0.0, compute=lambda df: _per_game(df, "Min")),
     ColumnDef("Pts", "points", "Points per game.", default=0.0, compute=lambda df: _per_game(df, "Pts")),
@@ -293,7 +293,8 @@ def _player_stats_select(league: str, season: str) -> str:
     ISNULL(r.RuoloCombinato, '') AS ruolo_combinato,
     ISNULL(CAST(o.NetRtg_On AS float), 0.0) AS on_net_rtg,
     ISNULL(CAST(o.NetRtg_Off AS float), 0.0) AS off_net_rtg,
-    ISNULL(CAST(o.NetRtg_Diff AS float), 0.0) AS net_rtg_diff
+    ISNULL(CAST(o.NetRtg_Diff AS float), 0.0) AS net_rtg_diff,
+    ISNULL(s.Competition, 'RS') AS competition
 FROM Analisi.AdvancedStats_Player_{tag} AS s
 LEFT JOIN {slug}_box  AS b ON CAST(s.Id AS nvarchar(100)) = b.player_id AND b.rn = 1
 LEFT JOIN {slug}_roles AS r ON CAST(s.Id AS nvarchar(100)) = r.player_id AND r.rn = 1

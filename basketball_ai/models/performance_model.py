@@ -236,8 +236,8 @@ class PerformanceModel:
         if "competition" in player_stats_history.columns:
             rs_hist = player_stats_history[player_stats_history["competition"] == "RS"]
             po_hist = player_stats_history[player_stats_history["competition"] == "PO"]
-            rs_mean = float(rs_hist["rating"].mean()) if not rs_hist.empty else float("nan")
-            po_mean = float(po_hist["rating"].mean()) if not po_hist.empty else float("nan")
+            rs_mean = float(rs_hist["rating"].mean()) if not rs_hist.empty else np.nan
+            po_mean = float(po_hist["rating"].mean()) if not po_hist.empty else np.nan
             if not (np.isnan(rs_mean) or np.isnan(po_mean)):
                 po_vs_rs_delta = po_mean - rs_mean
             else:

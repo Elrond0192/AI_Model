@@ -11,6 +11,9 @@ POS_WEIGHTS = [0.12,0.14,0.16,0.18,0.20,0.07,0.06,0.04,0.02,0.01]
 STYLES = ["pace_and_space","pick_and_roll","isolation","defensive","motion_offense","post_up"]
 NATIONALITIES = ["American","Spanish","French","German","Italian","Australian","Turkish","Greek","Nigerian","Canadian","Serbian","Slovenian","Argentinian","Brazilian","Croatian"]
 
+# Fraction of player-seasons that also generate a Playoff (PO) statistics row.
+_PO_GENERATION_PROBABILITY = 0.40
+
 LEAGUES = [
     (1,"NBA","USA",1,1.0,100.0,113.0),
     (2,"EuroLeague","Europe",2,0.85,93.0,108.0),
@@ -169,7 +172,7 @@ def generate_player_stats(players_df, teams_df):
                 "competition":"RS",
             })
             # ~40% of players also have a playoff (PO) row for this season
-            if random.random() < 0.40:
+            if random.random() < _PO_GENERATION_PROBABILITY:
                 _noise = lambda: float(np.random.normal(0, 0.04))
                 po_mult = 1.0 + po_tendency + _noise()
                 po_pts  = max(0.0, pts  * po_mult)
