@@ -29,6 +29,40 @@ COMPETITION_ENCODING: Dict[str, int] = {
     "SUPERCUP": 3,    # Super Cup / preseason
 }
 
+
+def compute_po_features(player_stats_df: "pd.DataFrame") -> Dict[str, float]:
+    """Return competition-specific features for a player from their full stats DataFrame.
+
+    Args:
+        player_stats_df: Rows from ``player_stats`` for a single player.
+
+    Returns:
+        Dict with keys ``po_vs_rs_delta`` (mean PO rating − mean RS rating; 0.0 if
+        one side is missing) and ``po_games_played`` (total PO games played).
+    """
+    if "competition" not in player_stats_df.columns:
+        return {"po_vs_rs_delta": 0.0, "po_games_played": 0.0}
+
+    rs_hist = player_stats_df[player_stats_df["competition"] == "RS"]
+    po_hist = player_stats_df[player_stats_df["competition"] == "PO"]
+
+    rs_mean = float(rs_hist["rating"].mean()) if not rs_hist.empty else np.nan
+    po_mean = float(po_hist["rating"].mean()) if not po_hist.empty else np.nan
+
+    if not (np.isnan(rs_mean) or np.isnan(po_mean)):
+        po_vs_rs_delta = po_mean - rs_mean
+    else:
+        po_vs_rs_delta = 0.0
+
+    po_gp = (
+        float(po_hist["games_played"].sum())
+        if (not po_hist.empty and "games_played" in po_hist.columns)
+        else 0.0
+    )
+
+    return {"po_vs_rs_delta": po_vs_rs_delta, "po_games_played": po_gp}
+
+
 # Feature columns (order matters for scaling)
 FEATURE_COLS: List[str] = [
     "age",
@@ -233,25 +267,9 @@ class PerformanceModel:
         }
 
         # PO vs RS delta and PO games played from historical data
-        if "competition" in player_stats_history.columns:
-            rs_hist = player_stats_history[player_stats_history["competition"] == "RS"]
-            po_hist = player_stats_history[player_stats_history["competition"] == "PO"]
-            rs_mean = float(rs_hist["rating"].mean()) if not rs_hist.empty else np.nan
-            po_mean = float(po_hist["rating"].mean()) if not po_hist.empty else np.nan
-            if not (np.isnan(rs_mean) or np.isnan(po_mean)):
-                po_vs_rs_delta = po_mean - rs_mean
-            else:
-                po_vs_rs_delta = 0.0
-            po_gp = (
-                float(po_hist["games_played"].sum())
-                if (not po_hist.empty and "games_played" in po_hist.columns)
-                else 0.0
-            )
-        else:
-            po_vs_rs_delta = 0.0
-            po_gp = 0.0
-        row["po_vs_rs_delta"]  = po_vs_rs_delta
-        row["po_games_played"] = po_gp
+        po_feats = compute_po_features(player_stats_history)
+        row["po_vs_rs_delta"]  = po_feats["po_vs_rs_delta"]
+        row["po_games_played"] = po_feats["po_games_played"]
 
         # Extra metrics requested by the caller
         for col in extra_metrics:

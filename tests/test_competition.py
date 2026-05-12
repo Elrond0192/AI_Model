@@ -11,6 +11,7 @@ from basketball_ai.models.performance_model import (
     COMPETITION_ENCODING,
     FEATURE_COLS,
     PerformanceModel,
+    compute_po_features,
 )
 from basketball_ai.models.ensemble import EnsembleModel, PredictionResult
 from basketball_ai.scenarios.engine import WhatIfEngine
@@ -162,6 +163,29 @@ class TestCompetitionEncoding:
     def test_feature_cols_contains_competition_features(self):
         for feat in ("competition_enc", "po_vs_rs_delta", "po_games_played"):
             assert feat in FEATURE_COLS, f"Missing: {feat}"
+
+    def test_compute_po_features_returns_delta(self):
+        stats = pd.DataFrame([
+            {"competition": "RS", "rating": 7.0, "games_played": 70},
+            {"competition": "RS", "rating": 7.5, "games_played": 72},
+            {"competition": "PO", "rating": 8.0, "games_played": 12},
+        ])
+        result = compute_po_features(stats)
+        assert abs(result["po_vs_rs_delta"] - (8.0 - 7.25)) < 0.01
+        assert result["po_games_played"] == 12.0
+
+    def test_compute_po_features_no_po_data_returns_zero_delta(self):
+        stats = pd.DataFrame([
+            {"competition": "RS", "rating": 7.0, "games_played": 70},
+        ])
+        result = compute_po_features(stats)
+        assert result["po_vs_rs_delta"] == 0.0
+
+    def test_compute_po_features_missing_competition_column_returns_zeros(self):
+        stats = pd.DataFrame([{"rating": 7.0, "games_played": 70}])
+        result = compute_po_features(stats)
+        assert result["po_vs_rs_delta"] == 0.0
+        assert result["po_games_played"] == 0.0
 
 
 # ---------------------------------------------------------------------------

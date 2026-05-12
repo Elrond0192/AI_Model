@@ -18,7 +18,9 @@ import numpy as np
 
 from basketball_ai.models.age_curve import age_performance_factor, PEAK_AGES
 from basketball_ai.models.compatibility_model import CompatibilityModel
-from basketball_ai.models.performance_model import PerformanceModel, COMPETITION_ENCODING
+from basketball_ai.models.performance_model import (
+    PerformanceModel, COMPETITION_ENCODING, compute_po_features,
+)
 from basketball_ai.features.player_features import compute_player_features
 from basketball_ai.features.team_features import compute_team_features
 from basketball_ai.features.context_features import compute_context_features
@@ -106,26 +108,9 @@ class EnsembleModel:
         # Inject competition-aware features that the model was trained on
         player_feats["competition_enc"] = float(COMPETITION_ENCODING.get(competition, 0))
 
-        stats_df = data["player_stats"]
-        p_stats  = stats_df[stats_df["player_id"] == int(player_id)]
-        if "competition" in p_stats.columns:
-            rs_ratings = p_stats[p_stats["competition"] == "RS"]["rating"].dropna()
-            po_ratings = p_stats[p_stats["competition"] == "PO"]["rating"].dropna()
-            if len(rs_ratings) > 0 and len(po_ratings) > 0:
-                player_feats["po_vs_rs_delta"] = (
-                    float(po_ratings.mean()) - float(rs_ratings.mean())
-                )
-            else:
-                player_feats["po_vs_rs_delta"] = 0.0
-            po_gp = (
-                float(p_stats[p_stats["competition"] == "PO"]["games_played"].sum())
-                if "games_played" in p_stats.columns
-                else 0.0
-            )
-            player_feats["po_games_played"] = float(po_gp) if not np.isnan(po_gp) else 0.0
-        else:
-            player_feats["po_vs_rs_delta"]  = 0.0
-            player_feats["po_games_played"] = 0.0
+        p_stats  = data["player_stats"][data["player_stats"]["player_id"] == int(player_id)]
+        po_feats = compute_po_features(p_stats)
+        player_feats.update(po_feats)
 
         # 2. Base rating from XGBoost
         base_rating = self.perf_model.predict_from_features(player_feats)

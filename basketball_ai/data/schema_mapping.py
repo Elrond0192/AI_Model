@@ -299,7 +299,9 @@ FROM Analisi.AdvancedStats_Player_{tag} AS s
 LEFT JOIN {slug}_box  AS b ON CAST(s.Id AS nvarchar(100)) = b.player_id AND b.rn = 1
 LEFT JOIN {slug}_roles AS r ON CAST(s.Id AS nvarchar(100)) = r.player_id AND r.rn = 1
 LEFT JOIN {slug}_onoff AS o ON CAST(s.Id AS nvarchar(100)) = o.player_id AND o.rn = 1
-WHERE s.Competition NOT IN ('TOT')"""
+WHERE s.Competition NOT IN ('TOT')
+-- 'TOT' rows are aggregated totals across multiple teams in the same season;
+-- we exclude them to avoid double-counting when a player changed teams mid-season."""
 
 
 def _team_player_relations_block(league: str, season: str) -> str:
