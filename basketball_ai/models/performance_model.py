@@ -21,10 +21,19 @@ try:
 except ImportError:
     _SHAP_AVAILABLE = False
 
+# Competition-type encoding used as a training feature and prediction context
+COMPETITION_ENCODING: Dict[str, int] = {
+    "RS": 0,          # Regular Season
+    "PO": 1,          # Playoffs
+    "CUP": 2,         # Cup competition
+    "SUPERCUP": 3,    # Super Cup / preseason
+}
+
 # Feature columns (order matters for scaling)
 FEATURE_COLS: List[str] = [
     "age",
     "position_enc",
+    "competition_enc",
     "pts_per_36",
     "ast_per_36",
     "reb_per_36",
@@ -38,6 +47,8 @@ FEATURE_COLS: List[str] = [
     "consistency_score",
     "career_trajectory",
     "age_vs_peak_age",
+    "po_vs_rs_delta",
+    "po_games_played",
 ]
 
 # Non-metric identity/target columns to exclude from METRIC_CATALOG selection
@@ -203,6 +214,9 @@ class PerformanceModel:
         row: Dict[str, float] = {
             "age":                float(age),
             "position_enc":       pos_enc,
+            "competition_enc":    float(COMPETITION_ENCODING.get(
+                str(stat_row.get("competition", "RS")), 0
+            )),
             "pts_per_36":         per36("points"),
             "ast_per_36":         per36("assists"),
             "reb_per_36":         per36("rebounds"),
@@ -217,6 +231,27 @@ class PerformanceModel:
             "career_trajectory":  trajectory,
             "age_vs_peak_age":    float(age - peak_age),
         }
+
+        # PO vs RS delta and PO games played from historical data
+        if "competition" in player_stats_history.columns:
+            rs_hist = player_stats_history[player_stats_history["competition"] == "RS"]
+            po_hist = player_stats_history[player_stats_history["competition"] == "PO"]
+            rs_mean = float(rs_hist["rating"].mean()) if not rs_hist.empty else float("nan")
+            po_mean = float(po_hist["rating"].mean()) if not po_hist.empty else float("nan")
+            if not (np.isnan(rs_mean) or np.isnan(po_mean)):
+                po_vs_rs_delta = po_mean - rs_mean
+            else:
+                po_vs_rs_delta = 0.0
+            po_gp = (
+                float(po_hist["games_played"].sum())
+                if (not po_hist.empty and "games_played" in po_hist.columns)
+                else 0.0
+            )
+        else:
+            po_vs_rs_delta = 0.0
+            po_gp = 0.0
+        row["po_vs_rs_delta"]  = po_vs_rs_delta
+        row["po_games_played"] = po_gp
 
         # Extra metrics requested by the caller
         for col in extra_metrics:

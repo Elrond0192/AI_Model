@@ -133,6 +133,8 @@ def generate_player_stats(players_df, teams_df):
         p = pos_params[pos]
         n_seasons = random.randint(1,len(seasons))
         player_seasons = random.sample(seasons,n_seasons)
+        # Per-player playoff tendency: positive = elevates in PO, negative = declines
+        po_tendency = float(np.random.normal(0.0, 0.12))
         for s in player_seasons:
             tid = random.choice(team_ids)
             lid = team_league[tid]
@@ -163,8 +165,42 @@ def generate_player_stats(players_df, teams_df):
                 "usg_pct":round(usg,2),"bpm":round(bpm,2),
                 "vorp":round(_rng(1,1.5,-3,10),2),"win_shares":round(ws,2),
                 "ast_ratio":round(_rng(15,8,0,50),2),"reb_pct":round(_rng(10,4,1,30),2),
-                "rating":round(rating,3)
+                "rating":round(rating,3),
+                "competition":"RS",
             })
+            # ~40% of players also have a playoff (PO) row for this season
+            if random.random() < 0.40:
+                _noise = lambda: float(np.random.normal(0, 0.04))
+                po_mult = 1.0 + po_tendency + _noise()
+                po_pts  = max(0.0, pts  * po_mult)
+                po_ast  = max(0.0, ast  * (1.0 + po_tendency * 0.7 + _noise()))
+                po_reb  = max(0.0, reb  * (1.0 + po_tendency * 0.5 + _noise()))
+                po_stl  = max(0.0, stl  * (1.0 + po_tendency * 0.5 + _noise()))
+                po_blk  = max(0.0, blk  * (1.0 + po_tendency * 0.5 + _noise()))
+                po_per  = max(0.0, per  * po_mult)
+                po_bpm  = bpm + po_tendency * 2.0 + float(np.random.normal(0, 0.4))
+                po_usg  = max(5.0, usg  * (1.0 + po_tendency * 0.5 + _noise()))
+                po_ws   = max(0.0, ws   * po_mult * 0.35)  # fewer games in PO
+                po_rating = compute_rating(po_per, po_bpm, po_ws, age, pos)
+                rows.append({
+                    "player_id":int(pl["id"]),"season":s,"team_id":int(tid),"league_id":int(lid),
+                    "games_played":int(max(1, _rng(12, 4, 1, 25))),
+                    "minutes_per_game":round(_rng(26, 6, 5, 40), 1),
+                    "points":round(po_pts,1),"rebounds":round(po_reb,1),
+                    "offensive_rebounds":round(po_reb*0.3,1),"defensive_rebounds":round(po_reb*0.7,1),
+                    "assists":round(po_ast,1),"steals":round(po_stl,2),"blocks":round(po_blk,2),
+                    "turnovers":round(_rng(2,1,0,8),1),"personal_fouls":round(_rng(2.5,1,0,6),1),
+                    "fg_pct":round(_rng(0.46,0.06,0.2,0.75),3),
+                    "three_point_pct":round(_rng(0.35,0.08,0.0,0.6),3),
+                    "ft_pct":round(_rng(0.77,0.09,0.3,1.0),3),
+                    "plus_minus":round(_rng(0,5,-20,25),1),
+                    "per":round(po_per,2),"ts_pct":round(_rng(0.56,0.06,0.3,0.75),3),
+                    "usg_pct":round(po_usg,2),"bpm":round(po_bpm,2),
+                    "vorp":round(_rng(1,1.5,-3,10),2),"win_shares":round(po_ws,2),
+                    "ast_ratio":round(_rng(15,8,0,50),2),"reb_pct":round(_rng(10,4,1,30),2),
+                    "rating":round(po_rating,3),
+                    "competition":"PO",
+                })
     return pd.DataFrame(rows)
 
 def generate_team_player_relations(players_df, teams_df, player_stats_df):

@@ -88,6 +88,7 @@ class PlayerStats:
     on_net_rtg: float = field(default=0.0)
     off_net_rtg: float = field(default=0.0)
     net_rtg_diff: float = field(default=0.0)
+    competition: str = field(default="RS")  # RS | PO | CUP | SUPERCUP
 
 @dataclass
 class TeamPlayerRelation:

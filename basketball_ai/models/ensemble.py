@@ -18,7 +18,7 @@ import numpy as np
 
 from basketball_ai.models.age_curve import age_performance_factor, PEAK_AGES
 from basketball_ai.models.compatibility_model import CompatibilityModel
-from basketball_ai.models.performance_model import PerformanceModel
+from basketball_ai.models.performance_model import PerformanceModel, COMPETITION_ENCODING
 from basketball_ai.features.player_features import compute_player_features
 from basketball_ai.features.team_features import compute_team_features
 from basketball_ai.features.context_features import compute_context_features
@@ -40,6 +40,7 @@ class PredictionResult:
     context_adjustment: float
     shap_values: Dict[str, float] = field(default_factory=dict)
     explanation: str = ""
+    competition: str = "RS"
 
 
 class EnsembleModel:
@@ -76,15 +77,20 @@ class EnsembleModel:
         data: Dict[str, Any],
         season: int = 2024,
         target_age: Optional[int] = None,
+        competition: str = "RS",
     ) -> PredictionResult:
         """Generate a full basketball prediction for a player in a given team.
 
         Args:
-            player_id:  Target player.
-            team_id:    Target team.
-            data:       Flat data dict from loader.load_all_data().
-            season:     Season reference year.
-            target_age: Override age (used for trajectory projections).
+            player_id:   Target player.
+            team_id:     Target team.
+            data:        Flat data dict from loader.load_all_data().
+            season:      Season reference year.
+            target_age:  Override age (used for trajectory projections).
+            competition: Competition context – "RS" (Regular Season), "PO" (Playoffs),
+                         "CUP", or "SUPERCUP".  The model was trained on data that
+                         includes competition as a feature, so this changes the
+                         predicted rating accordingly.
 
         Returns:
             PredictionResult with predicted rating and full breakdown.
@@ -96,6 +102,30 @@ class EnsembleModel:
 
         # 1. Player feature vector for XGBoost
         player_feats = compute_player_features(player_id, data, season=season, target_age=age)
+
+        # Inject competition-aware features that the model was trained on
+        player_feats["competition_enc"] = float(COMPETITION_ENCODING.get(competition, 0))
+
+        stats_df = data["player_stats"]
+        p_stats  = stats_df[stats_df["player_id"] == int(player_id)]
+        if "competition" in p_stats.columns:
+            rs_ratings = p_stats[p_stats["competition"] == "RS"]["rating"].dropna()
+            po_ratings = p_stats[p_stats["competition"] == "PO"]["rating"].dropna()
+            if len(rs_ratings) > 0 and len(po_ratings) > 0:
+                player_feats["po_vs_rs_delta"] = (
+                    float(po_ratings.mean()) - float(rs_ratings.mean())
+                )
+            else:
+                player_feats["po_vs_rs_delta"] = 0.0
+            po_gp = (
+                float(p_stats[p_stats["competition"] == "PO"]["games_played"].sum())
+                if "games_played" in p_stats.columns
+                else 0.0
+            )
+            player_feats["po_games_played"] = float(po_gp) if not np.isnan(po_gp) else 0.0
+        else:
+            player_feats["po_vs_rs_delta"]  = 0.0
+            player_feats["po_games_played"] = 0.0
 
         # 2. Base rating from XGBoost
         base_rating = self.perf_model.predict_from_features(player_feats)
@@ -143,7 +173,7 @@ class EnsembleModel:
         shap_vals = self.perf_model.get_shap_values(player_feats)
 
         explanation = (
-            f"XGB={base_rating:.2f} × Compat={compat_mult:.3f} "
+            f"[{competition}] XGB={base_rating:.2f} × Compat={compat_mult:.3f} "
             f"× League(tier{tier})={lf:.3f} × Context={ctx_mult:.3f}  "
             f"[age_curve={af:.3f}]"
         )
@@ -162,6 +192,7 @@ class EnsembleModel:
             context_adjustment=round(ctx_mult, 3),
             shap_values=shap_vals,
             explanation=explanation,
+            competition=competition,
         )
 
     # ------------------------------------------------------------------

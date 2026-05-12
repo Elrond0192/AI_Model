@@ -131,6 +131,10 @@ with tab_data:
                 _compute_star_player_usage(teams_df, stats_df)
                 _fill_current_team_league(players_df, stats_df)
 
+                # Ensure competition column exists in uploaded stats
+                if "competition" not in stats_df.columns:
+                    stats_df["competition"] = "RS"
+
                 league_dict = {_to_int(r["id"]): r.to_dict() for _, r in leagues_df.iterrows()}
                 team_dict   = {_to_int(r["id"]): r.to_dict() for _, r in teams_df.iterrows()}
                 player_dict = {_to_int(r["id"]): r.to_dict() for _, r in players_df.iterrows()}
@@ -643,19 +647,34 @@ with tab_pred:
                     format_func=lambda x: team_opts_p[x],
                     key="pred_team",
                 )
-            pred_season = st.number_input(
-                "Stagione", min_value=2000, max_value=2040, value=2024, key="pred_season"
-            )
+            pred_c1, pred_c2 = st.columns(2)
+            with pred_c1:
+                pred_season = st.number_input(
+                    "Stagione", min_value=2000, max_value=2040, value=2024, key="pred_season"
+                )
+            with pred_c2:
+                sel_competition = st.selectbox(
+                    "🏆 Competizione",
+                    options=["RS", "PO", "CUP", "SUPERCUP"],
+                    index=0,
+                    key="pred_competition",
+                    help=(
+                        "**RS** = Regular Season  |  **PO** = Playoff  |  "
+                        "**CUP** = Coppa  |  **SUPERCUP** = Supercoppa"
+                    ),
+                )
 
             if st.button("🔮 Predici", type="primary", key="pred_run"):
                 try:
                     result = engine_p.predict_in_team(
-                        sel_player_id, sel_team_id, season=int(pred_season)
+                        sel_player_id, sel_team_id, season=int(pred_season),
+                        competition=sel_competition,
                     )
                     r1, r2, r3 = st.columns(3)
                     r1.metric("Rating predetto", f"{result.predicted_rating:.2f} / 10")
                     r2.metric("CI basso",         f"{result.confidence_low:.2f}")
                     r3.metric("CI alto",          f"{result.confidence_high:.2f}")
+                    st.caption(f"📋 Competizione: **{result.competition}**")
 
                     st.subheader("📊 Breakdown")
                     breakdown_df = pd.DataFrame({

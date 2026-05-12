@@ -217,6 +217,8 @@ def load_players(data_dir: str = DATA_DIR) -> List[Player]:
 
 def load_player_stats(data_dir: str = DATA_DIR) -> List[PlayerStats]:
     df = pd.read_csv(f"{data_dir}/player_stats.csv")
+    if "competition" not in df.columns:
+        df["competition"] = "RS"
     results = []
     for r in df.to_dict("records"):
         r["player_id"] = _to_int(r["player_id"])
@@ -318,6 +320,10 @@ def load_all_data(data_dir: str) -> Dict[str, Any]:
     for col in ["team_id", "player_id"]:
         if col in rels_df.columns:
             rels_df[col] = rels_df[col].apply(lambda v: None if pd.isna(v) else _to_int(v))
+
+    # Ensure competition column exists (default "RS" for legacy CSV files)
+    if "competition" not in stats_df.columns:
+        stats_df["competition"] = "RS"
 
     # Enrich teams: derive playing_style and star_player_usage from actual stats
     _derive_playing_style(teams_df)
