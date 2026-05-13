@@ -4,6 +4,16 @@ import logging
 from typing import Dict
 
 
+def team_display_name(team: dict, fallback: str = "Unknown") -> str:
+    """Return the display name for a team, preferring short_name over name.
+
+    ShortName is the translated/localised abbreviation stored in the DB.
+    It is used unconditionally when non-empty (even when longer than 6 chars).
+    """
+    sn = str(team.get("short_name", "") or "").strip()
+    return sn if sn else str(team.get("name", fallback))
+
+
 def setup_logging(level: str = "INFO") -> logging.Logger:
     logging.basicConfig(
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
