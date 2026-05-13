@@ -428,6 +428,36 @@ def _discover_normalized_name_tags(engine, league_seasons: List[tuple]) -> set:
         return set()
 
 
+def _discover_clutch_tags(engine, league_seasons: List[tuple]) -> set:
+    """Return the set of ``"<league>_<season>"`` tags for which the
+    ``Analisi.AdvancedStats_Clutch_*`` table exists in the database.
+
+    Queries ``INFORMATION_SCHEMA.TABLES`` with a fully static SQL string (no
+    user-controlled values interpolated) and filters the results in Python, so
+    there is no risk of SQL injection.
+    """
+    if not league_seasons:
+        return set()
+    sql = (
+        "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES "
+        "WHERE TABLE_SCHEMA = 'Analisi' "
+        "AND TABLE_NAME LIKE 'AdvancedStats_Clutch_%'"
+    )
+    try:
+        df = _execute_query(engine, sql)
+        # Strip the 'AdvancedStats_Clutch_' prefix to get the tag
+        prefix = "AdvancedStats_Clutch_"
+        known_tags = {f"{l}_{s}" for l, s in league_seasons}
+        clutch_tags = {
+            name[len(prefix):]
+            for name in df["TABLE_NAME"].str.strip().tolist()
+            if name.startswith(prefix)
+        }
+        return clutch_tags & known_tags
+    except Exception:
+        return set()
+
+
 def _get_table_queries(engine=None) -> Dict[str, str]:
     """Return SQL queries for all logical tables.
 
@@ -439,6 +469,10 @@ def _get_table_queries(engine=None) -> Dict[str, str]:
     and passes that information to the query builder so the generated SQL can
     prefer it over the raw ``PlayerName``.
 
+    Discovers which ``Analisi.AdvancedStats_Clutch_*`` tables actually exist
+    so the query builder can emit an empty stub CTE for missing ones instead of
+    referencing a non-existent table.
+
     Falls back to the static TABLE_QUERIES dict (empty by default).
     """
     try:
@@ -449,7 +483,10 @@ def _get_table_queries(engine=None) -> Dict[str, str]:
         league_seasons = _discover_league_seasons(engine)
         if league_seasons and hasattr(schema_mapping, "get_table_queries"):
             tags_with_normalized = _discover_normalized_name_tags(engine, league_seasons)
-            return schema_mapping.get_table_queries(league_seasons, tags_with_normalized)
+            tags_with_clutch = _discover_clutch_tags(engine, league_seasons)
+            return schema_mapping.get_table_queries(
+                league_seasons, tags_with_normalized, tags_with_clutch
+            )
     return getattr(schema_mapping, "TABLE_QUERIES", {})
 
 

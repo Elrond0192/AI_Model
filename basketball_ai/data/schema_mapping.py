@@ -261,10 +261,52 @@ LEFT JOIN (
 ) AS adv ON CAST(p.Id AS nvarchar(100)) = adv.player_id AND adv.rn = 1"""
 
 
-def _player_stats_cte(league: str, season: str) -> str:
-    """Returns CTE definitions (no WITH keyword) for one league/season."""
+def _player_stats_cte(league: str, season: str, has_clutch: bool = True) -> str:
+    """Returns CTE definitions (no WITH keyword) for one league/season.
+
+    Parameters
+    ----------
+    has_clutch:
+        When ``True`` (default) the clutch CTE reads from the real
+        ``Analisi.AdvancedStats_Clutch_{tag}`` table.  When ``False`` the
+        table is absent and an empty stub CTE is emitted instead so that the
+        LEFT JOIN in the SELECT still compiles and simply produces NULL
+        values (which the ISNULL() calls in the SELECT normalise to zeros).
+    """
     tag = f"{league}_{season}"
     slug = tag.lower()
+
+    if has_clutch:
+        clutch_cte = f"""{slug}_clutch AS (
+    SELECT
+        CAST(c.Id AS nvarchar(100)) AS player_id,
+        ISNULL(CAST(c.ClutchGames AS int), 0) AS ClutchGames,
+        ISNULL(CAST(c.Pts AS float), 0.0) AS ClutchPts,
+        ISNULL(CAST(c.TsPct AS float), 0.0) AS ClutchTsPct,
+        ISNULL(CAST(c.AstToTovRatio AS float), 0.0) AS ClutchAstToTov,
+        ISNULL(CAST(c.NetRtg AS float), 0.0) AS ClutchNetRtg,
+        ISNULL(CAST(c.EfgPct AS float), 0.0) AS ClutchEfgPct,
+        ROW_NUMBER() OVER (
+            PARTITION BY CAST(c.Id AS nvarchar(100))
+            ORDER BY CASE WHEN c.Competition = 'RS' THEN 0 ELSE 1 END, ISNULL(c.ClutchGames, 0) DESC
+        ) AS rn
+    FROM Analisi.AdvancedStats_Clutch_{tag} AS c
+)"""
+    else:
+        # Table does not exist — emit an empty stub so the LEFT JOIN compiles.
+        clutch_cte = f"""{slug}_clutch AS (
+    SELECT
+        CAST(NULL AS nvarchar(100)) AS player_id,
+        CAST(0 AS int)   AS ClutchGames,
+        CAST(0.0 AS float) AS ClutchPts,
+        CAST(0.0 AS float) AS ClutchTsPct,
+        CAST(0.0 AS float) AS ClutchAstToTov,
+        CAST(0.0 AS float) AS ClutchNetRtg,
+        CAST(0.0 AS float) AS ClutchEfgPct,
+        CAST(1 AS int)   AS rn
+    WHERE 1 = 0
+)"""
+
     return f"""{slug}_box AS (
     SELECT
         CAST(b.Id AS nvarchar(100)) AS player_id,
@@ -296,21 +338,7 @@ def _player_stats_cte(league: str, season: str) -> str:
         ) AS rn
     FROM Analisi.AdvancedStatsOnOffCourt_{tag} AS o
 ),
-{slug}_clutch AS (
-    SELECT
-        CAST(c.Id AS nvarchar(100)) AS player_id,
-        ISNULL(CAST(c.ClutchGames AS int), 0) AS ClutchGames,
-        ISNULL(CAST(c.Pts AS float), 0.0) AS ClutchPts,
-        ISNULL(CAST(c.TsPct AS float), 0.0) AS ClutchTsPct,
-        ISNULL(CAST(c.AstToTovRatio AS float), 0.0) AS ClutchAstToTov,
-        ISNULL(CAST(c.NetRtg AS float), 0.0) AS ClutchNetRtg,
-        ISNULL(CAST(c.EfgPct AS float), 0.0) AS ClutchEfgPct,
-        ROW_NUMBER() OVER (
-            PARTITION BY CAST(c.Id AS nvarchar(100))
-            ORDER BY CASE WHEN c.Competition = 'RS' THEN 0 ELSE 1 END, ISNULL(c.ClutchGames, 0) DESC
-        ) AS rn
-    FROM Analisi.AdvancedStats_Clutch_{tag} AS c
-)"""
+{clutch_cte}"""
 
 
 def _player_stats_select(league: str, season: str) -> str:
@@ -425,6 +453,7 @@ LEFT JOIN Anagrafiche.{tag} AS p
 def get_table_queries(
     league_seasons: List[tuple],
     tags_with_normalized_name: Optional[set] = None,
+    tags_with_clutch: Optional[set] = None,
 ) -> Dict[str, str]:
     """Build SQL queries for all discovered (league, season) pairs.
 
@@ -442,18 +471,32 @@ def get_table_queries(
         table contains the ``NormalizedPlayerName`` column.  When a tag is in
         this set the generated SQL prefers ``NormalizedPlayerName`` over the
         raw ``PlayerName``.
+    tags_with_clutch:
+        Optional set of ``"<league>_<season>"`` tags for which the
+        ``Analisi.AdvancedStats_Clutch_*`` table exists.  When a tag is
+        **not** in this set an empty stub CTE is used so the query compiles
+        even when the table is absent.  When ``None`` (default) the clutch
+        table is assumed to exist for all tags (backwards-compatible).
     """
     if not league_seasons:
         return {}
 
     _norm_tags = tags_with_normalized_name or set()
+    # None means "assume all tags have clutch" for backwards compatibility.
+    _clutch_tags: Optional[set] = tags_with_clutch
     teams_sql = "\nUNION ALL\n".join(_teams_block(l, s) for l, s in league_seasons)
     players_sql = "\nUNION ALL\n".join(
         _players_block(l, s, has_normalized_name=(f"{l}_{s}" in _norm_tags))
         for l, s in league_seasons
     )
 
-    cte_parts = ",\n".join(_player_stats_cte(l, s) for l, s in league_seasons)
+    cte_parts = ",\n".join(
+        _player_stats_cte(
+            l, s,
+            has_clutch=(_clutch_tags is None or f"{l}_{s}" in _clutch_tags),
+        )
+        for l, s in league_seasons
+    )
     stats_selects = "\nUNION ALL\n".join(_player_stats_select(l, s) for l, s in league_seasons)
     stats_sql = f"WITH\n{cte_parts}\n{stats_selects}"
 
