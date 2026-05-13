@@ -4,8 +4,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.data.models import Player, PlayerStats
-from src.features.player_features import (
+from basketball_ai.data.models import Player, PlayerStats
+from basketball_ai.features.player_features import (
     compute_player_features_from_objects,
     compute_form_score,
     compute_consistency_score,
@@ -13,17 +13,17 @@ from src.features.player_features import (
     POSITIONAL_PEAK_AGES,
     _peak_age,
 )
-from src.features.team_features import (
+from basketball_ai.features.team_features import (
     compute_team_style_vector,
     get_style_position_compat,
     style_vector_similarity,
 )
-from src.features.context_features import (
+from basketball_ai.features.context_features import (
     compute_league_adaptation,
     compute_context_features,
     _default_context_features,
 )
-from src.models.age_curve import age_performance_factor, PEAK_AGES, peak_age_window
+from basketball_ai.models.age_curve import age_performance_factor, PEAK_AGES, peak_age_window
 
 
 # ---------------------------------------------------------------------------
@@ -166,7 +166,7 @@ class TestTeamFeatures:
         assert s >= 0.90
 
     def test_style_vector_6d(self):
-        from src.data.models import Team
+        from basketball_ai.data.models import Team
         t = Team(
             id=1, name="NBA Team", league_id=1,
             playing_style="pace_and_space", formation="small_ball",
@@ -266,3 +266,169 @@ class TestAgeCurve:
         assert isinstance(start, int)
         assert isinstance(end, int)
         assert start <= PEAK_AGES["PG"] <= end
+
+
+# ---------------------------------------------------------------------------
+# New DB-schema advanced feature keys
+# ---------------------------------------------------------------------------
+
+class TestAdvancedDBSchemaFeatures:
+    """Verify that compute_player_features_from_objects returns all new
+    DB-schema derived features (SPM, RAPTOR, LEBRON, clutch, on/off, per-40,
+    hustle, scoring efficiency)."""
+
+    def _make_player(self, pos="PG", age=25):
+        return Player(
+            id=1, name="Advanced Player", age=age, position=pos,
+            nationality="American", height_cm=195, weight_kg=92,
+            dominant_hand="right",
+            current_team_id=1, current_league_id=1,
+            draft_year=2018, draft_pick=4,
+        )
+
+    def _make_stat(self, season: str, rating: float = 7.5, **kw) -> PlayerStats:
+        defaults = dict(
+            player_id=1, team_id=1, league_id=1,
+            games_played=70, minutes_per_game=32.0,
+            points=18.0, rebounds=5.0, offensive_rebounds=1.5,
+            defensive_rebounds=3.5, assists=6.0, steals=1.2,
+            blocks=0.4, turnovers=2.5, personal_fouls=2.0,
+            fg_pct=0.47, three_point_pct=0.36, ft_pct=0.82,
+            plus_minus=3.0, per=18.0, ts_pct=0.58,
+            usg_pct=22.0, bpm=1.5, vorp=2.0,
+            win_shares=5.0, ast_ratio=18.0, reb_pct=8.0,
+        )
+        defaults.update(kw)
+        return PlayerStats(season=season, rating=rating, **defaults)
+
+    def test_new_feature_keys_present(self):
+        """All new DB-schema feature keys must appear in the output dict."""
+        player = self._make_player()
+        stat   = self._make_stat("2023-24", 7.5,
+            spm=1.2, obpm=0.8, dbpm=0.4,
+            gm_sc=12.5, fic=18.0, ows=3.0, dws=2.0,
+            raptor_off=2.1, raptor_def=0.5, raptor_total=2.6,
+            lebron_off=1.8, lebron_def=0.3, lebron_total=2.1,
+            scoring_efficiency=1.15, hustle_index=55.0,
+            foul_drawing_rate=0.28,
+            net_rtg_diff=4.2, ortg_diff=3.1,
+            clutch_games=10, clutch_pts=14.0, clutch_ts_pct=0.60,
+            clutch_ast_to_tov=2.0, clutch_net_rtg=3.5, clutch_efg_pct=0.55,
+            pts_per_40=22.5, ast_per_40=7.5,
+        )
+        feats = compute_player_features_from_objects(player, [stat])
+        new_keys = [
+            "avg_spm", "avg_raptor_total", "avg_raptor_off", "avg_raptor_def",
+            "avg_lebron_total", "avg_obpm", "avg_dbpm", "avg_gm_sc", "avg_fic",
+            "avg_scoring_efficiency", "avg_hustle_index", "avg_foul_drawing_rate",
+            "avg_net_rtg_diff", "avg_ortg_diff",
+            "clutch_pts_per_36", "avg_clutch_ts_pct", "avg_clutch_net_rtg",
+            "avg_clutch_efg_pct", "clutch_games_career",
+            "avg_pts_per_40", "avg_ast_per_40",
+        ]
+        for k in new_keys:
+            assert k in feats, f"Missing new feature key: {k}"
+
+    def test_spm_raptor_lebron_values(self):
+        """SPM, RAPTOR, LEBRON values should match the input stat."""
+        player = self._make_player()
+        stat   = self._make_stat("2023-24", 7.5,
+            spm=3.0, raptor_total=4.0, lebron_total=2.5)
+        feats  = compute_player_features_from_objects(player, [stat])
+        assert feats["avg_spm"]          == pytest.approx(3.0, abs=0.01)
+        assert feats["avg_raptor_total"] == pytest.approx(4.0, abs=0.01)
+        assert feats["avg_lebron_total"] == pytest.approx(2.5, abs=0.01)
+
+    def test_clutch_metrics_computed(self):
+        """Clutch metrics aggregate correctly over multiple seasons."""
+        player = self._make_player()
+        s1 = self._make_stat("2022-23", 7.0, clutch_games=8,  clutch_ts_pct=0.58, clutch_net_rtg=2.0)
+        s2 = self._make_stat("2023-24", 7.5, clutch_games=12, clutch_ts_pct=0.62, clutch_net_rtg=4.0)
+        feats = compute_player_features_from_objects(player, [s1, s2])
+        assert feats["clutch_games_career"] == 20
+        assert feats["avg_clutch_ts_pct"]   == pytest.approx(0.60, abs=0.01)
+        assert feats["avg_clutch_net_rtg"]  == pytest.approx(3.0, abs=0.01)
+
+    def test_on_off_differential(self):
+        """On/off net rating differential should be averaged."""
+        player = self._make_player()
+        s1 = self._make_stat("2022-23", 7.0, net_rtg_diff=3.0, ortg_diff=2.5)
+        s2 = self._make_stat("2023-24", 7.5, net_rtg_diff=5.0, ortg_diff=4.5)
+        feats = compute_player_features_from_objects(player, [s1, s2])
+        assert feats["avg_net_rtg_diff"] == pytest.approx(4.0, abs=0.01)
+        assert feats["avg_ortg_diff"]    == pytest.approx(3.5, abs=0.01)
+
+    def test_empty_stats_new_keys_present(self):
+        """New keys must be present even with no stats history."""
+        player = self._make_player()
+        feats  = compute_player_features_from_objects(player, [])
+        for k in ["avg_spm", "avg_raptor_total", "avg_clutch_ts_pct",
+                  "clutch_games_career", "avg_pts_per_40"]:
+            assert k in feats, f"Empty-stats missing: {k}"
+
+
+class TestMetricCatalog:
+    """Verify the METRIC_CATALOG includes all new DB-schema metric groups."""
+
+    def test_clutch_metrics_in_catalog(self):
+        from basketball_ai.models.performance_model import METRIC_CATALOG
+        for m in ["clutch_pts", "clutch_ts_pct", "clutch_net_rtg",
+                  "clutch_efg_pct", "clutch_ast_to_tov"]:
+            assert m in METRIC_CATALOG, f"Missing from METRIC_CATALOG: {m}"
+
+    def test_raptor_lebron_spm_in_catalog(self):
+        from basketball_ai.models.performance_model import METRIC_CATALOG
+        for m in ["spm", "raptor_total", "raptor_off", "raptor_def",
+                  "lebron_total", "lebron_off", "lebron_def",
+                  "obpm", "dbpm", "gm_sc", "fic"]:
+            assert m in METRIC_CATALOG, f"Missing from METRIC_CATALOG: {m}"
+
+    def test_per40_in_catalog(self):
+        from basketball_ai.models.performance_model import METRIC_CATALOG
+        for m in ["pts_per_40", "ast_per_40", "tr_per_40", "stl_per_40", "blk_per_40"]:
+            assert m in METRIC_CATALOG, f"Missing from METRIC_CATALOG: {m}"
+
+    def test_hustle_efficiency_in_catalog(self):
+        from basketball_ai.models.performance_model import METRIC_CATALOG
+        for m in ["scoring_efficiency", "hustle_index", "foul_drawing_rate",
+                  "ppsa", "true_usg_pct"]:
+            assert m in METRIC_CATALOG, f"Missing from METRIC_CATALOG: {m}"
+
+    def test_new_feature_cols_length(self):
+        from basketball_ai.models.performance_model import FEATURE_COLS
+        # Should have at least 30 features now (was 18 before)
+        assert len(FEATURE_COLS) >= 30
+
+
+class TestNewIntents:
+    """Verify new chat intents are detected correctly."""
+
+    def test_clutch_intent(self):
+        from basketball_ai.chat.intent import detect_intent, Intent
+        assert detect_intent("How is LeBron in clutch situations?") == Intent.CLUTCH
+        assert detect_intent("How does James perform in crunch time?") == Intent.CLUTCH
+        assert detect_intent("Is Player X good in the final minutes?") == Intent.CLUTCH
+
+    def test_market_value_intent(self):
+        from basketball_ai.chat.intent import detect_intent, Intent
+        assert detect_intent("What is the market value of James?")  == Intent.MARKET_VALUE
+        assert detect_intent("How much is James worth?")             == Intent.MARKET_VALUE
+        assert detect_intent("Qual è il valore di mercato di James?") == Intent.MARKET_VALUE
+
+    def test_individual_intent(self):
+        from basketball_ai.chat.intent import detect_intent, Intent
+        assert detect_intent("Tell me about James individual stats") == Intent.INDIVIDUAL
+        assert detect_intent("dimmi di James") == Intent.INDIVIDUAL
+
+    def test_role_fit_intent(self):
+        from basketball_ai.chat.intent import detect_intent, Intent
+        assert detect_intent("Is James a good fit as a stretch big?") == Intent.ROLE_FIT
+        assert detect_intent("Can X play as a false 9?")               == Intent.ROLE_FIT
+
+    def test_existing_intents_still_work(self):
+        """Ensure existing intents are not broken by new rules."""
+        from basketball_ai.chat.intent import detect_intent, Intent
+        assert detect_intent("How good is James at Lakers?") == Intent.PREDICT
+        assert detect_intent("Best teams for James?")          == Intent.BEST_TEAMS
+        assert detect_intent("When will James peak?")          == Intent.PEAK
+        assert detect_intent("transfer James from Lakers")     == Intent.TRANSFER

@@ -19,6 +19,10 @@ class Intent(str, Enum):
     BEST_TEAMS   = "best_teams"     # "Best teams for X?"
     BEST_PLAYERS = "best_players"   # "Best players for team Y?"
     TEAMMATES    = "teammates"      # "What if X had elite teammates?"
+    CLUTCH       = "clutch"         # "How is X in clutch/pressure situations?"
+    MARKET_VALUE = "market_value"   # "What is X's market value?"
+    INDIVIDUAL   = "individual"     # "What are X's individual stats?"
+    ROLE_FIT     = "role_fit"       # "Is X good as a false 9 / point forward / ...?"
     HELP         = "help"           # "What can you do?"
     UNKNOWN      = "unknown"
 
@@ -49,6 +53,42 @@ _RULES: list[tuple[Intent, re.Pattern[str]]] = [
         Intent.TEAMMATES,
         re.compile(
             r"\bteammate|with\s+(better|worse|elite|weaker|stronger|star|great)\s+team",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        Intent.CLUTCH,
+        re.compile(
+            r"\bclutch\b|pressure\s+situation|decisive\s+moment|crunch\s+time"
+            r"|final\s+(seconds?|minutes?|quarter)|ultimo\s+quarto"
+            r"|situazion[ie]\s+decisive|nei\s+moment[io]\s+(important|critic|chiave|crucial)"
+            r"|playoffs?\s+performer|big\s+game",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        Intent.MARKET_VALUE,
+        re.compile(
+            r"\bmarket\s+value|valore\s+di\s+mercato|worth|stipendio|salary"
+            r"|quanto\s+(vale|costerebbe|cost[ae])|price\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        Intent.ROLE_FIT,
+        re.compile(
+            r"\brole\b|ruolo\b|false\s+9|punto\s+forward|stretch\s+(big|4|five)"
+            r"|small\s+ball|lead\s+guard|spacer|dual[\s-]threat"
+            r"|adatto\b|si\s+adatta|pu[oò]\s+fare\s+(il|da)\b|fit\s+(as|for)\s+(a|the)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        Intent.INDIVIDUAL,
+        re.compile(
+            r"\bindividual|statistich[ae]\s+individual|da\s+solo|isolation"
+            r"|solo\s+stats?|player\s+profile|profilo\s+giocatore"
+            r"|what\s+are\s+\w+[\''s]*\s+stats|dimmi\s+di\b|raccontami\s+di\b",
             re.IGNORECASE,
         ),
     ),
@@ -90,7 +130,8 @@ _RULES: list[tuple[Intent, re.Pattern[str]]] = [
     (
         Intent.PREDICT,
         re.compile(
-            r"\bpredict|rating\b|how\s+good|how\s+well|perform|rate\b|score\b",
+            r"\bpredict|rating\b|how\s+good|how\s+well|perform|rate\b|score\b"
+            r"|\bquanto\s+segner[aà]|\bquante\s+partite|\bmetriche",
             re.IGNORECASE,
         ),
     ),

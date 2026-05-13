@@ -24,6 +24,24 @@ from basketball_ai.chat.entities import (
 from basketball_ai.chat import session as _session
 
 
+def _normalize_id(value: Any) -> Any:
+    """Normalize an ID to int when possible, keep as-is for non-numeric strings."""
+    if value is None:
+        return None
+    if isinstance(value, float):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    v = str(value).strip()
+    try:
+        return int(v, 10)
+    except (ValueError, TypeError):
+        try:
+            return int(v, 16)
+        except (ValueError, TypeError):
+            return v
+
+
 # ---------------------------------------------------------------------------
 # Response type
 # ---------------------------------------------------------------------------
@@ -55,6 +73,10 @@ Here are some things you can ask me:
 • **Best player for team** – *"Best players for [team]?"*
 • **Compare scenarios** – *"Compare [player] across teams"*
 • **Teammate quality** – *"What if [player] had elite teammates?"*
+• **Clutch performance** – *"How is [player] in clutch situations?"*
+• **Market value** – *"What is [player]'s market value?"*
+• **Individual profile** – *"Tell me about [player]'s individual stats"*
+• **Role fit** – *"Is [player] a good fit as a stretch big?"*
 
 For the **lineup** question I will analyse:
   – Predicted rating of each named teammate at that team
@@ -62,6 +84,13 @@ For the **lineup** question I will analyse:
   – Role of each player (Playmaker, Primary Scorer, Defender, 3pt Specialist, …)
   – Style compatibility of each position with the team's playing style
   – Overall adjusted rating for [player] with that specific lineup
+
+For **clutch** questions I use:
+  – Clutch TS%, eFG%, Net Rating, Ast/Tov from Analisi.AdvancedStats_Clutch_*
+  – Comparison to regular-season averages
+
+For **market value** I estimate based on:
+  – Current rating, age curve, RAPTOR/LEBRON/SPM composite, league tier
 
 Just mention player and team names and I'll use the trained AI model to answer.\
 """
@@ -458,6 +487,287 @@ class ChatEngine:
                 return reply, _to_dict(res), []
             except Exception as exc:
                 return f"Teammates scenario failed ({exc}).", {}, []
+
+        # --- CLUTCH -----------------------------------------------------
+        if intent == Intent.CLUTCH:
+            if not player_id:
+                return self._need_player(), {}, []
+            try:
+                p_stats = self.data["player_stats"]
+                mask    = p_stats["player_id"] == _normalize_id(player_id)
+                pdf     = p_stats[mask].sort_values("season")
+
+                def _col_mean(col: str, default: float = 0.0) -> float:
+                    if col in pdf.columns and not pdf[col].dropna().empty:
+                        return float(pdf[col].mean())
+                    return default
+
+                clutch_games    = int(pdf["clutch_games"].sum()) if "clutch_games" in pdf.columns else 0
+                clutch_ts       = _col_mean("clutch_ts_pct")
+                clutch_net      = _col_mean("clutch_net_rtg")
+                clutch_ast_tov  = _col_mean("clutch_ast_to_tov")
+                avg_ts          = _col_mean("ts_pct", 0.52)
+                avg_net         = _col_mean("net_rtg")
+
+                clutch_ts_delta  = (clutch_ts  - avg_ts)  * 100  if avg_ts  > 0 else 0.0
+                clutch_net_delta = clutch_net - avg_net
+
+                if clutch_ts_delta >= 2.5 and clutch_net_delta >= 1.0:
+                    verdict = "🔥 **Elite clutch performer** – significantly better under pressure"
+                elif clutch_ts_delta >= 0.0:
+                    verdict = "✅ **Reliable in clutch** – maintains efficiency under pressure"
+                elif clutch_ts_delta >= -3.0:
+                    verdict = "⚠️ **Slight drop in clutch** – slight efficiency decrease under pressure"
+                else:
+                    verdict = "❌ **Struggles in clutch** – notable drop in efficiency in key moments"
+
+                reply = (
+                    f"**{player_name}** – clutch & pressure performance\n\n"
+                    f"Clutch games: {clutch_games}\n"
+                    f"Clutch TS%   : {clutch_ts:.1%}  (career avg: {avg_ts:.1%}, "
+                    f"delta: {clutch_ts_delta:+.1f}%)\n"
+                    f"Clutch NetRtg: {clutch_net:+.1f}  (career avg: {avg_net:+.1f}, "
+                    f"delta: {clutch_net_delta:+.1f})\n"
+                    f"Clutch Ast/Tov: {clutch_ast_tov:.2f}\n\n"
+                    f"Verdict: {verdict}"
+                )
+                data_out = {
+                    "clutch_games": clutch_games,
+                    "clutch_ts_pct": round(clutch_ts, 4),
+                    "clutch_net_rtg": round(clutch_net, 2),
+                    "clutch_ast_to_tov": round(clutch_ast_tov, 2),
+                    "avg_ts_pct": round(avg_ts, 4),
+                    "avg_net_rtg": round(avg_net, 2),
+                    "ts_delta_pct": round(clutch_ts_delta, 2),
+                    "net_rtg_delta": round(clutch_net_delta, 2),
+                }
+                return reply, data_out, [
+                    f"Best teams for {player_name}?",
+                    f"When will {player_name} peak?",
+                    f"How good is {player_name} at [team]?",
+                ]
+            except Exception as exc:
+                return f"Could not compute clutch stats ({exc}).", {}, []
+
+        # --- MARKET VALUE -----------------------------------------------
+        if intent == Intent.MARKET_VALUE:
+            if not player_id:
+                return self._need_player(), {}, []
+            try:
+                player_row = pd_.get(_normalize_id(player_id), {})
+                age        = int(player_row.get("age", 26))
+                position   = str(player_row.get("position", "PG"))
+                cur_tid    = player_row.get("current_team_id")
+                cur_tid    = _normalize_id(cur_tid) if cur_tid else 1
+
+                pred = self.engine.predict_in_team(player_id, cur_tid)
+                peak = self.engine.predict_peak(player_id, team_id=cur_tid)
+
+                # Composite value score: rating × age-curve × RAPTOR/LEBRON bonus
+                p_stats = self.data["player_stats"]
+                mask    = p_stats["player_id"] == _normalize_id(player_id)
+                pdf     = p_stats[mask]
+
+                raptor = float(pdf["raptor_total"].mean()) if "raptor_total" in pdf.columns and not pdf["raptor_total"].dropna().empty else 0.0
+                spm    = float(pdf["spm"].mean())    if "spm" in pdf.columns and not pdf["spm"].dropna().empty else 0.0
+
+                # Rough multi-metric composite (0-10)
+                composite = float(
+                    pred.predicted_rating * 0.5
+                    + max(0, peak.peak_rating - pred.predicted_rating) * 0.2  # growth potential
+                    + max(0, 5.0 + raptor) / 10.0 * 2.0                       # RAPTOR bonus (0-2)
+                    + max(0, 5.0 + spm)    / 10.0 * 0.5                       # SPM bonus (0-0.5)
+                )
+                composite = round(min(10.0, max(1.0, composite)), 2)
+
+                # Tier labels (illustrative; no real salary data)
+                if composite >= 8.5:
+                    tier = "⭐ **Max contract / superstar tier**"
+                elif composite >= 7.5:
+                    tier = "🥇 **All-Star calibre**"
+                elif composite >= 6.5:
+                    tier = "🥈 **Starter / quality role player**"
+                elif composite >= 5.5:
+                    tier = "🥉 **Rotation player**"
+                else:
+                    tier = "📋 **Bench / developmental tier**"
+
+                reply = (
+                    f"**{player_name}** – estimated market value\n\n"
+                    f"Current rating  : {pred.predicted_rating:.2f} / 10\n"
+                    f"Peak projection : {peak.peak_rating:.2f} / 10  (age {peak.peak_age})\n"
+                    f"RAPTOR total    : {raptor:+.1f}\n"
+                    f"SPM             : {spm:+.1f}\n"
+                    f"Value composite : **{composite:.2f} / 10**\n\n"
+                    f"{tier}\n\n"
+                    f"_Note: this is a model estimate based on performance metrics, "
+                    f"not actual contract data._"
+                )
+                return reply, {
+                    "composite_value": composite,
+                    "current_rating": pred.predicted_rating,
+                    "peak_rating": peak.peak_rating,
+                    "peak_age": peak.peak_age,
+                    "raptor_total": round(raptor, 2),
+                    "spm": round(spm, 2),
+                }, [
+                    f"When will {player_name} peak?",
+                    f"Best teams for {player_name}?",
+                ]
+            except Exception as exc:
+                return f"Could not estimate market value ({exc}).", {}, []
+
+        # --- INDIVIDUAL -------------------------------------------------
+        if intent == Intent.INDIVIDUAL:
+            if not player_id:
+                return self._need_player(), {}, []
+            try:
+                player_row = pd_.get(_normalize_id(player_id), {})
+                position   = str(player_row.get("position", "?"))
+                age        = int(player_row.get("age", 0))
+                cur_tid    = player_row.get("current_team_id")
+                team_name_cur = str(td_.get(_normalize_id(cur_tid), {}).get("name", "—")) if cur_tid else "—"
+
+                p_stats = self.data["player_stats"]
+                mask    = p_stats["player_id"] == _normalize_id(player_id)
+                pdf     = p_stats[mask].sort_values("season")
+
+                def _latest(col: str, default: float = 0.0) -> float:
+                    if col in pdf.columns and not pdf[col].dropna().empty:
+                        return float(pdf[col].dropna().iloc[-1])
+                    return default
+
+                def _avg(col: str, default: float = 0.0) -> float:
+                    if col in pdf.columns and not pdf[col].dropna().empty:
+                        return float(pdf[col].mean())
+                    return default
+
+                pts  = _latest("points")
+                reb  = _latest("rebounds")
+                ast  = _latest("assists")
+                stl  = _latest("steals")
+                blk  = _latest("blocks")
+                ts   = _latest("ts_pct")
+                usg  = _latest("usg_pct")
+                bpm  = _avg("bpm")
+                vorp = _avg("vorp")
+                spm  = _avg("spm")
+                raptor = _avg("raptor_total")
+                lebron = _avg("lebron_total")
+                gm_sc  = _avg("gm_sc")
+                net_diff = _avg("net_rtg_diff")
+                clutch_ts = _avg("clutch_ts_pct")
+                ruolo = _latest("ruolo_combinato", 0.0)  # string col, special handling
+                if "ruolo_combinato" in pdf.columns and not pdf["ruolo_combinato"].dropna().empty:
+                    ruolo_str = str(pdf["ruolo_combinato"].dropna().iloc[-1])
+                else:
+                    ruolo_str = "—"
+
+                reply = (
+                    f"**{player_name}** – individual profile\n\n"
+                    f"Position: {position}  |  Age: {age}  |  Team: {team_name_cur}\n"
+                    f"Role: {ruolo_str}\n\n"
+                    f"**Per-game stats (latest season)**\n"
+                    f"PTS: {pts:.1f}  |  REB: {reb:.1f}  |  AST: {ast:.1f}"
+                    f"  |  STL: {stl:.1f}  |  BLK: {blk:.1f}\n\n"
+                    f"**Efficiency**\n"
+                    f"TS%: {ts:.1%}  |  USG%: {usg:.1f}%  |  BPM: {bpm:+.1f}\n"
+                    f"VORP: {vorp:.2f}  |  GmSc: {gm_sc:.2f}\n\n"
+                    f"**Advanced rating models**\n"
+                    f"SPM: {spm:+.2f}  |  RAPTOR: {raptor:+.2f}  |  LEBRON: {lebron:+.2f}\n\n"
+                    f"**Impact** (On/Off Net Rtg diff): {net_diff:+.1f}\n"
+                    f"**Clutch TS%**: {clutch_ts:.1%}"
+                )
+                return reply, {
+                    "player_id": player_id,
+                    "points": pts, "rebounds": reb, "assists": ast,
+                    "steals": stl, "blocks": blk, "ts_pct": ts, "usg_pct": usg,
+                    "bpm": bpm, "vorp": vorp, "spm": spm, "raptor_total": raptor,
+                    "lebron_total": lebron, "gm_sc": gm_sc,
+                    "net_rtg_diff": net_diff, "clutch_ts_pct": clutch_ts,
+                    "role": ruolo_str,
+                }, [
+                    f"How good is {player_name} at [team]?",
+                    f"When will {player_name} peak?",
+                    f"How is {player_name} in clutch situations?",
+                ]
+            except Exception as exc:
+                return f"Could not retrieve individual stats ({exc}).", {}, []
+
+        # --- ROLE FIT ---------------------------------------------------
+        if intent == Intent.ROLE_FIT:
+            if not player_id:
+                return self._need_player(), {}, []
+            try:
+                player_row = pd_.get(_normalize_id(player_id), {})
+                position   = str(player_row.get("position", "?"))
+
+                from basketball_ai.features.player_features import compute_player_features
+                p_feats = compute_player_features(player_id, self.data)
+
+                pm   = float(p_feats.get("playmaking_score", 0.0))
+                df   = float(p_feats.get("defensive_score", 0.0))
+                usg  = float(p_feats.get("avg_usg_pct", 18.0))
+                pts  = float(p_feats.get("pts_per_36", 0.0))
+                ast  = float(p_feats.get("ast_per_36", 0.0))
+                ver  = float(p_feats.get("versatility_score", 0.5))
+                prof = str(p_feats.get("scoring_profile", "efficient_scorer"))
+                raptor_o = float(p_feats.get("avg_raptor_off", 0.0))
+                raptor_d = float(p_feats.get("avg_raptor_def", 0.0))
+                hustle   = float(p_feats.get("avg_hustle_index", 0.0))
+
+                # Parse requested role from the message
+                msg_lower = message.lower()
+                if "false 9" in msg_lower or "punto" in msg_lower or "point forward" in msg_lower:
+                    # False 9 / point forward = big man with playmaking
+                    score = min(1.0, (pm * 2 + ast / 10 + ver) / 3)
+                    role_label = "false 9 / point forward"
+                elif "stretch" in msg_lower or "spacer" in msg_lower:
+                    # Stretch big / spacer = 3pt shooter
+                    three_pct = float(p_feats.get("avg_ts_pct", 0.52))
+                    score = min(1.0, (three_pct - 0.5) * 3 + (1 - usg / 40))
+                    role_label = "stretch big / spacer"
+                elif "defend" in msg_lower or "difens" in msg_lower:
+                    score = min(1.0, df / 8 + max(0, raptor_d) / 5)
+                    role_label = "primary defender"
+                elif "lead guard" in msg_lower or "ball handler" in msg_lower or "playmaker" in msg_lower:
+                    score = min(1.0, pm * 1.5 + ast / 12)
+                    role_label = "lead guard / playmaker"
+                else:
+                    # Generic versatility
+                    score = ver
+                    role_label = "versatile / two-way"
+
+                score = round(max(0.0, score), 3)
+                if score >= 0.75:
+                    verdict = f"✅ **Excellent fit** for {role_label} role"
+                elif score >= 0.55:
+                    verdict = f"👍 **Good fit** for {role_label} role"
+                elif score >= 0.35:
+                    verdict = f"⚠️ **Marginal fit** for {role_label} role"
+                else:
+                    verdict = f"❌ **Not well suited** for {role_label} role"
+
+                reply = (
+                    f"**{player_name}** – role fit analysis: {role_label}\n\n"
+                    f"Position: {position}  |  Scoring profile: {prof}\n"
+                    f"Playmaking score: {pm:.3f}  |  Defensive score: {df:.2f}\n"
+                    f"USG%: {usg:.1f}  |  Pts/36: {pts:.1f}  |  Ast/36: {ast:.1f}\n"
+                    f"Versatility: {ver:.3f}  |  Hustle index: {hustle:.1f}\n"
+                    f"RAPTOR off: {raptor_o:+.2f}  RAPTOR def: {raptor_d:+.2f}\n\n"
+                    f"Role fit score: **{score:.0%}**\n"
+                    f"{verdict}"
+                )
+                return reply, {
+                    "role": role_label, "fit_score": score,
+                    "playmaking_score": pm, "defensive_score": df,
+                    "usg_pct": usg, "versatility_score": ver,
+                }, [
+                    f"Best teams for {player_name}?",
+                    f"How good is {player_name} at [team]?",
+                ]
+            except Exception as exc:
+                return f"Could not evaluate role fit ({exc}).", {}, []
 
         # --- UNKNOWN ----------------------------------------------------
         return (

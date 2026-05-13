@@ -65,7 +65,12 @@ def compute_player_features_from_objects(
     player: Player,
     stats_history: List[PlayerStats],
 ) -> Dict[str, Any]:
-    """Compute basketball feature vector from typed dataclass objects."""
+    """Compute basketball feature vector from typed dataclass objects.
+
+    Includes all legacy features plus new DB-schema derived features:
+    SPM, RAPTOR, LEBRON, on/off differentials, clutch performance,
+    per-40 stats, hustle metrics, and scoring efficiency.
+    """
     if not stats_history:
         return _empty_features(player)
 
@@ -104,7 +109,44 @@ def compute_player_features_from_objects(
     peak_age = _peak_age(player.position)
     age_vs_peak_age = player.age - peak_age
 
-    # Scoring profile
+    # --- New DB-schema advanced metrics ------------------------------------
+    avg_spm          = float(np.mean([s.spm          for s in stats_history]))
+    avg_raptor_total = float(np.mean([s.raptor_total for s in stats_history]))
+    avg_raptor_off   = float(np.mean([s.raptor_off   for s in stats_history]))
+    avg_raptor_def   = float(np.mean([s.raptor_def   for s in stats_history]))
+    avg_lebron_total = float(np.mean([s.lebron_total for s in stats_history]))
+    avg_obpm         = float(np.mean([s.obpm         for s in stats_history]))
+    avg_dbpm         = float(np.mean([s.dbpm         for s in stats_history]))
+    avg_gm_sc        = float(np.mean([s.gm_sc        for s in stats_history]))
+    avg_fic          = float(np.mean([s.fic          for s in stats_history]))
+
+    # Efficiency / hustle
+    avg_scoring_efficiency = float(np.mean([s.scoring_efficiency for s in stats_history]))
+    avg_hustle_index       = float(np.mean([s.hustle_index       for s in stats_history]))
+    avg_foul_drawing_rate  = float(np.mean([s.foul_drawing_rate  for s in stats_history]))
+
+    # On/Off differentials
+    avg_net_rtg_diff = float(np.mean([s.net_rtg_diff for s in stats_history]))
+    avg_ortg_diff    = float(np.mean([s.ortg_diff    for s in stats_history]))
+
+    # Clutch performance (latest season for currency; fall back to career avg)
+    clutch_games_career = sum(s.clutch_games for s in stats_history)
+    if clutch_games_career > 0:
+        avg_clutch_ts_pct   = float(np.mean([s.clutch_ts_pct   for s in stats_history if s.clutch_games > 0]))
+        avg_clutch_net_rtg  = float(np.mean([s.clutch_net_rtg  for s in stats_history if s.clutch_games > 0]))
+        avg_clutch_efg_pct  = float(np.mean([s.clutch_efg_pct  for s in stats_history if s.clutch_games > 0]))
+        clutch_pts_per_36   = _per36(latest.clutch_pts, mpg)
+    else:
+        avg_clutch_ts_pct  = avg_ts_pct
+        avg_clutch_net_rtg = 0.0
+        avg_clutch_efg_pct = float(latest.fg_pct)
+        clutch_pts_per_36  = 0.0
+
+    # Per-40 stats (use DB values if available, compute from per-game otherwise)
+    avg_pts_per_40 = float(np.mean([s.pts_per_40 for s in stats_history])) if latest.pts_per_40 > 0 else _per36(latest.points, mpg) / 36 * 40
+    avg_ast_per_40 = float(np.mean([s.ast_per_40 for s in stats_history])) if latest.ast_per_40 > 0 else _per36(latest.assists, mpg) / 36 * 40
+
+    # --- Scoring profile (now using PPSA and scoring_efficiency too) -------
     if latest.three_point_pct > 0.37 and latest.usg_pct < 22:
         scoring_profile = "3pt_specialist"
     elif latest.fg_pct > 0.55:
@@ -120,25 +162,52 @@ def compute_player_features_from_objects(
     versatility_score = float(np.clip(1.0 - float(np.std(norms)), 0, 1))
 
     return {
-        "form_score":         round(form_score, 4),
-        "consistency_score":  round(consistency_score, 4),
-        "pts_per_36":         round(pts_per_36, 2),
-        "ast_per_36":         round(ast_per_36, 2),
-        "reb_per_36":         round(reb_per_36, 2),
-        "stl_per_36":         round(stl_per_36, 2),
-        "blk_per_36":         round(blk_per_36, 2),
-        "avg_per":            round(avg_per, 2),
-        "avg_ts_pct":         round(avg_ts_pct, 4),
-        "avg_usg_pct":        round(avg_usg_pct, 2),
-        "avg_bpm":            round(avg_bpm, 2),
-        "peak_rating":        round(peak_rating, 4),
-        "career_trajectory":  round(career_trajectory, 4),
-        "age_vs_peak_age":    age_vs_peak_age,
-        "positional_peak_age": peak_age,
-        "scoring_profile":    scoring_profile,
-        "playmaking_score":   round(playmaking_score, 4),
-        "defensive_score":    round(defensive_score, 4),
-        "versatility_score":  round(versatility_score, 4),
+        # Legacy features
+        "form_score":              round(form_score, 4),
+        "consistency_score":       round(consistency_score, 4),
+        "pts_per_36":              round(pts_per_36, 2),
+        "ast_per_36":              round(ast_per_36, 2),
+        "reb_per_36":              round(reb_per_36, 2),
+        "stl_per_36":              round(stl_per_36, 2),
+        "blk_per_36":              round(blk_per_36, 2),
+        "avg_per":                 round(avg_per, 2),
+        "avg_ts_pct":              round(avg_ts_pct, 4),
+        "avg_usg_pct":             round(avg_usg_pct, 2),
+        "avg_bpm":                 round(avg_bpm, 2),
+        "peak_rating":             round(peak_rating, 4),
+        "career_trajectory":       round(career_trajectory, 4),
+        "age_vs_peak_age":         age_vs_peak_age,
+        "positional_peak_age":     peak_age,
+        "scoring_profile":         scoring_profile,
+        "playmaking_score":        round(playmaking_score, 4),
+        "defensive_score":         round(defensive_score, 4),
+        "versatility_score":       round(versatility_score, 4),
+        # New advanced rating models
+        "avg_spm":                 round(avg_spm, 3),
+        "avg_raptor_total":        round(avg_raptor_total, 3),
+        "avg_raptor_off":          round(avg_raptor_off, 3),
+        "avg_raptor_def":          round(avg_raptor_def, 3),
+        "avg_lebron_total":        round(avg_lebron_total, 3),
+        "avg_obpm":                round(avg_obpm, 3),
+        "avg_dbpm":                round(avg_dbpm, 3),
+        "avg_gm_sc":               round(avg_gm_sc, 3),
+        "avg_fic":                 round(avg_fic, 3),
+        # Efficiency / hustle
+        "avg_scoring_efficiency":  round(avg_scoring_efficiency, 3),
+        "avg_hustle_index":        round(avg_hustle_index, 3),
+        "avg_foul_drawing_rate":   round(avg_foul_drawing_rate, 3),
+        # On/Off differentials
+        "avg_net_rtg_diff":        round(avg_net_rtg_diff, 3),
+        "avg_ortg_diff":           round(avg_ortg_diff, 3),
+        # Clutch
+        "clutch_pts_per_36":       round(clutch_pts_per_36, 2),
+        "avg_clutch_ts_pct":       round(avg_clutch_ts_pct, 4),
+        "avg_clutch_net_rtg":      round(avg_clutch_net_rtg, 3),
+        "avg_clutch_efg_pct":      round(avg_clutch_efg_pct, 4),
+        "clutch_games_career":     clutch_games_career,
+        # Per-40
+        "avg_pts_per_40":          round(avg_pts_per_40, 2),
+        "avg_ast_per_40":          round(avg_ast_per_40, 2),
     }
 
 
@@ -153,6 +222,17 @@ def _empty_features(player: Player) -> Dict[str, Any]:
         "age_vs_peak_age": player.age - peak_age, "positional_peak_age": peak_age,
         "scoring_profile": "efficient_scorer", "playmaking_score": 0.1,
         "defensive_score": 1.0, "versatility_score": 0.5,
+        # New advanced metrics – neutral defaults
+        "avg_spm": 0.0, "avg_raptor_total": 0.0, "avg_raptor_off": 0.0,
+        "avg_raptor_def": 0.0, "avg_lebron_total": 0.0,
+        "avg_obpm": 0.0, "avg_dbpm": 0.0, "avg_gm_sc": 0.0, "avg_fic": 0.0,
+        "avg_scoring_efficiency": 0.0, "avg_hustle_index": 0.0,
+        "avg_foul_drawing_rate": 0.0,
+        "avg_net_rtg_diff": 0.0, "avg_ortg_diff": 0.0,
+        "clutch_pts_per_36": 0.0, "avg_clutch_ts_pct": 0.52,
+        "avg_clutch_net_rtg": 0.0, "avg_clutch_efg_pct": 0.5,
+        "clutch_games_career": 0,
+        "avg_pts_per_40": 0.0, "avg_ast_per_40": 0.0,
     }
 
 
