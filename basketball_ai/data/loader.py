@@ -219,12 +219,17 @@ def load_player_stats(data_dir: str = DATA_DIR) -> List[PlayerStats]:
     df = pd.read_csv(f"{data_dir}/player_stats.csv")
     if "competition" not in df.columns:
         df["competition"] = "RS"
+    # Get the set of valid PlayerStats fields (those with defaults are optional)
+    import dataclasses as _dc
+    _ps_fields = {f.name for f in _dc.fields(PlayerStats)}
     results = []
     for r in df.to_dict("records"):
         r["player_id"] = _to_int(r["player_id"])
         r["team_id"] = _to_int(r["team_id"])
         r["league_id"] = _to_int(r["league_id"])
-        results.append(PlayerStats(**r))
+        # Drop any CSV columns not present in the dataclass to avoid TypeError
+        filtered = {k: v for k, v in r.items() if k in _ps_fields}
+        results.append(PlayerStats(**filtered))
     return results
 
 

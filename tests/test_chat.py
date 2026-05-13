@@ -94,8 +94,8 @@ def minimal_data():
 
 @pytest.fixture(scope="module")
 def trained_engine(minimal_data):
-    from src.models.ensemble import EnsembleModel
-    from src.scenarios.engine import WhatIfEngine
+    from basketball_ai.models.ensemble import EnsembleModel
+    from basketball_ai.scenarios.engine import WhatIfEngine
 
     ensemble = EnsembleModel()
     ensemble.train(minimal_data)
@@ -104,7 +104,7 @@ def trained_engine(minimal_data):
 
 @pytest.fixture(scope="module")
 def chat_engine(trained_engine, minimal_data):
-    from src.chat.engine import ChatEngine
+    from basketball_ai.chat.engine import ChatEngine
     return ChatEngine(trained_engine, minimal_data)
 
 
@@ -114,44 +114,44 @@ def chat_engine(trained_engine, minimal_data):
 
 class TestIntentDetection:
     def test_predict_intent(self):
-        from src.chat.intent import detect_intent, Intent
+        from basketball_ai.chat.intent import detect_intent, Intent
         assert detect_intent("How good is Player 1 at Team 2?") == Intent.PREDICT
 
     def test_peak_intent(self):
-        from src.chat.intent import detect_intent, Intent
+        from basketball_ai.chat.intent import detect_intent, Intent
         assert detect_intent("When will Player 5 reach their peak?") == Intent.PEAK
 
     def test_trajectory_intent(self):
-        from src.chat.intent import detect_intent, Intent
+        from basketball_ai.chat.intent import detect_intent, Intent
         assert detect_intent("Show me Player 3's career arc") == Intent.TRAJECTORY
 
     def test_transfer_intent(self):
-        from src.chat.intent import detect_intent, Intent
+        from basketball_ai.chat.intent import detect_intent, Intent
         assert detect_intent("What if Player 1 moved from Team 1 to Team 2?") == Intent.TRANSFER
 
     def test_best_teams_intent(self):
-        from src.chat.intent import detect_intent, Intent
+        from basketball_ai.chat.intent import detect_intent, Intent
         assert detect_intent("Best teams for Player 2?") == Intent.BEST_TEAMS
 
     def test_best_players_intent(self):
-        from src.chat.intent import detect_intent, Intent
+        from basketball_ai.chat.intent import detect_intent, Intent
         assert detect_intent("Best players for Team 1?") == Intent.BEST_PLAYERS
 
     def test_compare_intent(self):
-        from src.chat.intent import detect_intent, Intent
+        from basketball_ai.chat.intent import detect_intent, Intent
         assert detect_intent("Compare Player 1 across teams") == Intent.COMPARE
 
     def test_teammates_intent(self):
-        from src.chat.intent import detect_intent, Intent
+        from basketball_ai.chat.intent import detect_intent, Intent
         assert detect_intent("What if Player 1 had elite teammates?") == Intent.TEAMMATES
 
     def test_help_intent(self):
-        from src.chat.intent import detect_intent, Intent
+        from basketball_ai.chat.intent import detect_intent, Intent
         assert detect_intent("help") == Intent.HELP
         assert detect_intent("What can you do?") == Intent.HELP
 
     def test_unknown_intent(self):
-        from src.chat.intent import detect_intent, Intent
+        from basketball_ai.chat.intent import detect_intent, Intent
         assert detect_intent("xyzzy random gibberish") == Intent.UNKNOWN
 
 
@@ -161,7 +161,7 @@ class TestIntentDetection:
 
 class TestEntityExtraction:
     def test_find_player_exact(self, minimal_data):
-        from src.chat.entities import find_player
+        from basketball_ai.chat.entities import find_player
         result = find_player("How good is Player 1 today?", minimal_data["player_dict"])
         assert result is not None
         pid, name = result
@@ -169,19 +169,19 @@ class TestEntityExtraction:
         assert "Player 1" in name
 
     def test_find_player_none(self, minimal_data):
-        from src.chat.entities import find_player
+        from basketball_ai.chat.entities import find_player
         result = find_player("What is the weather like?", minimal_data["player_dict"])
         assert result is None
 
     def test_find_team_exact(self, minimal_data):
-        from src.chat.entities import find_team
+        from basketball_ai.chat.entities import find_team
         result = find_team("Tell me about Team 3", minimal_data["team_dict"])
         assert result is not None
         tid, name = result
         assert tid == 3
 
     def test_find_all_teams_two(self, minimal_data):
-        from src.chat.entities import find_all_teams
+        from basketball_ai.chat.entities import find_all_teams
         results = find_all_teams(
             "Move from Team 1 to Team 2", minimal_data["team_dict"]
         )
@@ -190,7 +190,7 @@ class TestEntityExtraction:
         assert 2 in team_ids
 
     def test_extract_number(self):
-        from src.chat.entities import extract_number
+        from basketball_ai.chat.entities import extract_number
         assert extract_number("rating of 8.5 expected") == 8.5
         assert extract_number("no numbers here") is None
 
@@ -273,27 +273,27 @@ class TestChatEngine:
     # ------------------------------------------------------------------
 
     def test_lineup_intent_detected(self):
-        from src.chat.intent import detect_intent, Intent
+        from basketball_ai.chat.intent import detect_intent, Intent
         assert detect_intent(
             "What if Player 1 played at Team 1 with Player 2, Player 3 and Player 4?"
         ) == Intent.LINEUP
 
     def test_lineup_intent_keyword(self):
-        from src.chat.intent import detect_intent, Intent
+        from basketball_ai.chat.intent import detect_intent, Intent
         assert detect_intent("lineup Player 1 Team 1") == Intent.LINEUP
 
     def test_lineup_intent_quintetto(self):
-        from src.chat.intent import detect_intent, Intent
+        from basketball_ai.chat.intent import detect_intent, Intent
         assert detect_intent("quintetto con Player 1 in Team 2") == Intent.LINEUP
 
     def test_lineup_does_not_trigger_on_transfer(self):
-        from src.chat.intent import detect_intent, Intent
+        from basketball_ai.chat.intent import detect_intent, Intent
         # Transfer must still win over lineup when "moved from … to" is present
         intent = detect_intent("What if Player 1 moved from Team 1 to Team 2?")
         assert intent == Intent.TRANSFER
 
     def test_find_all_players(self, minimal_data):
-        from src.chat.entities import find_all_players
+        from basketball_ai.chat.entities import find_all_players
         results = find_all_players(
             "Player 1, Player 2 and Player 3 in Team 1",
             minimal_data["player_dict"],
@@ -304,7 +304,7 @@ class TestChatEngine:
         assert 3 in ids
 
     def test_find_all_players_deduplicates(self, minimal_data):
-        from src.chat.entities import find_all_players
+        from basketball_ai.chat.entities import find_all_players
         results = find_all_players(
             "Player 1 Player 1 Player 1",
             minimal_data["player_dict"],
@@ -375,10 +375,10 @@ class TestChatEngine:
 
 @pytest.fixture(scope="module")
 def chat_client(minimal_data, trained_engine):
-    from src.api.main import app
+    from basketball_ai.api.main import app
     with TestClient(app, raise_server_exceptions=True) as tc:
-        from src.api import main as api_main
-        from src.chat.engine import ChatEngine
+        from basketball_ai.api import main as api_main
+        from basketball_ai.chat.engine import ChatEngine
         api_main.app_state["data"]        = minimal_data
         api_main.app_state["engine"]      = trained_engine
         api_main.app_state["chat_engine"] = ChatEngine(trained_engine, minimal_data)

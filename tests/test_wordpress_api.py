@@ -86,15 +86,15 @@ def wp_client():
         "league_dict": league_dict, "league_teams": {1: list(range(1, 7))},
     }
 
-    from src.models.ensemble import EnsembleModel
-    from src.scenarios.engine import WhatIfEngine
+    from basketball_ai.models.ensemble import EnsembleModel
+    from basketball_ai.scenarios.engine import WhatIfEngine
     ensemble = EnsembleModel()
     ensemble.train(data)
     engine = WhatIfEngine(ensemble, data)
 
-    from src.api.main import app
+    from basketball_ai.api.main import app
     with TestClient(app, raise_server_exceptions=True) as tc:
-        from src.api import main as api_main
+        from basketball_ai.api import main as api_main
         api_main.app_state["data"]        = data
         api_main.app_state["engine"]      = engine
         api_main.app_state["chat_engine"] = None

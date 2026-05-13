@@ -3,10 +3,10 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 import pytest
-from src.models.age_curve import age_performance_factor, PEAK_AGES, peak_age_window, age_trajectory
-from src.models.performance_model import PerformanceModel
-from src.models.compatibility_model import CompatibilityModel
-from src.models.ensemble import EnsembleModel, PredictionResult
+from basketball_ai.models.age_curve import age_performance_factor, PEAK_AGES, peak_age_window, age_trajectory
+from basketball_ai.models.performance_model import PerformanceModel
+from basketball_ai.models.compatibility_model import CompatibilityModel
+from basketball_ai.models.ensemble import EnsembleModel, PredictionResult
 
 
 # ---------------------------------------------------------------------------
@@ -220,7 +220,7 @@ class TestEnsemble:
         assert r.confidence_low <= r.predicted_rating <= r.confidence_high
 
     def test_trajectory_older_than_peak_drops(self, ensemble, tiny_data):
-        from src.scenarios.engine import WhatIfEngine
+        from basketball_ai.scenarios.engine import WhatIfEngine
         engine = WhatIfEngine(ensemble, tiny_data)
         traj   = engine.predict_age_trajectory(1, age_range=(22, 38))
         ratings = [p.predicted_rating for p in traj]
@@ -230,41 +230,41 @@ class TestEnsemble:
         assert peak_idx < len(ratings) - 1  # peak is not at the last age
 
     def test_compare_scenarios_sorted(self, ensemble, tiny_data):
-        from src.scenarios.engine import WhatIfEngine
+        from basketball_ai.scenarios.engine import WhatIfEngine
         engine = WhatIfEngine(ensemble, tiny_data)
         result = engine.compare_scenarios(1, [1, 2, 3])
         ratings = [s["rating"] for s in result.scenarios]
         assert ratings == sorted(ratings, reverse=True)
 
     def test_simulate_transfer(self, ensemble, tiny_data):
-        from src.scenarios.engine import WhatIfEngine
+        from basketball_ai.scenarios.engine import WhatIfEngine
         engine = WhatIfEngine(ensemble, tiny_data)
         result = engine.simulate_transfer(1, 1, 2)
         assert isinstance(result.rating_delta, float)
         assert result.recommendation != ""
 
     def test_predict_peak_age_reasonable(self, ensemble, tiny_data):
-        from src.scenarios.engine import WhatIfEngine
+        from basketball_ai.scenarios.engine import WhatIfEngine
         engine = WhatIfEngine(ensemble, tiny_data)
         peak   = engine.predict_peak(1)
         assert 18 <= peak.peak_age <= 40
 
     def test_what_if_better_teammates(self, ensemble, tiny_data):
-        from src.scenarios.engine import WhatIfEngine
+        from basketball_ai.scenarios.engine import WhatIfEngine
         engine = WhatIfEngine(ensemble, tiny_data)
         better = engine.what_if_teammates(1, 1, 9.0)
         worse  = engine.what_if_teammates(1, 1, 4.0)
         assert better.predicted_rating >= worse.predicted_rating
 
     def test_best_team_fit(self, ensemble, tiny_data):
-        from src.scenarios.engine import WhatIfEngine
+        from basketball_ai.scenarios.engine import WhatIfEngine
         engine = WhatIfEngine(ensemble, tiny_data)
         fits = engine.best_team_fit(1, top_n=5)
         assert len(fits) <= 5
         assert all(f.rank >= 1 for f in fits)
 
     def test_best_player_for_team_position_filter(self, ensemble, tiny_data):
-        from src.scenarios.engine import WhatIfEngine
+        from basketball_ai.scenarios.engine import WhatIfEngine
         engine  = WhatIfEngine(ensemble, tiny_data)
         players = engine.best_player_for_team(1, position="PG", top_n=3)
         assert len(players) >= 1

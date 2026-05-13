@@ -85,6 +85,27 @@ FEATURE_COLS: List[str] = [
     "age_vs_peak_age",
     "po_vs_rs_delta",
     "po_games_played",
+    # Advanced DB-schema metrics (SPM, RAPTOR, LEBRON, OBPM/DBPM)
+    "avg_spm",
+    "avg_raptor_total",
+    "avg_lebron_total",
+    "avg_obpm",
+    "avg_dbpm",
+    "avg_gm_sc",
+    # Efficiency / hustle
+    "avg_scoring_efficiency",
+    "avg_hustle_index",
+    "avg_foul_drawing_rate",
+    # Clutch performance (from AdvancedStats_Clutch_*)
+    "clutch_pts_per_36",
+    "avg_clutch_ts_pct",
+    "avg_clutch_net_rtg",
+    # On/Off impact
+    "avg_net_rtg_diff",
+    "avg_ortg_diff",
+    # Per-40 projection features
+    "avg_pts_per_40",
+    "avg_ast_per_40",
 ]
 
 # Non-metric identity/target columns to exclude from METRIC_CATALOG selection
@@ -109,13 +130,13 @@ METRIC_CATALOG: Dict[str, _MetricInfo] = {
     "blocks":               _MetricInfo("Stoppate",             "Stoppate per partita",                       True,  "Difesa"),
     "turnovers":            _MetricInfo("Palle perse",          "Palle perse per partita",                    True,  "Efficienza"),
     "fouls":                _MetricInfo("Falli",                "Falli per partita",                          True,  "Disciplina"),
-    "fg_pct":               _MetricInfo("FG%",                  "Percentuale tiri dal campo",                 False, "Efficienza"),
+    "fg_pct":               _MetricInfo("eFG%",                 "Effective Field Goal Percentage",            False, "Efficienza"),
     "three_point_pct":      _MetricInfo("3P%",                  "Percentuale tiri da tre punti",              False, "Efficienza"),
     "three_point_attempts": _MetricInfo("3PA/36",               "Tentativi da tre per 36 minuti",             True,  "Attacco"),
     "three_point_made":     _MetricInfo("3PM/36",               "Canestri da tre per 36 minuti",              True,  "Attacco"),
     "free_throw_pct":       _MetricInfo("FT%",                  "Percentuale tiri liberi",                    False, "Efficienza"),
     "free_throw_attempts":  _MetricInfo("FTA/36",               "Tiri liberi tentati per 36 minuti",          True,  "Efficienza"),
-    "per":                  _MetricInfo("PER",                  "Player Efficiency Rating",                   False, "Avanzate"),
+    "per":                  _MetricInfo("PER/PIE",              "Player Efficiency Rating (PIE)",             False, "Avanzate"),
     "ts_pct":               _MetricInfo("TS%",                  "True Shooting Percentage",                   False, "Avanzate"),
     "usg_pct":              _MetricInfo("USG%",                 "Usage Rate",                                 False, "Avanzate"),
     "bpm":                  _MetricInfo("BPM",                  "Box Plus/Minus",                             False, "Avanzate"),
@@ -135,13 +156,59 @@ METRIC_CATALOG: Dict[str, _MetricInfo] = {
     "tov_pct":              _MetricInfo("TOV%",                 "Turnover Rate",                              False, "Efficienza"),
     "stl_pct":              _MetricInfo("STL%",                 "Steal Rate",                                 False, "Difesa"),
     "blk_pct":              _MetricInfo("BLK%",                 "Block Rate",                                 False, "Difesa"),
+    "orb_pct":              _MetricInfo("ORB%",                 "Offensive Rebound Rate",                     False, "Rimbalzi"),
+    "drb_pct":              _MetricInfo("DRB%",                 "Defensive Rebound Rate",                     False, "Rimbalzi"),
     "ortg":                 _MetricInfo("ORtg",                 "Offensive Rating per 100 possessi",          False, "Team"),
     "drtg":                 _MetricInfo("DRtg",                 "Defensive Rating per 100 possessi",          False, "Team"),
+    "net_rtg":              _MetricInfo("NetRtg",               "Net rating per 100 possessi",                False, "Team"),
+    "on_net_rtg":           _MetricInfo("NetRtg On",            "Net rating quando in campo",                 False, "Team"),
+    "net_rtg_diff":         _MetricInfo("NetRtg Diff",          "Differenziale on/off net rating",            False, "Team"),
+    # --- New: Advanced rating models (DB schema) ----------------------------
+    "spm":                  _MetricInfo("SPM",                  "Statistical Plus/Minus",                     False, "Avanzate"),
+    "raptor_total":         _MetricInfo("RAPTOR",               "RAPTOR total (FiveThirtyEight)",             False, "Avanzate"),
+    "raptor_off":           _MetricInfo("RAPTOR Off",           "RAPTOR offensive rating",                    False, "Avanzate"),
+    "raptor_def":           _MetricInfo("RAPTOR Def",           "RAPTOR defensive rating",                    False, "Avanzate"),
+    "lebron_total":         _MetricInfo("LEBRON",               "LEBRON impact model",                        False, "Avanzate"),
+    "lebron_off":           _MetricInfo("LEBRON Off",           "LEBRON offensive component",                 False, "Avanzate"),
+    "lebron_def":           _MetricInfo("LEBRON Def",           "LEBRON defensive component",                 False, "Avanzate"),
+    "gm_sc":                _MetricInfo("GmSc",                 "Game Score per partita",                     False, "Avanzate"),
+    "fic":                  _MetricInfo("FIC",                  "Floor Impact Counter",                       False, "Avanzate"),
+    "ows":                  _MetricInfo("OWS",                  "Offensive Win Shares",                       False, "Avanzate"),
+    "dws":                  _MetricInfo("DWS",                  "Defensive Win Shares",                       False, "Avanzate"),
+    # --- New: Efficiency / hustle -------------------------------------------
+    "scoring_efficiency":   _MetricInfo("Sc. Eff.",             "Scoring efficiency index",                   False, "Efficienza"),
+    "ppsa":                 _MetricInfo("PPSA",                 "Points per shot attempt",                    False, "Efficienza"),
+    "true_usg_pct":         _MetricInfo("TUSG%",                "True usage percentage",                      False, "Avanzate"),
+    "foul_drawing_rate":    _MetricInfo("FDR",                  "Foul drawing rate",                          False, "Avanzate"),
+    "rf_per_game":          _MetricInfo("RF/G",                 "Referee fouls drawn per game",               False, "Disciplina"),
+    "hustle_index":         _MetricInfo("Hustle",               "Hustle index (aggressività)",                False, "Avanzate"),
+    "three_par":            _MetricInfo("3PAr",                 "Three-point attempt rate",                   False, "Attacco"),
+    # --- New: Clutch stats --------------------------------------------------
+    "clutch_pts":           _MetricInfo("Clutch Pts",           "Punti in situazioni clutch",                 True,  "Clutch"),
+    "clutch_ts_pct":        _MetricInfo("Clutch TS%",           "True shooting % in clutch",                  False, "Clutch"),
+    "clutch_net_rtg":       _MetricInfo("Clutch NetRtg",        "Net rating in situazioni clutch",            False, "Clutch"),
+    "clutch_efg_pct":       _MetricInfo("Clutch eFG%",          "eFG% in situazioni clutch",                  False, "Clutch"),
+    "clutch_ast_to_tov":    _MetricInfo("Clutch A/T",           "Assist/turnover ratio in clutch",            False, "Clutch"),
+    # --- New: Per-40 minute stats --------------------------------------------
+    "pts_per_40":           _MetricInfo("Pts/40",               "Punti per 40 minuti",                        False, "Utilizzo"),
+    "ast_per_40":           _MetricInfo("Ast/40",               "Assist per 40 minuti",                       False, "Utilizzo"),
+    "tr_per_40":            _MetricInfo("Reb/40",               "Rimbalzi per 40 minuti",                     False, "Utilizzo"),
+    "stl_per_40":           _MetricInfo("Stl/40",               "Palle rubate per 40 minuti",                 False, "Utilizzo"),
+    "blk_per_40":           _MetricInfo("Blk/40",               "Stoppate per 40 minuti",                     False, "Utilizzo"),
 }
 
-# Columns that are already covered by the base FEATURE_COLS (per-36 computed)
-_BASE_COVERED_COLS = {"points", "assists", "rebounds", "steals", "blocks",
-                      "per", "ts_pct", "usg_pct", "bpm"}
+# Columns that are already covered by the base FEATURE_COLS (per-36 computed
+# or historical averages already baked in)
+_BASE_COVERED_COLS = {
+    "points", "assists", "rebounds", "steals", "blocks",
+    "per", "ts_pct", "usg_pct", "bpm",
+    # New base features (already in FEATURE_COLS as avg_*)
+    "spm", "raptor_total", "lebron_total", "obpm", "dbpm",
+    "gm_sc", "scoring_efficiency", "hustle_index", "foul_drawing_rate",
+    "clutch_pts", "clutch_ts_pct", "clutch_net_rtg",
+    "net_rtg_diff", "ortg_diff",
+    "pts_per_40", "ast_per_40",
+}
 
 
 def get_available_metrics(player_stats_df: pd.DataFrame) -> List[str]:
@@ -217,13 +284,25 @@ class PerformanceModel:
         player_stats_history: pd.DataFrame,
         extra_metrics: List[str] = [],
     ) -> Dict[str, float]:
-        """Build a feature row from a player-stats row."""
+        """Build a feature row from a player-stats row.
+
+        Includes all base FEATURE_COLS plus any requested extra_metrics.
+        New DB-schema features (SPM, RAPTOR, LEBRON, clutch, on/off, per-40)
+        are included in the base set when available.
+        """
         mpg = float(stat_row.get("minutes_per_game", 0))
         if mpg <= 0:
             mpg = 1.0
 
         def per36(col: str) -> float:
             return float(stat_row.get(col, 0)) / mpg * 36
+
+        def hist_avg(col: str, fallback: float = 0.0) -> float:
+            """Historical average of *col* from career so far; fall back to current row."""
+            if not player_stats_history.empty and col in player_stats_history.columns:
+                vals = player_stats_history[col].dropna().tolist()
+                return float(np.mean(vals)) if vals else float(stat_row.get(col, fallback))
+            return float(stat_row.get(col, fallback))
 
         # Career stats up to this season
         ratings = player_stats_history["rating"].tolist()
@@ -239,10 +318,10 @@ class PerformanceModel:
             if len(ratings) >= 2 else 0.0
         )
 
-        avg_per = float(np.mean(player_stats_history["per"].tolist())) if not player_stats_history.empty else float(stat_row.get("per", 12))
-        avg_ts  = float(np.mean(player_stats_history["ts_pct"].tolist())) if not player_stats_history.empty else float(stat_row.get("ts_pct", 0.52))
-        avg_usg = float(np.mean(player_stats_history["usg_pct"].tolist())) if not player_stats_history.empty else float(stat_row.get("usg_pct", 18))
-        avg_bpm = float(np.mean(player_stats_history["bpm"].tolist())) if not player_stats_history.empty else float(stat_row.get("bpm", -1))
+        avg_per = hist_avg("per", 12.0)
+        avg_ts  = hist_avg("ts_pct", 0.52)
+        avg_usg = hist_avg("usg_pct", 18.0)
+        avg_bpm = hist_avg("bpm", -1.0)
 
         pos_enc = float(POSITION_ENCODING.get(position, POSITION_ENCODING.get(_primary_pos(position), 0)))
         peak_age = _peak_age(position)
@@ -266,6 +345,27 @@ class PerformanceModel:
             "consistency_score":  consistency,
             "career_trajectory":  trajectory,
             "age_vs_peak_age":    float(age - peak_age),
+            # Advanced DB-schema rating models
+            "avg_spm":                hist_avg("spm", 0.0),
+            "avg_raptor_total":       hist_avg("raptor_total", 0.0),
+            "avg_lebron_total":       hist_avg("lebron_total", 0.0),
+            "avg_obpm":               hist_avg("obpm", 0.0),
+            "avg_dbpm":               hist_avg("dbpm", 0.0),
+            "avg_gm_sc":              hist_avg("gm_sc", 0.0),
+            # Efficiency / hustle
+            "avg_scoring_efficiency": hist_avg("scoring_efficiency", 0.0),
+            "avg_hustle_index":       hist_avg("hustle_index", 0.0),
+            "avg_foul_drawing_rate":  hist_avg("foul_drawing_rate", 0.0),
+            # Clutch performance
+            "clutch_pts_per_36":      per36("clutch_pts"),
+            "avg_clutch_ts_pct":      hist_avg("clutch_ts_pct", 0.0),
+            "avg_clutch_net_rtg":     hist_avg("clutch_net_rtg", 0.0),
+            # On/Off impact
+            "avg_net_rtg_diff":       hist_avg("net_rtg_diff", 0.0),
+            "avg_ortg_diff":          hist_avg("ortg_diff", 0.0),
+            # Per-40 projection features
+            "avg_pts_per_40":         hist_avg("pts_per_40", 0.0),
+            "avg_ast_per_40":         hist_avg("ast_per_40", 0.0),
         }
 
         # PO vs RS delta and PO games played from historical data
@@ -279,7 +379,6 @@ class PerformanceModel:
             if info is None:
                 continue
             if col not in stat_row.index:
-                print(f"[PerformanceModel] Warning: column '{col}' not found in stat_row, using 0.0")
                 if info.use_per36:
                     row[f"{col}_per_36"] = 0.0
                 else:

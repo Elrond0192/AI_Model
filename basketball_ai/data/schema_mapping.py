@@ -116,6 +116,50 @@ TABLE_PLAYER_STATS: List[ColumnDef] = [
     ColumnDef("NetRtg_On", "on_net_rtg", "On-court net rating.", default=0.0),
     ColumnDef("NetRtg_Off", "off_net_rtg", "Off-court net rating.", default=0.0),
     ColumnDef("NetRtg_Diff", "net_rtg_diff", "On/off net rating differential.", default=0.0),
+    # --- Advanced metrics added from DB schema (schema_db.sql) ----------------
+    ColumnDef("Spm", "spm", "Statistical Plus/Minus.", default=0.0),
+    ColumnDef("OBpm", "obpm", "Offensive Box Plus/Minus.", default=0.0),
+    ColumnDef("DBpm", "dbpm", "Defensive Box Plus/Minus.", default=0.0),
+    ColumnDef("GmSc", "gm_sc", "Game Score (Hollinger).", default=0.0),
+    ColumnDef("Fic", "fic", "Floor Impact Counter.", default=0.0),
+    ColumnDef("OWS", "ows", "Offensive Win Shares.", default=0.0),
+    ColumnDef("DWS", "dws", "Defensive Win Shares.", default=0.0),
+    ColumnDef("RaptorOff", "raptor_off", "RAPTOR offensive rating.", default=0.0),
+    ColumnDef("RaptorDef", "raptor_def", "RAPTOR defensive rating.", default=0.0),
+    ColumnDef("RaptorTotal", "raptor_total", "RAPTOR total rating.", default=0.0),
+    ColumnDef("LebronOff", "lebron_off", "LEBRON offensive rating.", default=0.0),
+    ColumnDef("LebronDef", "lebron_def", "LEBRON defensive rating.", default=0.0),
+    ColumnDef("LebronTotal", "lebron_total", "LEBRON total rating.", default=0.0),
+    ColumnDef("ScoringEfficiency", "scoring_efficiency", "Scoring efficiency index.", default=0.0),
+    ColumnDef("Ppsa", "ppsa", "Points per shot attempt.", default=0.0),
+    ColumnDef("Fg2Pct", "two_point_pct", "Two-point field goal %.", default=0.0),
+    ColumnDef("TovPct", "tov_pct", "Turnover %.", default=0.0),
+    ColumnDef("AstPct", "ast_pct", "Assist %.", default=0.0),
+    ColumnDef("StlPct", "stl_pct", "Steal %.", default=0.0),
+    ColumnDef("BlkPct", "blk_pct", "Block %.", default=0.0),
+    ColumnDef("OrebPct", "orb_pct", "Offensive rebound %.", default=0.0),
+    ColumnDef("DrebPct", "drb_pct", "Defensive rebound %.", default=0.0),
+    ColumnDef("ThreePAr", "three_par", "Three-point attempt rate.", default=0.0),
+    ColumnDef("TusgPct", "true_usg_pct", "True usage percentage.", default=0.0),
+    ColumnDef("FoulDrawingRate", "foul_drawing_rate", "Foul drawing rate.", default=0.0),
+    ColumnDef("RfPerGame", "rf_per_game", "Referee fouls drawn per game.", default=0.0),
+    ColumnDef("HustleIndex", "hustle_index", "Hustle index.", default=0.0),
+    ColumnDef("PtsPer40", "pts_per_40", "Points per 40 minutes.", default=0.0),
+    ColumnDef("AstPer40", "ast_per_40", "Assists per 40 minutes.", default=0.0),
+    ColumnDef("TrPer40", "tr_per_40", "Rebounds per 40 minutes.", default=0.0),
+    ColumnDef("StlPer40", "stl_per_40", "Steals per 40 minutes.", default=0.0),
+    ColumnDef("BlkPer40", "blk_per_40", "Blocks per 40 minutes.", default=0.0),
+    # --- Clutch stats from Analisi.AdvancedStats_Clutch_* (joined at query time) -
+    ColumnDef("ClutchGames", "clutch_games", "Games with clutch situations.", default=0),
+    ColumnDef("ClutchPts", "clutch_pts", "Points per game in clutch situations.", default=0.0),
+    ColumnDef("ClutchTsPct", "clutch_ts_pct", "True shooting % in clutch.", default=0.0),
+    ColumnDef("ClutchAstToTov", "clutch_ast_to_tov", "Ast/Tov ratio in clutch.", default=0.0),
+    ColumnDef("ClutchNetRtg", "clutch_net_rtg", "Net rating in clutch situations.", default=0.0),
+    ColumnDef("ClutchEfgPct", "clutch_efg_pct", "eFG% in clutch situations.", default=0.0),
+    # --- On/Off offensive rating from Analisi.AdvancedStatsOnOffCourt_* --------
+    ColumnDef("ORtg_On", "ortg_on", "Offensive rating when on court.", default=0.0),
+    ColumnDef("ORtg_Off", "ortg_off", "Offensive rating when off court.", default=0.0),
+    ColumnDef("ORtg_Diff", "ortg_diff", "ORtg on/off differential.", default=0.0),
 ]
 
 
@@ -245,11 +289,27 @@ def _player_stats_cte(league: str, season: str) -> str:
     SELECT
         CAST(o.Player AS nvarchar(100)) AS player_id,
         o.NetRtg_On, o.NetRtg_Off, o.NetRtg_Diff,
+        o.ORtg_On, o.ORtg_Off, o.ORtg_Diff,
         ROW_NUMBER() OVER (
             PARTITION BY CAST(o.Player AS nvarchar(100))
             ORDER BY CASE WHEN o.Competition = 'RS' THEN 0 ELSE 1 END
         ) AS rn
     FROM Analisi.AdvancedStatsOnOffCourt_{tag} AS o
+),
+{slug}_clutch AS (
+    SELECT
+        CAST(c.Id AS nvarchar(100)) AS player_id,
+        ISNULL(CAST(c.ClutchGames AS int), 0) AS ClutchGames,
+        ISNULL(CAST(c.Pts AS float), 0.0) AS ClutchPts,
+        ISNULL(CAST(c.TsPct AS float), 0.0) AS ClutchTsPct,
+        ISNULL(CAST(c.AstToTovRatio AS float), 0.0) AS ClutchAstToTov,
+        ISNULL(CAST(c.NetRtg AS float), 0.0) AS ClutchNetRtg,
+        ISNULL(CAST(c.EfgPct AS float), 0.0) AS ClutchEfgPct,
+        ROW_NUMBER() OVER (
+            PARTITION BY CAST(c.Id AS nvarchar(100))
+            ORDER BY CASE WHEN c.Competition = 'RS' THEN 0 ELSE 1 END, ISNULL(c.ClutchGames, 0) DESC
+        ) AS rn
+    FROM Analisi.AdvancedStats_Clutch_{tag} AS c
 )"""
 
 
@@ -294,11 +354,56 @@ def _player_stats_select(league: str, season: str) -> str:
     ISNULL(CAST(o.NetRtg_On AS float), 0.0) AS on_net_rtg,
     ISNULL(CAST(o.NetRtg_Off AS float), 0.0) AS off_net_rtg,
     ISNULL(CAST(o.NetRtg_Diff AS float), 0.0) AS net_rtg_diff,
-    ISNULL(s.Competition, 'RS') AS competition
+    ISNULL(s.Competition, 'RS') AS competition,
+    -- Advanced metrics (schema_db.sql: Analisi.AdvancedStats_Player_*)
+    ISNULL(CAST(s.Spm AS float), 0.0) AS spm,
+    ISNULL(CAST(s.OBpm AS float), 0.0) AS obpm,
+    ISNULL(CAST(s.DBpm AS float), 0.0) AS dbpm,
+    ISNULL(CAST(s.GmSc AS float), 0.0) AS gm_sc,
+    ISNULL(CAST(s.Fic AS float), 0.0) AS fic,
+    ISNULL(CAST(s.OWS AS float), 0.0) AS ows,
+    ISNULL(CAST(s.DWS AS float), 0.0) AS dws,
+    ISNULL(CAST(s.RaptorOff AS float), 0.0) AS raptor_off,
+    ISNULL(CAST(s.RaptorDef AS float), 0.0) AS raptor_def,
+    ISNULL(CAST(s.RaptorTotal AS float), 0.0) AS raptor_total,
+    ISNULL(CAST(s.LebronOff AS float), 0.0) AS lebron_off,
+    ISNULL(CAST(s.LebronDef AS float), 0.0) AS lebron_def,
+    ISNULL(CAST(s.LebronTotal AS float), 0.0) AS lebron_total,
+    ISNULL(CAST(s.ScoringEfficiency AS float), 0.0) AS scoring_efficiency,
+    ISNULL(CAST(s.Ppsa AS float), 0.0) AS ppsa,
+    ISNULL(CAST(s.Fg2Pct AS float), 0.0) AS two_point_pct,
+    ISNULL(CAST(s.TovPct AS float), 0.0) AS tov_pct,
+    ISNULL(CAST(s.AstPct AS float), 0.0) AS ast_pct,
+    ISNULL(CAST(s.StlPct AS float), 0.0) AS stl_pct,
+    ISNULL(CAST(s.BlkPct AS float), 0.0) AS blk_pct,
+    ISNULL(CAST(s.OrebPct AS float), 0.0) AS orb_pct,
+    ISNULL(CAST(s.DrebPct AS float), 0.0) AS drb_pct,
+    ISNULL(CAST(s.ThreePAr AS float), 0.0) AS three_par,
+    ISNULL(CAST(s.TusgPct AS float), 0.0) AS true_usg_pct,
+    ISNULL(CAST(s.FoulDrawingRate AS float), 0.0) AS foul_drawing_rate,
+    ISNULL(CAST(s.RfPerGame AS float), 0.0) AS rf_per_game,
+    ISNULL(CAST(s.HustleIndex AS float), 0.0) AS hustle_index,
+    ISNULL(CAST(s.PtsPer40 AS float), 0.0) AS pts_per_40,
+    ISNULL(CAST(s.AstPer40 AS float), 0.0) AS ast_per_40,
+    ISNULL(CAST(s.TrPer40 AS float), 0.0) AS tr_per_40,
+    ISNULL(CAST(s.StlPer40 AS float), 0.0) AS stl_per_40,
+    ISNULL(CAST(s.BlkPer40 AS float), 0.0) AS blk_per_40,
+    -- Clutch stats (schema_db.sql: Analisi.AdvancedStats_Clutch_*)
+    ISNULL(c.ClutchGames, 0) AS clutch_games,
+    ISNULL(c.ClutchPts, 0.0) AS clutch_pts,
+    ISNULL(c.ClutchTsPct, 0.0) AS clutch_ts_pct,
+    ISNULL(c.ClutchAstToTov, 0.0) AS clutch_ast_to_tov,
+    ISNULL(c.ClutchNetRtg, 0.0) AS clutch_net_rtg,
+    ISNULL(c.ClutchEfgPct, 0.0) AS clutch_efg_pct,
+    -- On/Off offensive rating (schema_db.sql: Analisi.AdvancedStatsOnOffCourt_*)
+    ISNULL(CAST(o.ORtg_On AS float), 0.0) AS ortg_on,
+    ISNULL(CAST(o.ORtg_Off AS float), 0.0) AS ortg_off,
+    ISNULL(CAST(o.ORtg_Diff AS float), 0.0) AS ortg_diff
 FROM Analisi.AdvancedStats_Player_{tag} AS s
-LEFT JOIN {slug}_box  AS b ON CAST(s.Id AS nvarchar(100)) = b.player_id AND b.rn = 1
-LEFT JOIN {slug}_roles AS r ON CAST(s.Id AS nvarchar(100)) = r.player_id AND r.rn = 1
-LEFT JOIN {slug}_onoff AS o ON CAST(s.Id AS nvarchar(100)) = o.player_id AND o.rn = 1
+LEFT JOIN {slug}_box    AS b ON CAST(s.Id AS nvarchar(100)) = b.player_id AND b.rn = 1
+LEFT JOIN {slug}_roles  AS r ON CAST(s.Id AS nvarchar(100)) = r.player_id AND r.rn = 1
+LEFT JOIN {slug}_onoff  AS o ON CAST(s.Id AS nvarchar(100)) = o.player_id AND o.rn = 1
+LEFT JOIN {slug}_clutch AS c ON CAST(s.Id AS nvarchar(100)) = c.player_id AND c.rn = 1
 WHERE s.Competition NOT IN ('TOT')
 -- 'TOT' rows are aggregated totals across multiple teams in the same season;
 -- we exclude them to avoid double-counting when a player changed teams mid-season."""
