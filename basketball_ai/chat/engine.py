@@ -13,7 +13,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
-from basketball_ai.chat.intent import Intent, detect_intent
+from basketball_ai.chat.intent import Intent, detect_intent, detect_intent_with_confidence
 from basketball_ai.chat.entities import (
     extract_number,
     find_all_players,
@@ -145,7 +145,7 @@ class ChatEngine:
         sess = _session.get_or_create(session_id)
         _session.add_turn(session_id, "user", message)
 
-        intent = detect_intent(message)
+        intent, _intent_conf = detect_intent_with_confidence(message)
         reply, data, suggestions = self._dispatch(intent, message, sess)
 
         _session.add_turn(
