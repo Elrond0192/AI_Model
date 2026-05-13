@@ -54,13 +54,24 @@ def _save_to_env(key: str, value: str) -> None:
     _ENV_PATH.write_text("".join(lines), encoding="utf-8")
 
 def _safe_model_dir(user_input: str) -> Path:
-    """Sanitize a user-supplied directory path to prevent path traversal."""
-    raw = Path(user_input)
-    safe_parts = [
-        p for p in raw.parts
-        if p not in ("..", "/", "\\") and ":" not in p
-    ]
-    return Path(*safe_parts) if safe_parts else Path("models_saved")
+    """Resolve a user-supplied directory path, preventing '..' path traversal.
+
+    Unlike the previous implementation this function preserves absolute paths
+    (e.g. ``/home/user/models`` or ``C:\\Users\\user\\models``) so that the
+    user can specify any writable location on disk.  Only ``..`` components are
+    removed to neutralise traversal attempts.
+    """
+    raw = Path((user_input or "models_saved").strip())
+    # Walk the parts and drop any '..' that would escape the root
+    safe: list[str] = []
+    for part in raw.parts:
+        if part == "..":
+            # Pop last non-root component (never pop the drive/root anchor)
+            if safe and safe[-1] not in {"/", "\\", ""} and ":" not in safe[-1]:
+                safe.pop()
+        else:
+            safe.append(part)
+    return Path(*safe) if safe else Path("models_saved")
 
 
 def _require_data():
@@ -486,6 +497,47 @@ with tab_train:
 | `Random seed` | Seme per la riproducibilità dei risultati. | Qualsiasi intero |
         """)
 
+    # -----------------------------------------------------------------------
+    # Preset buttons
+    # -----------------------------------------------------------------------
+    _PRESETS = {
+        "🏆 Preciso": dict(
+            n_estimators=800, max_depth=7, learning_rate=0.01,
+            subsample=0.85, colsample_bytree=0.85, min_child_weight=2,
+            reg_alpha=0.1, reg_lambda=1.5, test_size=0.15, seed=42,
+            label="Alta precisione – addestramento lento (~5–10 min), ottimi risultati",
+        ),
+        "⚖️ Bilanciato": dict(
+            n_estimators=300, max_depth=5, learning_rate=0.05,
+            subsample=0.80, colsample_bytree=0.80, min_child_weight=3,
+            reg_alpha=0.1, reg_lambda=1.0, test_size=0.15, seed=42,
+            label="Bilanciato – addestramento medio (~1–2 min), buoni risultati (default)",
+        ),
+        "⚡ Veloce": dict(
+            n_estimators=100, max_depth=4, learning_rate=0.1,
+            subsample=0.70, colsample_bytree=0.70, min_child_weight=4,
+            reg_alpha=0.0, reg_lambda=0.5, test_size=0.20, seed=42,
+            label="Veloce – addestramento rapido (<30 s), precisione ridotta",
+        ),
+    }
+    st.markdown("**Preset rapidi**")
+    _pcols = st.columns(3)
+    for _pi, (_pname, _pvals) in enumerate(_PRESETS.items()):
+        with _pcols[_pi]:
+            if st.button(_pname, key=f"preset_{_pi}", use_container_width=True,
+                         help=_pvals["label"]):
+                st.session_state["t_nest"]       = _pvals["n_estimators"]
+                st.session_state["t_depth"]      = _pvals["max_depth"]
+                st.session_state["t_lr"]         = _pvals["learning_rate"]
+                st.session_state["t_sub"]        = _pvals["subsample"]
+                st.session_state["t_colsample"]  = _pvals["colsample_bytree"]
+                st.session_state["t_mcw"]        = _pvals["min_child_weight"]
+                st.session_state["t_alpha"]      = _pvals["reg_alpha"]
+                st.session_state["t_lambda"]     = _pvals["reg_lambda"]
+                st.session_state["t_split"]      = _pvals["test_size"]
+                st.session_state["t_seed"]       = _pvals["seed"]
+                st.rerun()
+
     col1, col2 = st.columns(2)
     with col1:
         st.markdown("**XGBoost**")
@@ -698,7 +750,11 @@ with tab_train:
                     "val_r2":     val_r2,
                 }
                 ensemble.save(str(save_dir), metrics=metrics_dict)
-                log(f"Modelli salvati in '{save_dir}/'")
+                _abs_save = save_dir.resolve()
+                log(f"Modelli salvati in: {_abs_save}")
+                log("  · performance_model.joblib")
+                log("  · compatibility_model.joblib")
+                log("  · metadata.json")
 
                 st.session_state["model_dir"]        = str(save_dir)
                 st.session_state["ensemble"]         = ensemble
@@ -710,7 +766,9 @@ with tab_train:
                 st.session_state.pop("chat_engine", None)
 
                 progress.progress(100, text="Completato!")
-                st.success("✅ Training completato!")
+                st.success(
+                    f"✅ Training completato! Modelli salvati in: `{_abs_save}`"
+                )
 
             except Exception as exc:
                 st.error(f"Training fallito: {exc}")
