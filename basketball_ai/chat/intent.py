@@ -33,7 +33,9 @@ _RULES: list[tuple[Intent, re.Pattern[str]]] = [
     (
         Intent.TRANSFER,
         re.compile(
-            r"\btransfer|traded?|moved?\s+from\b|from\s+\S+\s+to\s",
+            r"\btransfer|traded?|moved?\s+from\b|from\s+\S+\s+to\s"
+            r"|se\s+(\w+\s+)?(andasse|trasferisse|passasse)\b"
+            r"|trasferiment[oi]\b|dal?\s+\S+\s+al?\s",
             re.IGNORECASE,
         ),
     ),
@@ -88,7 +90,9 @@ _RULES: list[tuple[Intent, re.Pattern[str]]] = [
         re.compile(
             r"\bindividual|statistich[ae]\s+individual|da\s+solo|isolation"
             r"|solo\s+stats?|player\s+profile|profilo\s+giocatore"
-            r"|what\s+are\s+\w+[\''s]*\s+stats|dimmi\s+di\b|raccontami\s+di\b",
+            r"|what\s+are\s+\w+[\''s]*\s+stats|dimmi\s+di\b|raccontami\s+di\b"
+            r"|statistich[ae]\s+(di|del|della|dei)\b|chi\s+è\b|profilo\s+di\b"
+            r"|numeri\s+di\b|dati\s+(di|del|della)\b",
             re.IGNORECASE,
         ),
     ),
@@ -102,21 +106,27 @@ _RULES: list[tuple[Intent, re.Pattern[str]]] = [
     (
         Intent.PEAK,
         re.compile(
-            r"\bpeak|prime\b|career\s+(high|best)|best\s+age|when.{1,25}best\b",
+            r"\bpeak|prime\b|career\s+(high|best)|best\s+age|when.{1,25}best\b"
+            r"|picco\s+(di\s+)?carriera\b|miglior[ei]\s+(moment[io]|et[àa])\b"
+            r"|quando\s+raggiunger[aà]\b|quando\s+sarà\s+al\s+meglio\b",
             re.IGNORECASE,
         ),
     ),
     (
         Intent.TRAJECTORY,
         re.compile(
-            r"\btrajectory|over\s+time|career\s+arc|age\s+curve|evolv|age\s+\d+",
+            r"\btrajectory|over\s+time|career\s+arc|age\s+curve|evolv|age\s+\d+"
+            r"|traiettoria\b|curva\s+d[ie]\s+carriera|evoluzion[ei]\b"
+            r"|come\s+migliorer[aà]\b|proiezion[ei]\b",
             re.IGNORECASE,
         ),
     ),
     (
         Intent.BEST_TEAMS,
         re.compile(
-            r"\bbest\s+team|top\s+team|which\s+team|where\s+(would|will|should)\b|best\s+fit",
+            r"\bbest\s+team|top\s+team|which\s+team|where\s+(would|will|should)\b|best\s+fit"
+            r"|migliori?\s+squadr[ae]|dove\s+(potrebbe|dovrebbe|andrebbe|giocare)\b"
+            r"|quale\s+squadra\b|in\s+quale\s+squadra\b",
             re.IGNORECASE,
         ),
     ),
@@ -131,7 +141,13 @@ _RULES: list[tuple[Intent, re.Pattern[str]]] = [
         Intent.PREDICT,
         re.compile(
             r"\bpredict|rating\b|how\s+good|how\s+well|perform|rate\b|score\b"
-            r"|\bquanto\s+segner[aà]|\bquante\s+partite|\bmetriche",
+            r"|\bquanto\s+segner[aà]|\bquante\s+partite|\bmetriche"
+            # Italian natural-language queries about performance / stats at a team
+            r"|che\s+statistich[ae]\s+potrebbe|statistich[ae]\s+potrebbe\s+avere"
+            r"|come\s+(si\s+)?(comporterebbe|renderebbe|giocherebbe)\b"
+            r"|che\s+(rendimento|prestazion[ie])\s+(avrebbe|potrebbe)"
+            r"|quanto\s+(potrebbe\s+)?(rendere|fare|segnare)\b"
+            r"|che\s+(numeri|voto|punteggio)\b",
             re.IGNORECASE,
         ),
     ),

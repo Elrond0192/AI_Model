@@ -912,7 +912,29 @@ with tab_pred:
                     r3.metric("CI alto",          f"{result.confidence_high:.2f}")
                     st.caption(f"📋 Competizione: **{result.competition}**")
 
-                    st.subheader("📊 Breakdown")
+                    with st.expander("ℹ️ Come interpretare il rating 0–10", expanded=False):
+                        st.markdown(
+                            "Il **rating** è un punteggio composito che misura il livello di "
+                            "rendimento atteso del giocatore in quel contesto squadra/lega:\n\n"
+                            "| Fascia | Significato |\n"
+                            "|--------|-------------|\n"
+                            "| 8.5 – 10 | Superstar / impatto decisivo |\n"
+                            "| 7.5 – 8.4 | Titolare di alto livello / All-Star |\n"
+                            "| 6.5 – 7.4 | Titolare solido / Rotazione top |\n"
+                            "| 5.5 – 6.4 | Buon giocatore di rotazione |\n"
+                            "| < 5.5 | Panchina / sviluppo |\n\n"
+                            "**Componenti del calcolo:**\n"
+                            "- **XGBoost base**: modello addestrato su statistiche storiche "
+                            "(forma, consistenza, metriche avanzate SPM/RAPTOR/LEBRON)\n"
+                            "- **Compatibilità stile**: quanto lo stile di gioco della squadra "
+                            "si adatta al profilo del giocatore (scala 0–1)\n"
+                            "- **Fattore lega**: qualità/livello della competizione "
+                            "(tier 1 = massima serie = 1.00)\n"
+                            "- **Contesto**: adattamento posizione, ruolo, spacing e lega\n"
+                            "- **Curva età**: penalizzazione/bonus in base all'età rispetto al picco\n"
+                        )
+
+                    st.subheader("📊 Breakdown del rating")
                     breakdown_df = pd.DataFrame({
                         "Componente": [
                             "Base XGBoost", "Age factor",
@@ -922,6 +944,13 @@ with tab_pred:
                             result.base_rating,     result.age_factor,
                             result.compatibility_factor, result.league_factor,
                             result.context_adjustment,
+                        ],
+                        "Significato": [
+                            "Rating grezzo dal modello ML",
+                            "Moltiplicatore curva età",
+                            "Compatibilità stile squadra (0–1)",
+                            "Qualità lega",
+                            "Moltiplicatore contesto (posizione+stile+ruolo)",
                         ],
                     })
                     st.dataframe(breakdown_df, width='stretch', hide_index=True)
@@ -937,6 +966,69 @@ with tab_pred:
                         )
                         st.subheader("SHAP values")
                         st.bar_chart(shap_df.set_index("feature")["shap"])
+
+                    # --- Predicted statistics panel -----------------------
+                    st.divider()
+                    st.subheader("📈 Proiezione statistiche")
+                    with st.spinner("Calcolando proiezione statistiche…"):
+                        try:
+                            stats_proj = engine_p.predict_stats_at_team(
+                                sel_player_id, sel_team_id,
+                                season=int(pred_season),
+                                competition=sel_competition,
+                            )
+                        except Exception:
+                            stats_proj = None
+                    if stats_proj:
+                        sc1, sc2, sc3 = st.columns(3)
+                        sc1.caption(
+                            f"Stagione riferimento: **{stats_proj.get('season_reference', '—')}**"
+                        )
+                        sc2.caption(
+                            f"Rating storico medio: **{stats_proj.get('historical_rating', '—')}**"
+                        )
+                        sc3.caption(
+                            f"Fattore scala: **{stats_proj.get('scaling_ratio', 1.0):.2%}**"
+                        )
+                        _stat_labels = {
+                            "points":           "Punti",
+                            "rebounds":         "Rimbalzi",
+                            "assists":          "Assist",
+                            "steals":           "Palle rubate",
+                            "blocks":           "Stoppate",
+                            "minutes_per_game": "Minuti",
+                            "ts_pct":           "TS%",
+                            "fg_pct":           "FG%",
+                            "three_point_pct":  "3P%",
+                            "usg_pct":          "USG%",
+                        }
+                        _pct_cols = {"ts_pct", "fg_pct", "three_point_pct"}
+                        stat_rows = []
+                        for col, label in _stat_labels.items():
+                            val = stats_proj.get(col)
+                            if val is not None:
+                                stat_rows.append({
+                                    "Statistica": label,
+                                    "Valore proiettato": (
+                                        f"{val:.1%}" if col in _pct_cols else f"{val:.1f}"
+                                    ),
+                                })
+                        if stat_rows:
+                            st.dataframe(
+                                pd.DataFrame(stat_rows),
+                                hide_index=True,
+                                use_container_width=True,
+                            )
+                            st.caption(
+                                "⚠️ Le statistiche sono proiezioni scalate dall'ultima stagione "
+                                "in base al rapporto rating-predetto / media-storica. "
+                                "Non sono previsioni assolute ma stime indicative."
+                            )
+                    else:
+                        st.info(
+                            "Non ci sono dati storici sufficienti per proiettare le statistiche "
+                            "di questo giocatore."
+                        )
 
                 except Exception as exc:
                     st.error(f"Predizione fallita: {exc}")

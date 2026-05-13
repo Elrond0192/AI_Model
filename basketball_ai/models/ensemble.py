@@ -176,9 +176,12 @@ class EnsembleModel:
         shap_vals = self.perf_model.get_shap_values(player_feats)
 
         explanation = (
-            f"[{competition}] XGB={base_rating:.2f} × Compat={compat_mult:.3f} "
-            f"× League(tier{tier})={lf:.3f} × Context={ctx_mult:.3f}  "
-            f"[age_curve={af:.3f}]"
+            f"Rating 0–10 basato su: "
+            f"modello XGBoost (base {base_rating:.2f}) "
+            f"× compatibilità stile squadra ({compat_mult:.2f}) "
+            f"× qualità lega (tier {tier}, fattore {lf:.2f}) "
+            f"× contesto (posizione+stile+adattamento, fattore {ctx_mult:.3f}) "
+            f"| curva età: {af:.3f} | competizione: {competition}"
         )
 
         return PredictionResult(

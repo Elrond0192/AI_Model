@@ -773,12 +773,83 @@ class ChatEngine:
                 return f"Could not evaluate role fit ({exc}).", {}, []
 
         # --- UNKNOWN ----------------------------------------------------
+        # Smart fallback: if we found entities, try to infer the intent rather
+        # than returning the generic help message.
+        if player_id and team_id:
+            # User mentioned both player and team → treat as PREDICT
+            intent = Intent.PREDICT
+            # Fall through: the PREDICT handler will be re-entered on the
+            # recursive call, but since Python doesn't support goto we just
+            # duplicate the small block here.
+            try:
+                res    = self.engine.predict_in_team(player_id, team_id)
+                league = ld_.get(
+                    int(td_.get(team_id, {}).get("league_id", 1)), {}
+                )
+                reply = (
+                    f"**{player_name}** al **{team_name}**"
+                    f" ({league.get('name', '')})\n\n"
+                    f"Rating predetto: **{res.predicted_rating:.2f} / 10**\n"
+                    f"Intervallo di confidenza:"
+                    f" [{res.confidence_low:.2f} – {res.confidence_high:.2f}]\n\n"
+                    f"_{res.explanation}_\n\n"
+                    f"_Suggerimento: prova «Che statistiche potrebbe avere "
+                    f"{player_name} al {team_name}?» per le proiezioni statistiche._"
+                )
+                return reply, _to_dict(res), [
+                    f"Quando raggiungerà il picco {player_name}?",
+                    f"Migliori squadre per {player_name}?",
+                    f"Che statistiche potrebbe avere {player_name} al {team_name}?",
+                ]
+            except Exception as exc:
+                return f"Non sono riuscito a calcolare la previsione ({exc}).", {}, []
+        if player_id and not team_id:
+            # User mentioned only a player → show individual profile
+            intent = Intent.INDIVIDUAL
+            try:
+                player_row = pd_.get(_normalize_id(player_id), {})
+                position   = str(player_row.get("position", "?"))
+                age        = int(player_row.get("age", 0))
+                cur_tid    = player_row.get("current_team_id")
+                team_name_cur = _team_display_name(
+                    td_.get(_normalize_id(cur_tid), {}), "—"
+                ) if cur_tid else "—"
+                p_stats = self.data["player_stats"]
+                import pandas as _pd
+                mask    = p_stats["player_id"] == _normalize_id(player_id)
+                pdf     = p_stats[mask].sort_values("season")
+
+                def _latest(col, default=0.0):
+                    if col in pdf.columns and not pdf[col].dropna().empty:
+                        return float(pdf[col].dropna().iloc[-1])
+                    return default
+
+                pts = _latest("points"); reb = _latest("rebounds")
+                ast = _latest("assists"); stl = _latest("steals")
+                blk = _latest("blocks"); ts  = _latest("ts_pct")
+                usg = _latest("usg_pct"); bpm = _latest("bpm")
+
+                reply = (
+                    f"**{player_name}** – profilo individuale\n\n"
+                    f"Posizione: {position}  |  Età: {age}  |  Squadra: {team_name_cur}\n\n"
+                    f"**Statistiche per partita (ultima stagione)**\n"
+                    f"PTS: {pts:.1f}  |  REB: {reb:.1f}  |  AST: {ast:.1f}"
+                    f"  |  STL: {stl:.1f}  |  BLK: {blk:.1f}\n"
+                    f"TS%: {ts:.1%}  |  USG%: {usg:.1f}%  |  BPM: {bpm:+.1f}"
+                )
+                return reply, {}, [
+                    f"Come si comporterebbe {player_name} al [squadra]?",
+                    f"Quando raggiungerà il picco {player_name}?",
+                    f"Migliori squadre per {player_name}?",
+                ]
+            except Exception as exc:
+                pass
         return (
-            "I'm not sure what you're asking. "
-            "Type **help** to see what I can do, or try: "
-            "*How good is [player] at [team]?*",
+            "Non sono sicuro di cosa stai chiedendo. "
+            "Scrivi **help** per vedere cosa posso fare, oppure prova: "
+            "*Come si comporterebbe [giocatore] al [squadra]?*",
             {},
-            ["help", "Best teams for [player]?", "When will [player] peak?"],
+            ["help", "Migliori squadre per [giocatore]?", "Quando raggiungerà il picco [giocatore]?"],
         )
 
     # ------------------------------------------------------------------
