@@ -428,32 +428,48 @@ def _discover_normalized_name_tags(engine, league_seasons: List[tuple]) -> set:
         return set()
 
 
-def _discover_clutch_tags(engine, league_seasons: List[tuple]) -> set:
-    """Return the set of ``"<league>_<season>"`` tags for which the
-    ``Analisi.AdvancedStats_Clutch_*`` table exists in the database.
+def _discover_existing_table_tags(
+    engine,
+    league_seasons: List[tuple],
+    schema: str,
+    prefix: str = "",
+) -> set:
+    """Return the set of ``"<league>_<season>"`` tags for which
+    ``{schema}.{prefix}{tag}`` exists in the database.
 
-    Queries ``INFORMATION_SCHEMA.TABLES`` with a fully static SQL string (no
-    user-controlled values interpolated) and filters the results in Python, so
-    there is no risk of SQL injection.
+    Queries ``INFORMATION_SCHEMA.TABLES`` using only hardcoded schema/prefix
+    values (never user-supplied) and filters the results in Python, so there
+    is no risk of SQL injection.
+
+    Parameters
+    ----------
+    schema:
+        SQL Server schema name to search (e.g. ``'Analisi'``, ``'Boxscore'``).
+    prefix:
+        Table-name prefix that precedes the tag (e.g. ``'AdvancedStats_Clutch_'``).
+        When empty the table name itself is expected to equal the tag
+        (e.g. ``Boxscore.GRC1_2024``).
     """
     if not league_seasons:
         return set()
     sql = (
         "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES "
-        "WHERE TABLE_SCHEMA = 'Analisi' "
-        "AND TABLE_NAME LIKE 'AdvancedStats_Clutch_%'"
+        f"WHERE TABLE_SCHEMA = '{schema}'"
     )
     try:
         df = _execute_query(engine, sql)
-        # Strip the 'AdvancedStats_Clutch_' prefix to get the tag
-        prefix = "AdvancedStats_Clutch_"
         known_tags = {f"{l}_{s}" for l, s in league_seasons}
-        clutch_tags = {
-            name[len(prefix):]
-            for name in df["TABLE_NAME"].str.strip().tolist()
-            if name.startswith(prefix)
-        }
-        return clutch_tags & known_tags
+        table_names: List[str] = df["TABLE_NAME"].str.strip().tolist()
+        if prefix:
+            found = {
+                name[len(prefix):]
+                for name in table_names
+                if name.startswith(prefix)
+            }
+        else:
+            # No prefix: the table name itself is the tag (e.g. Boxscore.GRC1_2024)
+            found = set(table_names)
+        return found & known_tags
     except Exception:
         return set()
 
@@ -465,13 +481,9 @@ def _get_table_queries(engine=None) -> Dict[str, str]:
     and seasons are discovered from Anagrafiche schema table names and queries
     are built dynamically (one UNION ALL branch per league/season).
 
-    Also discovers which player tables contain a ``NormalizedPlayerName`` column
-    and passes that information to the query builder so the generated SQL can
-    prefer it over the raw ``PlayerName``.
-
-    Discovers which ``Analisi.AdvancedStats_Clutch_*`` tables actually exist
-    so the query builder can emit an empty stub CTE for missing ones instead of
-    referencing a non-existent table.
+    Discovers which optional source tables actually exist for each
+    league/season so the query builder can emit safe empty-stub CTEs (or skip
+    branches entirely) instead of referencing non-existent tables.
 
     Falls back to the static TABLE_QUERIES dict (empty by default).
     """
@@ -483,9 +495,23 @@ def _get_table_queries(engine=None) -> Dict[str, str]:
         league_seasons = _discover_league_seasons(engine)
         if league_seasons and hasattr(schema_mapping, "get_table_queries"):
             tags_with_normalized = _discover_normalized_name_tags(engine, league_seasons)
-            tags_with_clutch = _discover_clutch_tags(engine, league_seasons)
+            tags_with_boxscore = _discover_existing_table_tags(engine, league_seasons, "Boxscore")
+            tags_with_team_table = _discover_existing_table_tags(engine, league_seasons, "Anagrafiche", "Team_")
+            tags_with_player_stats = _discover_existing_table_tags(engine, league_seasons, "Analisi", "AdvancedStats_Player_")
+            tags_with_roles = _discover_existing_table_tags(engine, league_seasons, "Analisi", "PlayerRoles_")
+            tags_with_onoff = _discover_existing_table_tags(engine, league_seasons, "Analisi", "AdvancedStatsOnOffCourt_")
+            tags_with_clutch = _discover_existing_table_tags(engine, league_seasons, "Analisi", "AdvancedStats_Clutch_")
+            tags_with_team_stats = _discover_existing_table_tags(engine, league_seasons, "Analisi", "AdvancedStatsTeam_")
             return schema_mapping.get_table_queries(
-                league_seasons, tags_with_normalized, tags_with_clutch
+                league_seasons,
+                tags_with_normalized_name=tags_with_normalized,
+                tags_with_clutch=tags_with_clutch,
+                tags_with_boxscore=tags_with_boxscore,
+                tags_with_team_table=tags_with_team_table,
+                tags_with_player_stats=tags_with_player_stats,
+                tags_with_roles=tags_with_roles,
+                tags_with_onoff=tags_with_onoff,
+                tags_with_team_stats=tags_with_team_stats,
             )
     return getattr(schema_mapping, "TABLE_QUERIES", {})
 

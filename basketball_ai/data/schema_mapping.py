@@ -196,8 +196,44 @@ WHERE TABLE_SCHEMA = 'Anagrafiche'
 """
 
 
-def _teams_block(league: str, season: str) -> str:
+def _teams_block(league: str, season: str, has_team_stats: bool = True) -> str:
+    """Return the SELECT block for one league/season's teams.
+
+    Parameters
+    ----------
+    has_team_stats:
+        When ``True`` (default) the LEFT JOIN reads from the real
+        ``Analisi.AdvancedStatsTeam_{tag}`` table.  When ``False`` the table
+        is absent and an empty stub subquery is used so the JOIN compiles and
+        simply returns default values for all team-stats columns.
+    """
     tag = f"{league}_{season}"
+    if has_team_stats:
+        team_stats_join = f"""LEFT JOIN (
+    SELECT
+        CAST(TeamId AS nvarchar(100)) AS team_id,
+        [2Fga], [3Fga], Ast, Min, Pace, ORtg, DRtg, NetRtg,
+        ROW_NUMBER() OVER (
+            PARTITION BY CAST(TeamId AS nvarchar(100))
+            ORDER BY CASE WHEN Competition = 'RS' THEN 0 ELSE 1 END
+        ) AS rn
+    FROM Analisi.AdvancedStatsTeam_{tag}
+) AS s ON CAST(t.Id AS nvarchar(100)) = s.team_id AND s.rn = 1"""
+    else:
+        team_stats_join = """LEFT JOIN (
+    SELECT
+        CAST(NULL AS nvarchar(100)) AS team_id,
+        CAST(0.0 AS float) AS [2Fga],
+        CAST(0.0 AS float) AS [3Fga],
+        CAST(0.0 AS float) AS Ast,
+        CAST(0.0 AS float) AS Min,
+        CAST(0.0 AS float) AS Pace,
+        CAST(0.0 AS float) AS ORtg,
+        CAST(0.0 AS float) AS DRtg,
+        CAST(0.0 AS float) AS NetRtg,
+        CAST(1 AS int) AS rn
+    WHERE 1 = 0
+) AS s ON CAST(t.Id AS nvarchar(100)) = s.team_id AND s.rn = 1"""
     return f"""
 SELECT
     CAST(t.Id AS nvarchar(100)) AS id,
@@ -215,25 +251,46 @@ SELECT
     CAST(1 AS int) AS league_tier,
     ISNULL(CAST(s.NetRtg AS float), 0.0) AS net_rtg
 FROM Anagrafiche.Team_{tag} AS t
-LEFT JOIN (
-    SELECT
-        CAST(TeamId AS nvarchar(100)) AS team_id,
-        [2Fga], [3Fga], Ast, Min, Pace, ORtg, DRtg, NetRtg,
-        ROW_NUMBER() OVER (
-            PARTITION BY CAST(TeamId AS nvarchar(100))
-            ORDER BY CASE WHEN Competition = 'RS' THEN 0 ELSE 1 END
-        ) AS rn
-    FROM Analisi.AdvancedStatsTeam_{tag}
-) AS s ON CAST(t.Id AS nvarchar(100)) = s.team_id AND s.rn = 1"""
+{team_stats_join}"""
 
 
-def _players_block(league: str, season: str, has_normalized_name: bool = False) -> str:
+def _players_block(league: str, season: str, has_normalized_name: bool = False, has_player_stats: bool = True) -> str:
+    """Return the SELECT block for one league/season's players.
+
+    Parameters
+    ----------
+    has_player_stats:
+        When ``True`` (default) the LEFT JOIN reads from the real
+        ``Analisi.AdvancedStats_Player_{tag}`` table.  When ``False`` the
+        table is absent and an empty stub subquery is used so that Age and
+        Position columns default to NULL/0 without a compile error.
+    """
     tag = f"{league}_{season}"
     name_expr = (
         "ISNULL(NULLIF(p.NormalizedPlayerName, ''), p.PlayerName)"
         if has_normalized_name
         else "p.PlayerName"
     )
+    if has_player_stats:
+        adv_join = f"""LEFT JOIN (
+    SELECT
+        CAST(Id AS nvarchar(100)) AS player_id,
+        Age, Position,
+        ROW_NUMBER() OVER (
+            PARTITION BY CAST(Id AS nvarchar(100))
+            ORDER BY CASE WHEN Competition = 'RS' THEN 0 ELSE 1 END, ISNULL(Games, 0) DESC
+        ) AS rn
+    FROM Analisi.AdvancedStats_Player_{tag}
+) AS adv ON CAST(p.Id AS nvarchar(100)) = adv.player_id AND adv.rn = 1"""
+    else:
+        adv_join = """LEFT JOIN (
+    SELECT
+        CAST(NULL AS nvarchar(100)) AS player_id,
+        CAST(NULL AS int) AS Age,
+        CAST(NULL AS nvarchar(100)) AS Position,
+        CAST(1 AS int) AS rn
+    WHERE 1 = 0
+) AS adv ON CAST(p.Id AS nvarchar(100)) = adv.player_id AND adv.rn = 1"""
     return f"""
 SELECT
     CAST(p.Id AS nvarchar(100)) AS id,
@@ -249,32 +306,106 @@ SELECT
     CAST(NULL AS int) AS draft_year,
     CAST(NULL AS int) AS draft_pick
 FROM Anagrafiche.{tag} AS p
-LEFT JOIN (
-    SELECT
-        CAST(Id AS nvarchar(100)) AS player_id,
-        Age, Position,
-        ROW_NUMBER() OVER (
-            PARTITION BY CAST(Id AS nvarchar(100))
-            ORDER BY CASE WHEN Competition = 'RS' THEN 0 ELSE 1 END, ISNULL(Games, 0) DESC
-        ) AS rn
-    FROM Analisi.AdvancedStats_Player_{tag}
-) AS adv ON CAST(p.Id AS nvarchar(100)) = adv.player_id AND adv.rn = 1"""
+{adv_join}"""
 
 
-def _player_stats_cte(league: str, season: str, has_clutch: bool = True) -> str:
+def _player_stats_cte(
+    league: str,
+    season: str,
+    has_box: bool = True,
+    has_roles: bool = True,
+    has_onoff: bool = True,
+    has_clutch: bool = True,
+) -> str:
     """Returns CTE definitions (no WITH keyword) for one league/season.
+
+    For each optional source table, when the corresponding flag is ``True``
+    (default) the CTE reads from the real database table.  When ``False`` the
+    table is absent and an empty stub CTE is emitted instead so that the LEFT
+    JOIN in the SELECT still compiles and simply produces NULL values (which
+    the ISNULL() calls in the SELECT normalise to zeros/empty strings).
 
     Parameters
     ----------
+    has_box:
+        Whether ``Boxscore.{tag}`` exists.
+    has_roles:
+        Whether ``Analisi.PlayerRoles_{tag}`` exists.
+    has_onoff:
+        Whether ``Analisi.AdvancedStatsOnOffCourt_{tag}`` exists.
     has_clutch:
-        When ``True`` (default) the clutch CTE reads from the real
-        ``Analisi.AdvancedStats_Clutch_{tag}`` table.  When ``False`` the
-        table is absent and an empty stub CTE is emitted instead so that the
-        LEFT JOIN in the SELECT still compiles and simply produces NULL
-        values (which the ISNULL() calls in the SELECT normalise to zeros).
+        Whether ``Analisi.AdvancedStats_Clutch_{tag}`` exists.
     """
     tag = f"{league}_{season}"
     slug = tag.lower()
+
+    if has_box:
+        box_cte = f"""{slug}_box AS (
+    SELECT
+        CAST(b.Id AS nvarchar(100)) AS player_id,
+        CAST(b.TeamId AS nvarchar(100)) AS team_id,
+        ROW_NUMBER() OVER (
+            PARTITION BY CAST(b.Id AS nvarchar(100))
+            ORDER BY b.[Timestamp] DESC, b.Game DESC
+        ) AS rn
+    FROM Boxscore.{tag} AS b
+)"""
+    else:
+        box_cte = f"""{slug}_box AS (
+    SELECT
+        CAST(NULL AS nvarchar(100)) AS player_id,
+        CAST(NULL AS nvarchar(100)) AS team_id,
+        CAST(1 AS int) AS rn
+    WHERE 1 = 0
+)"""
+
+    if has_roles:
+        roles_cte = f"""{slug}_roles AS (
+    SELECT
+        CAST(r.Id AS nvarchar(100)) AS player_id,
+        r.RuoloOffensivo, r.RuoloDifensivo, r.RuoloCombinato,
+        ROW_NUMBER() OVER (
+            PARTITION BY CAST(r.Id AS nvarchar(100))
+            ORDER BY CASE WHEN r.Competition = 'RS' THEN 0 ELSE 1 END, ISNULL(r.GamesPlayed, 0) DESC
+        ) AS rn
+    FROM Analisi.PlayerRoles_{tag} AS r
+)"""
+    else:
+        roles_cte = f"""{slug}_roles AS (
+    SELECT
+        CAST(NULL AS nvarchar(100)) AS player_id,
+        CAST(NULL AS nvarchar(100)) AS RuoloOffensivo,
+        CAST(NULL AS nvarchar(100)) AS RuoloDifensivo,
+        CAST(NULL AS nvarchar(100)) AS RuoloCombinato,
+        CAST(1 AS int) AS rn
+    WHERE 1 = 0
+)"""
+
+    if has_onoff:
+        onoff_cte = f"""{slug}_onoff AS (
+    SELECT
+        CAST(o.Player AS nvarchar(100)) AS player_id,
+        o.NetRtg_On, o.NetRtg_Off, o.NetRtg_Diff,
+        o.ORtg_On, o.ORtg_Off, o.ORtg_Diff,
+        ROW_NUMBER() OVER (
+            PARTITION BY CAST(o.Player AS nvarchar(100))
+            ORDER BY CASE WHEN o.Competition = 'RS' THEN 0 ELSE 1 END
+        ) AS rn
+    FROM Analisi.AdvancedStatsOnOffCourt_{tag} AS o
+)"""
+    else:
+        onoff_cte = f"""{slug}_onoff AS (
+    SELECT
+        CAST(NULL AS nvarchar(100)) AS player_id,
+        CAST(NULL AS float) AS NetRtg_On,
+        CAST(NULL AS float) AS NetRtg_Off,
+        CAST(NULL AS float) AS NetRtg_Diff,
+        CAST(NULL AS float) AS ORtg_On,
+        CAST(NULL AS float) AS ORtg_Off,
+        CAST(NULL AS float) AS ORtg_Diff,
+        CAST(1 AS int) AS rn
+    WHERE 1 = 0
+)"""
 
     if has_clutch:
         clutch_cte = f"""{slug}_clutch AS (
@@ -293,7 +424,6 @@ def _player_stats_cte(league: str, season: str, has_clutch: bool = True) -> str:
     FROM Analisi.AdvancedStats_Clutch_{tag} AS c
 )"""
     else:
-        # Table does not exist — emit an empty stub so the LEFT JOIN compiles.
         clutch_cte = f"""{slug}_clutch AS (
     SELECT
         CAST(NULL AS nvarchar(100)) AS player_id,
@@ -307,38 +437,11 @@ def _player_stats_cte(league: str, season: str, has_clutch: bool = True) -> str:
     WHERE 1 = 0
 )"""
 
-    return f"""{slug}_box AS (
-    SELECT
-        CAST(b.Id AS nvarchar(100)) AS player_id,
-        CAST(b.TeamId AS nvarchar(100)) AS team_id,
-        ROW_NUMBER() OVER (
-            PARTITION BY CAST(b.Id AS nvarchar(100))
-            ORDER BY b.[Timestamp] DESC, b.Game DESC
-        ) AS rn
-    FROM Boxscore.{tag} AS b
-),
-{slug}_roles AS (
-    SELECT
-        CAST(r.Id AS nvarchar(100)) AS player_id,
-        r.RuoloOffensivo, r.RuoloDifensivo, r.RuoloCombinato,
-        ROW_NUMBER() OVER (
-            PARTITION BY CAST(r.Id AS nvarchar(100))
-            ORDER BY CASE WHEN r.Competition = 'RS' THEN 0 ELSE 1 END, ISNULL(r.GamesPlayed, 0) DESC
-        ) AS rn
-    FROM Analisi.PlayerRoles_{tag} AS r
-),
-{slug}_onoff AS (
-    SELECT
-        CAST(o.Player AS nvarchar(100)) AS player_id,
-        o.NetRtg_On, o.NetRtg_Off, o.NetRtg_Diff,
-        o.ORtg_On, o.ORtg_Off, o.ORtg_Diff,
-        ROW_NUMBER() OVER (
-            PARTITION BY CAST(o.Player AS nvarchar(100))
-            ORDER BY CASE WHEN o.Competition = 'RS' THEN 0 ELSE 1 END
-        ) AS rn
-    FROM Analisi.AdvancedStatsOnOffCourt_{tag} AS o
-),
+    return f"""{box_cte},
+{roles_cte},
+{onoff_cte},
 {clutch_cte}"""
+
 
 
 def _player_stats_select(league: str, season: str) -> str:
@@ -454,6 +557,12 @@ def get_table_queries(
     league_seasons: List[tuple],
     tags_with_normalized_name: Optional[set] = None,
     tags_with_clutch: Optional[set] = None,
+    tags_with_boxscore: Optional[set] = None,
+    tags_with_team_table: Optional[set] = None,
+    tags_with_player_stats: Optional[set] = None,
+    tags_with_roles: Optional[set] = None,
+    tags_with_onoff: Optional[set] = None,
+    tags_with_team_stats: Optional[set] = None,
 ) -> Dict[str, str]:
     """Build SQL queries for all discovered (league, season) pairs.
 
@@ -462,53 +571,112 @@ def get_table_queries(
     by scanning Anagrafiche schema table names — no dependency on
     Configuration.Championship_ids.
 
+    For every optional source table parameter, passing ``None`` (the default)
+    means "assume the table exists for all tags" (backwards-compatible
+    behaviour).  Passing an explicit set restricts inclusion to only the tags
+    in that set; missing tables are replaced by safe empty-stub CTEs or the
+    entire UNION ALL branch is skipped, depending on whether the table is a
+    primary FROM source or a JOIN target.
+
     Parameters
     ----------
     league_seasons:
         List of ``(league_id, season)`` tuples discovered from the database.
     tags_with_normalized_name:
-        Optional set of ``"<league>_<season>"`` tags whose Anagrafiche player
-        table contains the ``NormalizedPlayerName`` column.  When a tag is in
-        this set the generated SQL prefers ``NormalizedPlayerName`` over the
-        raw ``PlayerName``.
+        Tags whose ``Anagrafiche.{tag}`` table contains
+        ``NormalizedPlayerName``.
     tags_with_clutch:
-        Optional set of ``"<league>_<season>"`` tags for which the
-        ``Analisi.AdvancedStats_Clutch_*`` table exists.  When a tag is
-        **not** in this set an empty stub CTE is used so the query compiles
-        even when the table is absent.  When ``None`` (default) the clutch
-        table is assumed to exist for all tags (backwards-compatible).
+        Tags for which ``Analisi.AdvancedStats_Clutch_*`` exists.
+    tags_with_boxscore:
+        Tags for which ``Boxscore.{tag}`` exists.  Affects the box CTE (stub
+        when absent) and team_player_relations (branch skipped when absent).
+    tags_with_team_table:
+        Tags for which ``Anagrafiche.Team_{tag}`` exists.  Branches are
+        skipped in the teams query when absent.
+    tags_with_player_stats:
+        Tags for which ``Analisi.AdvancedStats_Player_*`` exists.  Affects
+        the players LEFT JOIN (stub when absent) and player_stats (branch
+        skipped when absent).
+    tags_with_roles:
+        Tags for which ``Analisi.PlayerRoles_*`` exists.
+    tags_with_onoff:
+        Tags for which ``Analisi.AdvancedStatsOnOffCourt_*`` exists.
+    tags_with_team_stats:
+        Tags for which ``Analisi.AdvancedStatsTeam_*`` exists.
     """
     if not league_seasons:
         return {}
 
-    _norm_tags = tags_with_normalized_name or set()
-    # None means "assume all tags have clutch" for backwards compatibility.
-    _clutch_tags: Optional[set] = tags_with_clutch
-    teams_sql = "\nUNION ALL\n".join(_teams_block(l, s) for l, s in league_seasons)
-    players_sql = "\nUNION ALL\n".join(
-        _players_block(l, s, has_normalized_name=(f"{l}_{s}" in _norm_tags))
-        for l, s in league_seasons
-    )
+    def _has(tag_set: Optional[set], tag: str) -> bool:
+        """Return True when *tag_set* is None (assume all exist) or tag is in it."""
+        return tag_set is None or tag in tag_set
 
-    cte_parts = ",\n".join(
-        _player_stats_cte(
+    _norm_tags = tags_with_normalized_name or set()
+
+    # --- teams ---------------------------------------------------------------
+    # Skip branches where the primary Anagrafiche.Team_{tag} table is absent.
+    teams_parts = [
+        _teams_block(
             l, s,
-            has_clutch=(_clutch_tags is None or f"{l}_{s}" in _clutch_tags),
+            has_team_stats=_has(tags_with_team_stats, f"{l}_{s}"),
+        )
+        for l, s in league_seasons
+        if _has(tags_with_team_table, f"{l}_{s}")
+    ]
+    teams_sql = "\nUNION ALL\n".join(teams_parts) if teams_parts else None
+
+    # --- players -------------------------------------------------------------
+    # Anagrafiche.{tag} always exists (it's the discovery source); only the
+    # AdvancedStats_Player_ JOIN may be absent.
+    players_sql = "\nUNION ALL\n".join(
+        _players_block(
+            l, s,
+            has_normalized_name=(f"{l}_{s}" in _norm_tags),
+            has_player_stats=_has(tags_with_player_stats, f"{l}_{s}"),
         )
         for l, s in league_seasons
     )
-    stats_selects = "\nUNION ALL\n".join(_player_stats_select(l, s) for l, s in league_seasons)
-    stats_sql = f"WITH\n{cte_parts}\n{stats_selects}"
 
-    rels_sql = "\nUNION ALL\n".join(_team_player_relations_block(l, s) for l, s in league_seasons)
+    # --- player_stats --------------------------------------------------------
+    # Skip branches where the primary AdvancedStats_Player_{tag} table is absent.
+    stats_seasons = [
+        (l, s) for l, s in league_seasons
+        if _has(tags_with_player_stats, f"{l}_{s}")
+    ]
+    if stats_seasons:
+        cte_parts = ",\n".join(
+            _player_stats_cte(
+                l, s,
+                has_box=_has(tags_with_boxscore, f"{l}_{s}"),
+                has_roles=_has(tags_with_roles, f"{l}_{s}"),
+                has_onoff=_has(tags_with_onoff, f"{l}_{s}"),
+                has_clutch=_has(tags_with_clutch, f"{l}_{s}"),
+            )
+            for l, s in stats_seasons
+        )
+        stats_selects = "\nUNION ALL\n".join(_player_stats_select(l, s) for l, s in stats_seasons)
+        stats_sql: Optional[str] = f"WITH\n{cte_parts}\n{stats_selects}"
+    else:
+        stats_sql = None
 
-    return {
-        "leagues": LEAGUES_DISCOVERY_QUERY,
-        "teams": teams_sql,
-        "players": players_sql,
-        "player_stats": stats_sql,
-        "team_player_relations": rels_sql,
-    }
+    # --- team_player_relations -----------------------------------------------
+    # Skip branches where the primary Boxscore.{tag} table is absent.
+    rels_parts = [
+        _team_player_relations_block(l, s)
+        for l, s in league_seasons
+        if _has(tags_with_boxscore, f"{l}_{s}")
+    ]
+    rels_sql = "\nUNION ALL\n".join(rels_parts) if rels_parts else None
+
+    result: Dict[str, str] = {"leagues": LEAGUES_DISCOVERY_QUERY}
+    if teams_sql:
+        result["teams"] = teams_sql
+    result["players"] = players_sql
+    if stats_sql:
+        result["player_stats"] = stats_sql
+    if rels_sql:
+        result["team_player_relations"] = rels_sql
+    return result
 
 
 TABLE_QUERIES: Dict[str, str] = {}  # Replaced at runtime by get_table_queries()
