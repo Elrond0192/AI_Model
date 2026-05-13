@@ -1,15 +1,77 @@
 """Utility helper functions for the Basketball Performance AI system."""
 from __future__ import annotations
 import logging
+import os
 from typing import Dict
 
+# ---------------------------------------------------------------------------
+# Team display-name helpers
+# ---------------------------------------------------------------------------
 
-def team_display_name(team: dict, fallback: str = "Unknown") -> str:
-    """Return the display name for a team, preferring short_name over name.
+#: Env-var that stores per-country field preferences, e.g. "IT:name,ES:short_name"
+TEAM_DISPLAY_FIELD_MAP_ENV = "AZURE_TEAM_DISPLAY_FIELD_MAP"
 
-    ShortName is the translated/localised abbreviation stored in the DB.
-    It is used unconditionally when non-empty (even when longer than 6 chars).
+
+def parse_team_display_map(raw: str = "") -> Dict[str, str]:
+    """Parse a ``"CC:field,CC:field,…"`` string into a ``{country: field}`` dict.
+
+    *raw* defaults to the value of :data:`TEAM_DISPLAY_FIELD_MAP_ENV`.
+    Valid *field* values are ``"name"`` and ``"short_name"``; anything else is
+    ignored and falls back to the default behaviour.
+
+    Example::
+
+        parse_team_display_map("IT:name,ES:short_name")
+        # → {"IT": "name", "ES": "short_name"}
     """
+    if not raw:
+        raw = os.environ.get(TEAM_DISPLAY_FIELD_MAP_ENV, "")
+    result: Dict[str, str] = {}
+    for token in raw.split(","):
+        token = token.strip()
+        if ":" not in token:
+            continue
+        cc, _, field = token.partition(":")
+        cc = cc.strip().upper()
+        field = field.strip().lower()
+        if cc and field in ("name", "short_name"):
+            result[cc] = field
+    return result
+
+
+def team_display_name(
+    team: dict,
+    fallback: str = "Unknown",
+    country: str = "",
+    display_map: Dict[str, str] | None = None,
+) -> str:
+    """Return the display name for a team.
+
+    The *display_map* (``{country_code: "name"|"short_name"}``) controls which
+    DB field is used per country.  When the team's country is found in the map
+    the specified field is returned directly (falling back to *fallback* only
+    when the field is truly empty).
+
+    When the country is **not** in the map the original behaviour is preserved:
+    prefer *short_name* when non-empty, otherwise *name*.
+
+    Args:
+        team:        Team dict with at least ``"name"`` and ``"short_name"`` keys.
+        fallback:    Value returned when neither field yields a non-empty string.
+        country:     ISO country code for this team's league (e.g. ``"IT"``).
+        display_map: Mapping produced by :func:`parse_team_display_map`.
+                     When ``None`` the global env-var is read automatically.
+    """
+    if display_map is None:
+        display_map = parse_team_display_map()
+
+    cc = (country or "").strip().upper()
+    if cc and cc in display_map:
+        field = display_map[cc]
+        val = str(team.get(field, "") or "").strip()
+        return val if val else str(team.get("name", fallback))
+
+    # Default: prefer short_name when available
     sn = str(team.get("short_name", "") or "").strip()
     return sn if sn else str(team.get("name", fallback))
 
