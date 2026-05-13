@@ -407,9 +407,16 @@ class WhatIfEngine:
           1. Computes the predicted performance rating at the target team.
           2. Computes the player's historical rating average.
           3. Scales the most recent season's per-game stats by the ratio
-             ``predicted / historical`` (capped at ±40 %).
+             ``predicted / historical``, capped at ±40 % to avoid unrealistic
+             projections caused by outlier model predictions.
           4. Returns ``None`` when insufficient historical data exists.
         """
+        # Scaling constants
+        _RATIO_MIN         = 0.60   # cap downside to −40 %
+        _RATIO_MAX         = 1.40   # cap upside  to +40 %
+        _PCT_SCALE_MUTE    = 0.5    # mute ratio for shooting %s (less elastic than volume)
+        _DEFAULT_USG_PCT   = 18.0   # fallback when usg_pct column is absent
+
         import pandas as _pd
         p_stats = self.data["player_stats"]
         pid_norm = _normalize_id(player_id)
@@ -425,7 +432,7 @@ class WhatIfEngine:
 
         # Predicted rating at target team
         pred = self.predict_in_team(player_id, team_id, season, competition)
-        ratio = float(np.clip(pred.predicted_rating / hist_rating, 0.60, 1.40))
+        ratio = float(np.clip(pred.predicted_rating / hist_rating, _RATIO_MIN, _RATIO_MAX))
 
         latest = pdf.iloc[-1]
 
@@ -434,8 +441,8 @@ class WhatIfEngine:
                 return None
             val = float(latest[col])
             if pct_field:
-                # Percentage stats: muted scaling (±50 % of the ratio effect)
-                return round(val * (1.0 + (ratio - 1.0) * 0.5), 3)
+                # Shooting percentages are less elastic than volume stats
+                return round(val * (1.0 + (ratio - 1.0) * _PCT_SCALE_MUTE), 3)
             return round(val * ratio, 1)
 
         result: Dict[str, Any] = {
@@ -444,25 +451,22 @@ class WhatIfEngine:
             "scaling_ratio":     round(ratio, 3),
             "season_reference":  str(latest.get("season", season)),
         }
-        for col, is_pct in [
-            ("points",           False),
-            ("rebounds",         False),
-            ("assists",          False),
-            ("steals",           False),
-            ("blocks",           False),
-            ("minutes_per_game", False),
-            ("ts_pct",           True),
-            ("fg_pct",           True),
-            ("three_point_pct",  True),
-            ("usg_pct",          False),   # usage kept unchanged
-        ]:
-            val = _scale(col, is_pct)
+        # Volume stats — scaled by ratio
+        for col in ("points", "rebounds", "assists", "steals", "blocks", "minutes_per_game"):
+            val = _scale(col)
             if val is not None:
                 result[col] = val
-
-        # USG stays at historical level (the team context changes output, not role)
-        if "usg_pct" in result:
-            result["usg_pct"] = round(float(latest.get("usg_pct", 18.0)), 1)
+        # Shooting percentages — muted scaling
+        for col in ("ts_pct", "fg_pct", "three_point_pct"):
+            val = _scale(col, pct_field=True)
+            if val is not None:
+                result[col] = val
+        # Usage rate — kept at historical level (role/responsibility unchanged)
+        raw_usg = latest.get("usg_pct")
+        if raw_usg is not None and not _pd.isna(raw_usg):
+            result["usg_pct"] = round(float(raw_usg), 1)
+        else:
+            result["usg_pct"] = _DEFAULT_USG_PCT
 
         return result
 
