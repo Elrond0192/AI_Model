@@ -23,6 +23,7 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 from basketball_ai.data.loader import _to_int
+from basketball_ai.utils.helpers import team_display_name as _team_display_name
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -762,7 +763,7 @@ with tab_pred:
                 for _, r in players_df_p.iterrows()
             }
             team_opts_p = {
-                _to_int(r["id"]): str(r["name"])
+                _to_int(r["id"]): _team_display_name(r)
                 for _, r in teams_df_p.iterrows()
             }
 
@@ -1008,7 +1009,7 @@ with tab_scen:
                 for _, r in players_df_s.iterrows()
             }
             team_opts_s = {
-                _to_int(r["id"]): str(r["name"])
+                _to_int(r["id"]): _team_display_name(r)
                 for _, r in teams_df_s.iterrows()
             }
 

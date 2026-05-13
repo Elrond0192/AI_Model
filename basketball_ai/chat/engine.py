@@ -22,6 +22,7 @@ from basketball_ai.chat.entities import (
     find_team,
 )
 from basketball_ai.chat import session as _session
+from basketball_ai.utils.helpers import team_display_name as _team_display_name
 
 
 def _normalize_id(value: Any) -> Any:
@@ -188,7 +189,7 @@ class ChatEngine:
         team_id   = team_hit[0] if team_hit else sess.last_team_id
         team_name = (
             team_hit[1] if team_hit
-            else str(td_.get(sess.last_team_id, {}).get("name", ""))
+            else _team_display_name(td_.get(sess.last_team_id, {}), "")
             if sess.last_team_id else None
         )
 
@@ -626,7 +627,9 @@ class ChatEngine:
                 position   = str(player_row.get("position", "?"))
                 age        = int(player_row.get("age", 0))
                 cur_tid    = player_row.get("current_team_id")
-                team_name_cur = str(td_.get(_normalize_id(cur_tid), {}).get("name", "—")) if cur_tid else "—"
+                team_name_cur = _team_display_name(
+                    td_.get(_normalize_id(cur_tid), {}), "—"
+                ) if cur_tid else "—"
 
                 p_stats = self.data["player_stats"]
                 mask    = p_stats["player_id"] == _normalize_id(player_id)

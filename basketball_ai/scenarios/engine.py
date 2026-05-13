@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 
 from basketball_ai.models.ensemble import EnsembleModel, PredictionResult
+from basketball_ai.utils.helpers import team_display_name as _team_display_name
 
 
 def _normalize_id(value: Any) -> Any:
@@ -26,6 +27,8 @@ def _normalize_id(value: Any) -> Any:
             return int(v, 16)
         except (ValueError, TypeError):
             return v
+
+
 from basketball_ai.models.age_curve import age_performance_factor, PEAK_AGES, peak_age_window
 from basketball_ai.features.context_features import compute_context_features
 from basketball_ai.features.player_features import compute_player_features
@@ -261,7 +264,7 @@ class WhatIfEngine:
             league = league_dict.get(_normalize_id(team.get("league_id")), {})
             scenarios.append({
                 "team_id":        tid,
-                "team_name":      str(team.get("name", f"Team {tid}")),
+                "team_name":      _team_display_name(team, f"Team {tid}"),
                 "league_name":    str(league.get("name", "Unknown")),
                 "competition":    competition,
                 "rating":         pred.predicted_rating,
@@ -301,7 +304,7 @@ class WhatIfEngine:
                 league = league_dict.get(_normalize_id(row["league_id"]), {})
                 results.append(TeamFitResult(
                     team_id=tid,
-                    team_name=str(team.get("name", f"Team {tid}")),
+                    team_name=_team_display_name(team, f"Team {tid}"),
                     league_name=str(league.get("name", "Unknown")),
                     predicted_rating=pred.predicted_rating,
                     compatibility_score=pred.compatibility_factor,
@@ -346,7 +349,7 @@ class WhatIfEngine:
                     player_name=str(row["name"]),
                     position=str(row["position"]),
                     predicted_rating=pred.predicted_rating,
-                    current_team=str(cur_team.get("name", "Unknown")),
+                    current_team=_team_display_name(cur_team),
                     rank=0,
                 ))
             except Exception:
