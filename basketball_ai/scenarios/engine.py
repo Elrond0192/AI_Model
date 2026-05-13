@@ -394,6 +394,83 @@ class WhatIfEngine:
         )
 
     # ------------------------------------------------------------------
+    def predict_stats_at_team(
+        self,
+        player_id: int,
+        team_id: int,
+        season: int = 2024,
+        competition: str = "RS",
+    ) -> Optional[Dict[str, Any]]:
+        """Predict which per-game statistics a player would average at *team_id*.
+
+        The method:
+          1. Computes the predicted performance rating at the target team.
+          2. Computes the player's historical rating average.
+          3. Scales the most recent season's per-game stats by the ratio
+             ``predicted / historical``, capped at ±40 % to avoid unrealistic
+             projections caused by outlier model predictions.
+          4. Returns ``None`` when insufficient historical data exists.
+        """
+        # Scaling constants
+        _RATIO_MIN         = 0.60   # cap downside to −40 %
+        _RATIO_MAX         = 1.40   # cap upside  to +40 %
+        _PCT_SCALE_MUTE    = 0.5    # mute ratio for shooting %s (less elastic than volume)
+        _DEFAULT_USG_PCT   = 18.0   # fallback when usg_pct column is absent
+
+        import pandas as _pd
+        p_stats = self.data["player_stats"]
+        pid_norm = _normalize_id(player_id)
+        mask = p_stats["player_id"] == pid_norm
+        pdf  = p_stats[mask].sort_values("season")
+        if pdf.empty:
+            return None
+
+        # Historical average rating
+        hist_rating = float(pdf["rating"].mean()) if "rating" in pdf.columns else 6.5
+        if hist_rating <= 0:
+            hist_rating = 6.5
+
+        # Predicted rating at target team
+        pred = self.predict_in_team(player_id, team_id, season, competition)
+        ratio = float(np.clip(pred.predicted_rating / hist_rating, _RATIO_MIN, _RATIO_MAX))
+
+        latest = pdf.iloc[-1]
+
+        def _scale(col: str, pct_field: bool = False) -> Optional[float]:
+            if col not in latest or _pd.isna(latest[col]):
+                return None
+            val = float(latest[col])
+            if pct_field:
+                # Shooting percentages are less elastic than volume stats
+                return round(val * (1.0 + (ratio - 1.0) * _PCT_SCALE_MUTE), 3)
+            return round(val * ratio, 1)
+
+        result: Dict[str, Any] = {
+            "predicted_rating":  pred.predicted_rating,
+            "historical_rating": round(hist_rating, 2),
+            "scaling_ratio":     round(ratio, 3),
+            "season_reference":  str(latest.get("season", season)),
+        }
+        # Volume stats — scaled by ratio
+        for col in ("points", "rebounds", "assists", "steals", "blocks", "minutes_per_game"):
+            val = _scale(col)
+            if val is not None:
+                result[col] = val
+        # Shooting percentages — muted scaling
+        for col in ("ts_pct", "fg_pct", "three_point_pct"):
+            val = _scale(col, pct_field=True)
+            if val is not None:
+                result[col] = val
+        # Usage rate — kept at historical level (role/responsibility unchanged)
+        raw_usg = latest.get("usg_pct")
+        if raw_usg is not None and not _pd.isna(raw_usg):
+            result["usg_pct"] = round(float(raw_usg), 1)
+        else:
+            result["usg_pct"] = _DEFAULT_USG_PCT
+
+        return result
+
+    # ------------------------------------------------------------------
     def predict_peak(self, player_id: int, team_id: Optional[int] = None) -> PeakPrediction:
         """Predict a player's career peak rating."""
         player      = self.data["player_dict"].get(_normalize_id(player_id), {})
@@ -465,18 +542,22 @@ class WhatIfEngine:
 
     @staticmethod
     def _assign_role(player_feats: Dict[str, Any]) -> str:
-        """Heuristic role label from computed player features."""
+        """Heuristic role label from computed player features (European basketball calibrated)."""
         pm   = float(player_feats.get("playmaking_score", 0.0))
         df   = float(player_feats.get("defensive_score", 0.0))
         usg  = float(player_feats.get("avg_usg_pct", 0.0))
         prof = str(player_feats.get("scoring_profile", "efficient_scorer"))
-        if pm > 0.35:
+        pts  = float(player_feats.get("pts_per_36", 0.0))
+        stl  = float(player_feats.get("stl_per_36", 0.0))
+        blk  = float(player_feats.get("blk_per_36", 0.0))
+        # Lower thresholds calibrated for European basketball data
+        if pm > 0.28:
             return "Playmaker"
-        if df > 4.0:
+        if (stl + blk) > 2.0 or df > 3.0:
             return "Defender"
         if prof == "3pt_specialist":
             return "3pt Specialist"
-        if usg > 24:
+        if usg > 20 or pts > 18:
             return "Primary Scorer"
         if prof == "paint_scorer":
             return "Paint Scorer / Big"
@@ -520,7 +601,7 @@ class WhatIfEngine:
             except Exception:
                 r = 6.0
             p_feats    = compute_player_features(pid, self.data)
-            role       = self._assign_role(p_feats)
+            role       = self._classify_role_advanced(p_feats, pos)
             style_compat = get_style_position_compat(team_style, pos)
             profiles.append(LineupMemberProfile(
                 player_id=pid, player_name=name, position=pos,
@@ -583,10 +664,13 @@ class WhatIfEngine:
             explanation=explanation,
         )
 
-    # ------------------------------------------------------------------
     @staticmethod
     def _classify_role_advanced(player_feats: Dict[str, Any], position: str) -> str:
-        """More granular role classification using ADVANCED_ROLES taxonomy."""
+        """More granular role classification using ADVANCED_ROLES taxonomy.
+
+        Thresholds are calibrated for European basketball (EuroLeague / national
+        leagues) where pace and individual stats are typically lower than NBA.
+        """
         pm   = float(player_feats.get("playmaking_score", 0.0))
         df   = float(player_feats.get("defensive_score", 0.0))
         usg  = float(player_feats.get("avg_usg_pct", 0.0))
@@ -598,21 +682,26 @@ class WhatIfEngine:
         ver  = float(player_feats.get("versatility_score", 0.0))
         primary = position.split("/")[0]
 
-        if pm > 0.35 or ast > 7.0:
+        # Playmaker: high AST/USG ratio or raw assists (EU guard threshold lowered)
+        if pm > 0.28 or ast > 5.5:
             return "🎯 Playmaker"
+        # Stretch big: PF/C with 3pt-oriented profile
         if primary in ("PF", "C") and prof == "3pt_specialist":
             return "🎭 Stretch Big"
-        if primary in ("PF", "C") and prof == "paint_scorer":
+        # Classic big
+        if primary in ("PF", "C") and (prof == "paint_scorer" or usg < 20):
             return "💪 Pivot / Big"
-        if primary in ("PF", "C") and usg < 22:
-            return "💪 Pivot / Big"
-        if (stl + blk) > 3.2 or df > 4.5:
+        # Defender: STL+BLK or defensive score (EU thresholds lowered)
+        if (stl + blk) > 2.0 or df > 3.0:
             return "🛡️ Difensore"
-        if usg > 24 or pts > 22:
+        # Primary scorer (EU usg/pts thresholds)
+        if usg > 20 or pts > 18:
             return "⚡ Scorer primario"
+        # 3-point specialist
         if prof == "3pt_specialist":
             return "🏹 Specialista 3pt"
-        if primary in ("SF", "SG") and ver > 0.45 and df > 2.0:
+        # Two-way wing
+        if primary in ("SF", "SG") and ver > 0.40 and df > 1.5:
             return "🔄 Ala tuttofare"
         return "📊 Role Player"
 
@@ -686,27 +775,59 @@ class WhatIfEngine:
 
         # 6. Pairwise role compatibility
         _ROLE_COMPAT: Dict[tuple, float] = {
+            # Classic two-man game pairs
             ("🎯 Playmaker", "🏹 Specialista 3pt"):   0.92,
             ("🎯 Playmaker", "💪 Pivot / Big"):        0.88,
             ("🎯 Playmaker", "🎭 Stretch Big"):        0.90,
             ("🎯 Playmaker", "⚡ Scorer primario"):    0.82,
+            ("🎯 Playmaker", "🛡️ Difensore"):         0.78,
+            ("🎯 Playmaker", "🔄 Ala tuttofare"):      0.80,
+            ("🎯 Playmaker", "📊 Role Player"):        0.72,
             ("⚡ Scorer primario", "🛡️ Difensore"):   0.85,
+            ("⚡ Scorer primario", "🏹 Specialista 3pt"): 0.80,
+            ("⚡ Scorer primario", "💪 Pivot / Big"):  0.76,
+            ("⚡ Scorer primario", "🎭 Stretch Big"):  0.78,
+            ("⚡ Scorer primario", "📊 Role Player"):  0.70,
             ("🏹 Specialista 3pt", "💪 Pivot / Big"):  0.80,
+            ("🏹 Specialista 3pt", "🛡️ Difensore"):   0.75,
+            ("🏹 Specialista 3pt", "🔄 Ala tuttofare"): 0.77,
+            ("🏹 Specialista 3pt", "📊 Role Player"):  0.68,
             ("🛡️ Difensore", "📊 Role Player"):       0.75,
+            ("🛡️ Difensore", "🔄 Ala tuttofare"):     0.78,
+            ("🛡️ Difensore", "💪 Pivot / Big"):       0.72,
             ("🔄 Ala tuttofare", "🎯 Playmaker"):      0.80,
+            ("🔄 Ala tuttofare", "💪 Pivot / Big"):    0.74,
+            ("🔄 Ala tuttofare", "📊 Role Player"):    0.70,
             ("🎭 Stretch Big", "🎯 Playmaker"):        0.88,
             ("🎭 Stretch Big", "⚡ Scorer primario"):  0.82,
+            ("🎭 Stretch Big", "🛡️ Difensore"):       0.74,
+            ("🎭 Stretch Big", "📊 Role Player"):      0.68,
+            ("💪 Pivot / Big", "📊 Role Player"):      0.65,
+            # Same-role pairs (generally lower synergy due to role overlap)
+            ("🎯 Playmaker", "🎯 Playmaker"):           0.62,
+            ("⚡ Scorer primario", "⚡ Scorer primario"): 0.60,
+            ("🛡️ Difensore", "🛡️ Difensore"):         0.65,
+            ("🏹 Specialista 3pt", "🏹 Specialista 3pt"): 0.68,
+            ("💪 Pivot / Big", "💪 Pivot / Big"):       0.58,
+            ("🎭 Stretch Big", "🎭 Stretch Big"):       0.62,
+            ("🔄 Ala tuttofare", "🔄 Ala tuttofare"):   0.66,
+            ("📊 Role Player", "📊 Role Player"):       0.62,
         }
         pairwise: Dict[str, float] = {}
         for i in range(len(profiles)):
             for j in range(i + 1, len(profiles)):
                 a, b  = profiles[i], profiles[j]
                 pair  = tuple(sorted([a["role"], b["role"]]))
-                base  = _ROLE_COMPAT.get(pair, 0.55)
+                base  = _ROLE_COMPAT.get(pair, 0.60)
                 pos_a = set(a["pos"].split("/"))
                 pos_b = set(b["pos"].split("/"))
-                adj   = 0.08 if not (pos_a & pos_b) else -0.05
-                pairwise[f"{a['name']} – {b['name']}"] = float(np.clip(base + adj, 0, 1))
+                pos_adj  = 0.06 if not (pos_a & pos_b) else -0.04
+                # Bonus for high-quality partnerships (both high-rated)
+                avg_rtg  = (a["rating"] + b["rating"]) / 2.0
+                rtg_adj  = float(np.clip((avg_rtg - 6.5) * 0.015, -0.05, 0.08))
+                pairwise[f"{a['name']} – {b['name']}"] = float(
+                    np.clip(base + pos_adj + rtg_adj, 0.30, 1.0)
+                )
 
         # 7. Overall synergy (0–10, weighted composite)
         overall = float(np.clip(

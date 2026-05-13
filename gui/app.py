@@ -23,7 +23,11 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 from basketball_ai.data.loader import _to_int
-from basketball_ai.utils.helpers import team_display_name as _team_display_name
+from basketball_ai.utils.helpers import (
+    team_display_name as _team_display_name,
+    parse_team_display_map,
+    TEAM_DISPLAY_FIELD_MAP_ENV,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -50,13 +54,24 @@ def _save_to_env(key: str, value: str) -> None:
     _ENV_PATH.write_text("".join(lines), encoding="utf-8")
 
 def _safe_model_dir(user_input: str) -> Path:
-    """Sanitize a user-supplied directory path to prevent path traversal."""
-    raw = Path(user_input)
-    safe_parts = [
-        p for p in raw.parts
-        if p not in ("..", "/", "\\") and ":" not in p
-    ]
-    return Path(*safe_parts) if safe_parts else Path("models_saved")
+    """Resolve a user-supplied directory path, preventing '..' path traversal.
+
+    Unlike the previous implementation this function preserves absolute paths
+    (e.g. ``/home/user/models`` or ``C:\\Users\\user\\models``) so that the
+    user can specify any writable location on disk.  Only ``..`` components are
+    removed to neutralise traversal attempts.
+    """
+    raw = Path((user_input or "models_saved").strip())
+    # Walk the parts and drop any '..' that would escape the root
+    safe: list[str] = []
+    for part in raw.parts:
+        if part == "..":
+            # Pop last non-root component (never pop the drive/root anchor)
+            if safe and safe[-1] not in {"/", "\\", ""} and ":" not in safe[-1]:
+                safe.pop()
+        else:
+            safe.append(part)
+    return Path(*safe) if safe else Path("models_saved")
 
 
 def _require_data():
@@ -65,6 +80,40 @@ def _require_data():
         st.info("👈 Vai al tab **📂 Dati** e carica i tuoi dati.")
         return None
     return st.session_state["data"]
+
+
+def _get_team_country_map(data: dict) -> dict:
+    """Return a ``{team_id: country_code}`` mapping from loaded data.
+
+    Combines the *teams* → *league_id* and *leagues* → *country* columns.
+    Returns an empty dict when the data is missing or incomplete.
+    """
+    try:
+        leagues_df = data.get("leagues")
+        teams_df   = data.get("teams")
+        if leagues_df is None or teams_df is None:
+            return {}
+        if "country" not in leagues_df.columns or "id" not in leagues_df.columns:
+            return {}
+        if "league_id" not in teams_df.columns or "id" not in teams_df.columns:
+            return {}
+        league_country = {
+            _to_int(r["id"]): str(r.get("country", "") or "").strip().upper()
+            for _, r in leagues_df.iterrows()
+        }
+        return {
+            _to_int(r["id"]): league_country.get(_to_int(r["league_id"]), "")
+            for _, r in teams_df.iterrows()
+        }
+    except Exception:
+        return {}
+
+
+def _make_team_display_name(team_row, team_country_map: dict, display_map: dict) -> str:
+    """Wrapper around :func:`_team_display_name` that injects *country*."""
+    team_id = _to_int(team_row.get("id", 0))
+    country = team_country_map.get(team_id, "")
+    return _team_display_name(team_row, country=country, display_map=display_map)
 
 
 def _require_engine(data):
@@ -448,6 +497,47 @@ with tab_train:
 | `Random seed` | Seme per la riproducibilità dei risultati. | Qualsiasi intero |
         """)
 
+    # -----------------------------------------------------------------------
+    # Preset buttons
+    # -----------------------------------------------------------------------
+    _PRESETS = {
+        "🏆 Preciso": dict(
+            n_estimators=800, max_depth=7, learning_rate=0.01,
+            subsample=0.85, colsample_bytree=0.85, min_child_weight=2,
+            reg_alpha=0.1, reg_lambda=1.5, test_size=0.15, seed=42,
+            label="Alta precisione – addestramento lento (~5–10 min), ottimi risultati",
+        ),
+        "⚖️ Bilanciato": dict(
+            n_estimators=300, max_depth=5, learning_rate=0.05,
+            subsample=0.80, colsample_bytree=0.80, min_child_weight=3,
+            reg_alpha=0.1, reg_lambda=1.0, test_size=0.15, seed=42,
+            label="Bilanciato – addestramento medio (~1–2 min), buoni risultati (default)",
+        ),
+        "⚡ Veloce": dict(
+            n_estimators=100, max_depth=4, learning_rate=0.1,
+            subsample=0.70, colsample_bytree=0.70, min_child_weight=4,
+            reg_alpha=0.0, reg_lambda=0.5, test_size=0.20, seed=42,
+            label="Veloce – addestramento rapido (<30 s), precisione ridotta",
+        ),
+    }
+    st.markdown("**Preset rapidi**")
+    _pcols = st.columns(3)
+    for _pi, (_pname, _pvals) in enumerate(_PRESETS.items()):
+        with _pcols[_pi]:
+            if st.button(_pname, key=f"preset_{_pi}", use_container_width=True,
+                         help=_pvals["label"]):
+                st.session_state["t_nest"]       = _pvals["n_estimators"]
+                st.session_state["t_depth"]      = _pvals["max_depth"]
+                st.session_state["t_lr"]         = _pvals["learning_rate"]
+                st.session_state["t_sub"]        = _pvals["subsample"]
+                st.session_state["t_colsample"]  = _pvals["colsample_bytree"]
+                st.session_state["t_mcw"]        = _pvals["min_child_weight"]
+                st.session_state["t_alpha"]      = _pvals["reg_alpha"]
+                st.session_state["t_lambda"]     = _pvals["reg_lambda"]
+                st.session_state["t_split"]      = _pvals["test_size"]
+                st.session_state["t_seed"]       = _pvals["seed"]
+                st.rerun()
+
     col1, col2 = st.columns(2)
     with col1:
         st.markdown("**XGBoost**")
@@ -660,7 +750,11 @@ with tab_train:
                     "val_r2":     val_r2,
                 }
                 ensemble.save(str(save_dir), metrics=metrics_dict)
-                log(f"Modelli salvati in '{save_dir}/'")
+                _abs_save = save_dir.resolve()
+                log(f"Modelli salvati in: {_abs_save}")
+                log("  · performance_model.joblib")
+                log("  · compatibility_model.joblib")
+                log("  · metadata.json")
 
                 st.session_state["model_dir"]        = str(save_dir)
                 st.session_state["ensemble"]         = ensemble
@@ -672,7 +766,9 @@ with tab_train:
                 st.session_state.pop("chat_engine", None)
 
                 progress.progress(100, text="Completato!")
-                st.success("✅ Training completato!")
+                st.success(
+                    f"✅ Training completato! Modelli salvati in: `{_abs_save}`"
+                )
 
             except Exception as exc:
                 st.error(f"Training fallito: {exc}")
@@ -762,8 +858,10 @@ with tab_pred:
                 _to_int(r["id"]): f"{r['name']} ({r['position']}, {r['age']}a)"
                 for _, r in players_df_p.iterrows()
             }
+            _display_map_p   = parse_team_display_map()
+            _team_country_p  = _get_team_country_map(data_p)
             team_opts_p = {
-                _to_int(r["id"]): _team_display_name(r)
+                _to_int(r["id"]): _make_team_display_name(r, _team_country_p, _display_map_p)
                 for _, r in teams_df_p.iterrows()
             }
 
@@ -872,7 +970,29 @@ with tab_pred:
                     r3.metric("CI alto",          f"{result.confidence_high:.2f}")
                     st.caption(f"📋 Competizione: **{result.competition}**")
 
-                    st.subheader("📊 Breakdown")
+                    with st.expander("ℹ️ Come interpretare il rating 0–10", expanded=False):
+                        st.markdown(
+                            "Il **rating** è un punteggio composito che misura il livello di "
+                            "rendimento atteso del giocatore in quel contesto squadra/lega:\n\n"
+                            "| Fascia | Significato |\n"
+                            "|--------|-------------|\n"
+                            "| 8.5 – 10 | Superstar / impatto decisivo |\n"
+                            "| 7.5 – 8.4 | Titolare di alto livello / All-Star |\n"
+                            "| 6.5 – 7.4 | Titolare solido / Rotazione top |\n"
+                            "| 5.5 – 6.4 | Buon giocatore di rotazione |\n"
+                            "| < 5.5 | Panchina / sviluppo |\n\n"
+                            "**Componenti del calcolo:**\n"
+                            "- **XGBoost base**: modello addestrato su statistiche storiche "
+                            "(forma, consistenza, metriche avanzate SPM/RAPTOR/LEBRON)\n"
+                            "- **Compatibilità stile**: quanto lo stile di gioco della squadra "
+                            "si adatta al profilo del giocatore (scala 0–1)\n"
+                            "- **Fattore lega**: qualità/livello della competizione "
+                            "(tier 1 = massima serie = 1.00)\n"
+                            "- **Contesto**: adattamento posizione, ruolo, spacing e lega\n"
+                            "- **Curva età**: penalizzazione/bonus in base all'età rispetto al picco\n"
+                        )
+
+                    st.subheader("📊 Breakdown del rating")
                     breakdown_df = pd.DataFrame({
                         "Componente": [
                             "Base XGBoost", "Age factor",
@@ -882,6 +1002,13 @@ with tab_pred:
                             result.base_rating,     result.age_factor,
                             result.compatibility_factor, result.league_factor,
                             result.context_adjustment,
+                        ],
+                        "Significato": [
+                            "Rating grezzo dal modello ML",
+                            "Moltiplicatore curva età",
+                            "Compatibilità stile squadra (0–1)",
+                            "Qualità lega",
+                            "Moltiplicatore contesto (posizione+stile+ruolo)",
                         ],
                     })
                     st.dataframe(breakdown_df, width='stretch', hide_index=True)
@@ -897,6 +1024,69 @@ with tab_pred:
                         )
                         st.subheader("SHAP values")
                         st.bar_chart(shap_df.set_index("feature")["shap"])
+
+                    # --- Predicted statistics panel -----------------------
+                    st.divider()
+                    st.subheader("📈 Proiezione statistiche")
+                    with st.spinner("Calcolando proiezione statistiche…"):
+                        try:
+                            stats_proj = engine_p.predict_stats_at_team(
+                                sel_player_id, sel_team_id,
+                                season=int(pred_season),
+                                competition=sel_competition,
+                            )
+                        except Exception:
+                            stats_proj = None
+                    if stats_proj:
+                        sc1, sc2, sc3 = st.columns(3)
+                        sc1.caption(
+                            f"Stagione riferimento: **{stats_proj.get('season_reference', '—')}**"
+                        )
+                        sc2.caption(
+                            f"Rating storico medio: **{stats_proj.get('historical_rating', '—')}**"
+                        )
+                        sc3.caption(
+                            f"Fattore scala: **{stats_proj.get('scaling_ratio', 1.0):.2%}**"
+                        )
+                        _stat_labels = {
+                            "points":           "Punti",
+                            "rebounds":         "Rimbalzi",
+                            "assists":          "Assist",
+                            "steals":           "Palle rubate",
+                            "blocks":           "Stoppate",
+                            "minutes_per_game": "Minuti",
+                            "ts_pct":           "TS%",
+                            "fg_pct":           "FG%",
+                            "three_point_pct":  "3P%",
+                            "usg_pct":          "USG%",
+                        }
+                        _pct_cols = {"ts_pct", "fg_pct", "three_point_pct"}
+                        stat_rows = []
+                        for col, label in _stat_labels.items():
+                            val = stats_proj.get(col)
+                            if val is not None:
+                                stat_rows.append({
+                                    "Statistica": label,
+                                    "Valore proiettato": (
+                                        f"{val:.1%}" if col in _pct_cols else f"{val:.1f}"
+                                    ),
+                                })
+                        if stat_rows:
+                            st.dataframe(
+                                pd.DataFrame(stat_rows),
+                                hide_index=True,
+                                use_container_width=True,
+                            )
+                            st.caption(
+                                "⚠️ Le statistiche sono proiezioni scalate dall'ultima stagione "
+                                "in base al rapporto rating-predetto / media-storica. "
+                                "Non sono previsioni assolute ma stime indicative."
+                            )
+                    else:
+                        st.info(
+                            "Non ci sono dati storici sufficienti per proiettare le statistiche "
+                            "di questo giocatore."
+                        )
 
                 except Exception as exc:
                     st.error(f"Predizione fallita: {exc}")
@@ -1008,8 +1198,10 @@ with tab_scen:
                 _to_int(r["id"]): f"{r['name']} ({r['position']})"
                 for _, r in players_df_s.iterrows()
             }
+            _display_map_s  = parse_team_display_map()
+            _team_country_s = _get_team_country_map(data_s)
             team_opts_s = {
-                _to_int(r["id"]): _team_display_name(r)
+                _to_int(r["id"]): _make_team_display_name(r, _team_country_s, _display_map_s)
                 for _, r in teams_df_s.iterrows()
             }
 
@@ -1458,17 +1650,8 @@ with tab_chat:
                 st.rerun()
 
 
-# ===========================================================================
-# TAB 6 – MAPPING
-# ===========================================================================
-
 with tab_mapping:
     st.header("🗺️ Mapping colonne DB → Modello")
-    st.markdown(
-        "Configura la corrispondenza tra le colonne del **database reale** e i campi "
-        "attesi dal modello. Modifica la colonna **DB Column** con il nome esatto della "
-        "colonna nel tuo database. Le modifiche vengono applicate al prossimo caricamento SQL."
-    )
 
     try:
         from basketball_ai.data.schema_mapping import ALL_TABLES, ColumnDef
@@ -1493,128 +1676,287 @@ with tab_mapping:
         "team_player_relations": "🔗 Relazioni giocatore-squadra  (Anagrafiche.*)",
     }
 
-    if _mapping_available:
-        # Initialise session state with current env-var values on first load
-        if "mapping_env_overrides" not in st.session_state:
-            st.session_state["mapping_env_overrides"] = {
-                ev: os.environ.get(ev, "")
-                for ev in _MAPPING_ENV_VARS.values()
+    _map_col_tab, _map_display_tab = st.tabs([
+        "🗂️ Colonne DB",
+        "🏷️ Display Nome Squadra",
+    ])
+
+    # -----------------------------------------------------------------------
+    # Sub-tab 1 – Column mapping
+    # -----------------------------------------------------------------------
+    with _map_col_tab:
+        st.markdown(
+            "Configura la corrispondenza tra le colonne del **database reale** e i campi "
+            "attesi dal modello. Modifica la colonna **DB Column** con il nome esatto della "
+            "colonna nel tuo database. Le modifiche vengono applicate al prossimo caricamento SQL."
+        )
+
+        if _mapping_available:
+            # Initialise session state with current env-var values on first load
+            if "mapping_env_overrides" not in st.session_state:
+                st.session_state["mapping_env_overrides"] = {
+                    ev: os.environ.get(ev, "")
+                    for ev in _MAPPING_ENV_VARS.values()
+                }
+
+            # Parse current env-var overrides into {logical: {db_col: logical_col}}
+            def _parse_overrides(env_val: str) -> dict:
+                result = {}
+                for pair in env_val.split(","):
+                    pair = pair.strip()
+                    if ":" in pair:
+                        src, _, dst = pair.partition(":")
+                        result[src.strip()] = dst.strip()
+                return result
+
+            any_changed = False
+
+            for logical, col_defs in ALL_TABLES.items():
+                env_key = _MAPPING_ENV_VARS[logical]
+                current_overrides = _parse_overrides(
+                    st.session_state["mapping_env_overrides"].get(env_key, "")
+                )
+
+                # Build display dataframe
+                rows = []
+                for cd in col_defs:
+                    # DB column: prefer saved override (by logical_col), then schema default
+                    db_col_val = ""
+                    for db_c, log_c in current_overrides.items():
+                        if log_c == cd.logical_col:
+                            db_col_val = db_c
+                            break
+                    if not db_col_val and cd.db_col:
+                        db_col_val = cd.db_col
+
+                    rows.append({
+                        "Campo modello": cd.logical_col,
+                        "Colonna DB": db_col_val,
+                        "Default (se assente)": str(cd.default) if cd.default is not None else "",
+                        "Derivata": "✓" if cd.compute is not None else "",
+                        "Descrizione": cd.description,
+                    })
+
+                df_mapping = pd.DataFrame(rows)
+
+                with st.expander(_TABLE_LABELS.get(logical, logical), expanded=False):
+                    st.caption(
+                        "• **Campo modello** — nome interno usato dall'applicazione (non modificare).  \n"
+                        "• **Colonna DB** — nome esatto della colonna nel database (modifica qui).  \n"
+                        "• **Default** — valore usato se la colonna è assente nel DB.  \n"
+                        "• **Derivata** — ✓ indica una colonna calcolata automaticamente (es. per-game stats)."
+                    )
+
+                    edited_df = st.data_editor(
+                        df_mapping,
+                        key=f"mapping_editor_{logical}",
+                        width='stretch',
+                        hide_index=True,
+                        column_config={
+                            "Campo modello": st.column_config.TextColumn(
+                                "Campo modello", disabled=True, width="medium"
+                            ),
+                            "Colonna DB": st.column_config.TextColumn(
+                                "Colonna DB", width="medium",
+                                help="Nome esatto della colonna nel tuo database."
+                            ),
+                            "Default (se assente)": st.column_config.TextColumn(
+                                "Default", disabled=True, width="small"
+                            ),
+                            "Derivata": st.column_config.TextColumn(
+                                "Derivata", disabled=True, width="small"
+                            ),
+                            "Descrizione": st.column_config.TextColumn(
+                                "Descrizione", disabled=True, width="large"
+                            ),
+                        },
+                    )
+
+                    # Check if anything was edited
+                    if not edited_df["Colonna DB"].equals(df_mapping["Colonna DB"]):
+                        any_changed = True
+
+                    # Store edited mapping back to session state
+                    pairs = []
+                    for _, row in edited_df.iterrows():
+                        db_c = str(row["Colonna DB"]).strip()
+                        log_c = str(row["Campo modello"]).strip()
+                        if db_c and log_c and db_c != log_c:
+                            pairs.append(f"{db_c}:{log_c}")
+                    st.session_state["mapping_env_overrides"][env_key] = ",".join(pairs)
+
+            st.divider()
+            col_save, col_reset, col_info = st.columns([2, 2, 6])
+
+            with col_save:
+                if st.button("💾 Salva e applica mapping", type="primary", key="mapping_save"):
+                    for env_key, val in st.session_state["mapping_env_overrides"].items():
+                        if val:
+                            os.environ[env_key] = val
+                        else:
+                            os.environ.pop(env_key, None)
+                    st.success(
+                        "✅ Mapping salvato. Torna al tab **📂 Dati** e ricarica i dati SQL "
+                        "per applicare le modifiche."
+                    )
+
+            with col_reset:
+                if st.button("↩️ Ripristina default", key="mapping_reset"):
+                    st.session_state.pop("mapping_env_overrides", None)
+                    for ev in _MAPPING_ENV_VARS.values():
+                        os.environ.pop(ev, None)
+                    st.rerun()
+
+            with col_info:
+                if any_changed:
+                    st.info("⚠️ Hai modifiche non salvate — premi **Salva e applica mapping**.")
+
+            # Show current env-var values for debugging
+            with st.expander("🔧 Variabili d'ambiente correnti (debug)", expanded=False):
+                for logical, env_key in _MAPPING_ENV_VARS.items():
+                    val = os.environ.get(env_key, "")
+                    st.code(f"{env_key}={val or '(non impostata)'}", language="bash")
+
+    # -----------------------------------------------------------------------
+    # Sub-tab 2 – Team display-name mapping
+    # -----------------------------------------------------------------------
+    with _map_display_tab:
+        st.markdown(
+            "Scegli quale campo usare come **nome visualizzato** delle squadre in ogni nazione.  \n"
+            "- **TeamName** — nome completo della squadra (es. *Olimpia Milano*)  \n"
+            "- **ShortName** — abbreviazione/acronimo dal DB (es. *MIL*, *OLI*)  \n\n"
+            "La configurazione viene salvata nel file `.env` e applicata immediatamente."
+        )
+
+        # ----- Auto-populate nations from loaded data -----------------------
+        _loaded_nations: list[str] = []
+        if "data" in st.session_state:
+            _lg_df = st.session_state["data"].get("leagues")
+            if _lg_df is not None and "country" in _lg_df.columns:
+                _loaded_nations = sorted(
+                    {str(c).strip().upper() for c in _lg_df["country"].dropna() if str(c).strip()}
+                )
+
+        # ----- Load persisted mapping from env-var --------------------------
+        if "team_display_map_rows" not in st.session_state:
+            _initial_map = parse_team_display_map(os.environ.get(TEAM_DISPLAY_FIELD_MAP_ENV, ""))
+            # Seed with all nations found in DB (if any), plus any already saved
+            _seed_nations = _loaded_nations or sorted(_initial_map.keys())
+            st.session_state["team_display_map_rows"] = [
+                {
+                    "Nazione (codice ISO)": cc,
+                    "Campo da visualizzare": _initial_map.get(cc, "short_name"),
+                }
+                for cc in _seed_nations
+            ] or [{"Nazione (codice ISO)": "", "Campo da visualizzare": "short_name"}]
+        else:
+            # If new nations were loaded from DB, add any missing ones
+            _existing_ccs = {
+                r["Nazione (codice ISO)"].strip().upper()
+                for r in st.session_state["team_display_map_rows"]
+                if r.get("Nazione (codice ISO)", "").strip()
             }
+            _current_saved = parse_team_display_map(os.environ.get(TEAM_DISPLAY_FIELD_MAP_ENV, ""))
+            for _cc in _loaded_nations:
+                if _cc and _cc not in _existing_ccs:
+                    st.session_state["team_display_map_rows"].append({
+                        "Nazione (codice ISO)": _cc,
+                        "Campo da visualizzare": _current_saved.get(_cc, "short_name"),
+                    })
 
-        # Parse current env-var overrides into {logical: {db_col: logical_col}}
-        def _parse_overrides(env_val: str) -> dict:
-            result = {}
-            for pair in env_val.split(","):
-                pair = pair.strip()
-                if ":" in pair:
-                    src, _, dst = pair.partition(":")
-                    result[src.strip()] = dst.strip()
-            return result
-
-        any_changed = False
-
-        for logical, col_defs in ALL_TABLES.items():
-            env_key = _MAPPING_ENV_VARS[logical]
-            current_overrides = _parse_overrides(
-                st.session_state["mapping_env_overrides"].get(env_key, "")
+        if not _loaded_nations:
+            st.info(
+                "ℹ️ Nessun dato SQL caricato. Puoi aggiungere manualmente le nazioni oppure "
+                "carica prima i dati dal tab **📂 Dati** per auto-popolare la lista."
             )
 
-            # Build display dataframe
-            rows = []
-            for cd in col_defs:
-                # DB column: prefer saved override (by logical_col), then schema default
-                db_col_val = ""
-                for db_c, log_c in current_overrides.items():
-                    if log_c == cd.logical_col:
-                        db_col_val = db_c
-                        break
-                if not db_col_val and cd.db_col:
-                    db_col_val = cd.db_col
+        _display_df = pd.DataFrame(st.session_state["team_display_map_rows"])
 
-                rows.append({
-                    "Campo modello": cd.logical_col,
-                    "Colonna DB": db_col_val,
-                    "Default (se assente)": str(cd.default) if cd.default is not None else "",
-                    "Derivata": "✓" if cd.compute is not None else "",
-                    "Descrizione": cd.description,
-                })
+        _edited_display = st.data_editor(
+            _display_df,
+            key="team_display_map_editor",
+            hide_index=True,
+            num_rows="dynamic",
+            column_config={
+                "Nazione (codice ISO)": st.column_config.TextColumn(
+                    "Nazione (codice ISO)",
+                    width="medium",
+                    help="Codice ISO a 2 lettere della nazione, es. IT, ES, FR, DE, GR …",
+                ),
+                "Campo da visualizzare": st.column_config.SelectboxColumn(
+                    "Campo da visualizzare",
+                    width="medium",
+                    options=["short_name", "name"],
+                    help=(
+                        "**short_name** → usa ShortName dal DB (abbreviazione).  \n"
+                        "**name** → usa TeamName dal DB (nome completo)."
+                    ),
+                    required=True,
+                ),
+            },
+        )
 
-            df_mapping = pd.DataFrame(rows)
-
-            with st.expander(_TABLE_LABELS.get(logical, logical), expanded=False):
-                st.caption(
-                    "• **Campo modello** — nome interno usato dall'applicazione (non modificare).  \n"
-                    "• **Colonna DB** — nome esatto della colonna nel database (modifica qui).  \n"
-                    "• **Default** — valore usato se la colonna è assente nel DB.  \n"
-                    "• **Derivata** — ✓ indica una colonna calcolata automaticamente (es. per-game stats)."
-                )
-
-                edited_df = st.data_editor(
-                    df_mapping,
-                    key=f"mapping_editor_{logical}",
-                    width='stretch',
-                    hide_index=True,
-                    column_config={
-                        "Campo modello": st.column_config.TextColumn(
-                            "Campo modello", disabled=True, width="medium"
-                        ),
-                        "Colonna DB": st.column_config.TextColumn(
-                            "Colonna DB", width="medium",
-                            help="Nome esatto della colonna nel tuo database."
-                        ),
-                        "Default (se assente)": st.column_config.TextColumn(
-                            "Default", disabled=True, width="small"
-                        ),
-                        "Derivata": st.column_config.TextColumn(
-                            "Derivata", disabled=True, width="small"
-                        ),
-                        "Descrizione": st.column_config.TextColumn(
-                            "Descrizione", disabled=True, width="large"
-                        ),
-                    },
-                )
-
-                # Check if anything was edited
-                if not edited_df["Colonna DB"].equals(df_mapping["Colonna DB"]):
-                    any_changed = True
-
-                # Store edited mapping back to session state
-                pairs = []
-                for _, row in edited_df.iterrows():
-                    db_c = str(row["Colonna DB"]).strip()
-                    log_c = str(row["Campo modello"]).strip()
-                    if db_c and log_c and db_c != log_c:
-                        pairs.append(f"{db_c}:{log_c}")
-                st.session_state["mapping_env_overrides"][env_key] = ",".join(pairs)
+        # ----- Preview ------------------------------------------------------
+        if "data" in st.session_state and not _edited_display.empty:
+            _prev_map = {
+                str(r["Nazione (codice ISO)"]).strip().upper(): r["Campo da visualizzare"]
+                for _, r in _edited_display.iterrows()
+                if str(r.get("Nazione (codice ISO)", "")).strip()
+                   and r.get("Campo da visualizzare") in ("name", "short_name")
+            }
+            _prev_country_map = _get_team_country_map(st.session_state["data"])
+            _teams_preview = st.session_state["data"].get("teams")
+            if _teams_preview is not None and not _teams_preview.empty:
+                with st.expander("👁️ Anteprima nomi squadre", expanded=True):
+                    _prev_rows = []
+                    for _, _tr in _teams_preview.iterrows():
+                        _tid = _to_int(_tr.get("id", 0))
+                        _cc = _prev_country_map.get(_tid, "")
+                        _prev_rows.append({
+                            "Squadra (nome DB)": str(_tr.get("name", "")),
+                            "ShortName DB": str(_tr.get("short_name", "") or ""),
+                            "Nazione": _cc,
+                            "Visualizzato come": _make_team_display_name(_tr, _prev_country_map, _prev_map),
+                        })
+                    st.dataframe(
+                        pd.DataFrame(_prev_rows),
+                        hide_index=True,
+                        use_container_width=True,
+                    )
 
         st.divider()
-        col_save, col_reset, col_info = st.columns([2, 2, 6])
+        _dc1, _dc2, _dc3 = st.columns([2, 2, 6])
 
-        with col_save:
-            if st.button("💾 Salva e applica mapping", type="primary", key="mapping_save"):
-                for env_key, val in st.session_state["mapping_env_overrides"].items():
-                    if val:
-                        os.environ[env_key] = val
-                    else:
-                        os.environ.pop(env_key, None)
+        with _dc1:
+            if st.button("💾 Salva display mapping", type="primary", key="display_map_save"):
+                _new_map_str = ",".join(
+                    f"{str(r['Nazione (codice ISO)']).strip().upper()}:{r['Campo da visualizzare']}"
+                    for _, r in _edited_display.iterrows()
+                    if str(r.get("Nazione (codice ISO)", "")).strip()
+                       and r.get("Campo da visualizzare") in ("name", "short_name")
+                )
+                os.environ[TEAM_DISPLAY_FIELD_MAP_ENV] = _new_map_str
+                _save_to_env(TEAM_DISPLAY_FIELD_MAP_ENV, _new_map_str)
+                # Update session state so subsequent reruns use the new values
+                st.session_state["team_display_map_rows"] = _edited_display.to_dict("records")
                 st.success(
-                    "✅ Mapping salvato. Torna al tab **📂 Dati** e ricarica i dati SQL "
-                    "per applicare le modifiche."
+                    "✅ Display mapping salvato nel file `.env`. "
+                    "I nomi delle squadre si aggiorneranno al prossimo rendering."
                 )
 
-        with col_reset:
-            if st.button("↩️ Ripristina default", key="mapping_reset"):
-                st.session_state.pop("mapping_env_overrides", None)
-                for ev in _MAPPING_ENV_VARS.values():
-                    os.environ.pop(ev, None)
+        with _dc2:
+            if st.button("↩️ Ripristina default", key="display_map_reset"):
+                st.session_state.pop("team_display_map_rows", None)
+                os.environ.pop(TEAM_DISPLAY_FIELD_MAP_ENV, None)
+                _save_to_env(TEAM_DISPLAY_FIELD_MAP_ENV, "")
                 st.rerun()
 
-        with col_info:
-            if any_changed:
-                st.info("⚠️ Hai modifiche non salvate — premi **Salva e applica mapping**.")
-
-        # Show current env-var values for debugging
-        with st.expander("🔧 Variabili d'ambiente correnti (debug)", expanded=False):
-            for logical, env_key in _MAPPING_ENV_VARS.items():
-                val = os.environ.get(env_key, "")
-                st.code(f"{env_key}={val or '(non impostata)'}", language="bash")
+        with _dc3:
+            _cur_env = os.environ.get(TEAM_DISPLAY_FIELD_MAP_ENV, "")
+            if _cur_env:
+                st.caption(f"**Env-var corrente:** `{TEAM_DISPLAY_FIELD_MAP_ENV}={_cur_env}`")
+            else:
+                st.caption(
+                    f"**Env-var:** `{TEAM_DISPLAY_FIELD_MAP_ENV}` non impostata — "
+                    "comportamento di default: usa ShortName se disponibile, altrimenti TeamName."
+                )
