@@ -61,7 +61,7 @@ _RULES: list[tuple[Intent, re.Pattern[str]]] = [
         re.compile(
             r"\bclutch\b|pressure\s+situation|decisive\s+moment|crunch\s+time"
             r"|final\s+(seconds?|minutes?|quarter)|ultimo\s+quarto"
-            r"|situazion[ie]\s+decisive|nei\s+moment[io]\s+(important|critic|chiaV|crucial)"
+            r"|situazion[ie]\s+decisive|nei\s+moment[io]\s+(important|critic|chiave|crucial)"
             r"|playoffs?\s+performer|big\s+game",
             re.IGNORECASE,
         ),
