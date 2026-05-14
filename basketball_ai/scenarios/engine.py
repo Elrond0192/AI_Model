@@ -186,8 +186,41 @@ class LineupByRolesResult:
 
 
 # ---------------------------------------------------------------------------
-# Engine
+# Engine helpers
 # ---------------------------------------------------------------------------
+
+#: Maps a human-readable dimension key to the DB column name in player_stats.
+ROLE_DIMENSIONS: Dict[str, str] = {
+    "ruolo_combinato":  "ruolo_combinato",
+    "ruolo_offensivo":  "ruolo_offensivo",
+    "ruolo_difensivo":  "ruolo_difensivo",
+}
+
+def get_available_roles(
+    data: Dict[str, Any],
+    dimension: str = "ruolo_combinato",
+) -> Dict[str, str]:
+    """Return a mapping of role_key → description from the loaded data.
+
+    *dimension* selects which DB column to read (``"ruolo_combinato"``,
+    ``"ruolo_offensivo"``, or ``"ruolo_difensivo"``).  Falls back to
+    :data:`ADVANCED_ROLES` when the column is absent or entirely empty.
+    """
+    col = ROLE_DIMENSIONS.get(dimension, dimension)
+    try:
+        stats = data.get("player_stats")
+        if stats is not None and col in stats.columns:
+            roles = sorted({
+                str(v).strip()
+                for v in stats[col].dropna()
+                if str(v).strip()
+            })
+            if roles:
+                return {r: r for r in roles}
+    except Exception:
+        pass
+    return dict(ADVANCED_ROLES)
+
 
 class WhatIfEngine:
     """High-level basketball scenario engine wrapping EnsembleModel."""
@@ -195,6 +228,39 @@ class WhatIfEngine:
     def __init__(self, ensemble: EnsembleModel, data: Dict[str, Any]) -> None:
         self.ensemble = ensemble
         self.data     = data
+
+    # ------------------------------------------------------------------
+    def _get_player_db_role(
+        self,
+        player_id: int,
+        player_feats: Dict[str, Any],
+        position: str,
+        role_dimension: str = "ruolo_combinato",
+    ) -> str:
+        """Return the player's role for the requested dimension, preferring DB labels.
+
+        *role_dimension* can be ``"ruolo_combinato"``, ``"ruolo_offensivo"``, or
+        ``"ruolo_difensivo"``.  When the requested column is empty the method
+        falls back to ``ruolo_combinato``, then to the heuristic classifier.
+        """
+        col = ROLE_DIMENSIONS.get(role_dimension, "ruolo_combinato")
+        fallback_cols = [c for c in ("ruolo_combinato", "ruolo_offensivo") if c != col]
+        try:
+            stats = self.data.get("player_stats")
+            if stats is not None:
+                pid = _normalize_id(player_id)
+                mask = stats["player_id"] == pid
+                p_stats = stats[mask].sort_values("season")
+                if not p_stats.empty:
+                    latest = p_stats.iloc[-1]
+                    # Try the requested dimension first, then fallbacks
+                    for c in [col] + fallback_cols:
+                        val = str(latest.get(c, "") or "").strip()
+                        if val:
+                            return val
+        except Exception:
+            pass
+        return self._classify_role_advanced(player_feats, position)
 
     # ------------------------------------------------------------------
     def predict_in_team(
@@ -210,6 +276,26 @@ class WhatIfEngine:
         return self.ensemble.predict(
             player_id, target_team_id, self.data, season, competition=competition
         )
+
+    def _get_all_player_db_roles(self, player_id: int) -> Dict[str, str]:
+        """Return all three DB role fields for the player's most-recent stats row.
+
+        Returns a dict with keys ``"ruolo_combinato"``, ``"ruolo_offensivo"``,
+        ``"ruolo_difensivo"``.  Any field not present / empty is returned as ``""``.
+        """
+        result = {"ruolo_combinato": "", "ruolo_offensivo": "", "ruolo_difensivo": ""}
+        try:
+            stats = self.data.get("player_stats")
+            if stats is not None:
+                pid = _normalize_id(player_id)
+                p_stats = stats[stats["player_id"] == pid].sort_values("season")
+                if not p_stats.empty:
+                    latest = p_stats.iloc[-1]
+                    for col in result:
+                        result[col] = str(latest.get(col, "") or "").strip()
+        except Exception:
+            pass
+        return result
 
     # ------------------------------------------------------------------
     def predict_age_trajectory(
@@ -601,7 +687,7 @@ class WhatIfEngine:
             except Exception:
                 r = 6.0
             p_feats    = compute_player_features(pid, self.data)
-            role       = self._classify_role_advanced(p_feats, pos)
+            role       = self._get_player_db_role(pid, p_feats, pos)
             style_compat = get_style_position_compat(team_style, pos)
             profiles.append(LineupMemberProfile(
                 player_id=pid, player_name=name, position=pos,
@@ -729,7 +815,7 @@ class WhatIfEngine:
             except Exception:
                 rating = 6.0
             p_feats  = compute_player_features(pid, self.data)
-            role     = self._classify_role_advanced(p_feats, pos)
+            role     = self._get_player_db_role(pid, p_feats, pos)
             style_c  = get_style_position_compat(team_style, pos)
             profiles.append({
                 "pid": pid, "name": name, "pos": pos, "rating": rating,
@@ -742,6 +828,9 @@ class WhatIfEngine:
         role_dist: Dict[str, List[str]] = {}
         for p in profiles:
             role_dist.setdefault(p["role"], []).append(p["name"])
+        # Key roles are only meaningful for the heuristic taxonomy (emoji labels).
+        # When DB roles are in use the set won't contain emoji keys, so missing_roles
+        # will simply be empty – which is correct behaviour.
         key_roles_needed = {"🎯 Playmaker", "🛡️ Difensore"}
         missing_roles = sorted(key_roles_needed - unique_roles)
 
@@ -872,15 +961,19 @@ class WhatIfEngine:
         desired_roles: List[str],
         season: int = 2024,
         top_n_per_role: int = 5,
+        role_dimension: str = "ruolo_combinato",
     ) -> LineupByRolesResult:
         """Find the best players for each desired role around a target player.
 
         Args:
             target_player_id: The focal player.
             team_id:          Context team for predictions.
-            desired_roles:    List of role keys from ADVANCED_ROLES.
+            desired_roles:    List of role values to search for.
             season:           Season for predictions.
             top_n_per_role:   How many candidates per role to return.
+            role_dimension:   DB column used for filtering – one of
+                              ``"ruolo_combinato"``, ``"ruolo_offensivo"``,
+                              or ``"ruolo_difensivo"``.
         """
         players_df  = self.data["players"]
         player_dict = self.data["player_dict"]
@@ -901,19 +994,25 @@ class WhatIfEngine:
             try:
                 pred      = self.ensemble.predict(pid, team_id, self.data, season)
                 p_feats   = compute_player_features(pid, self.data)
-                role      = self._classify_role_advanced(p_feats, pos)
+                # Role used for filtering – based on the chosen dimension
+                role      = self._get_player_db_role(pid, p_feats, pos, role_dimension)
+                # Collect all three DB role fields for display
+                all_roles = self._get_all_player_db_roles(pid)
                 cur_tid   = row.get("current_team_id")
                 cur_team  = str(team_dict.get(
                     _normalize_id(cur_tid) if cur_tid else None, {}
                 ).get("name", "Unknown"))
                 all_scored.append({
-                    "player_id":       pid,
-                    "player_name":     name,
-                    "position":        pos,
+                    "player_id":        pid,
+                    "player_name":      name,
+                    "position":         pos,
                     "predicted_rating": round(pred.predicted_rating, 3),
-                    "role":            role,
-                    "current_team":    cur_team,
-                    "style_compat":    round(
+                    "role":             role,
+                    "ruolo_combinato":  all_roles["ruolo_combinato"],
+                    "ruolo_offensivo":  all_roles["ruolo_offensivo"],
+                    "ruolo_difensivo":  all_roles["ruolo_difensivo"],
+                    "current_team":     cur_team,
+                    "style_compat":     round(
                         get_style_position_compat(
                             str(team_dict.get(_normalize_id(team_id), {}).get("playing_style", "")), pos
                         ), 3
@@ -922,14 +1021,16 @@ class WhatIfEngine:
             except Exception:
                 continue
 
-        # Build per-role candidate lists
+        # Build per-role candidate lists – description falls back to ADVANCED_ROLES
+        # for heuristic labels; DB role strings are used as-is.
+        available_role_map = get_available_roles(self.data, dimension=role_dimension)
         role_candidates: List[RoleCandidateResult] = []
         for role in desired_roles:
             matches = [p for p in all_scored if p["role"] == role]
             matches.sort(key=lambda p: p["predicted_rating"], reverse=True)
             role_candidates.append(RoleCandidateResult(
                 role=role,
-                description=ADVANCED_ROLES.get(role, ""),
+                description=available_role_map.get(role, role),
                 candidates=matches[:top_n_per_role],
             ))
 

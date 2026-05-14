@@ -1188,8 +1188,13 @@ with tab_scen:
     if data_s is not None:
         engine_s = _require_engine(data_s)
         if engine_s is not None:
-            from basketball_ai.scenarios.engine import ADVANCED_ROLES
+            from basketball_ai.scenarios.engine import (
+                ADVANCED_ROLES, ROLE_DIMENSIONS, get_available_roles,
+            )
             import numpy as np
+
+            # Default combined-role map used in the manual lineup mode expander.
+            _combined_roles = get_available_roles(data_s, dimension="ruolo_combinato")
 
             players_df_s = data_s["players"]
             teams_df_s   = data_s["teams"]
@@ -1354,9 +1359,9 @@ with tab_scen:
 
                 if lu_mode == "🎯 Per giocatori":
                     # ---- Manual mode: pick teammates ----------------------
-                    with st.expander("ℹ️ Ruoli disponibili", expanded=False):
-                        for r_key, r_desc in ADVANCED_ROLES.items():
-                            st.markdown(f"**{r_key}** — {r_desc}")
+                    with st.expander("ℹ️ Ruoli disponibili (combinato)", expanded=False):
+                        for r_key, r_desc in _combined_roles.items():
+                            st.markdown(f"**{r_key}** — {r_desc}" if r_key != r_desc else f"**{r_key}**")
 
                     other_opts = {k: v for k, v in player_opts_s.items() if k != lu_player}
                     # Search for multiselect
@@ -1451,14 +1456,36 @@ with tab_scen:
                 else:
                     # ---- Role-based mode ----------------------------------
                     st.markdown("Seleziona i **ruoli** dei compagni che vuoi attorno al giocatore target.")
-                    with st.expander("ℹ️ Descrizione ruoli avanzati", expanded=True):
-                        for r_key, r_desc in ADVANCED_ROLES.items():
-                            st.markdown(f"**{r_key}** — {r_desc}")
+
+                    # Dimension selector: which role column to use for filtering
+                    _dim_labels = {
+                        "ruolo_combinato": "🔄 Ruolo combinato (offensivo + difensivo)",
+                        "ruolo_offensivo": "⚡ Solo ruolo offensivo",
+                        "ruolo_difensivo": "🛡️ Solo ruolo difensivo",
+                    }
+                    _sel_dim = st.radio(
+                        "Filtra per dimensione ruolo",
+                        options=list(_dim_labels.keys()),
+                        format_func=lambda x: _dim_labels[x],
+                        horizontal=True,
+                        key="lu_role_dimension",
+                    )
+                    # Build available roles from the chosen dimension
+                    _available_roles = get_available_roles(data_s, dimension=_sel_dim)
+                    _using_db_roles = _available_roles != dict(ADVANCED_ROLES)
+                    if _using_db_roles:
+                        st.caption(f"ℹ️ Ruoli letti dal database (`{_sel_dim}`).")
+                    else:
+                        st.caption("ℹ️ Ruoli classificati euristicamente (colonna DB non presente o vuota).")
+
+                    with st.expander("ℹ️ Ruoli disponibili", expanded=True):
+                        for r_key, r_desc in _available_roles.items():
+                            st.markdown(f"**{r_key}** — {r_desc}" if r_key != r_desc else f"**{r_key}**")
 
                     desired_roles = st.multiselect(
                         "🎭 Ruoli desiderati (fino a 4)",
-                        options=list(ADVANCED_ROLES.keys()),
-                        default=list(ADVANCED_ROLES.keys())[:3],
+                        options=list(_available_roles.keys()),
+                        default=list(_available_roles.keys())[:min(3, len(_available_roles))],
                         max_selections=4,
                         key="lu_roles",
                         format_func=lambda x: x,
@@ -1476,6 +1503,7 @@ with tab_scen:
                                         desired_roles=desired_roles,
                                         season=int(lu_season),
                                         top_n_per_role=int(top_n_role),
+                                        role_dimension=_sel_dim,
                                     )
 
                                     st.success(
@@ -1483,15 +1511,17 @@ with tab_scen:
                                         f"— Rating medio: **{result_r.estimated_avg_rating:.2f}**"
                                     )
 
-                                    # Show optimal lineup
+                                    # Show optimal lineup with all three role columns
                                     if result_r.optimal_lineup:
                                         opt_df = pd.DataFrame([{
-                                            "Ruolo target":    p["target_role"],
-                                            "Giocatore":       p["player_name"],
-                                            "Posizione":       p["position"],
-                                            "Squadra attuale": p["current_team"],
-                                            "Rating predetto": p["predicted_rating"],
-                                            "Ruolo classificato": p["role"],
+                                            "Ruolo target":       p["target_role"],
+                                            "Giocatore":          p["player_name"],
+                                            "Posizione":          p["position"],
+                                            "Squadra attuale":    p["current_team"],
+                                            "Rating predetto":    p["predicted_rating"],
+                                            "Ruolo combinato":    p.get("ruolo_combinato", ""),
+                                            "Ruolo offensivo":    p.get("ruolo_offensivo", ""),
+                                            "Ruolo difensivo":    p.get("ruolo_difensivo", ""),
                                         } for p in result_r.optimal_lineup])
                                         st.dataframe(opt_df, width='stretch', hide_index=True)
 
@@ -1508,6 +1538,9 @@ with tab_scen:
                                                     "Posizione":       c["position"],
                                                     "Squadra":         c["current_team"],
                                                     "Rating predetto": c["predicted_rating"],
+                                                    "Ruolo combinato": c.get("ruolo_combinato", ""),
+                                                    "Ruolo offensivo": c.get("ruolo_offensivo", ""),
+                                                    "Ruolo difensivo": c.get("ruolo_difensivo", ""),
                                                 } for c in rc.candidates])
                                                 st.dataframe(cand_df, width='stretch',
                                                              hide_index=True)
@@ -1939,10 +1972,8 @@ with tab_mapping:
                 _save_to_env(TEAM_DISPLAY_FIELD_MAP_ENV, _new_map_str)
                 # Update session state so subsequent reruns use the new values
                 st.session_state["team_display_map_rows"] = _edited_display.to_dict("records")
-                st.success(
-                    "✅ Display mapping salvato nel file `.env`. "
-                    "I nomi delle squadre si aggiorneranno al prossimo rendering."
-                )
+                st.toast("✅ Display mapping salvato. Aggiornamento in corso…", icon="💾")
+                st.rerun()
 
         with _dc2:
             if st.button("↩️ Ripristina default", key="display_map_reset"):
