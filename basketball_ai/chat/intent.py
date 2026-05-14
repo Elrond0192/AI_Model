@@ -89,6 +89,14 @@ _EXAMPLES: Dict[Intent, List[str]] = {
         "Che numeri potrebbe fare al CSKA Mosca?",
         "Che impatto avrebbe in questa squadra?",
         "Quanto segnerebbe se passasse all'Alba Berlin?",
+        # IT — keyword-style queries with explicit player+team
+        "Flaccadori statistiche Panathinaikos",
+        "Datome numeri Olimpia Milano",
+        "Melli rendimento Virtus Bologna",
+        "Belinelli statistiche Partizan",
+        "come renderebbe Flaccadori nel Panathinaikos",
+        "i numeri di Flaccadori nel Panathinaikos",
+        "le prestazioni di questo giocatore in questa squadra",
         # EN
         "How good would he be at the Lakers?",
         "Predict his performance at this team",
