@@ -1963,6 +1963,16 @@ with tab_scout:
                             _sc_mask       = _sc_stats_df["player_id"] == scout_player_id
                             _sc_p_stats    = _sc_stats_df[_sc_mask].sort_values("season")
                             _sc_latest     = _sc_p_stats.iloc[-1].to_dict() if not _sc_p_stats.empty else {}
+                            # Prefer the latest Regular Season row for DNA and strengths
+                            # (PO/CUP rows may have fewer games and outlier stats).
+                            if (
+                                not _sc_p_stats.empty
+                                and "competition" in _sc_p_stats.columns
+                            ):
+                                _rs_rows = _sc_p_stats[_sc_p_stats["competition"] == "RS"]
+                                _sc_latest_rs = _rs_rows.iloc[-1].to_dict() if not _rs_rows.empty else _sc_latest
+                            else:
+                                _sc_latest_rs = _sc_latest
 
                             # --- Predict current performance ----------------------
                             _sc_cur_team = _sc_player_row.get("current_team_id")
@@ -2034,21 +2044,34 @@ with tab_scout:
                                     for _cpid, _sim in _comp_rows[:5]
                                 ]
 
+                            # Build per-competition stats dict for the detailed view
+                            _sc_stats_by_comp: dict = {}
+                            if not _sc_p_stats.empty:
+                                if "competition" in _sc_p_stats.columns:
+                                    for _comp_key in _sc_p_stats["competition"].dropna().unique():
+                                        _comp_rows_df = _sc_p_stats[_sc_p_stats["competition"] == _comp_key]
+                                        if not _comp_rows_df.empty:
+                                            _sc_stats_by_comp[str(_comp_key)] = _comp_rows_df.iloc[-1].to_dict()
+                                else:
+                                    _sc_stats_by_comp["RS"] = _sc_latest
+
                             # Store results in session state for display
                             st.session_state["scout_result"] = {
-                                "name":         _sc_name,
-                                "age":          _sc_age,
-                                "pos":          _sc_pos,
-                                "nat":          _sc_nat,
-                                "height":       _sc_height,
-                                "weight":       _sc_weight,
-                                "pred":         _sc_pred,
-                                "traj":         _sc_traj,
-                                "peak":         _sc_peak,
-                                "best_teams":   _sc_best_teams,
-                                "comparables":  _sc_comparables,
-                                "latest_stats": _sc_latest,
-                                "avail_cols":   _avail_cols,
+                                "name":            _sc_name,
+                                "age":             _sc_age,
+                                "pos":             _sc_pos,
+                                "nat":             _sc_nat,
+                                "height":          _sc_height,
+                                "weight":          _sc_weight,
+                                "pred":            _sc_pred,
+                                "traj":            _sc_traj,
+                                "peak":            _sc_peak,
+                                "best_teams":      _sc_best_teams,
+                                "comparables":     _sc_comparables,
+                                "latest_stats":    _sc_latest,
+                                "latest_stats_rs": _sc_latest_rs,
+                                "stats_by_comp":   _sc_stats_by_comp,
+                                "avail_cols":      _avail_cols,
                             }
                         except Exception as exc:
                             st.error(f"Errore durante l'analisi: {exc}")
@@ -2081,17 +2104,31 @@ with tab_scout:
                     _peak_age   = _sr["peak"].age
                     _seasons_to = max(0, _peak_age - _sr["age"])
 
-                    # Rating tier label
-                    if _rating >= 8.5:
+                    # Use RS (Regular Season) stats for strengths/DNA when available
+                    _ls_rs_available = bool(_sr.get("latest_stats_rs"))
+                    _ls = _sr["latest_stats_rs"] if _ls_rs_available else _sr["latest_stats"]
+
+                    # Minutes context for tier label
+                    _ls_mpg = float(_ls.get("minutes_per_game", 0) or 0)
+                    _ls_gp  = float(_ls.get("games_played", 0) or 0)
+                    _mpg_ctx = (
+                        f" ({_ls_mpg:.0f} min/g, {_ls_gp:.0f} partite)"
+                        if _ls_mpg > 0 and _ls_gp > 0 else ""
+                    )
+
+                    # Rating tier label – adjusted thresholds reflect post-mpg-factor ratings
+                    if _rating >= 8.0:
                         _tier = "élite assoluta (top mondiale)"
-                    elif _rating >= 7.5:
+                    elif _rating >= 7.0:
                         _tier = "giocatore di alto livello"
-                    elif _rating >= 6.5:
+                    elif _rating >= 6.0:
                         _tier = "giocatore competitivo di buon livello"
-                    elif _rating >= 5.5:
-                        _tier = "role player affidabile"
+                    elif _rating >= 5.0:
+                        _tier = "role player / titolare di buon livello"
+                    elif _rating >= 4.0:
+                        _tier = "giocatore di rotazione"
                     else:
-                        _tier = "potenziale di sviluppo"
+                        _tier = "riserva / potenziale di sviluppo"
 
                     # Trend from trajectory
                     _traj = _sr["traj"]
@@ -2113,35 +2150,55 @@ with tab_scout:
                         _sr["best_teams"][0].predicted_rating if _sr["best_teams"] else 0.0
                     )
 
-                    # Strengths from latest stats
-                    _ls = _sr["latest_stats"]
+                    # Strengths from RS stats (proportional to minutes to avoid
+                    # inflating bench-player strengths via per-game stats).
                     _strengths = []
-                    if float(_ls.get("points", 0) or 0) >= 15:
+                    if float(_ls.get("points", 0) or 0) >= 12:
                         _strengths.append("scorer prolifico")
-                    if float(_ls.get("rebounds", 0) or 0) >= 7:
+                    if float(_ls.get("rebounds", 0) or 0) >= 6:
                         _strengths.append("rimbalzista dominante")
-                    if float(_ls.get("assists", 0) or 0) >= 6:
+                    if float(_ls.get("assists", 0) or 0) >= 5:
                         _strengths.append("playmaker di qualità")
-                    if float(_ls.get("steals", 0) or 0) >= 1.5:
+                    if float(_ls.get("steals", 0) or 0) >= 1.2:
                         _strengths.append("difensore aggressivo")
-                    if float(_ls.get("blocks", 0) or 0) >= 1.5:
+                    if float(_ls.get("blocks", 0) or 0) >= 1.2:
                         _strengths.append("shot-blocker")
-                    if float(_ls.get("three_point_pct", 0) or 0) >= 0.37:
+                    if float(_ls.get("three_point_pct", 0) or 0) >= 0.36:
                         _strengths.append("tiratore da tre efficiente")
-                    if float(_ls.get("ts_pct", 0) or 0) >= 0.58:
+                    if float(_ls.get("ts_pct", 0) or 0) >= 0.56:
                         _strengths.append("finisher efficiente")
+                    if float(_ls.get("usg_pct", 0) or 0) >= 25:
+                        _strengths.append("prima opzione offensiva")
+                    if float(_ls.get("bpm", 0) or 0) >= 2.0:
+                        _strengths.append("impatto positivo sul campo")
                     if not _strengths:
-                        _strengths = ["giocatore versatile e bilanciato"]
+                        # If no stats are populated, say so rather than "versatile e bilanciato"
+                        _has_any_stat = any(
+                            float(_ls.get(c, 0) or 0) > 0
+                            for c in ("points", "rebounds", "assists", "steals")
+                        )
+                        _strengths = (
+                            ["dati statistici insufficienti per analisi specifica"]
+                            if not _has_any_stat
+                            else ["giocatore di rotazione / ruolo specifico"]
+                        )
 
-                    _peak_desc = (
-                        f"Il picco prestativo è atteso a **{_peak_age} anni** "
-                        f"(rating previsto: **{_peak_r:.2f}**)"
-                        + (f", tra **{_seasons_to} stagioni**" if _seasons_to > 0 else " — già al picco o vicino")
-                        + "."
-                    )
+                    # Peak description: distinguish future vs already-past peak
+                    if _seasons_to > 0:
+                        _peak_desc = (
+                            f"Il picco prestativo è atteso a **{_peak_age} anni** "
+                            f"(rating stimato al picco: **{_peak_r:.2f}**), "
+                            f"tra **{_seasons_to} {'stagione' if _seasons_to == 1 else 'stagioni'}**."
+                        )
+                    else:
+                        _peak_desc = (
+                            f"Il modello stima che il picco prestativo era intorno ai "
+                            f"**{_peak_age} anni** (rating stimato: **{_peak_r:.2f}**) — "
+                            f"il giocatore ha già superato o è vicino al suo apice."
+                        )
 
                     st.markdown(f"""
-    **{_sr['name']}** è un giocatore di **{_sr['age']} anni** ({_sr['pos']}) classificato come
+    **{_sr['name']}** è un giocatore di **{_sr['age']} anni** ({_sr['pos']}{_mpg_ctx}) classificato come
     **{_tier}**, con un rating AI attuale di **{_rating:.2f}/10** e una traiettoria di rendimento
     **{_trend_str}**.
 
@@ -2159,6 +2216,9 @@ with tab_scout:
 
                     # --- Performance DNA Chart ---
                     st.subheader("🧬 DNA Prestativo")
+                    # BPM normalisation: shift [-10, +10] → [0%, 100%] so that
+                    # negative values still render (0% = BPM −10, 50% = neutral, 100% = +10).
+                    _BPM_MIN, _BPM_MAX = -10.0, 10.0
                     _dna_cols = [
                         ("Punti",         "points",           20.0),
                         ("Rimbalzi",      "rebounds",         12.0),
@@ -2171,17 +2231,32 @@ with tab_scout:
                         ("BPM",           "bpm",              10.0),
                         ("USG%",          "usg_pct",           1.0),
                     ]
+                    # Use RS stats for DNA chart; BPM can be negative → floor at 0
                     _dna_data = {}
                     for _label, _col, _max_val in _dna_cols:
                         _raw = float(_ls.get(_col, 0) or 0)
-                        _pct = min(100.0, max(0.0, _raw / _max_val * 100))
+                        if _col == "bpm":
+                            _pct = min(100.0, max(0.0, (_raw - _BPM_MIN) / (_BPM_MAX - _BPM_MIN) * 100))
+                        else:
+                            _pct = min(100.0, max(0.0, _raw / _max_val * 100))
                         _dna_data[_label] = round(_pct, 1)
 
-                    _dna_df = pd.DataFrame(
-                        list(_dna_data.items()), columns=["Metrica", "Percentuale (0-100)"]
-                    ).set_index("Metrica")
-                    st.bar_chart(_dna_df, height=350)
-                    st.caption("Valori normalizzati rispetto ai massimi di riferimento.")
+                    if all(v == 0.0 for v in _dna_data.values()):
+                        st.info(
+                            "📭 Statistiche non disponibili per questo giocatore. "
+                            "Il DNA verrà visualizzato una volta che i dati saranno caricati nel database."
+                        )
+                    else:
+                        _dna_df = pd.DataFrame(
+                            list(_dna_data.items()), columns=["Metrica", "Percentuale (0-100)"]
+                        ).set_index("Metrica")
+                        st.bar_chart(_dna_df, height=350)
+                        _dna_src = "RS (Regular Season)" if _ls_rs_available else "ultima stagione disponibile"
+                        st.caption(
+                            f"Valori normalizzati rispetto ai massimi di riferimento. "
+                            f"Fonte dati: {_dna_src}. "
+                            f"BPM riscalato: 50% = neutro (0.0), 100% = +{_BPM_MAX:.0f}, 0% = {_BPM_MIN:.0f}."
+                        )
 
                     # --- Career Trajectory Chart ---
                     st.subheader("📈 Traiettoria di Carriera")
@@ -2229,14 +2304,43 @@ with tab_scout:
                         else:
                             st.info("Nessuna squadra disponibile.")
 
-                    # --- Raw stats expander ---
-                    with st.expander("📊 Statistiche dettagliate (ultima stagione)", expanded=False):
-                        _raw_stats = {k: v for k, v in _sr["latest_stats"].items()
-                                      if v is not None and str(v) not in ("", "nan")}
-                        st.dataframe(
-                            pd.DataFrame(list(_raw_stats.items()), columns=["Metrica", "Valore"]),
-                            hide_index=True, width="stretch",
-                        )
+                    # --- Stats by competition ---
+                    with st.expander("📊 Statistiche dettagliate per competizione", expanded=False):
+                        _stats_by_comp = _sr.get("stats_by_comp", {})
+                        if _stats_by_comp:
+                            _comp_labels = {"RS": "🏆 Regular Season", "PO": "🔥 Playoff",
+                                            "CUP": "🥇 Coppa Nazionale", "SUPERCUP": "⭐ Supercoppa"}
+                            for _comp_key in ["RS", "PO", "CUP", "SUPERCUP"]:
+                                if _comp_key not in _stats_by_comp:
+                                    continue
+                                _comp_row = _stats_by_comp[_comp_key]
+                                _comp_clean = {
+                                    k: v for k, v in _comp_row.items()
+                                    if v is not None and str(v) not in ("", "nan")
+                                    and k not in ("player_id", "competition")
+                                }
+                                if not _comp_clean:
+                                    continue
+                                st.markdown(f"**{_comp_labels.get(_comp_key, _comp_key)}**")
+                                st.dataframe(
+                                    pd.DataFrame(
+                                        list(_comp_clean.items()),
+                                        columns=["Metrica", "Valore"],
+                                    ),
+                                    hide_index=True,
+                                    use_container_width=True,
+                                )
+                        else:
+                            # Fallback: show all latest stats flat
+                            _raw_stats = {k: v for k, v in _sr["latest_stats"].items()
+                                          if v is not None and str(v) not in ("", "nan")}
+                            if _raw_stats:
+                                st.dataframe(
+                                    pd.DataFrame(list(_raw_stats.items()), columns=["Metrica", "Valore"]),
+                                    hide_index=True, use_container_width=True,
+                                )
+                            else:
+                                st.info("Nessuna statistica disponibile nel database per questo giocatore.")
 
 
 with tab_mapping:

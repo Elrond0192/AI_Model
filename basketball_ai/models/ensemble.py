@@ -28,6 +28,31 @@ from basketball_ai.features.player_features import compute_player_features
 from basketball_ai.features.team_features import compute_team_features
 from basketball_ai.features.context_features import compute_context_features
 
+# ---------------------------------------------------------------------------
+# Tuning constants – centralised so that calibration changes require edits in
+# one place only.
+# ---------------------------------------------------------------------------
+
+# Age-curve ratio bounds: caps how much the base rating can be amplified (or
+# shrunk) when projecting a player to a different age.  A ceiling of 1.5×
+# prevents unrealistically high peak projections for post-peak players.
+_AGE_RATIO_MIN: float = 0.50
+_AGE_RATIO_MAX: float = 1.50
+
+# Contextual fit multiplier: maps the weighted ctx_score onto a rating
+# multiplier with a wider range than the old ±2% so that position/style fit
+# creates meaningful differentiation between teams for different players.
+_CTX_MULT_OFFSET: float = 0.78   # value at ctx_score == 0.50
+_CTX_MULT_SLOPE:  float = 0.55   # sensitivity to ctx_score above the anchor
+_CTX_MULT_LO:     float = 0.72   # hard lower bound
+_CTX_MULT_HI:     float = 1.08   # hard upper bound
+
+# Playing-time factor: scales down ratings for bench players with low minutes.
+# At _MPG_BASELINE minutes per game the factor reaches 1.0 (no discount).
+_MPG_FACTOR_BASE:     float = 0.60   # factor at 0 min/game (theoretical floor)
+_MPG_FACTOR_RANGE:    float = 0.40   # additive range: base + range = 1.0 at baseline
+_MPG_BASELINE:        float = 30.0   # minutes/game at which factor = 1.0
+
 
 @dataclass
 class PredictionResult:
@@ -119,9 +144,11 @@ class EnsembleModel:
             latest_role_off     = str(latest_row.get("ruolo_offensivo",  "") or "").strip()
             latest_role_def     = str(latest_row.get("ruolo_difensivo",  "") or "").strip()
             latest_games_played = float(latest_row.get("games_played", 0) or 0)
+            latest_mpg          = float(latest_row.get("minutes_per_game", 20) or 20)
         else:
             latest_role = latest_role_off = latest_role_def = ""
             latest_games_played = 0.0
+            latest_mpg = 20.0
         player_feats["role_enc"]     = float(self.perf_model.role_encoding.get(latest_role, 0))
         player_feats["role_off_enc"] = float(self.perf_model.role_off_encoding.get(latest_role_off, 0))
         player_feats["role_def_enc"] = float(self.perf_model.role_def_encoding.get(latest_role_def, 0))
@@ -133,12 +160,14 @@ class EnsembleModel:
         base_rating = self.perf_model.predict_from_features(player_feats)
 
         # 3. Age-curve ratio (only for trajectory projections)
+        # Cap the ratio at ×1.5 to prevent unrealistic peak projections for
+        # post-peak players being projected back to their prime years.
         current_af = age_performance_factor(current_age, position)
         target_af  = age_performance_factor(age, position)
         af = target_af
 
         if target_age is not None and target_age != current_age and current_af > 0.01:
-            age_ratio   = target_af / current_af
+            age_ratio   = float(np.clip(target_af / current_af, _AGE_RATIO_MIN, _AGE_RATIO_MAX))
             base_rating = float(np.clip(base_rating * age_ratio, 3.5, 10.0))
 
         # 4. Compatibility: KNN score [0,1] → mapped to multiplier [0.90, 1.10]
@@ -153,6 +182,8 @@ class EnsembleModel:
         lf       = tier_map.get(tier, 0.900)
 
         # 6. Contextual adjustment (position fit, style, role, adaptation, spacing)
+        # Using a wider mapping range so player-specific position/style fit creates
+        # meaningful differentiation between teams (different players rank teams differently).
         ctx = compute_context_features(player_id, team_id, data)
         ctx_score = (
             ctx["position_team_fit"]        * 0.25
@@ -161,11 +192,28 @@ class EnsembleModel:
             + ctx["league_adaptation_factor"] * 0.15
             + ctx["spacing_fit"]            * 0.10
         )
-        # Map ctx_score (typically 0.7–0.9) to multiplier around 1.00
-        ctx_mult = 0.95 + (ctx_score - 0.75) * 0.20
+        # Map ctx_score (range ~0.55–0.98) to multiplier; wider range than before
+        # so that a PG in pace-and-space vs a C in the same team get noticeably
+        # different ratings, preventing all players from ranking teams identically.
+        ctx_mult = float(np.clip(
+            _CTX_MULT_OFFSET + (ctx_score - 0.50) * _CTX_MULT_SLOPE,
+            _CTX_MULT_LO,
+            _CTX_MULT_HI,
+        ))
 
-        # Final rating
+        # 7. Playing-time adjustment: bench players (low minutes) are penalised.
+        # A player averaging 10 min/game contributes much less proven impact than
+        # a 30-min starter even when per-36 stats look similar.
+        # Factor: ≥30 min → 1.00; 20 min → 0.93; 10 min → 0.73
+        mpg_factor = float(np.clip(
+            _MPG_FACTOR_BASE + (min(latest_mpg, _MPG_BASELINE) / _MPG_BASELINE) * _MPG_FACTOR_RANGE,
+            _MPG_FACTOR_BASE,
+            1.00,
+        ))
+
+        # Final rating (apply mpg_factor before CI so interval is always consistent)
         adjusted = float(np.clip(base_rating * compat_mult * lf * ctx_mult, 3.5, 10.0))
+        adjusted = float(np.clip(adjusted * mpg_factor, 3.5, 10.0))
 
         # Confidence interval – wider for inconsistent players, wider for small samples
         consistency = float(player_feats.get("consistency_score", 0.5))
@@ -183,6 +231,7 @@ class EnsembleModel:
             f"× compatibilità stile ({compat_mult:.2f}) "
             f"× qualità lega (tier {tier}, fattore {lf:.2f}) "
             f"× contesto (posizione+stile+adattamento, fattore {ctx_mult:.3f}) "
+            f"× minuti ({latest_mpg:.0f} min/g, fattore {mpg_factor:.2f}) "
             f"| età: {age} (curva {af:.3f}) "
             f"| ruolo: {latest_role or '—'} / off: {latest_role_off or '—'} / def: {latest_role_def or '—'} "
             f"| competizione: {competition}"
