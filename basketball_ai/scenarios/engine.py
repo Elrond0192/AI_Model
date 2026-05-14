@@ -334,7 +334,8 @@ class WhatIfEngine:
             league = league_dict.get(_normalize_id(team.get("league_id")), {})
             scenarios.append({
                 "team_id":        tid,
-                "team_name":      _team_display_name(team, f"Team {tid}"),
+                "team_name":      _team_display_name(team, f"Team {tid}",
+                                                     league_id=str(team.get("league_id", "") or "")),
                 "league_name":    str(league.get("name", "Unknown")),
                 "competition":    competition,
                 "rating":         pred.predicted_rating,
@@ -374,7 +375,8 @@ class WhatIfEngine:
                 league = league_dict.get(_normalize_id(row["league_id"]), {})
                 results.append(TeamFitResult(
                     team_id=tid,
-                    team_name=_team_display_name(team, f"Team {tid}"),
+                    team_name=_team_display_name(team, f"Team {tid}",
+                                                  league_id=str(team.get("league_id", "") or "")),
                     league_name=str(league.get("name", "Unknown")),
                     predicted_rating=pred.predicted_rating,
                     compatibility_score=pred.compatibility_factor,
@@ -419,7 +421,10 @@ class WhatIfEngine:
                     player_name=str(row["name"]),
                     position=str(row["position"]),
                     predicted_rating=pred.predicted_rating,
-                    current_team=_team_display_name(cur_team),
+                    current_team=_team_display_name(
+                        cur_team,
+                        league_id=str(cur_team.get("league_id", "") or ""),
+                    ),
                     rank=0,
                 ))
             except Exception:

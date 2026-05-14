@@ -172,7 +172,10 @@ class ChatEngine:
         team_id   = team_hit[0] if team_hit else sess.last_team_id
         team_name = (
             team_hit[1] if team_hit
-            else _team_display_name(td_.get(sess.last_team_id, {}), "")
+            else _team_display_name(
+                td_.get(sess.last_team_id, {}), "",
+                league_id=str(td_.get(sess.last_team_id, {}).get("league_id", "") or ""),
+            )
             if sess.last_team_id else None
         )
 
@@ -202,7 +205,7 @@ class ChatEngine:
             try:
                 res    = self.engine.predict_in_team(player_id, team_id)
                 league = ld_.get(
-                    int(td_.get(team_id, {}).get("league_id", 1)), {}
+                    _normalize_id(td_.get(team_id, {}).get("league_id", 1)), {}
                 )
                 reply = (
                     f"**{player_name}** at **{team_name}**"
@@ -613,7 +616,7 @@ class ChatEngine:
                 try:
                     res    = self.engine.predict_in_team(player_id, team_id)
                     league = ld_.get(
-                        int(td_.get(team_id, {}).get("league_id", 1)), {}
+                        _normalize_id(td_.get(team_id, {}).get("league_id", 1)), {}
                     )
                     reply = (
                         f"**{player_name}** al **{team_name}**"
@@ -636,7 +639,8 @@ class ChatEngine:
                 age        = int(player_row.get("age", 0))
                 cur_tid    = player_row.get("current_team_id")
                 team_name_cur = _team_display_name(
-                    td_.get(_normalize_id(cur_tid), {}), "—"
+                    td_.get(_normalize_id(cur_tid), {}), "—",
+                    league_id=str(td_.get(_normalize_id(cur_tid), {}).get("league_id", "") or ""),
                 ) if cur_tid else "—"
 
                 p_stats = self.data["player_stats"]
@@ -792,7 +796,7 @@ class ChatEngine:
             try:
                 res    = self.engine.predict_in_team(player_id, team_id)
                 league = ld_.get(
-                    int(td_.get(team_id, {}).get("league_id", 1)), {}
+                    _normalize_id(td_.get(team_id, {}).get("league_id", 1)), {}
                 )
                 reply = (
                     f"**{player_name}** al **{team_name}**"
@@ -820,7 +824,8 @@ class ChatEngine:
                 age        = int(player_row.get("age", 0))
                 cur_tid    = player_row.get("current_team_id")
                 team_name_cur = _team_display_name(
-                    td_.get(_normalize_id(cur_tid), {}), "—"
+                    td_.get(_normalize_id(cur_tid), {}), "—",
+                    league_id=str(td_.get(_normalize_id(cur_tid), {}).get("league_id", "") or ""),
                 ) if cur_tid else "—"
                 p_stats = self.data["player_stats"]
                 import pandas as _pd
