@@ -206,7 +206,7 @@ class EnsembleModel:
         # a 30-min starter even when per-36 stats look similar.
         # Factor: ≥30 min → 1.00; 20 min → 0.93; 10 min → 0.73
         mpg_factor = float(np.clip(
-            _MPG_FACTOR_BASE + min(latest_mpg, _MPG_BASELINE) / _MPG_BASELINE * _MPG_FACTOR_RANGE,
+            _MPG_FACTOR_BASE + (min(latest_mpg, _MPG_BASELINE) / _MPG_BASELINE) * _MPG_FACTOR_RANGE,
             _MPG_FACTOR_BASE,
             1.00,
         ))

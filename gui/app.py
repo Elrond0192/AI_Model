@@ -2188,7 +2188,7 @@ with tab_scout:
                         _peak_desc = (
                             f"Il picco prestativo è atteso a **{_peak_age} anni** "
                             f"(rating stimato al picco: **{_peak_r:.2f}**), "
-                            f"tra **{_seasons_to} stagion{'e' if _seasons_to == 1 else 'i'}**."
+                            f"tra **{_seasons_to} {'stagione' if _seasons_to == 1 else 'stagioni'}**."
                         )
                     else:
                         _peak_desc = (
