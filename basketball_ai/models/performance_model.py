@@ -1,7 +1,9 @@
 """Basketball XGBoost performance model.
 
 Predicts player rating (0-10) from basketball-specific features:
-per-36 stats, advanced metrics (PER, BPM, TS%, USG%), age, position.
+per-36 stats, advanced metrics (PER, BPM, TS%, USG%), age, position,
+DB role labels (ruolo_combinato / offensivo / difensivo), RAPTOR, LEBRON,
+OWS/DWS, FIC, interaction features, and career trajectory signals.
 """
 from __future__ import annotations
 
@@ -11,7 +13,7 @@ from typing import Any, Dict, List, NamedTuple, Optional, Tuple
 import joblib
 import numpy as np
 import pandas as pd
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split, KFold
 from sklearn.preprocessing import StandardScaler
 from xgboost import XGBRegressor
 
@@ -65,47 +67,77 @@ def compute_po_features(player_stats_df: "pd.DataFrame") -> Dict[str, float]:
     return {"po_vs_rs_delta": po_vs_rs_delta, "po_games_played": po_gp}
 
 
-# Feature columns (order matters for scaling)
+# ---------------------------------------------------------------------------
+# Feature columns – the full feature set used by the XGBoost model.
+# NOTE: order matters for StandardScaler.
+# ---------------------------------------------------------------------------
 FEATURE_COLS: List[str] = [
+    # --- Identity / context ---------------------------------------------------
     "age",
     "position_enc",
     "competition_enc",
+    # --- DB role labels (all three dimensions) --------------------------------
+    "role_enc",             # ruolo_combinato (combined role)
+    "role_off_enc",         # ruolo_offensivo (offensive role)
+    "role_def_enc",         # ruolo_difensivo (defensive role)
+    # --- Per-36 volume stats --------------------------------------------------
     "pts_per_36",
     "ast_per_36",
     "reb_per_36",
     "stl_per_36",
     "blk_per_36",
+    # --- Core advanced metrics (historical averages) --------------------------
     "avg_per",
     "avg_ts_pct",
     "avg_usg_pct",
     "avg_bpm",
+    "avg_obpm",
+    "avg_dbpm",
+    # --- Career signals -------------------------------------------------------
     "form_score",
     "consistency_score",
     "career_trajectory",
     "age_vs_peak_age",
+    "ts_efficiency_trend",  # per-season slope of TS% over career
+    "durability_score",     # avg games_played / 82 (or league max)
+    # --- Competition context --------------------------------------------------
     "po_vs_rs_delta",
     "po_games_played",
-    # Advanced DB-schema metrics (SPM, RAPTOR, LEBRON, OBPM/DBPM)
+    # --- Composite / model-based ratings (DB schema) --------------------------
     "avg_spm",
+    "avg_raptor_off",       # RAPTOR offensive component
+    "avg_raptor_def",       # RAPTOR defensive component
     "avg_raptor_total",
+    "avg_lebron_off",       # LEBRON offensive component
+    "avg_lebron_def",       # LEBRON defensive component
     "avg_lebron_total",
-    "avg_obpm",
-    "avg_dbpm",
     "avg_gm_sc",
-    # Efficiency / hustle
+    "avg_fic",              # Floor Impact Counter
+    "avg_ows",              # Offensive Win Shares
+    "avg_dws",              # Defensive Win Shares
+    # --- Efficiency / hustle --------------------------------------------------
     "avg_scoring_efficiency",
     "avg_hustle_index",
     "avg_foul_drawing_rate",
-    # Clutch performance (from AdvancedStats_Clutch_*)
+    # --- Rate stats (normalised percentages) ----------------------------------
+    "avg_tov_pct",
+    "avg_ast_pct",
+    "avg_orb_pct",
+    "avg_drb_pct",
+    # --- Clutch performance ---------------------------------------------------
     "clutch_pts_per_36",
     "avg_clutch_ts_pct",
     "avg_clutch_net_rtg",
-    # On/Off impact
+    # --- On/Off impact --------------------------------------------------------
     "avg_net_rtg_diff",
     "avg_ortg_diff",
-    # Per-40 projection features
+    # --- Per-40 projection features -------------------------------------------
     "avg_pts_per_40",
     "avg_ast_per_40",
+    # --- Engineered interaction features (domain-specific) --------------------
+    "obpm_x_usg",           # Offensive production at high usage (OBPM × USG%)
+    "dbpm_x_reb",           # Defensive impact via rebounding (DBPM × REB%)
+    "two_way_score",        # RAPTOR_off + |RAPTOR_def| (balanced two-way value)
 ]
 
 # Non-metric identity/target columns to exclude from METRIC_CATALOG selection
@@ -203,8 +235,12 @@ _BASE_COVERED_COLS = {
     "points", "assists", "rebounds", "steals", "blocks",
     "per", "ts_pct", "usg_pct", "bpm",
     # New base features (already in FEATURE_COLS as avg_*)
-    "spm", "raptor_total", "lebron_total", "obpm", "dbpm",
-    "gm_sc", "scoring_efficiency", "hustle_index", "foul_drawing_rate",
+    "spm", "raptor_total", "raptor_off", "raptor_def",
+    "lebron_total", "lebron_off", "lebron_def",
+    "obpm", "dbpm",
+    "gm_sc", "fic", "ows", "dws",
+    "scoring_efficiency", "hustle_index", "foul_drawing_rate",
+    "tov_pct", "ast_pct", "orb_pct", "drb_pct",
     "clutch_pts", "clutch_ts_pct", "clutch_net_rtg",
     "net_rtg_diff", "ortg_diff",
     "pts_per_40", "ast_per_40",
@@ -266,11 +302,17 @@ class PerformanceModel:
             reg_lambda=1.0,
             random_state=42,
             verbosity=0,
+            early_stopping_rounds=50,
         )
         self.scaler = StandardScaler()
         self.feature_names: List[str] = FEATURE_COLS.copy()
         self.is_trained: bool = False
         self._shap_explainer: Optional[Any] = None
+        #: Maps ruolo_combinato / ruolo_offensivo / ruolo_difensivo → ordinal int.
+        #: Built during prepare_features(); unknown roles at inference default to 0.
+        self.role_encoding:     Dict[str, int] = {}
+        self.role_off_encoding: Dict[str, int] = {}
+        self.role_def_encoding: Dict[str, int] = {}
 
     # ------------------------------------------------------------------
     # Training helpers
@@ -286,9 +328,9 @@ class PerformanceModel:
     ) -> Dict[str, float]:
         """Build a feature row from a player-stats row.
 
-        Includes all base FEATURE_COLS plus any requested extra_metrics.
-        New DB-schema features (SPM, RAPTOR, LEBRON, clutch, on/off, per-40)
-        are included in the base set when available.
+        Includes all base FEATURE_COLS (per-36 volume, career signals, advanced
+        DB-schema metrics, all three DB role encodings, interaction features)
+        plus any extra_metrics requested by the caller.
         """
         mpg = float(stat_row.get("minutes_per_game", 0))
         if mpg <= 0:
@@ -318,54 +360,116 @@ class PerformanceModel:
             if len(ratings) >= 2 else 0.0
         )
 
-        avg_per = hist_avg("per", 12.0)
-        avg_ts  = hist_avg("ts_pct", 0.52)
-        avg_usg = hist_avg("usg_pct", 18.0)
-        avg_bpm = hist_avg("bpm", -1.0)
+        # TS% efficiency trend over career (slope of ts_pct per season)
+        if (
+            not player_stats_history.empty
+            and "ts_pct" in player_stats_history.columns
+            and len(player_stats_history) >= 2
+        ):
+            ts_vals = player_stats_history["ts_pct"].dropna().tolist()
+            ts_trend = float(np.polyfit(np.arange(len(ts_vals), dtype=float), ts_vals, 1)[0]) if len(ts_vals) >= 2 else 0.0
+        else:
+            ts_trend = 0.0
 
-        pos_enc = float(POSITION_ENCODING.get(position, POSITION_ENCODING.get(_primary_pos(position), 0)))
+        # Durability: average fraction of league max games played (proxy: 82)
+        if not player_stats_history.empty and "games_played" in player_stats_history.columns:
+            gp_vals = player_stats_history["games_played"].dropna().tolist()
+            durability = float(np.clip(np.mean(gp_vals) / 82.0, 0.0, 1.0)) if gp_vals else 0.5
+        else:
+            durability = float(np.clip(float(stat_row.get("games_played", 40)) / 82.0, 0.0, 1.0))
+
+        avg_per  = hist_avg("per",     12.0)
+        avg_ts   = hist_avg("ts_pct",   0.52)
+        avg_usg  = hist_avg("usg_pct", 18.0)
+        avg_bpm  = hist_avg("bpm",     -1.0)
+        avg_obpm = hist_avg("obpm",     0.0)
+        avg_dbpm = hist_avg("dbpm",     0.0)
+
+        # Engineered interaction features
+        avg_reb_pct = hist_avg("reb_pct", 5.0)
+        obpm_x_usg  = avg_obpm * avg_usg / 100.0
+        dbpm_x_reb  = avg_dbpm * avg_reb_pct / 100.0
+
+        avg_raptor_off = hist_avg("raptor_off", 0.0)
+        avg_raptor_def = hist_avg("raptor_def", 0.0)
+        # Two-way score: offensive value + magnitude of defensive contribution
+        two_way_score = avg_raptor_off + abs(avg_raptor_def)
+
+        pos_enc  = float(POSITION_ENCODING.get(position, POSITION_ENCODING.get(_primary_pos(position), 0)))
         peak_age = _peak_age(position)
 
         row: Dict[str, float] = {
-            "age":                float(age),
-            "position_enc":       pos_enc,
-            "competition_enc":    float(COMPETITION_ENCODING.get(
+            # --- Identity / context ------------------------------------------
+            "age":                  float(age),
+            "position_enc":         pos_enc,
+            "competition_enc":      float(COMPETITION_ENCODING.get(
                 str(stat_row.get("competition", "RS")), 0
             )),
-            "pts_per_36":         per36("points"),
-            "ast_per_36":         per36("assists"),
-            "reb_per_36":         per36("rebounds"),
-            "stl_per_36":         per36("steals"),
-            "blk_per_36":         per36("blocks"),
-            "avg_per":            avg_per,
-            "avg_ts_pct":         avg_ts,
-            "avg_usg_pct":        avg_usg,
-            "avg_bpm":            avg_bpm,
-            "form_score":         form_score,
-            "consistency_score":  consistency,
-            "career_trajectory":  trajectory,
-            "age_vs_peak_age":    float(age - peak_age),
-            # Advanced DB-schema rating models
-            "avg_spm":                hist_avg("spm", 0.0),
-            "avg_raptor_total":       hist_avg("raptor_total", 0.0),
-            "avg_lebron_total":       hist_avg("lebron_total", 0.0),
-            "avg_obpm":               hist_avg("obpm", 0.0),
-            "avg_dbpm":               hist_avg("dbpm", 0.0),
-            "avg_gm_sc":              hist_avg("gm_sc", 0.0),
-            # Efficiency / hustle
+            # --- DB role encodings (all three dimensions) --------------------
+            "role_enc":             float(self.role_encoding.get(
+                str(stat_row.get("ruolo_combinato", "") or "").strip(), 0
+            )),
+            "role_off_enc":         float(self.role_off_encoding.get(
+                str(stat_row.get("ruolo_offensivo", "") or "").strip(), 0
+            )),
+            "role_def_enc":         float(self.role_def_encoding.get(
+                str(stat_row.get("ruolo_difensivo", "") or "").strip(), 0
+            )),
+            # --- Per-36 volume stats -----------------------------------------
+            "pts_per_36":           per36("points"),
+            "ast_per_36":           per36("assists"),
+            "reb_per_36":           per36("rebounds"),
+            "stl_per_36":           per36("steals"),
+            "blk_per_36":           per36("blocks"),
+            # --- Core advanced metrics ---------------------------------------
+            "avg_per":              avg_per,
+            "avg_ts_pct":           avg_ts,
+            "avg_usg_pct":          avg_usg,
+            "avg_bpm":              avg_bpm,
+            "avg_obpm":             avg_obpm,
+            "avg_dbpm":             avg_dbpm,
+            # --- Career signals ----------------------------------------------
+            "form_score":           form_score,
+            "consistency_score":    consistency,
+            "career_trajectory":    trajectory,
+            "age_vs_peak_age":      float(age - peak_age),
+            "ts_efficiency_trend":  ts_trend,
+            "durability_score":     durability,
+            # --- Composite / model-based ratings (DB schema) -----------------
+            "avg_spm":              hist_avg("spm", 0.0),
+            "avg_raptor_off":       avg_raptor_off,
+            "avg_raptor_def":       avg_raptor_def,
+            "avg_raptor_total":     hist_avg("raptor_total", 0.0),
+            "avg_lebron_off":       hist_avg("lebron_off", 0.0),
+            "avg_lebron_def":       hist_avg("lebron_def", 0.0),
+            "avg_lebron_total":     hist_avg("lebron_total", 0.0),
+            "avg_gm_sc":            hist_avg("gm_sc", 0.0),
+            "avg_fic":              hist_avg("fic", 0.0),
+            "avg_ows":              hist_avg("ows", 0.0),
+            "avg_dws":              hist_avg("dws", 0.0),
+            # --- Efficiency / hustle -----------------------------------------
             "avg_scoring_efficiency": hist_avg("scoring_efficiency", 0.0),
             "avg_hustle_index":       hist_avg("hustle_index", 0.0),
             "avg_foul_drawing_rate":  hist_avg("foul_drawing_rate", 0.0),
-            # Clutch performance
-            "clutch_pts_per_36":      per36("clutch_pts"),
-            "avg_clutch_ts_pct":      hist_avg("clutch_ts_pct", 0.0),
-            "avg_clutch_net_rtg":     hist_avg("clutch_net_rtg", 0.0),
-            # On/Off impact
-            "avg_net_rtg_diff":       hist_avg("net_rtg_diff", 0.0),
-            "avg_ortg_diff":          hist_avg("ortg_diff", 0.0),
-            # Per-40 projection features
-            "avg_pts_per_40":         hist_avg("pts_per_40", 0.0),
-            "avg_ast_per_40":         hist_avg("ast_per_40", 0.0),
+            # --- Rate stats (normalised percentages) -------------------------
+            "avg_tov_pct":          hist_avg("tov_pct", 10.0),
+            "avg_ast_pct":          hist_avg("ast_pct", 10.0),
+            "avg_orb_pct":          hist_avg("orb_pct", 3.0),
+            "avg_drb_pct":          hist_avg("drb_pct", 12.0),
+            # --- Clutch performance ------------------------------------------
+            "clutch_pts_per_36":    per36("clutch_pts"),
+            "avg_clutch_ts_pct":    hist_avg("clutch_ts_pct", 0.0),
+            "avg_clutch_net_rtg":   hist_avg("clutch_net_rtg", 0.0),
+            # --- On/Off impact -----------------------------------------------
+            "avg_net_rtg_diff":     hist_avg("net_rtg_diff", 0.0),
+            "avg_ortg_diff":        hist_avg("ortg_diff", 0.0),
+            # --- Per-40 projection features ----------------------------------
+            "avg_pts_per_40":       hist_avg("pts_per_40", 0.0),
+            "avg_ast_per_40":       hist_avg("ast_per_40", 0.0),
+            # --- Engineered interaction features -----------------------------
+            "obpm_x_usg":           obpm_x_usg,
+            "dbpm_x_reb":           dbpm_x_reb,
+            "two_way_score":        two_way_score,
         }
 
         # PO vs RS delta and PO games played from historical data
@@ -379,15 +483,11 @@ class PerformanceModel:
             if info is None:
                 continue
             if col not in stat_row.index:
-                if info.use_per36:
-                    row[f"{col}_per_36"] = 0.0
-                else:
-                    row[f"avg_{col}"] = 0.0
+                row[f"{col}_per_36" if info.use_per36 else f"avg_{col}"] = 0.0
                 continue
             if info.use_per36:
                 row[f"{col}_per_36"] = per36(col)
             else:
-                # Use historical average if available, otherwise current value
                 if col in player_stats_history.columns:
                     vals = player_stats_history[col].dropna().tolist()
                     row[f"avg_{col}"] = float(np.mean(vals)) if vals else float(stat_row.get(col, 0))
@@ -401,15 +501,39 @@ class PerformanceModel:
     ) -> Tuple[pd.DataFrame, np.ndarray]:
         """Build training (X, y) from all player-season data.
 
+        Rebuilds all three role encodings (``ruolo_combinato``,
+        ``ruolo_offensivo``, ``ruolo_difensivo``) so codes are consistent
+        between training and inference.
+
         Args:
-            data: dict with keys ``player_stats`` and ``players``.
+            data:          dict with keys ``player_stats`` and ``players``.
             extra_metrics: additional columns from METRIC_CATALOG to include
-                as features (on top of the base FEATURE_COLS).
+                           as features (on top of the base FEATURE_COLS).
         """
         player_stats = data["player_stats"]
         players      = data["players"]
 
-        # Determine the full feature column list for this run
+        # --- Build role encodings for all three DB role columns ---------------
+        def _build_encoding(col: str) -> Dict[str, int]:
+            if col not in player_stats.columns:
+                return {}
+            unique = sorted({
+                str(v).strip()
+                for v in player_stats[col].dropna()
+                if str(v).strip()
+            })
+            return {role: idx + 1 for idx, role in enumerate(unique)}
+
+        self.role_encoding     = _build_encoding("ruolo_combinato")
+        self.role_off_encoding = _build_encoding("ruolo_offensivo")
+        self.role_def_encoding = _build_encoding("ruolo_difensivo")
+
+        if self.role_encoding:
+            print(f"[PerformanceModel] Role encoding – combinato: {len(self.role_encoding)}, "
+                  f"offensivo: {len(self.role_off_encoding)}, "
+                  f"difensivo: {len(self.role_def_encoding)}")
+
+        # --- Extra metric feature names ---------------------------------------
         extra_feature_names: List[str] = []
         for col in extra_metrics:
             info = METRIC_CATALOG.get(col)
@@ -420,7 +544,6 @@ class PerformanceModel:
                 extra_feature_names.append(feat_name)
 
         all_feature_names = FEATURE_COLS + extra_feature_names
-        # Note: self.feature_names is NOT set here; the caller (train() or GUI) sets it.
 
         if extra_metrics:
             print(f"[PerformanceModel] Metriche extra ({len(extra_metrics)}): {extra_metrics}")
@@ -445,9 +568,8 @@ class PerformanceModel:
             by  = birth_year_map.get(pid)
             if by is None:
                 continue
-            for idx, stat in grp.iterrows():
+            for _, stat in grp.iterrows():
                 season_str = str(stat["season"])
-                # approximate year from season string like "2023-24"
                 try:
                     year = int(season_str.split("-")[0])
                 except Exception:
@@ -467,29 +589,70 @@ class PerformanceModel:
     # Public API
     # ------------------------------------------------------------------
 
-    def train(self, data: Dict[str, Any], extra_metrics: List[str] = []) -> Dict[str, float]:
+    def train(
+        self,
+        data: Dict[str, Any],
+        extra_metrics: List[str] = [],
+        cv_folds: int = 0,
+    ) -> Dict[str, float]:
         """Train the model and return RMSE metrics.
 
         Args:
-            data: dict with keys ``player_stats`` and ``players``.
+            data:          dict with keys ``player_stats`` and ``players``.
             extra_metrics: additional METRIC_CATALOG columns to include as features.
+            cv_folds:      when > 1, run stratified k-fold cross-validation **in
+                           addition** to the standard train/val split.  The CV scores
+                           are returned as ``cv_mean_rmse`` and ``cv_std_rmse`` but
+                           the final model is always re-fitted on the full dataset.
         """
         print("[PerformanceModel] Building feature matrix …")
         X, y = self.prepare_features(data, extra_metrics=extra_metrics)
         self.feature_names = list(X.columns)
-        print(f"[PerformanceModel] Training on {len(X):,} samples …")
+        print(f"[PerformanceModel] Training on {len(X):,} samples, {len(self.feature_names)} features …")
 
         X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.15, random_state=42)
         X_tr_sc = self.scaler.fit_transform(X_train)
         X_va_sc = self.scaler.transform(X_val)
 
-        self.model.fit(X_tr_sc, y_train, eval_set=[(X_va_sc, y_val)], verbose=False)
+        self.model.fit(
+            X_tr_sc, y_train,
+            eval_set=[(X_va_sc, y_val)],
+            verbose=False,
+        )
 
         train_rmse = float(np.sqrt(np.mean((self.model.predict(X_tr_sc) - y_train) ** 2)))
         val_rmse   = float(np.sqrt(np.mean((self.model.predict(X_va_sc) - y_val) ** 2)))
         self.is_trained = True
         print(f"[PerformanceModel] Train RMSE={train_rmse:.4f}  Val RMSE={val_rmse:.4f}")
-        return {"train_rmse": train_rmse, "val_rmse": val_rmse}
+
+        metrics: Dict[str, float] = {"train_rmse": train_rmse, "val_rmse": val_rmse}
+
+        # Optional k-fold cross-validation for more robust evaluation
+        if cv_folds > 1:
+            print(f"[PerformanceModel] Running {cv_folds}-fold cross-validation …")
+            kf = KFold(n_splits=cv_folds, shuffle=True, random_state=42)
+            X_np = X.values.astype(float)
+            cv_rmses: List[float] = []
+            for fold, (tr_idx, va_idx) in enumerate(kf.split(X_np), 1):
+                Xtr, Xva = X_np[tr_idx], X_np[va_idx]
+                ytr, yva = y[tr_idx], y[va_idx]
+                _sc = StandardScaler()
+                Xtr_sc = _sc.fit_transform(Xtr)
+                Xva_sc = _sc.transform(Xva)
+                _m = XGBRegressor(
+                    n_estimators=300, max_depth=5, learning_rate=0.05,
+                    subsample=0.8, colsample_bytree=0.8, min_child_weight=3,
+                    reg_alpha=0.1, reg_lambda=1.0, random_state=42, verbosity=0,
+                )
+                _m.fit(Xtr_sc, ytr, verbose=False)
+                fold_rmse = float(np.sqrt(np.mean((_m.predict(Xva_sc) - yva) ** 2)))
+                cv_rmses.append(fold_rmse)
+                print(f"  Fold {fold}/{cv_folds}  RMSE={fold_rmse:.4f}")
+            metrics["cv_mean_rmse"] = float(np.mean(cv_rmses))
+            metrics["cv_std_rmse"]  = float(np.std(cv_rmses))
+            print(f"[PerformanceModel] CV RMSE={metrics['cv_mean_rmse']:.4f} ±{metrics['cv_std_rmse']:.4f}")
+
+        return metrics
 
     def predict_from_features(self, feature_dict: Dict[str, float]) -> float:
         """Predict rating from an already-engineered feature dict."""
@@ -527,14 +690,24 @@ class PerformanceModel:
 
     def save(self, path: str) -> None:
         Path(path).parent.mkdir(parents=True, exist_ok=True)
-        joblib.dump({"model": self.model, "scaler": self.scaler, "feature_names": self.feature_names}, path)
+        joblib.dump({
+            "model":              self.model,
+            "scaler":             self.scaler,
+            "feature_names":      self.feature_names,
+            "role_encoding":      self.role_encoding,
+            "role_off_encoding":  self.role_off_encoding,
+            "role_def_encoding":  self.role_def_encoding,
+        }, path)
         print(f"[PerformanceModel] Saved to {path}")
 
     def load(self, path: str) -> None:
         payload = joblib.load(path)
-        self.model         = payload["model"]
-        self.scaler        = payload["scaler"]
-        self.feature_names = payload["feature_names"]
-        self.is_trained    = True
-        self._shap_explainer = None
+        self.model              = payload["model"]
+        self.scaler             = payload["scaler"]
+        self.feature_names      = payload["feature_names"]
+        self.role_encoding      = payload.get("role_encoding", {})
+        self.role_off_encoding  = payload.get("role_off_encoding", {})
+        self.role_def_encoding  = payload.get("role_def_encoding", {})
+        self.is_trained         = True
+        self._shap_explainer    = None
         print(f"[PerformanceModel] Loaded from {path}")

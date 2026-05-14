@@ -52,6 +52,9 @@ def tiny_data():
     } for i in range(60)])
 
     stat_rows = []
+    _ROLES_COMBO = ["playmaker", "scorer", "forward", "big", "wing"]
+    _ROLES_OFF   = ["scorer", "facilitator", "spot_up", "post", "cutter"]
+    _ROLES_DEF   = ["lockdown", "stopper", "help_side", "rim_protector", "versatile"]
     for _, p in players.iterrows():
         for season in ["2021-22", "2022-23", "2023-24"]:
             mpg = np.random.uniform(15, 35)
@@ -77,10 +80,20 @@ def tiny_data():
                 "ts_pct": round(np.random.uniform(0.50, 0.65), 3),
                 "usg_pct": round(np.random.uniform(14, 30), 2),
                 "bpm": round(np.random.uniform(-3, 6), 2),
+                "obpm": round(np.random.uniform(-2, 4), 2),
+                "dbpm": round(np.random.uniform(-2, 3), 2),
                 "vorp": round(np.random.uniform(-0.5, 4), 2),
                 "win_shares": round(np.random.uniform(0, 12), 2),
                 "ast_ratio": round(np.random.uniform(5, 30), 2),
                 "reb_pct": round(np.random.uniform(3, 20), 2),
+                "tov_pct": round(np.random.uniform(8, 20), 1),
+                "ast_pct": round(np.random.uniform(5, 30), 1),
+                "orb_pct": round(np.random.uniform(1, 8), 1),
+                "drb_pct": round(np.random.uniform(5, 25), 1),
+                # DB role columns
+                "ruolo_combinato": _ROLES_COMBO[int(p["id"]) % len(_ROLES_COMBO)],
+                "ruolo_offensivo": _ROLES_OFF[int(p["id"]) % len(_ROLES_OFF)],
+                "ruolo_difensivo": _ROLES_DEF[int(p["id"]) % len(_ROLES_DEF)],
                 "rating": round(np.random.uniform(5.0, 8.5), 3),
             })
     stats = pd.DataFrame(stat_rows)

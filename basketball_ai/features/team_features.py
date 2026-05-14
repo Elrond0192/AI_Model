@@ -10,24 +10,7 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 
 from basketball_ai.data.models import Team
-
-
-def _normalize_id(value):
-    """Normalize an ID to int when possible, keep as-is for non-numeric strings."""
-    if value is None:
-        return None
-    if isinstance(value, float):
-        return int(value)
-    if isinstance(value, int):
-        return value
-    v = str(value).strip()
-    try:
-        return int(v, 10)
-    except (ValueError, TypeError):
-        try:
-            return int(v, 16)
-        except (ValueError, TypeError):
-            return v
+from basketball_ai.utils.helpers import normalize_id as _normalize_id
 
 # ---------------------------------------------------------------------------
 # Style-vs-position compatibility table (all 10 positions incl. hybrids)

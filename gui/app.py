@@ -28,6 +28,53 @@ from basketball_ai.utils.helpers import (
     parse_team_display_map,
     TEAM_DISPLAY_FIELD_MAP_ENV,
 )
+from basketball_ai.auth.auth import (
+    check_credentials,
+    create_user,
+    delete_user,
+    change_password,
+    reset_password,
+    load_users,
+    ensure_default_admin,
+)
+
+# ---------------------------------------------------------------------------
+# Authentication gate – must run before any other Streamlit rendering
+# ---------------------------------------------------------------------------
+
+# Ensure at least one admin account exists (first-run bootstrap)
+_default_pw = ensure_default_admin()
+
+if not st.session_state.get("authenticated"):
+    st.set_page_config(page_title="Basketball AI – Login", page_icon="🏀")
+    st.title("🏀 Basketball Performance AI")
+    st.subheader("Accesso riservato")
+
+    if _default_pw:
+        st.warning(
+            f"**Primo avvio**: account `admin` creato con password temporanea.\n\n"
+            f"Password: `{_default_pw}`\n\n"
+            "Cambiala subito dopo il primo accesso.",
+            icon="⚠️",
+        )
+
+    with st.form("login_form"):
+        _username = st.text_input("Username", autocomplete="username")
+        _password = st.text_input("Password", type="password", autocomplete="current-password")
+        _login_btn = st.form_submit_button("🔐 Accedi", type="primary", width="stretch")
+
+    if _login_btn:
+        _ok, _user = check_credentials(_username, _password)
+        if _ok:
+            st.session_state["authenticated"]  = True
+            st.session_state["current_user"]   = _username.strip().lower()
+            st.session_state["current_role"]   = _user.get("role", "viewer")
+            st.rerun()
+        else:
+            st.error("Credenziali non valide. Riprova.")
+
+    st.stop()
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -238,19 +285,31 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
+# ---------------------------------------------------------------------------
+# Sidebar – user info and logout
+# ---------------------------------------------------------------------------
+with st.sidebar:
+    _cur_user = st.session_state.get("current_user", "")
+    _cur_role = st.session_state.get("current_role", "")
+    st.caption(f"👤 **{_cur_user}** ({_cur_role})")
+    if st.button("🚪 Logout", width="stretch"):
+        st.session_state.clear()
+        st.rerun()
+
 st.title("🏀 Basketball Performance AI")
 
 # ---------------------------------------------------------------------------
 # Tabs
 # ---------------------------------------------------------------------------
 
-tab_data, tab_train, tab_pred, tab_scen, tab_chat, tab_mapping = st.tabs([
+tab_data, tab_train, tab_pred, tab_scen, tab_chat, tab_mapping, tab_admin = st.tabs([
     "📂 Dati",
     "🏋️ Training",
     "🎯 Predizioni",
     "🔀 Scenari",
     "💬 Chat",
     "🗺️ Mapping",
+    "👥 Utenti",
 ])
 
 # ===========================================================================
@@ -485,38 +544,49 @@ with tab_train:
         st.markdown("""
 | Parametro | Descrizione | Range consigliato |
 |---|---|---|
-| `n_estimators` | Numero di alberi XGBoost. Più è alto, più il modello è preciso ma lento. | 200–500 |
+| `n_estimators` | Numero di alberi XGBoost. Più è alto, più il modello è preciso ma lento. | 200–800 |
 | `max_depth` | Profondità massima di ogni albero. Valori alti = rischio overfitting. | 4–7 |
-| `learning_rate` | Velocità di apprendimento (eta). Bilanciare con n_estimators: più basso = più alberi necessari. | 0.01–0.1 |
+| `learning_rate` | Velocità di apprendimento (eta). Bilanciare con n_estimators: più basso = più alberi necessari. | 0.005–0.1 |
 | `subsample` | Frazione dei campioni usata per ogni albero. Riduce overfitting. | 0.7–0.9 |
 | `colsample_bytree` | Frazione delle feature usata per ogni albero. Riduce la correlazione tra alberi. | 0.6–0.9 |
 | `min_child_weight` | Peso minimo dei campioni in una foglia. Aumentare se il dataset è piccolo. | 2–6 |
 | `reg_alpha (L1)` | Regolarizzazione L1: annulla feature poco rilevanti. | 0.0–0.5 |
 | `reg_lambda (L2)` | Regolarizzazione L2: riduce smoothly i pesi. | 0.5–2.0 |
+| `early_stopping_rounds` | Ferma il training se la val-loss non migliora per N rounds consecutivi. | 20–100 |
 | `Validation split` | Frazione dei dati usata per la validazione (non per il training). | 0.10–0.20 |
+| `CV folds` | K-fold cross-validation per valutare la stabilità del modello. 0 = disabilitata. | 0, 3, 5, 10 |
 | `Random seed` | Seme per la riproducibilità dei risultati. | Qualsiasi intero |
-        """)
+
+Il modello usa **{n_features} feature** tra cui:
+- Ruoli DB: `ruolo_combinato`, `ruolo_offensivo`, `ruolo_difensivo` (3 dimensioni separate)
+- RAPTOR offensivo/difensivo, LEBRON off/def, OWS/DWS, FIC
+- Feature di interazione: `OBPM × USG%`, `DBPM × REB%`, `two_way_score`
+- Trend di efficienza (TS%), durabilità, segnali di carriera
+        """.format(n_features=len(__import__('basketball_ai.models.performance_model', fromlist=['FEATURE_COLS']).FEATURE_COLS)))
 
     # -----------------------------------------------------------------------
     # Preset buttons
     # -----------------------------------------------------------------------
     _PRESETS = {
         "🏆 Preciso": dict(
-            n_estimators=800, max_depth=7, learning_rate=0.01,
+            n_estimators=1000, max_depth=6, learning_rate=0.01,
             subsample=0.85, colsample_bytree=0.85, min_child_weight=2,
             reg_alpha=0.1, reg_lambda=1.5, test_size=0.15, seed=42,
-            label="Alta precisione – addestramento lento (~5–10 min), ottimi risultati",
+            early_stopping=50, cv_folds=5,
+            label="Alta precisione – addestramento lento (~5–15 min), ottimi risultati",
         ),
         "⚖️ Bilanciato": dict(
-            n_estimators=300, max_depth=5, learning_rate=0.05,
+            n_estimators=400, max_depth=5, learning_rate=0.03,
             subsample=0.80, colsample_bytree=0.80, min_child_weight=3,
             reg_alpha=0.1, reg_lambda=1.0, test_size=0.15, seed=42,
-            label="Bilanciato – addestramento medio (~1–2 min), buoni risultati (default)",
+            early_stopping=30, cv_folds=0,
+            label="Bilanciato – addestramento medio (~2–4 min), buoni risultati (default)",
         ),
         "⚡ Veloce": dict(
-            n_estimators=100, max_depth=4, learning_rate=0.1,
+            n_estimators=150, max_depth=4, learning_rate=0.1,
             subsample=0.70, colsample_bytree=0.70, min_child_weight=4,
             reg_alpha=0.0, reg_lambda=0.5, test_size=0.20, seed=42,
+            early_stopping=20, cv_folds=0,
             label="Veloce – addestramento rapido (<30 s), precisione ridotta",
         ),
     }
@@ -524,7 +594,7 @@ with tab_train:
     _pcols = st.columns(3)
     for _pi, (_pname, _pvals) in enumerate(_PRESETS.items()):
         with _pcols[_pi]:
-            if st.button(_pname, key=f"preset_{_pi}", use_container_width=True,
+            if st.button(_pname, key=f"preset_{_pi}", width="stretch",
                          help=_pvals["label"]):
                 st.session_state["t_nest"]       = _pvals["n_estimators"]
                 st.session_state["t_depth"]      = _pvals["max_depth"]
@@ -536,6 +606,8 @@ with tab_train:
                 st.session_state["t_lambda"]     = _pvals["reg_lambda"]
                 st.session_state["t_split"]      = _pvals["test_size"]
                 st.session_state["t_seed"]       = _pvals["seed"]
+                st.session_state["t_early_stop"] = _pvals["early_stopping"]
+                st.session_state["t_cv_folds"]   = _pvals["cv_folds"]
                 st.rerun()
 
     col1, col2 = st.columns(2)
@@ -574,6 +646,15 @@ with tab_train:
         xgb_reg_lambda = st.slider(
             "reg_lambda (L2)", 0.0, 3.0, 1.0, step=0.1, key="t_lambda",
             help="Regolarizzazione L2: riduce smoothly i pesi. Range consigliato: 0.5–2.0.",
+        )
+        st.markdown("**Early Stopping & Cross-Validation**")
+        early_stopping_rounds = st.slider(
+            "early_stopping_rounds", 0, 200, 30, step=10, key="t_early_stop",
+            help="Ferma il training se la val-loss non migliora per N rounds. 0 = disabilitato.",
+        )
+        cv_folds_gui = st.select_slider(
+            "CV folds (k-fold)", options=[0, 3, 5, 10], value=0, key="t_cv_folds",
+            help="K-fold cross-validation per stimare la stabilità del modello. 0 = disabilitata.",
         )
         st.markdown("**Generale**")
         seed = st.number_input(
@@ -687,6 +768,7 @@ with tab_train:
                     reg_lambda=xgb_reg_lambda,
                     random_state=int(seed),
                     verbosity=0,
+                    early_stopping_rounds=int(early_stopping_rounds) if early_stopping_rounds > 0 else None,
                 )
                 perf_model.scaler = StandardScaler()
 
@@ -731,6 +813,53 @@ with tab_train:
                 log(f"Performance model – Train RMSE: {train_rmse:.4f}")
                 log(f"Performance model – Val   RMSE: {val_rmse:.4f}  MAE: {val_mae:.4f}  R²: {val_r2:.4f}")
 
+                metrics_dict = {
+                    "train_rmse": train_rmse,
+                    "val_rmse":   val_rmse,
+                    "val_mae":    val_mae,
+                    "val_r2":     val_r2,
+                }
+
+                # Optional k-fold cross-validation
+                if cv_folds_gui > 1:
+                    log(f"Avvio {cv_folds_gui}-fold cross-validation …")
+                    progress.progress(55, text=f"{cv_folds_gui}-fold cross-validation …")
+                    from sklearn.model_selection import KFold as _KFold
+                    kf = _KFold(n_splits=cv_folds_gui, shuffle=True, random_state=int(seed))
+                    X_np = X.values.astype(float)
+                    cv_rmses_gui = []
+                    cv_r2s_gui   = []
+                    for fold_idx, (tr_i, va_i) in enumerate(_kf_iter := kf.split(X_np), 1):
+                        _Xtr, _Xva = X_np[tr_i], X_np[va_i]
+                        _ytr, _yva = y_full[tr_i], y_full[va_i]
+                        _sc2 = StandardScaler()
+                        _Xtr_sc = _sc2.fit_transform(_Xtr)
+                        _Xva_sc = _sc2.transform(_Xva)
+                        _m2 = XGBRegressor(
+                            n_estimators=xgb_n_estimators,
+                            max_depth=xgb_max_depth, learning_rate=xgb_lr,
+                            subsample=xgb_subsample, colsample_bytree=xgb_colsample,
+                            min_child_weight=xgb_min_child_weight,
+                            reg_alpha=xgb_reg_alpha, reg_lambda=xgb_reg_lambda,
+                            random_state=int(seed), verbosity=0,
+                        )
+                        _m2.fit(_Xtr_sc, _ytr, verbose=False)
+                        _ypred = _m2.predict(_Xva_sc)
+                        fold_rmse = float(np.sqrt(np.mean((_ypred - _yva) ** 2)))
+                        fold_r2   = float(skm.r2_score(_yva, _ypred))
+                        cv_rmses_gui.append(fold_rmse)
+                        cv_r2s_gui.append(fold_r2)
+                        log(f"  Fold {fold_idx}/{cv_folds_gui}  RMSE={fold_rmse:.4f}  R²={fold_r2:.4f}")
+                    cv_mean = float(np.mean(cv_rmses_gui))
+                    cv_std  = float(np.std(cv_rmses_gui))
+                    cv_r2_mean = float(np.mean(cv_r2s_gui))
+                    log(f"CV  RMSE={cv_mean:.4f} ±{cv_std:.4f}   R²={cv_r2_mean:.4f}")
+                    metrics_dict.update({
+                        "cv_mean_rmse": cv_mean,
+                        "cv_std_rmse":  cv_std,
+                        "cv_mean_r2":   cv_r2_mean,
+                    })
+
                 progress.progress(60, text="Training compatibility model …")
                 compat_model = CompatibilityModel()
                 compat_model.train(data_t)
@@ -743,12 +872,6 @@ with tab_train:
                 )
                 save_dir = _safe_model_dir(model_dir_gui)
                 save_dir.mkdir(parents=True, exist_ok=True)
-                metrics_dict = {
-                    "train_rmse": train_rmse,
-                    "val_rmse":   val_rmse,
-                    "val_mae":    val_mae,
-                    "val_r2":     val_r2,
-                }
                 ensemble.save(str(save_dir), metrics=metrics_dict)
                 _abs_save = save_dir.resolve()
                 log(f"Modelli salvati in: {_abs_save}")
@@ -780,11 +903,15 @@ with tab_train:
         st.divider()
         st.subheader("C · Risultati")
         m = st.session_state["metrics"]
-        c1, c2, c3, c4 = st.columns(4)
+        _n_cv_cols = 6 if "cv_mean_rmse" in m else 4
+        c1, c2, c3, c4, *_rest = st.columns(_n_cv_cols)
         c1.metric("Train RMSE", f"{m['train_rmse']:.4f}")
         c2.metric("Val RMSE",   f"{m['val_rmse']:.4f}")
         c3.metric("Val MAE",    f"{m['val_mae']:.4f}")
         c4.metric("Val R²",     f"{m['val_r2']:.4f}")
+        if "cv_mean_rmse" in m and _rest:
+            _rest[0].metric("CV RMSE",    f"{m['cv_mean_rmse']:.4f} ±{m['cv_std_rmse']:.4f}")
+            _rest[1].metric("CV R²",      f"{m['cv_mean_r2']:.4f}")
 
         perf_model_r = st.session_state.get("perf_model")
         if perf_model_r and perf_model_r.is_trained:
@@ -1075,7 +1202,7 @@ with tab_pred:
                             st.dataframe(
                                 pd.DataFrame(stat_rows),
                                 hide_index=True,
-                                use_container_width=True,
+                                width="stretch",
                             )
                             st.caption(
                                 "⚠️ Le statistiche sono proiezioni scalate dall'ultima stagione "
@@ -1188,8 +1315,13 @@ with tab_scen:
     if data_s is not None:
         engine_s = _require_engine(data_s)
         if engine_s is not None:
-            from basketball_ai.scenarios.engine import ADVANCED_ROLES
+            from basketball_ai.scenarios.engine import (
+                ADVANCED_ROLES, ROLE_DIMENSIONS, get_available_roles,
+            )
             import numpy as np
+
+            # Default combined-role map used in the manual lineup mode expander.
+            _combined_roles = get_available_roles(data_s, dimension="ruolo_combinato")
 
             players_df_s = data_s["players"]
             teams_df_s   = data_s["teams"]
@@ -1354,9 +1486,9 @@ with tab_scen:
 
                 if lu_mode == "🎯 Per giocatori":
                     # ---- Manual mode: pick teammates ----------------------
-                    with st.expander("ℹ️ Ruoli disponibili", expanded=False):
-                        for r_key, r_desc in ADVANCED_ROLES.items():
-                            st.markdown(f"**{r_key}** — {r_desc}")
+                    with st.expander("ℹ️ Ruoli disponibili (combinato)", expanded=False):
+                        for r_key, r_desc in _combined_roles.items():
+                            st.markdown(f"**{r_key}** — {r_desc}" if r_key != r_desc else f"**{r_key}**")
 
                     other_opts = {k: v for k, v in player_opts_s.items() if k != lu_player}
                     # Search for multiselect
@@ -1451,14 +1583,36 @@ with tab_scen:
                 else:
                     # ---- Role-based mode ----------------------------------
                     st.markdown("Seleziona i **ruoli** dei compagni che vuoi attorno al giocatore target.")
-                    with st.expander("ℹ️ Descrizione ruoli avanzati", expanded=True):
-                        for r_key, r_desc in ADVANCED_ROLES.items():
-                            st.markdown(f"**{r_key}** — {r_desc}")
+
+                    # Dimension selector: which role column to use for filtering
+                    _dim_labels = {
+                        "ruolo_combinato": "🔄 Ruolo combinato (offensivo + difensivo)",
+                        "ruolo_offensivo": "⚡ Solo ruolo offensivo",
+                        "ruolo_difensivo": "🛡️ Solo ruolo difensivo",
+                    }
+                    _sel_dim = st.radio(
+                        "Filtra per dimensione ruolo",
+                        options=list(_dim_labels.keys()),
+                        format_func=lambda x: _dim_labels[x],
+                        horizontal=True,
+                        key="lu_role_dimension",
+                    )
+                    # Build available roles from the chosen dimension
+                    _available_roles = get_available_roles(data_s, dimension=_sel_dim)
+                    _using_db_roles = _available_roles != dict(ADVANCED_ROLES)
+                    if _using_db_roles:
+                        st.caption(f"ℹ️ Ruoli letti dal database (`{_sel_dim}`).")
+                    else:
+                        st.caption("ℹ️ Ruoli classificati euristicamente (colonna DB non presente o vuota).")
+
+                    with st.expander("ℹ️ Ruoli disponibili", expanded=True):
+                        for r_key, r_desc in _available_roles.items():
+                            st.markdown(f"**{r_key}** — {r_desc}" if r_key != r_desc else f"**{r_key}**")
 
                     desired_roles = st.multiselect(
                         "🎭 Ruoli desiderati (fino a 4)",
-                        options=list(ADVANCED_ROLES.keys()),
-                        default=list(ADVANCED_ROLES.keys())[:3],
+                        options=list(_available_roles.keys()),
+                        default=list(_available_roles.keys())[:min(3, len(_available_roles))],
                         max_selections=4,
                         key="lu_roles",
                         format_func=lambda x: x,
@@ -1476,6 +1630,7 @@ with tab_scen:
                                         desired_roles=desired_roles,
                                         season=int(lu_season),
                                         top_n_per_role=int(top_n_role),
+                                        role_dimension=_sel_dim,
                                     )
 
                                     st.success(
@@ -1483,15 +1638,17 @@ with tab_scen:
                                         f"— Rating medio: **{result_r.estimated_avg_rating:.2f}**"
                                     )
 
-                                    # Show optimal lineup
+                                    # Show optimal lineup with all three role columns
                                     if result_r.optimal_lineup:
                                         opt_df = pd.DataFrame([{
-                                            "Ruolo target":    p["target_role"],
-                                            "Giocatore":       p["player_name"],
-                                            "Posizione":       p["position"],
-                                            "Squadra attuale": p["current_team"],
-                                            "Rating predetto": p["predicted_rating"],
-                                            "Ruolo classificato": p["role"],
+                                            "Ruolo target":       p["target_role"],
+                                            "Giocatore":          p["player_name"],
+                                            "Posizione":          p["position"],
+                                            "Squadra attuale":    p["current_team"],
+                                            "Rating predetto":    p["predicted_rating"],
+                                            "Ruolo combinato":    p.get("ruolo_combinato", ""),
+                                            "Ruolo offensivo":    p.get("ruolo_offensivo", ""),
+                                            "Ruolo difensivo":    p.get("ruolo_difensivo", ""),
                                         } for p in result_r.optimal_lineup])
                                         st.dataframe(opt_df, width='stretch', hide_index=True)
 
@@ -1508,6 +1665,9 @@ with tab_scen:
                                                     "Posizione":       c["position"],
                                                     "Squadra":         c["current_team"],
                                                     "Rating predetto": c["predicted_rating"],
+                                                    "Ruolo combinato": c.get("ruolo_combinato", ""),
+                                                    "Ruolo offensivo": c.get("ruolo_offensivo", ""),
+                                                    "Ruolo difensivo": c.get("ruolo_difensivo", ""),
                                                 } for c in rc.candidates])
                                                 st.dataframe(cand_df, width='stretch',
                                                              hide_index=True)
@@ -1921,7 +2081,7 @@ with tab_mapping:
                     st.dataframe(
                         pd.DataFrame(_prev_rows),
                         hide_index=True,
-                        use_container_width=True,
+                        width="stretch",
                     )
 
         st.divider()
@@ -1939,10 +2099,8 @@ with tab_mapping:
                 _save_to_env(TEAM_DISPLAY_FIELD_MAP_ENV, _new_map_str)
                 # Update session state so subsequent reruns use the new values
                 st.session_state["team_display_map_rows"] = _edited_display.to_dict("records")
-                st.success(
-                    "✅ Display mapping salvato nel file `.env`. "
-                    "I nomi delle squadre si aggiorneranno al prossimo rendering."
-                )
+                st.toast("✅ Display mapping salvato. Aggiornamento in corso…", icon="💾")
+                st.rerun()
 
         with _dc2:
             if st.button("↩️ Ripristina default", key="display_map_reset"):
@@ -1960,3 +2118,145 @@ with tab_mapping:
                     f"**Env-var:** `{TEAM_DISPLAY_FIELD_MAP_ENV}` non impostata — "
                     "comportamento di default: usa ShortName se disponibile, altrimenti TeamName."
                 )
+
+# ===========================================================================
+# TAB 7 – GESTIONE UTENTI (solo admin)
+# ===========================================================================
+
+with tab_admin:
+    st.header("👥 Gestione Utenti")
+    _is_admin = st.session_state.get("current_role") == "admin"
+
+    if not _is_admin:
+        st.warning("⛔ Accesso riservato agli amministratori.")
+        st.stop()
+
+    # -----------------------------------------------------------------------
+    # User list
+    # -----------------------------------------------------------------------
+    _all_users = load_users()
+    st.subheader(f"Utenti registrati ({len(_all_users)})")
+    if _all_users:
+        _users_df = pd.DataFrame([
+            {
+                "Username": uname,
+                "Ruolo":    info.get("role", "—"),
+                "Creato da": info.get("created_by", "—"),
+            }
+            for uname, info in _all_users.items()
+        ])
+        st.dataframe(_users_df, width="stretch", hide_index=True)
+    else:
+        st.caption("Nessun utente trovato.")
+
+    st.divider()
+
+    # -----------------------------------------------------------------------
+    # Create user
+    # -----------------------------------------------------------------------
+    with st.expander("➕ Crea nuovo utente", expanded=False):
+        with st.form("admin_create_user"):
+            _new_uname = st.text_input("Username", key="au_new_uname")
+            _new_pw    = st.text_input("Password", type="password", key="au_new_pw")
+            _new_pw2   = st.text_input("Conferma password", type="password", key="au_new_pw2")
+            _new_role  = st.selectbox(
+                "Ruolo", ["viewer", "analyst", "admin"], key="au_new_role"
+            )
+            _create_btn = st.form_submit_button("Crea utente", type="primary")
+
+        if _create_btn:
+            if not _new_uname.strip():
+                st.error("Inserisci un username.")
+            elif not _new_pw:
+                st.error("Inserisci una password.")
+            elif _new_pw != _new_pw2:
+                st.error("Le password non coincidono.")
+            else:
+                _ok = create_user(
+                    _new_uname, _new_pw, _new_role,
+                    created_by=st.session_state.get("current_user", "admin"),
+                )
+                if _ok:
+                    st.success(f"✅ Utente **{_new_uname.strip().lower()}** creato con ruolo **{_new_role}**.")
+                    st.rerun()
+                else:
+                    st.error(f"Username **{_new_uname.strip().lower()}** già esistente.")
+
+    # -----------------------------------------------------------------------
+    # Reset password
+    # -----------------------------------------------------------------------
+    with st.expander("🔑 Reset password utente", expanded=False):
+        _all_usernames = list(_all_users.keys())
+        if _all_usernames:
+            with st.form("admin_reset_pw"):
+                _reset_uname = st.selectbox(
+                    "Utente da modificare", _all_usernames, key="au_reset_uname"
+                )
+                _reset_pw  = st.text_input("Nuova password", type="password", key="au_reset_pw")
+                _reset_pw2 = st.text_input(
+                    "Conferma nuova password", type="password", key="au_reset_pw2"
+                )
+                _reset_btn = st.form_submit_button("Reimposta password", type="primary")
+
+            if _reset_btn:
+                if not _reset_pw:
+                    st.error("Inserisci una nuova password.")
+                elif _reset_pw != _reset_pw2:
+                    st.error("Le password non coincidono.")
+                else:
+                    _ok = reset_password(_reset_uname, _reset_pw)
+                    if _ok:
+                        st.success(f"✅ Password di **{_reset_uname}** aggiornata.")
+                    else:
+                        st.error("Errore durante il reset della password.")
+        else:
+            st.caption("Nessun utente disponibile.")
+
+    # -----------------------------------------------------------------------
+    # Delete user
+    # -----------------------------------------------------------------------
+    with st.expander("🗑️ Elimina utente", expanded=False):
+        _deletable = [u for u in _all_users if u != st.session_state.get("current_user")]
+        if _deletable:
+            with st.form("admin_delete_user"):
+                _del_uname = st.selectbox(
+                    "Utente da eliminare", _deletable, key="au_del_uname"
+                )
+                _del_btn = st.form_submit_button("❌ Elimina", type="primary")
+
+            if _del_btn:
+                _ok = delete_user(_del_uname)
+                if _ok:
+                    st.success(f"✅ Utente **{_del_uname}** eliminato.")
+                    st.rerun()
+                else:
+                    st.error("Errore durante l'eliminazione.")
+        else:
+            st.caption("Non è possibile eliminare il proprio account o altri utenti.")
+
+    # -----------------------------------------------------------------------
+    # Change own password
+    # -----------------------------------------------------------------------
+    st.divider()
+    st.subheader("🔒 Cambia la tua password")
+    with st.form("admin_change_own_pw"):
+        _own_old  = st.text_input("Password attuale",   type="password", key="au_own_old")
+        _own_new  = st.text_input("Nuova password",     type="password", key="au_own_new")
+        _own_new2 = st.text_input("Conferma password",  type="password", key="au_own_new2")
+        _own_btn  = st.form_submit_button("Aggiorna password", type="primary")
+
+    if _own_btn:
+        if not _own_new:
+            st.error("Inserisci una nuova password.")
+        elif _own_new != _own_new2:
+            st.error("Le password non coincidono.")
+        else:
+            _ok = change_password(
+                st.session_state.get("current_user", ""),
+                _own_old, _own_new,
+            )
+            if _ok:
+                st.success("✅ Password aggiornata con successo.")
+            else:
+                st.error("Password attuale errata.")
+

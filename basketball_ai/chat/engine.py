@@ -23,24 +23,7 @@ from basketball_ai.chat.entities import (
 )
 from basketball_ai.chat import session as _session
 from basketball_ai.utils.helpers import team_display_name as _team_display_name
-
-
-def _normalize_id(value: Any) -> Any:
-    """Normalize an ID to int when possible, keep as-is for non-numeric strings."""
-    if value is None:
-        return None
-    if isinstance(value, float):
-        return int(value)
-    if isinstance(value, int):
-        return value
-    v = str(value).strip()
-    try:
-        return int(v, 10)
-    except (ValueError, TypeError):
-        try:
-            return int(v, 16)
-        except (ValueError, TypeError):
-            return v
+from basketball_ai.utils.helpers import normalize_id as _normalize_id
 
 
 # ---------------------------------------------------------------------------
@@ -622,6 +605,31 @@ class ChatEngine:
         if intent == Intent.INDIVIDUAL:
             if not player_id:
                 return self._need_player(), {}, []
+            # If the user also mentioned a team, they likely want a prediction
+            # at that team (e.g. "Diego Flaccadori statistiche nel Panathinaikos")
+            if team_id:
+                intent = Intent.PREDICT
+                # Fall through to the PREDICT block below by re-dispatching
+                try:
+                    res    = self.engine.predict_in_team(player_id, team_id)
+                    league = ld_.get(
+                        int(td_.get(team_id, {}).get("league_id", 1)), {}
+                    )
+                    reply = (
+                        f"**{player_name}** al **{team_name}**"
+                        f" ({league.get('name', '')})\n\n"
+                        f"Rating predetto: **{res.predicted_rating:.2f} / 10**\n"
+                        f"Intervallo di confidenza:"
+                        f" [{res.confidence_low:.2f} – {res.confidence_high:.2f}]\n\n"
+                        f"_{res.explanation}_"
+                    )
+                    return reply, _to_dict(res), [
+                        f"Quando raggiungerà il picco {player_name}?",
+                        f"Migliori squadre per {player_name}?",
+                        f"Come si comporterebbe {player_name} con compagni d'élite?",
+                    ]
+                except Exception as exc:
+                    return f"Non sono riuscito a calcolare la previsione ({exc}).", {}, []
             try:
                 player_row = pd_.get(_normalize_id(player_id), {})
                 position   = str(player_row.get("position", "?"))
