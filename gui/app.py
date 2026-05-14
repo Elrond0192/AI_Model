@@ -2577,10 +2577,13 @@ with tab_admin:
     if not _is_admin:
         st.warning("⛔ Accesso riservato agli amministratori.")
     else:
+        # Load all users and roles once at the start of the admin block
+        _all_users     = load_users()
+        _current_roles = load_roles()
+
         # -----------------------------------------------------------------------
         # User list
         # -----------------------------------------------------------------------
-        _all_users = load_users()
         st.subheader(f"Utenti registrati ({len(_all_users)})")
         if _all_users:
             _users_df = pd.DataFrame([
@@ -2606,7 +2609,7 @@ with tab_admin:
                 _new_pw    = st.text_input("Password", type="password", key="au_new_pw")
                 _new_pw2   = st.text_input("Conferma password", type="password", key="au_new_pw2")
                 _new_role  = st.selectbox(
-                    "Ruolo", list(load_roles().keys()), key="au_new_role"
+                    "Ruolo", list(_current_roles.keys()), key="au_new_role"
                 )
                 _create_btn = st.form_submit_button("Crea utente", type="primary")
 
