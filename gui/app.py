@@ -2105,7 +2105,8 @@ with tab_scout:
                     _seasons_to = max(0, _peak_age - _sr["age"])
 
                     # Use RS (Regular Season) stats for strengths/DNA when available
-                    _ls = _sr.get("latest_stats_rs") or _sr["latest_stats"]
+                    _ls_rs_available = bool(_sr.get("latest_stats_rs"))
+                    _ls = _sr["latest_stats_rs"] if _ls_rs_available else _sr["latest_stats"]
 
                     # Minutes context for tier label
                     _ls_mpg = float(_ls.get("minutes_per_game", 0) or 0)
@@ -2215,6 +2216,9 @@ with tab_scout:
 
                     # --- Performance DNA Chart ---
                     st.subheader("🧬 DNA Prestativo")
+                    # BPM normalisation: shift [-10, +10] → [0%, 100%] so that
+                    # negative values still render (0% = BPM −10, 50% = neutral, 100% = +10).
+                    _BPM_MIN, _BPM_MAX = -10.0, 10.0
                     _dna_cols = [
                         ("Punti",         "points",           20.0),
                         ("Rimbalzi",      "rebounds",         12.0),
@@ -2232,8 +2236,7 @@ with tab_scout:
                     for _label, _col, _max_val in _dna_cols:
                         _raw = float(_ls.get(_col, 0) or 0)
                         if _col == "bpm":
-                            # Shift BPM: map [-10, +10] → [0, 100]
-                            _pct = min(100.0, max(0.0, (_raw + 10.0) / 20.0 * 100))
+                            _pct = min(100.0, max(0.0, (_raw - _BPM_MIN) / (_BPM_MAX - _BPM_MIN) * 100))
                         else:
                             _pct = min(100.0, max(0.0, _raw / _max_val * 100))
                         _dna_data[_label] = round(_pct, 1)
@@ -2248,11 +2251,11 @@ with tab_scout:
                             list(_dna_data.items()), columns=["Metrica", "Percentuale (0-100)"]
                         ).set_index("Metrica")
                         st.bar_chart(_dna_df, height=350)
-                        _dna_src = "RS (Regular Season)" if _ls is not _sr["latest_stats"] else "ultima stagione disponibile"
+                        _dna_src = "RS (Regular Season)" if _ls_rs_available else "ultima stagione disponibile"
                         st.caption(
                             f"Valori normalizzati rispetto ai massimi di riferimento. "
                             f"Fonte dati: {_dna_src}. "
-                            "BPM riscalato: 50% = neutro (0.0), 100% = +10, 0% = −10."
+                            f"BPM riscalato: 50% = neutro (0.0), 100% = +{_BPM_MAX:.0f}, 0% = {_BPM_MIN:.0f}."
                         )
 
                     # --- Career Trajectory Chart ---

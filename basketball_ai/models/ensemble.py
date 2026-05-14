@@ -28,6 +28,31 @@ from basketball_ai.features.player_features import compute_player_features
 from basketball_ai.features.team_features import compute_team_features
 from basketball_ai.features.context_features import compute_context_features
 
+# ---------------------------------------------------------------------------
+# Tuning constants – centralised so that calibration changes require edits in
+# one place only.
+# ---------------------------------------------------------------------------
+
+# Age-curve ratio bounds: caps how much the base rating can be amplified (or
+# shrunk) when projecting a player to a different age.  A ceiling of 1.5×
+# prevents unrealistically high peak projections for post-peak players.
+_AGE_RATIO_MIN: float = 0.50
+_AGE_RATIO_MAX: float = 1.50
+
+# Contextual fit multiplier: maps the weighted ctx_score onto a rating
+# multiplier with a wider range than the old ±2% so that position/style fit
+# creates meaningful differentiation between teams for different players.
+_CTX_MULT_OFFSET: float = 0.78   # value at ctx_score == 0.50
+_CTX_MULT_SLOPE:  float = 0.55   # sensitivity to ctx_score above the anchor
+_CTX_MULT_LO:     float = 0.72   # hard lower bound
+_CTX_MULT_HI:     float = 1.08   # hard upper bound
+
+# Playing-time factor: scales down ratings for bench players with low minutes.
+# At _MPG_BASELINE minutes per game the factor reaches 1.0 (no discount).
+_MPG_FACTOR_BASE:     float = 0.60   # factor at 0 min/game (theoretical floor)
+_MPG_FACTOR_RANGE:    float = 0.40   # additive range: base + range = 1.0 at baseline
+_MPG_BASELINE:        float = 30.0   # minutes/game at which factor = 1.0
+
 
 @dataclass
 class PredictionResult:
@@ -142,7 +167,7 @@ class EnsembleModel:
         af = target_af
 
         if target_age is not None and target_age != current_age and current_af > 0.01:
-            age_ratio   = float(np.clip(target_af / current_af, 0.5, 1.5))
+            age_ratio   = float(np.clip(target_af / current_af, _AGE_RATIO_MIN, _AGE_RATIO_MAX))
             base_rating = float(np.clip(base_rating * age_ratio, 3.5, 10.0))
 
         # 4. Compatibility: KNN score [0,1] → mapped to multiplier [0.90, 1.10]
@@ -170,13 +195,21 @@ class EnsembleModel:
         # Map ctx_score (range ~0.55–0.98) to multiplier; wider range than before
         # so that a PG in pace-and-space vs a C in the same team get noticeably
         # different ratings, preventing all players from ranking teams identically.
-        ctx_mult = float(np.clip(0.78 + (ctx_score - 0.50) * 0.55, 0.72, 1.08))
+        ctx_mult = float(np.clip(
+            _CTX_MULT_OFFSET + (ctx_score - 0.50) * _CTX_MULT_SLOPE,
+            _CTX_MULT_LO,
+            _CTX_MULT_HI,
+        ))
 
         # 7. Playing-time adjustment: bench players (low minutes) are penalised.
         # A player averaging 10 min/game contributes much less proven impact than
         # a 30-min starter even when per-36 stats look similar.
         # Factor: ≥30 min → 1.00; 20 min → 0.93; 10 min → 0.73
-        mpg_factor = float(np.clip(0.60 + min(latest_mpg, 30.0) / 30.0 * 0.40, 0.60, 1.00))
+        mpg_factor = float(np.clip(
+            _MPG_FACTOR_BASE + min(latest_mpg, _MPG_BASELINE) / _MPG_BASELINE * _MPG_FACTOR_RANGE,
+            _MPG_FACTOR_BASE,
+            1.00,
+        ))
 
         # Final rating (apply mpg_factor before CI so interval is always consistent)
         adjusted = float(np.clip(base_rating * compat_mult * lf * ctx_mult, 3.5, 10.0))
