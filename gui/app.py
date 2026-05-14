@@ -460,6 +460,7 @@ with tab_data:
                 "Connection string",
                 value=os.environ.get("AZURE_SQL_CONNECTION_STRING", ""),
                 type="password",
+                autocomplete="off",
                 help=(
                     "SQLAlchemy URL, es.: "
                     "mssql+pyodbc://user:pass@server.database.windows.net/db"
