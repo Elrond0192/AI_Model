@@ -302,12 +302,13 @@ st.title("🏀 Basketball Performance AI")
 # Tabs
 # ---------------------------------------------------------------------------
 
-tab_data, tab_train, tab_pred, tab_scen, tab_chat, tab_mapping, tab_admin = st.tabs([
+tab_data, tab_train, tab_pred, tab_scen, tab_chat, tab_scout, tab_mapping, tab_admin = st.tabs([
     "📂 Dati",
     "🏋️ Training",
     "🎯 Predizioni",
     "🔀 Scenari",
     "💬 Chat",
+    "🔬 Scouting AI",
     "🗺️ Mapping",
     "👥 Utenti",
 ])
@@ -1810,6 +1811,350 @@ with tab_chat:
                 st.rerun()
 
 
+# ===========================================================================
+# TAB 6 – SCOUTING AI
+# ===========================================================================
+
+with tab_scout:
+    st.header("🔬 Scouting AI — Intelligence Platform")
+    st.caption(
+        "Genera report di scouting automatici, trova i giocatori più simili nel database, "
+        "analizza il DNA prestativo e individua il miglior contesto di squadra."
+    )
+
+    data_sc = _require_data()
+    if data_sc is not None:
+        engine_sc = _require_engine(data_sc)
+        if engine_sc is not None:
+
+            # ------------------------------------------------------------------
+            # Player selector
+            # ------------------------------------------------------------------
+            _sc_players = {
+                int(r["id"]): str(r["name"])
+                for _, r in data_sc["players"].iterrows()
+            }
+            sc_col1, sc_col2 = st.columns([2, 1])
+            with sc_col1:
+                _sc_srch = st.text_input(
+                    "🔍 Cerca giocatore",
+                    key="_s_scout_player",
+                    placeholder="Nome giocatore…",
+                    label_visibility="collapsed",
+                )
+            _sc_filtered = (
+                {k: v for k, v in _sc_players.items()
+                 if _sc_srch.strip().lower() in v.lower()}
+                if _sc_srch.strip() else _sc_players
+            )
+            if not _sc_filtered:
+                _sc_filtered = _sc_players
+            scout_player_id = sc_col1.selectbox(
+                "Giocatore da analizzare",
+                list(_sc_filtered.keys()),
+                format_func=lambda x: _sc_filtered.get(x, str(x)),
+                key="scout_player",
+            )
+            with sc_col2:
+                _sc_season = st.number_input(
+                    "Stagione", min_value=2000, max_value=2040,
+                    value=2024, key="scout_season",
+                )
+
+            if st.button("🔬 Genera Report Scouting", type="primary", key="scout_run"):
+                with st.spinner("Analisi AI in corso …"):
+                    try:
+                        import numpy as np
+
+                        # --- Fetch player data --------------------------------
+                        _sc_player_row = data_sc["player_dict"].get(scout_player_id, {})
+                        _sc_name       = _sc_filtered.get(scout_player_id, f"Giocatore {scout_player_id}")
+                        _sc_age        = int(_sc_player_row.get("age", 25))
+                        _sc_pos        = str(_sc_player_row.get("position", "—"))
+                        _sc_nat        = str(_sc_player_row.get("nationality", "—"))
+                        _sc_height     = int(_sc_player_row.get("height_cm", 0))
+                        _sc_weight     = int(_sc_player_row.get("weight_kg", 0))
+
+                        _sc_stats_df   = data_sc["player_stats"]
+                        _sc_mask       = _sc_stats_df["player_id"] == scout_player_id
+                        _sc_p_stats    = _sc_stats_df[_sc_mask].sort_values("season")
+                        _sc_latest     = _sc_p_stats.iloc[-1].to_dict() if not _sc_p_stats.empty else {}
+
+                        # --- Predict current performance ----------------------
+                        _sc_cur_team = _sc_player_row.get("current_team_id")
+                        if _sc_cur_team is None and not _sc_p_stats.empty:
+                            _sc_cur_team = _sc_p_stats.iloc[-1].get("team_id")
+                        if _sc_cur_team is None:
+                            _sc_cur_team = data_sc["teams"].iloc[0]["id"]
+
+                        _sc_pred = engine_sc.predict_in_team(
+                            scout_player_id, int(_sc_cur_team), season=int(_sc_season)
+                        )
+
+                        # --- Career trajectory --------------------------------
+                        _sc_traj = engine_sc.predict_age_trajectory(
+                            scout_player_id,
+                            age_range=(max(18, _sc_age - 2), min(40, _sc_age + 8)),
+                            team_id=int(_sc_cur_team),
+                            season_base=int(_sc_season),
+                        )
+                        _sc_peak = max(_sc_traj, key=lambda p: p.predicted_rating)
+
+                        # --- Best team fits -----------------------------------
+                        _sc_best_teams = engine_sc.best_team_fit(
+                            scout_player_id, top_n=5, season=int(_sc_season)
+                        )
+
+                        # --- Player comparables (cosine similarity) -----------
+                        _COMP_COLS = [
+                            "points", "rebounds", "assists", "steals", "blocks",
+                            "fg_pct", "three_point_pct", "usg_pct", "bpm", "vorp",
+                            "per", "ts_pct", "plus_minus",
+                        ]
+                        _avail_cols = [c for c in _COMP_COLS if c in _sc_stats_df.columns]
+                        _sc_comparables = []
+                        if _avail_cols and not _sc_p_stats.empty:
+                            _sc_vec = np.array([
+                                float(_sc_latest.get(c, 0) or 0) for c in _avail_cols
+                            ])
+                            _sc_vec_norm = np.linalg.norm(_sc_vec)
+
+                            # Build per-player average stat vector
+                            _sc_grouped = (
+                                _sc_stats_df.groupby("player_id")[_avail_cols]
+                                .mean()
+                                .fillna(0)
+                            )
+                            _comp_rows = []
+                            for _cpid, _crow in _sc_grouped.iterrows():
+                                if _cpid == scout_player_id:
+                                    continue
+                                _cv = np.array([float(_crow.get(c, 0) or 0)
+                                                for c in _avail_cols])
+                                _cn = np.linalg.norm(_cv)
+                                if _sc_vec_norm < 1e-9 or _cn < 1e-9:
+                                    continue
+                                _sim = float(np.dot(_sc_vec, _cv) / (_sc_vec_norm * _cn))
+                                _comp_rows.append((_cpid, _sim))
+
+                            _comp_rows.sort(key=lambda x: x[1], reverse=True)
+                            _player_names = {
+                                int(r["id"]): str(r["name"])
+                                for _, r in data_sc["players"].iterrows()
+                            }
+                            _sc_comparables = [
+                                {
+                                    "Giocatore comparabile": _player_names.get(int(_cpid), f"#{_cpid}"),
+                                    "Similarità": round(_sim * 100, 1),
+                                }
+                                for _cpid, _sim in _comp_rows[:5]
+                            ]
+
+                        # Store results in session state for display
+                        st.session_state["scout_result"] = {
+                            "name":         _sc_name,
+                            "age":          _sc_age,
+                            "pos":          _sc_pos,
+                            "nat":          _sc_nat,
+                            "height":       _sc_height,
+                            "weight":       _sc_weight,
+                            "pred":         _sc_pred,
+                            "traj":         _sc_traj,
+                            "peak":         _sc_peak,
+                            "best_teams":   _sc_best_teams,
+                            "comparables":  _sc_comparables,
+                            "latest_stats": _sc_latest,
+                            "avail_cols":   _avail_cols,
+                        }
+                    except Exception as exc:
+                        st.error(f"Errore durante l'analisi: {exc}")
+
+            # ------------------------------------------------------------------
+            # Display results
+            # ------------------------------------------------------------------
+            if "scout_result" in st.session_state:
+                _sr = st.session_state["scout_result"]
+                _pred = _sr["pred"]
+
+                st.divider()
+
+                # Header card
+                st.subheader(f"🏀 {_sr['name']}")
+                _h1, _h2, _h3, _h4, _h5 = st.columns(5)
+                _h1.metric("Età",       _sr["age"])
+                _h2.metric("Posizione", _sr["pos"])
+                _h3.metric("Nazionalità", _sr["nat"])
+                _h4.metric("Altezza",   f"{_sr['height']} cm" if _sr["height"] else "—")
+                _h5.metric("Peso",      f"{_sr['weight']} kg" if _sr["weight"] else "—")
+
+                st.divider()
+
+                # --- AI Scouting Narrative ---
+                st.subheader("📋 Report di Scouting AI")
+
+                _rating     = _pred.predicted_rating
+                _peak_r     = _sr["peak"].predicted_rating
+                _peak_age   = _sr["peak"].age
+                _seasons_to = max(0, _peak_age - _sr["age"])
+
+                # Rating tier label
+                if _rating >= 8.5:
+                    _tier = "élite assoluta (top mondiale)"
+                elif _rating >= 7.5:
+                    _tier = "giocatore di alto livello"
+                elif _rating >= 6.5:
+                    _tier = "giocatore competitivo di buon livello"
+                elif _rating >= 5.5:
+                    _tier = "role player affidabile"
+                else:
+                    _tier = "potenziale di sviluppo"
+
+                # Trend from trajectory
+                _traj = _sr["traj"]
+                if len(_traj) >= 3:
+                    _recent = [p.predicted_rating for p in _traj[:3]]
+                    _trend_str = (
+                        "in crescita 📈" if _recent[-1] > _recent[0] + 0.1
+                        else "in calo 📉" if _recent[-1] < _recent[0] - 0.1
+                        else "stabile ➡️"
+                    )
+                else:
+                    _trend_str = "stabile ➡️"
+
+                # Best team info
+                _best_team_name = (
+                    _sr["best_teams"][0].team_name if _sr["best_teams"] else "N/D"
+                )
+                _best_team_rating = (
+                    _sr["best_teams"][0].predicted_rating if _sr["best_teams"] else 0.0
+                )
+
+                # Strengths from latest stats
+                _ls = _sr["latest_stats"]
+                _strengths = []
+                if float(_ls.get("points", 0) or 0) >= 15:
+                    _strengths.append("scorer prolifico")
+                if float(_ls.get("rebounds", 0) or 0) >= 7:
+                    _strengths.append("rimbalzista dominante")
+                if float(_ls.get("assists", 0) or 0) >= 6:
+                    _strengths.append("playmaker di qualità")
+                if float(_ls.get("steals", 0) or 0) >= 1.5:
+                    _strengths.append("difensore aggressivo")
+                if float(_ls.get("blocks", 0) or 0) >= 1.5:
+                    _strengths.append("shot-blocker")
+                if float(_ls.get("three_point_pct", 0) or 0) >= 0.37:
+                    _strengths.append("tiratore da tre efficiente")
+                if float(_ls.get("ts_pct", 0) or 0) >= 0.58:
+                    _strengths.append("finisher efficiente")
+                if not _strengths:
+                    _strengths = ["giocatore versatile e bilanciato"]
+
+                _peak_desc = (
+                    f"Il picco prestativo è atteso a **{_peak_age} anni** "
+                    f"(rating previsto: **{_peak_r:.2f}**)"
+                    + (f", tra **{_seasons_to} stagioni**" if _seasons_to > 0 else " — già al picco o vicino")
+                    + "."
+                )
+
+                st.markdown(f"""
+**{_sr['name']}** è un giocatore di **{_sr['age']} anni** ({_sr['pos']}) classificato come
+**{_tier}**, con un rating AI attuale di **{_rating:.2f}/10** e una traiettoria di rendimento
+**{_trend_str}**.
+
+**Punti di forza identificati dall'AI:** {', '.join(_strengths)}.
+
+{_peak_desc}
+
+Il contesto ottimale per esprimere il suo massimo potenziale è **{_best_team_name}**,
+dove il modello stima un rating di **{_best_team_rating:.2f}** — la miglior opportunità
+nel database corrente.
+
+> *Report generato automaticamente dall'AI Basketball Intelligence Engine.
+> Basato su modello ensemble (XGBoost + Random Forest) con {len(_traj)} punti di traiettoria.*
+""")
+
+                # --- Performance DNA Chart ---
+                st.subheader("🧬 DNA Prestativo")
+                _dna_cols = [
+                    ("Punti",         "points",           20.0),
+                    ("Rimbalzi",      "rebounds",         12.0),
+                    ("Assist",        "assists",          10.0),
+                    ("Rubate",        "steals",            3.0),
+                    ("Stoppate",      "blocks",            3.0),
+                    ("% tiro",        "fg_pct",            1.0),
+                    ("% 3pt",         "three_point_pct",   1.0),
+                    ("Efficienza TS", "ts_pct",            1.0),
+                    ("BPM",           "bpm",              10.0),
+                    ("USG%",          "usg_pct",           1.0),
+                ]
+                _dna_data = {}
+                for _label, _col, _max_val in _dna_cols:
+                    _raw = float(_ls.get(_col, 0) or 0)
+                    _pct = min(100.0, max(0.0, _raw / _max_val * 100))
+                    _dna_data[_label] = round(_pct, 1)
+
+                _dna_df = pd.DataFrame(
+                    list(_dna_data.items()), columns=["Metrica", "Percentuale (0-100)"]
+                ).set_index("Metrica")
+                st.bar_chart(_dna_df, height=350)
+                st.caption("Valori normalizzati rispetto ai massimi di riferimento.")
+
+                # --- Career Trajectory Chart ---
+                st.subheader("📈 Traiettoria di Carriera")
+                _traj_df = pd.DataFrame([
+                    {
+                        "Età":      pt.age,
+                        "Rating":   pt.predicted_rating,
+                        "CI basso": pt.confidence_low,
+                        "CI alto":  pt.confidence_high,
+                    }
+                    for pt in _sr["traj"]
+                ]).set_index("Età")
+                st.line_chart(_traj_df[["Rating", "CI basso", "CI alto"]])
+
+                _c1, _c2 = st.columns(2)
+
+                # --- Player Comparables ---
+                with _c1:
+                    st.subheader("👥 Giocatori Comparabili")
+                    if _sr["comparables"]:
+                        _comp_df = pd.DataFrame(_sr["comparables"])
+                        st.dataframe(_comp_df, hide_index=True, width="stretch")
+                        st.caption(
+                            "Similarità basata su coseno dei vettori statistici "
+                            f"({len(_sr['avail_cols'])} metriche)."
+                        )
+                    else:
+                        st.info("Dati insufficienti per calcolare comparabili.")
+
+                # --- Best Team Fits ---
+                with _c2:
+                    st.subheader("🏆 Top 5 Squadre Ideali")
+                    if _sr["best_teams"]:
+                        _teams_df = pd.DataFrame([
+                            {
+                                "#": t.rank,
+                                "Squadra":       t.team_name,
+                                "Lega":          t.league_name,
+                                "Rating previsto": round(t.predicted_rating, 2),
+                                "Compatibilità": round(t.compatibility_score * 100, 1),
+                            }
+                            for t in _sr["best_teams"]
+                        ])
+                        st.dataframe(_teams_df, hide_index=True, width="stretch")
+                    else:
+                        st.info("Nessuna squadra disponibile.")
+
+                # --- Raw stats expander ---
+                with st.expander("📊 Statistiche dettagliate (ultima stagione)", expanded=False):
+                    _raw_stats = {k: v for k, v in _sr["latest_stats"].items()
+                                  if v is not None and str(v) not in ("", "nan")}
+                    st.dataframe(
+                        pd.DataFrame(list(_raw_stats.items()), columns=["Metrica", "Valore"]),
+                        hide_index=True, width="stretch",
+                    )
+
+
 with tab_mapping:
     st.header("🗺️ Mapping colonne DB → Modello")
 
@@ -2129,134 +2474,133 @@ with tab_admin:
 
     if not _is_admin:
         st.warning("⛔ Accesso riservato agli amministratori.")
-        st.stop()
-
-    # -----------------------------------------------------------------------
-    # User list
-    # -----------------------------------------------------------------------
-    _all_users = load_users()
-    st.subheader(f"Utenti registrati ({len(_all_users)})")
-    if _all_users:
-        _users_df = pd.DataFrame([
-            {
-                "Username": uname,
-                "Ruolo":    info.get("role", "—"),
-                "Creato da": info.get("created_by", "—"),
-            }
-            for uname, info in _all_users.items()
-        ])
-        st.dataframe(_users_df, width="stretch", hide_index=True)
     else:
-        st.caption("Nessun utente trovato.")
+        # -----------------------------------------------------------------------
+        # User list
+        # -----------------------------------------------------------------------
+        _all_users = load_users()
+        st.subheader(f"Utenti registrati ({len(_all_users)})")
+        if _all_users:
+            _users_df = pd.DataFrame([
+                {
+                    "Username": uname,
+                    "Ruolo":    info.get("role", "—"),
+                    "Creato da": info.get("created_by", "—"),
+                }
+                for uname, info in _all_users.items()
+            ])
+            st.dataframe(_users_df, width="stretch", hide_index=True)
+        else:
+            st.caption("Nessun utente trovato.")
 
-    st.divider()
+        st.divider()
 
-    # -----------------------------------------------------------------------
-    # Create user
-    # -----------------------------------------------------------------------
-    with st.expander("➕ Crea nuovo utente", expanded=False):
-        with st.form("admin_create_user"):
-            _new_uname = st.text_input("Username", key="au_new_uname")
-            _new_pw    = st.text_input("Password", type="password", key="au_new_pw")
-            _new_pw2   = st.text_input("Conferma password", type="password", key="au_new_pw2")
-            _new_role  = st.selectbox(
-                "Ruolo", ["viewer", "analyst", "admin"], key="au_new_role"
-            )
-            _create_btn = st.form_submit_button("Crea utente", type="primary")
-
-        if _create_btn:
-            if not _new_uname.strip():
-                st.error("Inserisci un username.")
-            elif not _new_pw:
-                st.error("Inserisci una password.")
-            elif _new_pw != _new_pw2:
-                st.error("Le password non coincidono.")
-            else:
-                _ok = create_user(
-                    _new_uname, _new_pw, _new_role,
-                    created_by=st.session_state.get("current_user", "admin"),
+        # -----------------------------------------------------------------------
+        # Create user
+        # -----------------------------------------------------------------------
+        with st.expander("➕ Crea nuovo utente", expanded=False):
+            with st.form("admin_create_user"):
+                _new_uname = st.text_input("Username", key="au_new_uname")
+                _new_pw    = st.text_input("Password", type="password", key="au_new_pw")
+                _new_pw2   = st.text_input("Conferma password", type="password", key="au_new_pw2")
+                _new_role  = st.selectbox(
+                    "Ruolo", ["viewer", "analyst", "admin"], key="au_new_role"
                 )
-                if _ok:
-                    st.success(f"✅ Utente **{_new_uname.strip().lower()}** creato con ruolo **{_new_role}**.")
-                    st.rerun()
-                else:
-                    st.error(f"Username **{_new_uname.strip().lower()}** già esistente.")
+                _create_btn = st.form_submit_button("Crea utente", type="primary")
 
-    # -----------------------------------------------------------------------
-    # Reset password
-    # -----------------------------------------------------------------------
-    with st.expander("🔑 Reset password utente", expanded=False):
-        _all_usernames = list(_all_users.keys())
-        if _all_usernames:
-            with st.form("admin_reset_pw"):
-                _reset_uname = st.selectbox(
-                    "Utente da modificare", _all_usernames, key="au_reset_uname"
-                )
-                _reset_pw  = st.text_input("Nuova password", type="password", key="au_reset_pw")
-                _reset_pw2 = st.text_input(
-                    "Conferma nuova password", type="password", key="au_reset_pw2"
-                )
-                _reset_btn = st.form_submit_button("Reimposta password", type="primary")
-
-            if _reset_btn:
-                if not _reset_pw:
-                    st.error("Inserisci una nuova password.")
-                elif _reset_pw != _reset_pw2:
+            if _create_btn:
+                if not _new_uname.strip():
+                    st.error("Inserisci un username.")
+                elif not _new_pw:
+                    st.error("Inserisci una password.")
+                elif _new_pw != _new_pw2:
                     st.error("Le password non coincidono.")
                 else:
-                    _ok = reset_password(_reset_uname, _reset_pw)
+                    _ok = create_user(
+                        _new_uname, _new_pw, _new_role,
+                        created_by=st.session_state.get("current_user", "admin"),
+                    )
                     if _ok:
-                        st.success(f"✅ Password di **{_reset_uname}** aggiornata.")
+                        st.success(f"✅ Utente **{_new_uname.strip().lower()}** creato con ruolo **{_new_role}**.")
+                        st.rerun()
                     else:
-                        st.error("Errore durante il reset della password.")
-        else:
-            st.caption("Nessun utente disponibile.")
+                        st.error(f"Username **{_new_uname.strip().lower()}** già esistente.")
 
-    # -----------------------------------------------------------------------
-    # Delete user
-    # -----------------------------------------------------------------------
-    with st.expander("🗑️ Elimina utente", expanded=False):
-        _deletable = [u for u in _all_users if u != st.session_state.get("current_user")]
-        if _deletable:
-            with st.form("admin_delete_user"):
-                _del_uname = st.selectbox(
-                    "Utente da eliminare", _deletable, key="au_del_uname"
-                )
-                _del_btn = st.form_submit_button("❌ Elimina", type="primary")
+        # -----------------------------------------------------------------------
+        # Reset password
+        # -----------------------------------------------------------------------
+        with st.expander("🔑 Reset password utente", expanded=False):
+            _all_usernames = list(_all_users.keys())
+            if _all_usernames:
+                with st.form("admin_reset_pw"):
+                    _reset_uname = st.selectbox(
+                        "Utente da modificare", _all_usernames, key="au_reset_uname"
+                    )
+                    _reset_pw  = st.text_input("Nuova password", type="password", key="au_reset_pw")
+                    _reset_pw2 = st.text_input(
+                        "Conferma nuova password", type="password", key="au_reset_pw2"
+                    )
+                    _reset_btn = st.form_submit_button("Reimposta password", type="primary")
 
-            if _del_btn:
-                _ok = delete_user(_del_uname)
-                if _ok:
-                    st.success(f"✅ Utente **{_del_uname}** eliminato.")
-                    st.rerun()
-                else:
-                    st.error("Errore durante l'eliminazione.")
-        else:
-            st.caption("Non è possibile eliminare il proprio account o altri utenti.")
-
-    # -----------------------------------------------------------------------
-    # Change own password
-    # -----------------------------------------------------------------------
-    st.divider()
-    st.subheader("🔒 Cambia la tua password")
-    with st.form("admin_change_own_pw"):
-        _own_old  = st.text_input("Password attuale",   type="password", key="au_own_old")
-        _own_new  = st.text_input("Nuova password",     type="password", key="au_own_new")
-        _own_new2 = st.text_input("Conferma password",  type="password", key="au_own_new2")
-        _own_btn  = st.form_submit_button("Aggiorna password", type="primary")
-
-    if _own_btn:
-        if not _own_new:
-            st.error("Inserisci una nuova password.")
-        elif _own_new != _own_new2:
-            st.error("Le password non coincidono.")
-        else:
-            _ok = change_password(
-                st.session_state.get("current_user", ""),
-                _own_old, _own_new,
-            )
-            if _ok:
-                st.success("✅ Password aggiornata con successo.")
+                if _reset_btn:
+                    if not _reset_pw:
+                        st.error("Inserisci una nuova password.")
+                    elif _reset_pw != _reset_pw2:
+                        st.error("Le password non coincidono.")
+                    else:
+                        _ok = reset_password(_reset_uname, _reset_pw)
+                        if _ok:
+                            st.success(f"✅ Password di **{_reset_uname}** aggiornata.")
+                        else:
+                            st.error("Errore durante il reset della password.")
             else:
-                st.error("Password attuale errata.")
+                st.caption("Nessun utente disponibile.")
+
+        # -----------------------------------------------------------------------
+        # Delete user
+        # -----------------------------------------------------------------------
+        with st.expander("🗑️ Elimina utente", expanded=False):
+            _deletable = [u for u in _all_users if u != st.session_state.get("current_user")]
+            if _deletable:
+                with st.form("admin_delete_user"):
+                    _del_uname = st.selectbox(
+                        "Utente da eliminare", _deletable, key="au_del_uname"
+                    )
+                    _del_btn = st.form_submit_button("❌ Elimina", type="primary")
+
+                if _del_btn:
+                    _ok = delete_user(_del_uname)
+                    if _ok:
+                        st.success(f"✅ Utente **{_del_uname}** eliminato.")
+                        st.rerun()
+                    else:
+                        st.error("Errore durante l'eliminazione.")
+            else:
+                st.caption("Non è possibile eliminare il proprio account o altri utenti.")
+
+        # -----------------------------------------------------------------------
+        # Change own password
+        # -----------------------------------------------------------------------
+        st.divider()
+        st.subheader("🔒 Cambia la tua password")
+        with st.form("admin_change_own_pw"):
+            _own_old  = st.text_input("Password attuale",   type="password", key="au_own_old")
+            _own_new  = st.text_input("Nuova password",     type="password", key="au_own_new")
+            _own_new2 = st.text_input("Conferma password",  type="password", key="au_own_new2")
+            _own_btn  = st.form_submit_button("Aggiorna password", type="primary")
+
+        if _own_btn:
+            if not _own_new:
+                st.error("Inserisci una nuova password.")
+            elif _own_new != _own_new2:
+                st.error("Le password non coincidono.")
+            else:
+                _ok = change_password(
+                    st.session_state.get("current_user", ""),
+                    _own_old, _own_new,
+                )
+                if _ok:
+                    st.success("✅ Password aggiornata con successo.")
+                else:
+                    st.error("Password attuale errata.")
 
