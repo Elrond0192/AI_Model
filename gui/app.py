@@ -1915,7 +1915,7 @@ with tab_scout:
                 # Player selector
                 # ------------------------------------------------------------------
                 _sc_players = {
-                    int(r["id"]): str(r["name"])
+                    _to_int(r["id"]): str(r["name"])
                     for _, r in data_sc["players"].iterrows()
                 }
                 sc_col1, sc_col2 = st.columns([2, 1])
@@ -2023,12 +2023,12 @@ with tab_scout:
 
                                 _comp_rows.sort(key=lambda x: x[1], reverse=True)
                                 _player_names = {
-                                    int(r["id"]): str(r["name"])
+                                    _to_int(r["id"]): str(r["name"])
                                     for _, r in data_sc["players"].iterrows()
                                 }
                                 _sc_comparables = [
                                     {
-                                        "Giocatore comparabile": _player_names.get(int(_cpid), f"#{_cpid}"),
+                                        "Giocatore comparabile": _player_names.get(_to_int(_cpid), f"#{_cpid}"),
                                         "Similarità": round(_sim * 100, 1),
                                     }
                                     for _cpid, _sim in _comp_rows[:5]
