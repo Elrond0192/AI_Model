@@ -75,6 +75,9 @@ def tiny_data_with_competition():
         "draft_year": None, "draft_pick": None,
     } for i in range(30)])
 
+    _ROLES_COMBO = ["playmaker", "scorer", "forward", "big", "wing"]
+    _ROLES_OFF   = ["scorer", "facilitator", "spot_up", "post", "cutter"]
+    _ROLES_DEF   = ["lockdown", "stopper", "help_side", "rim_protector", "versatile"]
     stat_rows = []
     for _, p in players.iterrows():
         pid = int(p["id"])
@@ -106,10 +109,19 @@ def tiny_data_with_competition():
                 ts_pct=round(float(rng.uniform(0.50, 0.65)), 3),
                 usg_pct=round(float(rng.uniform(14, 30)), 2),
                 bpm=round(float(rng.uniform(-3, 6)), 2),
+                obpm=round(float(rng.uniform(-2, 4)), 2),
+                dbpm=round(float(rng.uniform(-2, 3)), 2),
                 vorp=round(float(rng.uniform(-0.5, 4)), 2),
                 win_shares=round(float(rng.uniform(0, 12)), 2),
                 ast_ratio=round(float(rng.uniform(5, 30)), 2),
                 reb_pct=round(float(rng.uniform(3, 20)), 2),
+                tov_pct=round(float(rng.uniform(8, 20)), 1),
+                ast_pct=round(float(rng.uniform(5, 30)), 1),
+                orb_pct=round(float(rng.uniform(1, 8)), 1),
+                drb_pct=round(float(rng.uniform(5, 25)), 1),
+                ruolo_combinato=_ROLES_COMBO[pid % len(_ROLES_COMBO)],
+                ruolo_offensivo=_ROLES_OFF[pid % len(_ROLES_OFF)],
+                ruolo_difensivo=_ROLES_DEF[pid % len(_ROLES_DEF)],
             )
             # RS row
             stat_rows.append({**base, "rating": round(rs_rating, 3), "competition": "RS"})

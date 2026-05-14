@@ -544,38 +544,49 @@ with tab_train:
         st.markdown("""
 | Parametro | Descrizione | Range consigliato |
 |---|---|---|
-| `n_estimators` | Numero di alberi XGBoost. Più è alto, più il modello è preciso ma lento. | 200–500 |
+| `n_estimators` | Numero di alberi XGBoost. Più è alto, più il modello è preciso ma lento. | 200–800 |
 | `max_depth` | Profondità massima di ogni albero. Valori alti = rischio overfitting. | 4–7 |
-| `learning_rate` | Velocità di apprendimento (eta). Bilanciare con n_estimators: più basso = più alberi necessari. | 0.01–0.1 |
+| `learning_rate` | Velocità di apprendimento (eta). Bilanciare con n_estimators: più basso = più alberi necessari. | 0.005–0.1 |
 | `subsample` | Frazione dei campioni usata per ogni albero. Riduce overfitting. | 0.7–0.9 |
 | `colsample_bytree` | Frazione delle feature usata per ogni albero. Riduce la correlazione tra alberi. | 0.6–0.9 |
 | `min_child_weight` | Peso minimo dei campioni in una foglia. Aumentare se il dataset è piccolo. | 2–6 |
 | `reg_alpha (L1)` | Regolarizzazione L1: annulla feature poco rilevanti. | 0.0–0.5 |
 | `reg_lambda (L2)` | Regolarizzazione L2: riduce smoothly i pesi. | 0.5–2.0 |
+| `early_stopping_rounds` | Ferma il training se la val-loss non migliora per N rounds consecutivi. | 20–100 |
 | `Validation split` | Frazione dei dati usata per la validazione (non per il training). | 0.10–0.20 |
+| `CV folds` | K-fold cross-validation per valutare la stabilità del modello. 0 = disabilitata. | 0, 3, 5, 10 |
 | `Random seed` | Seme per la riproducibilità dei risultati. | Qualsiasi intero |
-        """)
+
+Il modello usa **{n_features} feature** tra cui:
+- Ruoli DB: `ruolo_combinato`, `ruolo_offensivo`, `ruolo_difensivo` (3 dimensioni separate)
+- RAPTOR offensivo/difensivo, LEBRON off/def, OWS/DWS, FIC
+- Feature di interazione: `OBPM × USG%`, `DBPM × REB%`, `two_way_score`
+- Trend di efficienza (TS%), durabilità, segnali di carriera
+        """.format(n_features=len(__import__('basketball_ai.models.performance_model', fromlist=['FEATURE_COLS']).FEATURE_COLS)))
 
     # -----------------------------------------------------------------------
     # Preset buttons
     # -----------------------------------------------------------------------
     _PRESETS = {
         "🏆 Preciso": dict(
-            n_estimators=800, max_depth=7, learning_rate=0.01,
+            n_estimators=1000, max_depth=6, learning_rate=0.01,
             subsample=0.85, colsample_bytree=0.85, min_child_weight=2,
             reg_alpha=0.1, reg_lambda=1.5, test_size=0.15, seed=42,
-            label="Alta precisione – addestramento lento (~5–10 min), ottimi risultati",
+            early_stopping=50, cv_folds=5,
+            label="Alta precisione – addestramento lento (~5–15 min), ottimi risultati",
         ),
         "⚖️ Bilanciato": dict(
-            n_estimators=300, max_depth=5, learning_rate=0.05,
+            n_estimators=400, max_depth=5, learning_rate=0.03,
             subsample=0.80, colsample_bytree=0.80, min_child_weight=3,
             reg_alpha=0.1, reg_lambda=1.0, test_size=0.15, seed=42,
-            label="Bilanciato – addestramento medio (~1–2 min), buoni risultati (default)",
+            early_stopping=30, cv_folds=0,
+            label="Bilanciato – addestramento medio (~2–4 min), buoni risultati (default)",
         ),
         "⚡ Veloce": dict(
-            n_estimators=100, max_depth=4, learning_rate=0.1,
+            n_estimators=150, max_depth=4, learning_rate=0.1,
             subsample=0.70, colsample_bytree=0.70, min_child_weight=4,
             reg_alpha=0.0, reg_lambda=0.5, test_size=0.20, seed=42,
+            early_stopping=20, cv_folds=0,
             label="Veloce – addestramento rapido (<30 s), precisione ridotta",
         ),
     }
@@ -595,6 +606,8 @@ with tab_train:
                 st.session_state["t_lambda"]     = _pvals["reg_lambda"]
                 st.session_state["t_split"]      = _pvals["test_size"]
                 st.session_state["t_seed"]       = _pvals["seed"]
+                st.session_state["t_early_stop"] = _pvals["early_stopping"]
+                st.session_state["t_cv_folds"]   = _pvals["cv_folds"]
                 st.rerun()
 
     col1, col2 = st.columns(2)
@@ -633,6 +646,15 @@ with tab_train:
         xgb_reg_lambda = st.slider(
             "reg_lambda (L2)", 0.0, 3.0, 1.0, step=0.1, key="t_lambda",
             help="Regolarizzazione L2: riduce smoothly i pesi. Range consigliato: 0.5–2.0.",
+        )
+        st.markdown("**Early Stopping & Cross-Validation**")
+        early_stopping_rounds = st.slider(
+            "early_stopping_rounds", 0, 200, 30, step=10, key="t_early_stop",
+            help="Ferma il training se la val-loss non migliora per N rounds. 0 = disabilitato.",
+        )
+        cv_folds_gui = st.select_slider(
+            "CV folds (k-fold)", options=[0, 3, 5, 10], value=0, key="t_cv_folds",
+            help="K-fold cross-validation per stimare la stabilità del modello. 0 = disabilitata.",
         )
         st.markdown("**Generale**")
         seed = st.number_input(
@@ -746,6 +768,7 @@ with tab_train:
                     reg_lambda=xgb_reg_lambda,
                     random_state=int(seed),
                     verbosity=0,
+                    early_stopping_rounds=int(early_stopping_rounds) if early_stopping_rounds > 0 else None,
                 )
                 perf_model.scaler = StandardScaler()
 
@@ -790,6 +813,53 @@ with tab_train:
                 log(f"Performance model – Train RMSE: {train_rmse:.4f}")
                 log(f"Performance model – Val   RMSE: {val_rmse:.4f}  MAE: {val_mae:.4f}  R²: {val_r2:.4f}")
 
+                metrics_dict = {
+                    "train_rmse": train_rmse,
+                    "val_rmse":   val_rmse,
+                    "val_mae":    val_mae,
+                    "val_r2":     val_r2,
+                }
+
+                # Optional k-fold cross-validation
+                if cv_folds_gui > 1:
+                    log(f"Avvio {cv_folds_gui}-fold cross-validation …")
+                    progress.progress(55, text=f"{cv_folds_gui}-fold cross-validation …")
+                    from sklearn.model_selection import KFold as _KFold
+                    kf = _KFold(n_splits=cv_folds_gui, shuffle=True, random_state=int(seed))
+                    X_np = X.values.astype(float)
+                    cv_rmses_gui = []
+                    cv_r2s_gui   = []
+                    for fold_idx, (tr_i, va_i) in enumerate(_kf_iter := kf.split(X_np), 1):
+                        _Xtr, _Xva = X_np[tr_i], X_np[va_i]
+                        _ytr, _yva = y_full[tr_i], y_full[va_i]
+                        _sc2 = StandardScaler()
+                        _Xtr_sc = _sc2.fit_transform(_Xtr)
+                        _Xva_sc = _sc2.transform(_Xva)
+                        _m2 = XGBRegressor(
+                            n_estimators=xgb_n_estimators,
+                            max_depth=xgb_max_depth, learning_rate=xgb_lr,
+                            subsample=xgb_subsample, colsample_bytree=xgb_colsample,
+                            min_child_weight=xgb_min_child_weight,
+                            reg_alpha=xgb_reg_alpha, reg_lambda=xgb_reg_lambda,
+                            random_state=int(seed), verbosity=0,
+                        )
+                        _m2.fit(_Xtr_sc, _ytr, verbose=False)
+                        _ypred = _m2.predict(_Xva_sc)
+                        fold_rmse = float(np.sqrt(np.mean((_ypred - _yva) ** 2)))
+                        fold_r2   = float(skm.r2_score(_yva, _ypred))
+                        cv_rmses_gui.append(fold_rmse)
+                        cv_r2s_gui.append(fold_r2)
+                        log(f"  Fold {fold_idx}/{cv_folds_gui}  RMSE={fold_rmse:.4f}  R²={fold_r2:.4f}")
+                    cv_mean = float(np.mean(cv_rmses_gui))
+                    cv_std  = float(np.std(cv_rmses_gui))
+                    cv_r2_mean = float(np.mean(cv_r2s_gui))
+                    log(f"CV  RMSE={cv_mean:.4f} ±{cv_std:.4f}   R²={cv_r2_mean:.4f}")
+                    metrics_dict.update({
+                        "cv_mean_rmse": cv_mean,
+                        "cv_std_rmse":  cv_std,
+                        "cv_mean_r2":   cv_r2_mean,
+                    })
+
                 progress.progress(60, text="Training compatibility model …")
                 compat_model = CompatibilityModel()
                 compat_model.train(data_t)
@@ -802,12 +872,6 @@ with tab_train:
                 )
                 save_dir = _safe_model_dir(model_dir_gui)
                 save_dir.mkdir(parents=True, exist_ok=True)
-                metrics_dict = {
-                    "train_rmse": train_rmse,
-                    "val_rmse":   val_rmse,
-                    "val_mae":    val_mae,
-                    "val_r2":     val_r2,
-                }
                 ensemble.save(str(save_dir), metrics=metrics_dict)
                 _abs_save = save_dir.resolve()
                 log(f"Modelli salvati in: {_abs_save}")
@@ -839,11 +903,15 @@ with tab_train:
         st.divider()
         st.subheader("C · Risultati")
         m = st.session_state["metrics"]
-        c1, c2, c3, c4 = st.columns(4)
+        _n_cv_cols = 6 if "cv_mean_rmse" in m else 4
+        c1, c2, c3, c4, *_rest = st.columns(_n_cv_cols)
         c1.metric("Train RMSE", f"{m['train_rmse']:.4f}")
         c2.metric("Val RMSE",   f"{m['val_rmse']:.4f}")
         c3.metric("Val MAE",    f"{m['val_mae']:.4f}")
         c4.metric("Val R²",     f"{m['val_r2']:.4f}")
+        if "cv_mean_rmse" in m and _rest:
+            _rest[0].metric("CV RMSE",    f"{m['cv_mean_rmse']:.4f} ±{m['cv_std_rmse']:.4f}")
+            _rest[1].metric("CV R²",      f"{m['cv_mean_r2']:.4f}")
 
         perf_model_r = st.session_state.get("perf_model")
         if perf_model_r and perf_model_r.is_trained:

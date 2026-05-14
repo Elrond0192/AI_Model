@@ -111,16 +111,20 @@ class EnsembleModel:
         # Inject competition-aware features that the model was trained on
         player_feats["competition_enc"] = float(COMPETITION_ENCODING.get(competition, 0))
 
-        # Inject DB role encoding (ruolo_combinato → ordinal int)
+        # Inject DB role encoding – all three dimensions
         p_stats  = data["player_stats"][data["player_stats"]["player_id"] == _normalize_id(player_id)]
         if not p_stats.empty:
-            latest_row      = p_stats.sort_values("season").iloc[-1]
-            latest_role     = str(latest_row.get("ruolo_combinato", "") or "").strip()
+            latest_row          = p_stats.sort_values("season").iloc[-1]
+            latest_role         = str(latest_row.get("ruolo_combinato",  "") or "").strip()
+            latest_role_off     = str(latest_row.get("ruolo_offensivo",  "") or "").strip()
+            latest_role_def     = str(latest_row.get("ruolo_difensivo",  "") or "").strip()
             latest_games_played = float(latest_row.get("games_played", 0) or 0)
         else:
-            latest_role = ""
+            latest_role = latest_role_off = latest_role_def = ""
             latest_games_played = 0.0
-        player_feats["role_enc"] = float(self.perf_model.role_encoding.get(latest_role, 0))
+        player_feats["role_enc"]     = float(self.perf_model.role_encoding.get(latest_role, 0))
+        player_feats["role_off_enc"] = float(self.perf_model.role_off_encoding.get(latest_role_off, 0))
+        player_feats["role_def_enc"] = float(self.perf_model.role_def_encoding.get(latest_role_def, 0))
 
         po_feats = compute_po_features(p_stats)
         player_feats.update(po_feats)
@@ -141,11 +145,12 @@ class EnsembleModel:
         cf          = self.compat_model.score(team_id, data)
         compat_mult = 0.90 + cf * 0.20   # neutral ≈ 1.05
 
-        # 5. League quality factor (tier 1 = NBA = 1.00)
+        # 5. League quality factor
+        # Tier 1 = NBA/top EuroLeague (1.00); higher tiers are progressively discounted.
         team_row = data["team_dict"].get(_normalize_id(team_id), {})
         tier     = int(team_row.get("league_tier", 1))
-        tier_map = {1: 1.00, 2: 0.98, 3: 0.95, 4: 0.91, 5: 0.86}
-        lf       = tier_map.get(tier, 0.95)
+        tier_map = {1: 1.000, 2: 0.980, 3: 0.955, 4: 0.920, 5: 0.875, 6: 0.820, 7: 0.760}
+        lf       = tier_map.get(tier, 0.900)
 
         # 6. Contextual adjustment (position fit, style, role, adaptation, spacing)
         ctx = compute_context_features(player_id, team_id, data)
@@ -174,11 +179,13 @@ class EnsembleModel:
 
         explanation = (
             f"Rating 0–10 basato su: "
-            f"modello XGBoost (base {base_rating:.2f}) "
-            f"× compatibilità stile squadra ({compat_mult:.2f}) "
+            f"XGBoost ({len(self.perf_model.feature_names)} features, base {base_rating:.2f}) "
+            f"× compatibilità stile ({compat_mult:.2f}) "
             f"× qualità lega (tier {tier}, fattore {lf:.2f}) "
             f"× contesto (posizione+stile+adattamento, fattore {ctx_mult:.3f}) "
-            f"| curva età: {af:.3f} | competizione: {competition}"
+            f"| età: {age} (curva {af:.3f}) "
+            f"| ruolo: {latest_role or '—'} / off: {latest_role_off or '—'} / def: {latest_role_def or '—'} "
+            f"| competizione: {competition}"
         )
 
         return PredictionResult(
