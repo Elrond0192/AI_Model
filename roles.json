@@ -1,0 +1,34 @@
+{
+  "admin": {
+    "description": "Accesso completo a tutte le sezioni",
+    "sections": [
+      "data",
+      "training",
+      "predictions",
+      "scenarios",
+      "chat",
+      "scouting",
+      "mapping",
+      "admin"
+    ]
+  },
+  "analyst": {
+    "description": "Accesso alle funzionalit\u00e0 analitiche (no gestione utenti/mapping)",
+    "sections": [
+      "data",
+      "training",
+      "predictions",
+      "scenarios",
+      "chat",
+      "scouting"
+    ]
+  },
+  "viewer": {
+    "description": "Accesso in sola lettura a predizioni e chat",
+    "sections": [
+      "predictions",
+      "chat",
+      "scouting"
+    ]
+  }
+}

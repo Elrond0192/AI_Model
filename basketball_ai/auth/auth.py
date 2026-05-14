@@ -4,11 +4,22 @@ Users are stored in a JSON file (``users.json``) at the project root.  The file
 is **not** committed to git (see ``.gitignore``); on first run a default admin
 account is created automatically and the temporary password is displayed once.
 
-Roles
------
-- ``"admin"`` – full access including user management.
-- ``"analyst"`` – access to all analytic features, read-only user list.
-- ``"viewer"`` – read-only access to predictions and scenarios.
+Roles and permissions are stored in ``roles.json`` at the project root.  Each
+role defines the list of **sections** (GUI tabs) that it can access.  The three
+built-in roles (``admin``, ``analyst``, ``viewer``) are seeded automatically;
+admins can create additional custom roles and assign them fine-grained
+section-level privileges through the Gestione Utenti tab.
+
+Sections
+--------
+- ``data``        – 📂 Dati (data source)
+- ``training``    – 🏋️ Training
+- ``predictions`` – 🎯 Predizioni
+- ``scenarios``   – 🔀 Scenari
+- ``chat``        – 💬 Chat
+- ``scouting``    – 🔬 Scouting AI
+- ``mapping``     – 🗺️ Mapping colonne DB
+- ``admin``       – 👥 Gestione Utenti
 
 Password security
 -----------------
@@ -23,7 +34,7 @@ import json
 import os
 import secrets
 from pathlib import Path
-from typing import Dict, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 # ---------------------------------------------------------------------------
 # Storage
@@ -36,6 +47,49 @@ USERS_FILE = Path(
         str(Path(__file__).parent.parent.parent / "users.json"),
     )
 )
+
+#: Path of the roles file.  Can be overridden via BASKETBALL_AI_ROLES_FILE env var.
+ROLES_FILE = Path(
+    os.environ.get(
+        "BASKETBALL_AI_ROLES_FILE",
+        str(Path(__file__).parent.parent.parent / "roles.json"),
+    )
+)
+
+#: Ordered list of all section identifiers that map to GUI tabs.
+ALL_SECTIONS: List[str] = [
+    "data", "training", "predictions", "scenarios",
+    "chat", "scouting", "mapping", "admin",
+]
+
+#: Human-readable labels for each section (used in the admin UI).
+SECTION_LABELS: Dict[str, str] = {
+    "data":        "📂 Dati",
+    "training":    "🏋️ Training",
+    "predictions": "🎯 Predizioni",
+    "scenarios":   "🔀 Scenari",
+    "chat":        "💬 Chat",
+    "scouting":    "🔬 Scouting AI",
+    "mapping":     "🗺️ Mapping",
+    "admin":       "👥 Gestione Utenti",
+}
+
+#: Default role definitions.  These are used when ``roles.json`` does not exist
+#: and as the baseline when a role is missing from the file.
+DEFAULT_ROLES: Dict[str, Dict] = {
+    "admin": {
+        "description": "Accesso completo a tutte le sezioni",
+        "sections": list(ALL_SECTIONS),
+    },
+    "analyst": {
+        "description": "Accesso alle funzionalità analitiche (no gestione utenti/mapping)",
+        "sections": ["data", "training", "predictions", "scenarios", "chat", "scouting"],
+    },
+    "viewer": {
+        "description": "Accesso in sola lettura a predizioni e chat",
+        "sections": ["predictions", "chat", "scouting"],
+    },
+}
 
 _PBKDF2_ITERATIONS = 260_000
 _PBKDF2_DIGEST     = "sha256"
@@ -67,7 +121,7 @@ def _verify_password(password: str, stored_hash: str, salt: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Public API
+# Users – public API
 # ---------------------------------------------------------------------------
 
 def load_users() -> Dict[str, Dict]:
@@ -174,3 +228,46 @@ def ensure_default_admin() -> Optional[str]:
     password = secrets.token_urlsafe(12)
     create_user("admin", password, role="admin", created_by="system")
     return password
+
+
+# ---------------------------------------------------------------------------
+# Roles – public API
+# ---------------------------------------------------------------------------
+
+def load_roles() -> Dict[str, Dict]:
+    """Return the full roles dict from disk, falling back to :data:`DEFAULT_ROLES`."""
+    if not ROLES_FILE.exists():
+        return dict(DEFAULT_ROLES)
+    try:
+        return json.loads(ROLES_FILE.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return dict(DEFAULT_ROLES)
+
+
+def save_roles(roles: Dict[str, Dict]) -> None:
+    """Persist *roles* to :data:`ROLES_FILE`."""
+    ROLES_FILE.parent.mkdir(parents=True, exist_ok=True)
+    ROLES_FILE.write_text(json.dumps(roles, indent=2), encoding="utf-8")
+
+
+def ensure_default_roles() -> None:
+    """Create the default roles file when it does not yet exist."""
+    if not ROLES_FILE.exists():
+        save_roles(DEFAULT_ROLES)
+
+
+def get_role_sections(role: str) -> List[str]:
+    """Return the list of section identifiers accessible to *role*.
+
+    Falls back to :data:`DEFAULT_ROLES` when the role is missing from disk,
+    and ultimately to the ``viewer`` defaults.
+    """
+    roles = load_roles()
+    entry = roles.get(role) or DEFAULT_ROLES.get(role) or DEFAULT_ROLES["viewer"]
+    return list(entry.get("sections", []))
+
+
+def can_access(role: str, section: str) -> bool:
+    """Return ``True`` when *role* is permitted to access *section*."""
+    return section in get_role_sections(role)
+

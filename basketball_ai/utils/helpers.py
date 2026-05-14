@@ -45,16 +45,20 @@ TEAM_DISPLAY_FIELD_MAP_ENV = "AZURE_TEAM_DISPLAY_FIELD_MAP"
 
 
 def parse_team_display_map(raw: str = "") -> Dict[str, str]:
-    """Parse a ``"CC:field,CC:field,…"`` string into a ``{country: field}`` dict.
+    """Parse a ``"KEY:field,KEY:field,…"`` string into a ``{key: field}`` dict.
 
     *raw* defaults to the value of :data:`TEAM_DISPLAY_FIELD_MAP_ENV`.
     Valid *field* values are ``"name"`` and ``"short_name"``; anything else is
     ignored and falls back to the default behaviour.
 
+    Keys can be either **league codes** (e.g. ``"ITA1"``, ``"GRC1"``) or
+    **country codes** (e.g. ``"IT"``, ``"ES"``).  League codes take priority
+    over country codes in :func:`team_display_name`.
+
     Example::
 
-        parse_team_display_map("IT:name,ES:short_name")
-        # → {"IT": "name", "ES": "short_name"}
+        parse_team_display_map("ITA1:name,ITA2:short_name,GRC1:name")
+        # → {"ITA1": "name", "ITA2": "short_name", "GRC1": "name"}
     """
     if not raw:
         raw = os.environ.get(TEAM_DISPLAY_FIELD_MAP_ENV, "")
@@ -63,11 +67,11 @@ def parse_team_display_map(raw: str = "") -> Dict[str, str]:
         token = token.strip()
         if ":" not in token:
             continue
-        cc, _, field = token.partition(":")
-        cc = cc.strip().upper()
+        key, _, field = token.partition(":")
+        key = key.strip().upper()
         field = field.strip().lower()
-        if cc and field in ("name", "short_name"):
-            result[cc] = field
+        if key and field in ("name", "short_name"):
+            result[key] = field
     return result
 
 
@@ -75,35 +79,48 @@ def team_display_name(
     team: dict,
     fallback: str = "Unknown",
     country: str = "",
+    league_id: str = "",
     display_map: Dict[str, str] | None = None,
 ) -> str:
     """Return the display name for a team.
 
-    The *display_map* (``{country_code: "name"|"short_name"}``) controls which
-    DB field is used per country.  When the team's country is found in the map
-    the specified field is returned directly (falling back to *fallback* only
-    when the field is truly empty).
+    The *display_map* (``{key: "name"|"short_name"}``) controls which DB field
+    is used.  Keys can be league codes (e.g. ``"ITA1"``) or country codes
+    (e.g. ``"IT"``).
 
-    When the country is **not** in the map the original behaviour is preserved:
-    prefer *short_name* when non-empty, otherwise *name*.
+    Lookup priority:
+    1. **league_id** — exact league code (e.g. ``"ITA1"``, ``"GRC1"``).
+       This allows per-league configuration within the same country.
+    2. **country** — country code as fallback (e.g. ``"ITA"``, ``"IT"``).
+    3. **default** — prefer *short_name* when non-empty, otherwise *name*.
 
     Args:
         team:        Team dict with at least ``"name"`` and ``"short_name"`` keys.
         fallback:    Value returned when neither field yields a non-empty string.
-        country:     ISO country code for this team's league (e.g. ``"IT"``).
+        country:     Country code for this team's league (e.g. ``"ITA"``).
+        league_id:   League code (e.g. ``"ITA1"``). Has higher priority than
+                     *country* in the display map lookup.
         display_map: Mapping produced by :func:`parse_team_display_map`.
                      When ``None`` the global env-var is read automatically.
     """
     if display_map is None:
         display_map = parse_team_display_map()
 
+    # 1. League code (highest priority)
+    lid = (league_id or "").strip().upper()
+    if lid and lid in display_map:
+        field = display_map[lid]
+        val = str(team.get(field, "") or "").strip()
+        return val if val else str(team.get("name", fallback))
+
+    # 2. Country code fallback
     cc = (country or "").strip().upper()
     if cc and cc in display_map:
         field = display_map[cc]
         val = str(team.get(field, "") or "").strip()
         return val if val else str(team.get("name", fallback))
 
-    # Default: prefer short_name when available
+    # 3. Default: prefer short_name when available
     sn = str(team.get("short_name", "") or "").strip()
     return sn if sn else str(team.get("name", fallback))
 
