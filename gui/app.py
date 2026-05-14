@@ -61,7 +61,7 @@ if not st.session_state.get("authenticated"):
     with st.form("login_form"):
         _username = st.text_input("Username", autocomplete="username")
         _password = st.text_input("Password", type="password", autocomplete="current-password")
-        _login_btn = st.form_submit_button("🔐 Accedi", type="primary", use_container_width=True)
+        _login_btn = st.form_submit_button("🔐 Accedi", type="primary", width="stretch")
 
     if _login_btn:
         _ok, _user = check_credentials(_username, _password)
@@ -292,7 +292,7 @@ with st.sidebar:
     _cur_user = st.session_state.get("current_user", "")
     _cur_role = st.session_state.get("current_role", "")
     st.caption(f"👤 **{_cur_user}** ({_cur_role})")
-    if st.button("🚪 Logout", use_container_width=True):
+    if st.button("🚪 Logout", width="stretch"):
         st.session_state.clear()
         st.rerun()
 
@@ -583,7 +583,7 @@ with tab_train:
     _pcols = st.columns(3)
     for _pi, (_pname, _pvals) in enumerate(_PRESETS.items()):
         with _pcols[_pi]:
-            if st.button(_pname, key=f"preset_{_pi}", use_container_width=True,
+            if st.button(_pname, key=f"preset_{_pi}", width="stretch",
                          help=_pvals["label"]):
                 st.session_state["t_nest"]       = _pvals["n_estimators"]
                 st.session_state["t_depth"]      = _pvals["max_depth"]
@@ -1134,7 +1134,7 @@ with tab_pred:
                             st.dataframe(
                                 pd.DataFrame(stat_rows),
                                 hide_index=True,
-                                use_container_width=True,
+                                width="stretch",
                             )
                             st.caption(
                                 "⚠️ Le statistiche sono proiezioni scalate dall'ultima stagione "
@@ -2013,7 +2013,7 @@ with tab_mapping:
                     st.dataframe(
                         pd.DataFrame(_prev_rows),
                         hide_index=True,
-                        use_container_width=True,
+                        width="stretch",
                     )
 
         st.divider()
