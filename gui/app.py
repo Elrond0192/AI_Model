@@ -28,6 +28,53 @@ from basketball_ai.utils.helpers import (
     parse_team_display_map,
     TEAM_DISPLAY_FIELD_MAP_ENV,
 )
+from basketball_ai.auth.auth import (
+    check_credentials,
+    create_user,
+    delete_user,
+    change_password,
+    reset_password,
+    load_users,
+    ensure_default_admin,
+)
+
+# ---------------------------------------------------------------------------
+# Authentication gate – must run before any other Streamlit rendering
+# ---------------------------------------------------------------------------
+
+# Ensure at least one admin account exists (first-run bootstrap)
+_default_pw = ensure_default_admin()
+
+if not st.session_state.get("authenticated"):
+    st.set_page_config(page_title="Basketball AI – Login", page_icon="🏀")
+    st.title("🏀 Basketball Performance AI")
+    st.subheader("Accesso riservato")
+
+    if _default_pw:
+        st.warning(
+            f"**Primo avvio**: account `admin` creato con password temporanea.\n\n"
+            f"Password: `{_default_pw}`\n\n"
+            "Cambiala subito dopo il primo accesso.",
+            icon="⚠️",
+        )
+
+    with st.form("login_form"):
+        _username = st.text_input("Username", autocomplete="username")
+        _password = st.text_input("Password", type="password", autocomplete="current-password")
+        _login_btn = st.form_submit_button("🔐 Accedi", type="primary", use_container_width=True)
+
+    if _login_btn:
+        _ok, _user = check_credentials(_username, _password)
+        if _ok:
+            st.session_state["authenticated"]  = True
+            st.session_state["current_user"]   = _username.strip().lower()
+            st.session_state["current_role"]   = _user.get("role", "viewer")
+            st.rerun()
+        else:
+            st.error("Credenziali non valide. Riprova.")
+
+    st.stop()
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -238,19 +285,31 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
+# ---------------------------------------------------------------------------
+# Sidebar – user info and logout
+# ---------------------------------------------------------------------------
+with st.sidebar:
+    _cur_user = st.session_state.get("current_user", "")
+    _cur_role = st.session_state.get("current_role", "")
+    st.caption(f"👤 **{_cur_user}** ({_cur_role})")
+    if st.button("🚪 Logout", use_container_width=True):
+        st.session_state.clear()
+        st.rerun()
+
 st.title("🏀 Basketball Performance AI")
 
 # ---------------------------------------------------------------------------
 # Tabs
 # ---------------------------------------------------------------------------
 
-tab_data, tab_train, tab_pred, tab_scen, tab_chat, tab_mapping = st.tabs([
+tab_data, tab_train, tab_pred, tab_scen, tab_chat, tab_mapping, tab_admin = st.tabs([
     "📂 Dati",
     "🏋️ Training",
     "🎯 Predizioni",
     "🔀 Scenari",
     "💬 Chat",
     "🗺️ Mapping",
+    "👥 Utenti",
 ])
 
 # ===========================================================================
@@ -1991,3 +2050,145 @@ with tab_mapping:
                     f"**Env-var:** `{TEAM_DISPLAY_FIELD_MAP_ENV}` non impostata — "
                     "comportamento di default: usa ShortName se disponibile, altrimenti TeamName."
                 )
+
+# ===========================================================================
+# TAB 7 – GESTIONE UTENTI (solo admin)
+# ===========================================================================
+
+with tab_admin:
+    st.header("👥 Gestione Utenti")
+    _is_admin = st.session_state.get("current_role") == "admin"
+
+    if not _is_admin:
+        st.warning("⛔ Accesso riservato agli amministratori.")
+        st.stop()
+
+    # -----------------------------------------------------------------------
+    # User list
+    # -----------------------------------------------------------------------
+    _all_users = load_users()
+    st.subheader(f"Utenti registrati ({len(_all_users)})")
+    if _all_users:
+        _users_df = pd.DataFrame([
+            {
+                "Username": uname,
+                "Ruolo":    info.get("role", "—"),
+                "Creato da": info.get("created_by", "—"),
+            }
+            for uname, info in _all_users.items()
+        ])
+        st.dataframe(_users_df, width="stretch", hide_index=True)
+    else:
+        st.caption("Nessun utente trovato.")
+
+    st.divider()
+
+    # -----------------------------------------------------------------------
+    # Create user
+    # -----------------------------------------------------------------------
+    with st.expander("➕ Crea nuovo utente", expanded=False):
+        with st.form("admin_create_user"):
+            _new_uname = st.text_input("Username", key="au_new_uname")
+            _new_pw    = st.text_input("Password", type="password", key="au_new_pw")
+            _new_pw2   = st.text_input("Conferma password", type="password", key="au_new_pw2")
+            _new_role  = st.selectbox(
+                "Ruolo", ["viewer", "analyst", "admin"], key="au_new_role"
+            )
+            _create_btn = st.form_submit_button("Crea utente", type="primary")
+
+        if _create_btn:
+            if not _new_uname.strip():
+                st.error("Inserisci un username.")
+            elif not _new_pw:
+                st.error("Inserisci una password.")
+            elif _new_pw != _new_pw2:
+                st.error("Le password non coincidono.")
+            else:
+                _ok = create_user(
+                    _new_uname, _new_pw, _new_role,
+                    created_by=st.session_state.get("current_user", "admin"),
+                )
+                if _ok:
+                    st.success(f"✅ Utente **{_new_uname.strip().lower()}** creato con ruolo **{_new_role}**.")
+                    st.rerun()
+                else:
+                    st.error(f"Username **{_new_uname.strip().lower()}** già esistente.")
+
+    # -----------------------------------------------------------------------
+    # Reset password
+    # -----------------------------------------------------------------------
+    with st.expander("🔑 Reset password utente", expanded=False):
+        _all_usernames = list(_all_users.keys())
+        if _all_usernames:
+            with st.form("admin_reset_pw"):
+                _reset_uname = st.selectbox(
+                    "Utente da modificare", _all_usernames, key="au_reset_uname"
+                )
+                _reset_pw  = st.text_input("Nuova password", type="password", key="au_reset_pw")
+                _reset_pw2 = st.text_input(
+                    "Conferma nuova password", type="password", key="au_reset_pw2"
+                )
+                _reset_btn = st.form_submit_button("Reimposta password", type="primary")
+
+            if _reset_btn:
+                if not _reset_pw:
+                    st.error("Inserisci una nuova password.")
+                elif _reset_pw != _reset_pw2:
+                    st.error("Le password non coincidono.")
+                else:
+                    _ok = reset_password(_reset_uname, _reset_pw)
+                    if _ok:
+                        st.success(f"✅ Password di **{_reset_uname}** aggiornata.")
+                    else:
+                        st.error("Errore durante il reset della password.")
+        else:
+            st.caption("Nessun utente disponibile.")
+
+    # -----------------------------------------------------------------------
+    # Delete user
+    # -----------------------------------------------------------------------
+    with st.expander("🗑️ Elimina utente", expanded=False):
+        _deletable = [u for u in _all_users if u != st.session_state.get("current_user")]
+        if _deletable:
+            with st.form("admin_delete_user"):
+                _del_uname = st.selectbox(
+                    "Utente da eliminare", _deletable, key="au_del_uname"
+                )
+                _del_btn = st.form_submit_button("❌ Elimina", type="primary")
+
+            if _del_btn:
+                _ok = delete_user(_del_uname)
+                if _ok:
+                    st.success(f"✅ Utente **{_del_uname}** eliminato.")
+                    st.rerun()
+                else:
+                    st.error("Errore durante l'eliminazione.")
+        else:
+            st.caption("Non è possibile eliminare il proprio account o altri utenti.")
+
+    # -----------------------------------------------------------------------
+    # Change own password
+    # -----------------------------------------------------------------------
+    st.divider()
+    st.subheader("🔒 Cambia la tua password")
+    with st.form("admin_change_own_pw"):
+        _own_old  = st.text_input("Password attuale",   type="password", key="au_own_old")
+        _own_new  = st.text_input("Nuova password",     type="password", key="au_own_new")
+        _own_new2 = st.text_input("Conferma password",  type="password", key="au_own_new2")
+        _own_btn  = st.form_submit_button("Aggiorna password", type="primary")
+
+    if _own_btn:
+        if not _own_new:
+            st.error("Inserisci una nuova password.")
+        elif _own_new != _own_new2:
+            st.error("Le password non coincidono.")
+        else:
+            _ok = change_password(
+                st.session_state.get("current_user", ""),
+                _own_old, _own_new,
+            )
+            if _ok:
+                st.success("✅ Password aggiornata con successo.")
+            else:
+                st.error("Password attuale errata.")
+

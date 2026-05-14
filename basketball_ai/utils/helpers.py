@@ -2,7 +2,39 @@
 from __future__ import annotations
 import logging
 import os
-from typing import Dict
+from typing import Any, Dict
+
+# ---------------------------------------------------------------------------
+# ID normalisation (single canonical implementation, imported everywhere)
+# ---------------------------------------------------------------------------
+
+def normalize_id(value: Any) -> Any:
+    """Normalize an ID to int when possible, keep as-is for non-numeric strings.
+
+    Handles ``int``, ``float``, decimal strings (``"42"``), and hex strings
+    such as ``"0000009B"``.  Returns ``None`` when *value* is ``None``.
+
+    >>> normalize_id(3.0)
+    3
+    >>> normalize_id("0000009B")
+    155
+    >>> normalize_id("GRC1")
+    'GRC1'
+    """
+    if value is None:
+        return None
+    if isinstance(value, float):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    v = str(value).strip()
+    try:
+        return int(v, 10)
+    except (ValueError, TypeError):
+        try:
+            return int(v, 16)
+        except (ValueError, TypeError):
+            return v
 
 # ---------------------------------------------------------------------------
 # Team display-name helpers

@@ -8,26 +8,10 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 
 from basketball_ai.models.ensemble import EnsembleModel, PredictionResult
-from basketball_ai.utils.helpers import team_display_name as _team_display_name
-
-
-def _normalize_id(value: Any) -> Any:
-    """Normalize an ID to int when possible, keep as-is for non-numeric strings like 'GRC1'."""
-    if value is None:
-        return None
-    if isinstance(value, float):
-        return int(value)
-    if isinstance(value, int):
-        return value
-    v = str(value).strip()
-    try:
-        return int(v, 10)
-    except (ValueError, TypeError):
-        try:
-            return int(v, 16)
-        except (ValueError, TypeError):
-            return v
-
+from basketball_ai.utils.helpers import (
+    team_display_name as _team_display_name,
+    normalize_id as _normalize_id,
+)
 
 from basketball_ai.models.age_curve import age_performance_factor, PEAK_AGES, peak_age_window
 from basketball_ai.features.context_features import compute_context_features

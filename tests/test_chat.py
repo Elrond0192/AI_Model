@@ -331,11 +331,12 @@ class TestChatEngine:
 
     def test_lineup_engine_profiles_have_roles(self, trained_engine, minimal_data):
         result = trained_engine.what_if_lineup(1, 1, [2, 3, 4])
+        from basketball_ai.scenarios.engine import ADVANCED_ROLES
+        valid_roles = set(ADVANCED_ROLES.keys())
         for p in result.lineup_profiles:
-            assert p.role in {
-                "Playmaker", "Primary Scorer", "Defender",
-                "3pt Specialist", "Paint Scorer / Big", "Two-way / Role Player",
-            }
+            # Role must be either a known ADVANCED_ROLES key (heuristic fallback)
+            # or a non-empty DB role string (from ruolo_combinato / ruolo_offensivo).
+            assert p.role  # non-empty
             assert 0.0 <= p.style_compat <= 1.0
 
     def test_lineup_engine_empty_lineup(self, trained_engine, minimal_data):

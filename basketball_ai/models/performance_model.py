@@ -11,7 +11,7 @@ from typing import Any, Dict, List, NamedTuple, Optional, Tuple
 import joblib
 import numpy as np
 import pandas as pd
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split, KFold
 from sklearn.preprocessing import StandardScaler
 from xgboost import XGBRegressor
 
@@ -70,6 +70,7 @@ FEATURE_COLS: List[str] = [
     "age",
     "position_enc",
     "competition_enc",
+    "role_enc",             # DB role (ruolo_combinato) encoded as ordinal int
     "pts_per_36",
     "ast_per_36",
     "reb_per_36",
@@ -271,6 +272,9 @@ class PerformanceModel:
         self.feature_names: List[str] = FEATURE_COLS.copy()
         self.is_trained: bool = False
         self._shap_explainer: Optional[Any] = None
+        #: Maps ruolo_combinato string → ordinal int.  Built during training;
+        #: unknown roles at inference time default to 0.
+        self.role_encoding: Dict[str, int] = {}
 
     # ------------------------------------------------------------------
     # Training helpers
@@ -331,6 +335,10 @@ class PerformanceModel:
             "position_enc":       pos_enc,
             "competition_enc":    float(COMPETITION_ENCODING.get(
                 str(stat_row.get("competition", "RS")), 0
+            )),
+            # DB role encoding: ordinal int built during prepare_features()
+            "role_enc":           float(self.role_encoding.get(
+                str(stat_row.get("ruolo_combinato", "") or "").strip(), 0
             )),
             "pts_per_36":         per36("points"),
             "ast_per_36":         per36("assists"),
@@ -401,6 +409,10 @@ class PerformanceModel:
     ) -> Tuple[pd.DataFrame, np.ndarray]:
         """Build training (X, y) from all player-season data.
 
+        Also rebuilds :attr:`role_encoding` from the ``ruolo_combinato``
+        column (when present) so the ordinal codes are consistent between
+        training and inference.
+
         Args:
             data: dict with keys ``player_stats`` and ``players``.
             extra_metrics: additional columns from METRIC_CATALOG to include
@@ -408,6 +420,20 @@ class PerformanceModel:
         """
         player_stats = data["player_stats"]
         players      = data["players"]
+
+        # --- Build role encoding from ruolo_combinato (DB roles) ---------------
+        if "ruolo_combinato" in player_stats.columns:
+            unique_roles = sorted({
+                str(v).strip()
+                for v in player_stats["ruolo_combinato"].dropna()
+                if str(v).strip()
+            })
+            # 0 is reserved for "unknown / empty"; known roles start at 1
+            self.role_encoding = {role: idx + 1 for idx, role in enumerate(unique_roles)}
+        else:
+            self.role_encoding = {}
+        if self.role_encoding:
+            print(f"[PerformanceModel] Role encoding: {len(self.role_encoding)} ruoli combinati")
 
         # Determine the full feature column list for this run
         extra_feature_names: List[str] = []
@@ -467,17 +493,26 @@ class PerformanceModel:
     # Public API
     # ------------------------------------------------------------------
 
-    def train(self, data: Dict[str, Any], extra_metrics: List[str] = []) -> Dict[str, float]:
+    def train(
+        self,
+        data: Dict[str, Any],
+        extra_metrics: List[str] = [],
+        cv_folds: int = 0,
+    ) -> Dict[str, float]:
         """Train the model and return RMSE metrics.
 
         Args:
-            data: dict with keys ``player_stats`` and ``players``.
+            data:          dict with keys ``player_stats`` and ``players``.
             extra_metrics: additional METRIC_CATALOG columns to include as features.
+            cv_folds:      when > 1, run stratified k-fold cross-validation **in
+                           addition** to the standard train/val split.  The CV scores
+                           are returned as ``cv_mean_rmse`` and ``cv_std_rmse`` but
+                           the final model is always re-fitted on the full dataset.
         """
         print("[PerformanceModel] Building feature matrix …")
         X, y = self.prepare_features(data, extra_metrics=extra_metrics)
         self.feature_names = list(X.columns)
-        print(f"[PerformanceModel] Training on {len(X):,} samples …")
+        print(f"[PerformanceModel] Training on {len(X):,} samples, {len(self.feature_names)} features …")
 
         X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.15, random_state=42)
         X_tr_sc = self.scaler.fit_transform(X_train)
@@ -489,7 +524,35 @@ class PerformanceModel:
         val_rmse   = float(np.sqrt(np.mean((self.model.predict(X_va_sc) - y_val) ** 2)))
         self.is_trained = True
         print(f"[PerformanceModel] Train RMSE={train_rmse:.4f}  Val RMSE={val_rmse:.4f}")
-        return {"train_rmse": train_rmse, "val_rmse": val_rmse}
+
+        metrics: Dict[str, float] = {"train_rmse": train_rmse, "val_rmse": val_rmse}
+
+        # Optional k-fold cross-validation for more robust evaluation
+        if cv_folds > 1:
+            print(f"[PerformanceModel] Running {cv_folds}-fold cross-validation …")
+            kf = KFold(n_splits=cv_folds, shuffle=True, random_state=42)
+            X_np = X.values.astype(float)
+            cv_rmses: List[float] = []
+            for fold, (tr_idx, va_idx) in enumerate(kf.split(X_np), 1):
+                Xtr, Xva = X_np[tr_idx], X_np[va_idx]
+                ytr, yva = y[tr_idx], y[va_idx]
+                _sc = StandardScaler()
+                Xtr_sc = _sc.fit_transform(Xtr)
+                Xva_sc = _sc.transform(Xva)
+                _m = XGBRegressor(
+                    n_estimators=300, max_depth=5, learning_rate=0.05,
+                    subsample=0.8, colsample_bytree=0.8, min_child_weight=3,
+                    reg_alpha=0.1, reg_lambda=1.0, random_state=42, verbosity=0,
+                )
+                _m.fit(Xtr_sc, ytr, verbose=False)
+                fold_rmse = float(np.sqrt(np.mean((_m.predict(Xva_sc) - yva) ** 2)))
+                cv_rmses.append(fold_rmse)
+                print(f"  Fold {fold}/{cv_folds}  RMSE={fold_rmse:.4f}")
+            metrics["cv_mean_rmse"] = float(np.mean(cv_rmses))
+            metrics["cv_std_rmse"]  = float(np.std(cv_rmses))
+            print(f"[PerformanceModel] CV RMSE={metrics['cv_mean_rmse']:.4f} ±{metrics['cv_std_rmse']:.4f}")
+
+        return metrics
 
     def predict_from_features(self, feature_dict: Dict[str, float]) -> float:
         """Predict rating from an already-engineered feature dict."""
@@ -527,7 +590,12 @@ class PerformanceModel:
 
     def save(self, path: str) -> None:
         Path(path).parent.mkdir(parents=True, exist_ok=True)
-        joblib.dump({"model": self.model, "scaler": self.scaler, "feature_names": self.feature_names}, path)
+        joblib.dump({
+            "model": self.model,
+            "scaler": self.scaler,
+            "feature_names": self.feature_names,
+            "role_encoding": self.role_encoding,
+        }, path)
         print(f"[PerformanceModel] Saved to {path}")
 
     def load(self, path: str) -> None:
@@ -535,6 +603,7 @@ class PerformanceModel:
         self.model         = payload["model"]
         self.scaler        = payload["scaler"]
         self.feature_names = payload["feature_names"]
+        self.role_encoding = payload.get("role_encoding", {})
         self.is_trained    = True
         self._shap_explainer = None
         print(f"[PerformanceModel] Loaded from {path}")

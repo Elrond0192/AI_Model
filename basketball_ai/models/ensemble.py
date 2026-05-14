@@ -19,22 +19,7 @@ import numpy as np
 from basketball_ai.models.age_curve import age_performance_factor, PEAK_AGES
 
 
-def _normalize_id(value):
-    """Normalize an ID to int when possible, keep as-is for non-numeric strings."""
-    if value is None:
-        return None
-    if isinstance(value, float):
-        return int(value)
-    if isinstance(value, int):
-        return value
-    v = str(value).strip()
-    try:
-        return int(v, 10)
-    except (ValueError, TypeError):
-        try:
-            return int(v, 16)
-        except (ValueError, TypeError):
-            return v
+from basketball_ai.utils.helpers import normalize_id as _normalize_id
 from basketball_ai.models.compatibility_model import CompatibilityModel
 from basketball_ai.models.performance_model import (
     PerformanceModel, COMPETITION_ENCODING, compute_po_features,
@@ -126,7 +111,17 @@ class EnsembleModel:
         # Inject competition-aware features that the model was trained on
         player_feats["competition_enc"] = float(COMPETITION_ENCODING.get(competition, 0))
 
+        # Inject DB role encoding (ruolo_combinato → ordinal int)
         p_stats  = data["player_stats"][data["player_stats"]["player_id"] == _normalize_id(player_id)]
+        if not p_stats.empty:
+            latest_row      = p_stats.sort_values("season").iloc[-1]
+            latest_role     = str(latest_row.get("ruolo_combinato", "") or "").strip()
+            latest_games_played = float(latest_row.get("games_played", 0) or 0)
+        else:
+            latest_role = ""
+            latest_games_played = 0.0
+        player_feats["role_enc"] = float(self.perf_model.role_encoding.get(latest_role, 0))
+
         po_feats = compute_po_features(p_stats)
         player_feats.update(po_feats)
 
@@ -167,9 +162,11 @@ class EnsembleModel:
         # Final rating
         adjusted = float(np.clip(base_rating * compat_mult * lf * ctx_mult, 3.5, 10.0))
 
-        # Confidence interval (wider for inconsistent players)
+        # Confidence interval – wider for inconsistent players, wider for small samples
         consistency = float(player_feats.get("consistency_score", 0.5))
-        sigma       = max(0.20, 0.80 * (1.0 - consistency))
+        # Scale reliability 0.5 → 1.0 based on games_played (25+ games = full reliability)
+        games_reliability = float(np.clip(latest_games_played / 25.0, 0.4, 1.0))
+        sigma = max(0.15, 0.85 * (1.0 - consistency) / games_reliability)
         ci_lo = float(np.clip(adjusted - 1.96 * sigma, 1.0, 10.0))
         ci_hi = float(np.clip(adjusted + 1.96 * sigma, 1.0, 10.0))
 

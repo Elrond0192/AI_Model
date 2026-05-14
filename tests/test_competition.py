@@ -304,7 +304,8 @@ class TestEnsembleCompetition:
     ):
         for comp in ("RS", "PO", "CUP"):
             r = trained_ensemble.predict(1, 1, tiny_data_with_competition, competition=comp)
-            assert f"[{comp}]" in r.explanation
+            # The explanation encodes competition in the narrative: "competizione: RS" etc.
+            assert f"competizione: {comp}" in r.explanation
 
     def test_predicted_rating_in_range(
         self, trained_ensemble, tiny_data_with_competition
