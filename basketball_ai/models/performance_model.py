@@ -633,8 +633,8 @@ class PerformanceModel:
 
         # Three-way split: conformal holdout is never seen by the model.
         # Splits (approximate): conformal 15% → train 70% / val 15% of total.
-        # random_state is deliberately different for the two splits so the
-        # conformal set is drawn independently of the val set.
+        # Distinct random seeds ensure the two splits select different subsets
+        # without overlap.
         if len(X) >= 40:
             X_main, X_conformal, y_main, y_conformal = train_test_split(
                 X, y, test_size=0.15, random_state=43

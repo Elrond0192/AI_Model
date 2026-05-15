@@ -239,9 +239,9 @@ class EnsembleModel:
         """Store a prediction result in the LRU cache."""
         if self._cache_maxsize <= 0:
             return  # caching disabled
-        if key in self._prediction_cache:
-            self._prediction_cache.move_to_end(key)
+        # Overwrite the entry (new timestamp) and move it to the MRU end.
         self._prediction_cache[key] = (result, time.monotonic())
+        self._prediction_cache.move_to_end(key)
         # Evict the least-recently-used entry when over capacity.
         while len(self._prediction_cache) > self._cache_maxsize:
             self._prediction_cache.popitem(last=False)
