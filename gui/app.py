@@ -12,6 +12,7 @@ Tabs:
 """
 from __future__ import annotations
 
+import datetime
 import json
 import os
 import uuid
@@ -22,6 +23,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 import numpy as np
 import pandas as pd
 import streamlit as st
+import extra_streamlit_components as stx
 from basketball_ai.data.loader import _to_int
 from basketball_ai.utils.helpers import (
     team_display_name as _team_display_name,
@@ -44,7 +46,35 @@ from basketball_ai.auth.auth import (
     ALL_SECTIONS,
     SECTION_LABELS,
     DEFAULT_ROLES,
+    create_session_token,
+    validate_session_token,
+    revoke_session_token,
+    revoke_user_sessions,
 )
+
+# ---------------------------------------------------------------------------
+# Session cookie settings
+# ---------------------------------------------------------------------------
+
+_SESSION_COOKIE_NAME = "ba_session"
+_SESSION_TTL_DAYS    = int(os.environ.get("SESSION_COOKIE_TTL_DAYS", "7"))
+
+# ---------------------------------------------------------------------------
+# Page config – must be the very first Streamlit call
+# ---------------------------------------------------------------------------
+
+st.set_page_config(
+    page_title="Basketball Performance AI",
+    page_icon="🏀",
+    layout="wide",
+    initial_sidebar_state="collapsed",
+)
+
+# ---------------------------------------------------------------------------
+# Cookie manager – single instance for the entire script
+# ---------------------------------------------------------------------------
+
+_cookie_mgr = stx.CookieManager(key="bai_session_cookies")
 
 # ---------------------------------------------------------------------------
 # Authentication gate – must run before any other Streamlit rendering
@@ -56,7 +86,19 @@ _default_pw = ensure_default_admin()
 ensure_default_roles()
 
 if not st.session_state.get("authenticated"):
-    st.set_page_config(page_title="Basketball AI – Login", page_icon="🏀")
+    # ── Try to restore session from a persistent browser cookie ─────────────
+    _saved_token = _cookie_mgr.get(_SESSION_COOKIE_NAME)
+    if _saved_token:
+        _session = validate_session_token(_saved_token)
+        if _session:
+            _tok_user, _tok_role = _session
+            st.session_state["authenticated"]   = True
+            st.session_state["current_user"]    = _tok_user
+            st.session_state["current_role"]    = _tok_role
+            st.session_state["_session_token"]  = _saved_token
+            st.rerun()
+
+    # ── Show login form ──────────────────────────────────────────────────────
     st.title("🏀 Basketball Performance AI")
     st.subheader("Accesso riservato")
 
@@ -76,9 +118,15 @@ if not st.session_state.get("authenticated"):
     if _login_btn:
         _ok, _user = check_credentials(_username, _password)
         if _ok:
-            st.session_state["authenticated"]  = True
-            st.session_state["current_user"]   = _username.strip().lower()
-            st.session_state["current_role"]   = _user.get("role", "viewer")
+            _uname  = _username.strip().lower()
+            _role   = _user.get("role", "viewer")
+            _token  = create_session_token(_uname, _role, _SESSION_TTL_DAYS)
+            _expiry = datetime.datetime.utcnow() + datetime.timedelta(days=_SESSION_TTL_DAYS)
+            _cookie_mgr.set(_SESSION_COOKIE_NAME, _token, expires_at=_expiry)
+            st.session_state["authenticated"]   = True
+            st.session_state["current_user"]    = _uname
+            st.session_state["current_role"]    = _role
+            st.session_state["_session_token"]  = _token
             st.rerun()
         else:
             st.error("Credenziali non valide. Riprova.")
@@ -340,13 +388,6 @@ def _auto_team_for_player(
 
 
 
-st.set_page_config(
-    page_title="Basketball Performance AI",
-    page_icon="🏀",
-    layout="wide",
-    initial_sidebar_state="collapsed",
-)
-
 # ---------------------------------------------------------------------------
 # Sidebar – user info and logout
 # ---------------------------------------------------------------------------
@@ -355,6 +396,10 @@ with st.sidebar:
     _cur_role = st.session_state.get("current_role", "")
     st.caption(f"👤 **{_cur_user}** ({_cur_role})")
     if st.button("🚪 Logout", width="stretch"):
+        _tok = st.session_state.get("_session_token")
+        if _tok:
+            revoke_session_token(_tok)
+        _cookie_mgr.delete(_SESSION_COOKIE_NAME)
         st.session_state.clear()
         st.rerun()
 
@@ -1954,11 +1999,11 @@ with tab_scout:
                             # --- Fetch player data --------------------------------
                             _sc_player_row = data_sc["player_dict"].get(scout_player_id, {})
                             _sc_name       = _sc_filtered.get(scout_player_id, f"Giocatore {scout_player_id}")
-                            _sc_age        = int(_sc_player_row.get("age", 25))
+                            _sc_age        = _to_int(_sc_player_row.get("age", 25))
                             _sc_pos        = str(_sc_player_row.get("position", "—"))
                             _sc_nat        = str(_sc_player_row.get("nationality", "—"))
-                            _sc_height     = int(_sc_player_row.get("height_cm", 0))
-                            _sc_weight     = int(_sc_player_row.get("weight_kg", 0))
+                            _sc_height     = _to_int(_sc_player_row.get("height_cm", 0))
+                            _sc_weight     = _to_int(_sc_player_row.get("weight_kg", 0))
 
                             _sc_stats_df   = data_sc["player_stats"]
                             _sc_mask       = _sc_stats_df["player_id"] == scout_player_id
@@ -1983,14 +2028,14 @@ with tab_scout:
                                 _sc_cur_team = data_sc["teams"].iloc[0]["id"]
 
                             _sc_pred = engine_sc.predict_in_team(
-                                scout_player_id, int(_sc_cur_team), season=int(_sc_season)
+                                scout_player_id, _to_int(_sc_cur_team), season=int(_sc_season)
                             )
 
                             # --- Career trajectory --------------------------------
                             _sc_traj = engine_sc.predict_age_trajectory(
                                 scout_player_id,
                                 age_range=(max(18, _sc_age - 2), min(40, _sc_age + 8)),
-                                team_id=int(_sc_cur_team),
+                                team_id=_to_int(_sc_cur_team),
                                 season_base=int(_sc_season),
                             )
                             _sc_peak = max(_sc_traj, key=lambda p: p.predicted_rating)
@@ -2760,6 +2805,7 @@ with tab_admin:
                     else:
                         _ok = reset_password(_reset_uname, _reset_pw)
                         if _ok:
+                            revoke_user_sessions(_reset_uname)
                             st.success(f"✅ Password di **{_reset_uname}** aggiornata.")
                         else:
                             st.error("Errore durante il reset della password.")
@@ -2781,6 +2827,7 @@ with tab_admin:
                 if _del_btn:
                     _ok = delete_user(_del_uname)
                     if _ok:
+                        revoke_user_sessions(_del_uname)
                         st.success(f"✅ Utente **{_del_uname}** eliminato.")
                         st.rerun()
                     else:
@@ -2810,6 +2857,7 @@ with tab_admin:
                     _own_old, _own_new,
                 )
                 if _ok:
+                    revoke_user_sessions(st.session_state.get("current_user", ""))
                     st.success("✅ Password aggiornata con successo.")
                 else:
                     st.error("Password attuale errata.")

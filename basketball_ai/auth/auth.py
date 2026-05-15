@@ -28,11 +28,13 @@ per-user random 32-byte salt.  No plain-text password is ever stored on disk.
 """
 from __future__ import annotations
 
+import datetime
 import hashlib
 import hmac
 import json
 import os
 import secrets
+import warnings
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -55,6 +57,17 @@ ROLES_FILE = Path(
         str(Path(__file__).parent.parent.parent / "roles.json"),
     )
 )
+
+#: Path of the active sessions file.  Can be overridden via BASKETBALL_AI_SESSIONS_FILE.
+SESSIONS_FILE = Path(
+    os.environ.get(
+        "BASKETBALL_AI_SESSIONS_FILE",
+        str(Path(__file__).parent.parent.parent / "sessions.json"),
+    )
+)
+
+#: Default session TTL in days (overridden by SESSION_COOKIE_TTL_DAYS env var).
+_SESSION_TTL_DAYS_DEFAULT = 7
 
 #: Ordered list of all section identifiers that map to GUI tabs.
 ALL_SECTIONS: List[str] = [
@@ -270,4 +283,134 @@ def get_role_sections(role: str) -> List[str]:
 def can_access(role: str, section: str) -> bool:
     """Return ``True`` when *role* is permitted to access *section*."""
     return section in get_role_sections(role)
+
+
+# ---------------------------------------------------------------------------
+# Session tokens – persistent browser login
+# ---------------------------------------------------------------------------
+
+def _get_session_secret() -> bytes:
+    """Return the HMAC/signing secret for session tokens.
+
+    Reads ``SESSION_SECRET_KEY`` from the environment.  When the variable is
+    absent, a random key is generated, persisted to the project ``.env`` file
+    for convenience, and a warning is emitted.  In production **always** set
+    ``SESSION_SECRET_KEY`` to a fixed, high-entropy value so that sessions
+    survive server restarts and are consistent across replicas.
+    """
+    key = os.environ.get("SESSION_SECRET_KEY", "")
+    if key:
+        return key.encode("utf-8")
+
+    # Dev-mode fallback: generate a key and persist it so subsequent runs reuse it.
+    warnings.warn(
+        "SESSION_SECRET_KEY is not set.  A random key has been generated and "
+        "saved to .env – existing sessions will be invalidated on restart.  "
+        "Set SESSION_SECRET_KEY to a fixed 64-char hex value in production.",
+        stacklevel=2,
+    )
+    new_key = secrets.token_hex(32)
+    env_path = Path(__file__).parent.parent.parent / ".env"
+    try:
+        text = env_path.read_text(encoding="utf-8") if env_path.exists() else ""
+        if "SESSION_SECRET_KEY=" not in text:
+            with env_path.open("a", encoding="utf-8") as fh:
+                fh.write(f"\nSESSION_SECRET_KEY={new_key}\n")
+    except OSError:
+        pass
+    os.environ["SESSION_SECRET_KEY"] = new_key
+    return new_key.encode("utf-8")
+
+
+def _hash_token(raw_token: str) -> str:
+    """Return the SHA-256 hex digest of *raw_token* for safe server-side storage."""
+    return hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+
+
+def _load_sessions() -> Dict[str, Dict]:
+    """Load the active sessions from disk.  Returns ``{}`` on error."""
+    if not SESSIONS_FILE.exists():
+        return {}
+    try:
+        return json.loads(SESSIONS_FILE.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def _save_sessions(sessions: Dict[str, Dict]) -> None:
+    SESSIONS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    SESSIONS_FILE.write_text(json.dumps(sessions, indent=2), encoding="utf-8")
+
+
+def create_session_token(
+    username: str,
+    role: str,
+    ttl_days: int = _SESSION_TTL_DAYS_DEFAULT,
+) -> str:
+    """Create a persistent session token for *username*.
+
+    Returns the raw (unhashed) token that must be stored in the browser cookie.
+    Only the SHA-256 hash is persisted server-side in ``sessions.json``.
+    Expired entries are pruned automatically on each call.
+    """
+    raw_token = secrets.token_hex(32)
+    token_hash = _hash_token(raw_token)
+    now = datetime.datetime.utcnow()
+    expires_at = (now + datetime.timedelta(days=ttl_days)).isoformat()
+    sessions = _load_sessions()
+    # Prune expired entries while we're here
+    now_iso = now.isoformat()
+    sessions = {h: e for h, e in sessions.items() if e.get("expires_at", "") > now_iso}
+    sessions[token_hash] = {
+        "username":   username.strip().lower(),
+        "role":       role,
+        "expires_at": expires_at,
+    }
+    _save_sessions(sessions)
+    return raw_token
+
+
+def validate_session_token(raw_token: str) -> Optional[Tuple[str, str]]:
+    """Validate *raw_token* and return ``(username, role)`` or ``None``.
+
+    Returns ``None`` when the token is unknown, malformed, or expired.
+    """
+    if not raw_token or not isinstance(raw_token, str):
+        return None
+    token_hash = _hash_token(raw_token.strip())
+    sessions = _load_sessions()
+    entry = sessions.get(token_hash)
+    if entry is None:
+        return None
+    if datetime.datetime.utcnow().isoformat() > entry.get("expires_at", ""):
+        # Expired – clean up
+        sessions.pop(token_hash, None)
+        _save_sessions(sessions)
+        return None
+    return entry["username"], entry["role"]
+
+
+def revoke_session_token(raw_token: str) -> None:
+    """Revoke a single session token (call on explicit logout)."""
+    if not raw_token:
+        return
+    token_hash = _hash_token(raw_token.strip())
+    sessions = _load_sessions()
+    if token_hash in sessions:
+        sessions.pop(token_hash)
+        _save_sessions(sessions)
+
+
+def revoke_user_sessions(username: str) -> None:
+    """Revoke **all** active sessions for *username*.
+
+    Called when the user's password is changed or the account is deleted so
+    that any previously issued tokens (e.g. on other devices / browsers) are
+    immediately invalidated.
+    """
+    key = username.strip().lower()
+    sessions = _load_sessions()
+    pruned = {h: e for h, e in sessions.items() if e.get("username", "") != key}
+    if len(pruned) != len(sessions):
+        _save_sessions(pruned)
 
