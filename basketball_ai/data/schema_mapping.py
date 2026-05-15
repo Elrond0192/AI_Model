@@ -348,7 +348,7 @@ def _player_stats_cte(
         CAST(b.Id AS nvarchar(100)) AS player_id,
         CAST(b.TeamId AS nvarchar(100)) AS team_id,
         -- SF = 1 when the player was in the starting five for that game
-        ISNULL(CAST(b.SF AS int), 0) AS is_starter,
+        ISNULL(TRY_CAST(b.SF AS int), 0) AS is_starter,
         ROW_NUMBER() OVER (
             PARTITION BY CAST(b.Id AS nvarchar(100))
             ORDER BY b.[Timestamp] DESC, b.Game DESC
@@ -359,9 +359,9 @@ def _player_stats_cte(
     -- Aggregate per-player: total games in starting five and starter pct
     SELECT
         CAST(b.Id AS nvarchar(100)) AS player_id,
-        SUM(ISNULL(CAST(b.SF AS int), 0)) AS games_started,
+        SUM(ISNULL(TRY_CAST(b.SF AS int), 0)) AS games_started,
         CASE WHEN COUNT(*) > 0
-             THEN CAST(SUM(ISNULL(CAST(b.SF AS int), 0)) AS float) / CAST(COUNT(*) AS float)
+             THEN CAST(SUM(ISNULL(TRY_CAST(b.SF AS int), 0)) AS float) / CAST(COUNT(*) AS float)
              ELSE 0.0
         END AS starter_pct
     FROM Boxscore.{tag} AS b
@@ -583,7 +583,7 @@ FROM (
     SELECT
         CAST(b.TeamId AS nvarchar(100)) AS team_id,
         CAST(b.Id AS nvarchar(100)) AS player_id,
-        CAST(SUM(ISNULL(CAST(b.SF AS int), 0)) AS float)
+        CAST(SUM(ISNULL(TRY_CAST(b.SF AS int), 0)) AS float)
             / NULLIF(CAST(COUNT(*) AS float), 0) AS starter_pct
     FROM Boxscore.{tag} AS b
     GROUP BY CAST(b.TeamId AS nvarchar(100)), CAST(b.Id AS nvarchar(100))
