@@ -1999,11 +1999,11 @@ with tab_scout:
                             # --- Fetch player data --------------------------------
                             _sc_player_row = data_sc["player_dict"].get(scout_player_id, {})
                             _sc_name       = _sc_filtered.get(scout_player_id, f"Giocatore {scout_player_id}")
-                            _sc_age        = int(_sc_player_row.get("age", 25))
+                            _sc_age        = _to_int(_sc_player_row.get("age", 25))
                             _sc_pos        = str(_sc_player_row.get("position", "—"))
                             _sc_nat        = str(_sc_player_row.get("nationality", "—"))
-                            _sc_height     = int(_sc_player_row.get("height_cm", 0))
-                            _sc_weight     = int(_sc_player_row.get("weight_kg", 0))
+                            _sc_height     = _to_int(_sc_player_row.get("height_cm", 0))
+                            _sc_weight     = _to_int(_sc_player_row.get("weight_kg", 0))
 
                             _sc_stats_df   = data_sc["player_stats"]
                             _sc_mask       = _sc_stats_df["player_id"] == scout_player_id
@@ -2028,14 +2028,14 @@ with tab_scout:
                                 _sc_cur_team = data_sc["teams"].iloc[0]["id"]
 
                             _sc_pred = engine_sc.predict_in_team(
-                                scout_player_id, int(_sc_cur_team), season=int(_sc_season)
+                                scout_player_id, _to_int(_sc_cur_team), season=int(_sc_season)
                             )
 
                             # --- Career trajectory --------------------------------
                             _sc_traj = engine_sc.predict_age_trajectory(
                                 scout_player_id,
                                 age_range=(max(18, _sc_age - 2), min(40, _sc_age + 8)),
-                                team_id=int(_sc_cur_team),
+                                team_id=_to_int(_sc_cur_team),
                                 season_base=int(_sc_season),
                             )
                             _sc_peak = max(_sc_traj, key=lambda p: p.predicted_rating)
