@@ -337,19 +337,21 @@ class PerformanceModel:
         DB-schema metrics, all three DB role encodings, interaction features)
         plus any extra_metrics requested by the caller.
         """
-        mpg = float(stat_row.get("minutes_per_game", 0))
-        if mpg <= 0:
-            mpg = 1.0
+        _mpg_raw = stat_row.get("minutes_per_game", 0)
+        mpg = float(_mpg_raw) if not pd.isna(_mpg_raw) and _mpg_raw > 0 else 1.0
 
         def per36(col: str) -> float:
-            return float(stat_row.get(col, 0)) / mpg * 36
+            v = stat_row.get(col, 0)
+            return (float(v) if not pd.isna(v) else 0.0) / mpg * 36
 
         def hist_avg(col: str, fallback: float = 0.0) -> float:
             """Historical average of *col* from career so far; fall back to current row."""
             if not player_stats_history.empty and col in player_stats_history.columns:
                 vals = player_stats_history[col].dropna().tolist()
-                return float(np.mean(vals)) if vals else float(stat_row.get(col, fallback))
-            return float(stat_row.get(col, fallback))
+                if vals:
+                    return float(np.mean(vals))
+            v = stat_row.get(col, fallback)
+            return fallback if pd.isna(v) else float(v)
 
         # Career stats up to this season
         ratings = player_stats_history["rating"].tolist()
@@ -588,6 +590,10 @@ class PerformanceModel:
                 targets.append(float(stat["rating"]))
 
         X = pd.DataFrame(rows, columns=all_feature_names)
+        nan_cols = X.columns[X.isna().any()].tolist()
+        if nan_cols:
+            logger.debug("[PerformanceModel] fillna(0) applied to %d column(s): %s", len(nan_cols), nan_cols)
+        X = X.fillna(0.0)
         y = np.array(targets, dtype=float)
         return X, y
 

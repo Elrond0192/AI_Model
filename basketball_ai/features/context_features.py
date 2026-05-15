@@ -80,7 +80,7 @@ def compute_context_features(
     rels_df = data["team_player_relations"]
     players_df = data["players"]
     starter_mask = (
-        (rels_df["team_id"] == int(team_id)) &
+        (rels_df["team_id"] == _normalize_id(team_id)) &
         (rels_df["season"] == "2023-24") &
         (rels_df["role"] == "starter")
     )
@@ -112,7 +112,7 @@ def compute_context_features(
     if style in ("pace_and_space", "motion_offense"):
         # Check player's 3pt ability from latest stats
         stats_df = data["player_stats"]
-        p_stats = stats_df[stats_df["player_id"] == int(player_id)].sort_values("season")
+        p_stats = stats_df[stats_df["player_id"] == _normalize_id(player_id)].sort_values("season")
         if not p_stats.empty:
             tpp = float(p_stats.iloc[-1].get("three_point_pct", 0.33))
             spacing_fit = float(np.clip(tpp / 0.40, 0, 1))
