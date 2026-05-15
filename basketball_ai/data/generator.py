@@ -1,6 +1,9 @@
 """Basketball synthetic data generator."""
+import logging
 import os, random, numpy as np, pandas as pd
 from typing import List
+
+logger = logging.getLogger(__name__)
 
 random.seed(42)
 np.random.seed(42)
@@ -359,19 +362,19 @@ def generate_data(output_dir: str = "data/sample", seed: int = 42) -> None:
     random.seed(seed)
     np.random.seed(seed)
     os.makedirs(output_dir, exist_ok=True)
-    print("Generating leagues...")
+    logger.info("Generating leagues...")
     leagues = generate_leagues()
     leagues.to_csv(f"{output_dir}/leagues.csv", index=False)
-    print("Generating teams...")
+    logger.info("Generating teams...")
     teams = generate_teams(leagues)
     teams.to_csv(f"{output_dir}/teams.csv", index=False)
-    print("Generating players...")
+    logger.info("Generating players...")
     players = generate_players(5000)
     players.to_csv(f"{output_dir}/players.csv", index=False)
-    print("Generating player stats...")
+    logger.info("Generating player stats...")
     stats = generate_player_stats(players, teams)
     stats.to_csv(f"{output_dir}/player_stats.csv", index=False)
-    print("Generating team-player relations...")
+    logger.info("Generating team-player relations...")
     rels = generate_team_player_relations(players, teams, stats)
     rels.to_csv(f"{output_dir}/team_player_relations.csv", index=False)
     # update player current team/league
@@ -379,7 +382,10 @@ def generate_data(output_dir: str = "data/sample", seed: int = 42) -> None:
     players["current_team_id"]   = players["id"].map(dict(zip(latest["player_id"], latest["team_id"])))
     players["current_league_id"] = players["id"].map(dict(zip(latest["player_id"], latest["league_id"])))
     players.to_csv(f"{output_dir}/players.csv", index=False)
-    print(f"Done. leagues={len(leagues)}, teams={len(teams)}, players={len(players)}, stats={len(stats)}, rels={len(rels)}")
+    logger.info(
+        "Done. leagues=%d, teams=%d, players=%d, stats=%d, rels=%d",
+        len(leagues), len(teams), len(players), len(stats), len(rels),
+    )
 
 
 if __name__ == "__main__":

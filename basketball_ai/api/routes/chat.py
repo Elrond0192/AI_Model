@@ -25,9 +25,10 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 
 from basketball_ai.api.schemas import ChatRequest, ChatMessageResponse
+from basketball_ai.api.limiter import limiter, RATE_LIMIT_CHAT
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
@@ -52,7 +53,8 @@ def _get_chat_engine():
 
 
 @router.post("", response_model=ChatMessageResponse)
-def chat(req: ChatRequest):
+@limiter.limit(RATE_LIMIT_CHAT)
+async def chat(request: Request, req: ChatRequest):
     """Send a natural-language basketball question and get an AI-powered reply.
 
     Maintains conversation context across calls using ``session_id``.

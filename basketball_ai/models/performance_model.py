@@ -7,6 +7,7 @@ OWS/DWS, FIC, interaction features, and career trajectory signals.
 """
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any, Dict, List, NamedTuple, Optional, Tuple
 
@@ -18,6 +19,8 @@ from sklearn.preprocessing import StandardScaler
 from xgboost import XGBRegressor
 
 from basketball_ai.data.loader import _to_int
+
+logger = logging.getLogger(__name__)
 
 try:
     import shap as _shap
@@ -529,9 +532,10 @@ class PerformanceModel:
         self.role_def_encoding = _build_encoding("ruolo_difensivo")
 
         if self.role_encoding:
-            print(f"[PerformanceModel] Role encoding – combinato: {len(self.role_encoding)}, "
-                  f"offensivo: {len(self.role_off_encoding)}, "
-                  f"difensivo: {len(self.role_def_encoding)}")
+            logger.info(
+                "[PerformanceModel] Role encoding – combinato: %d, offensivo: %d, difensivo: %d",
+                len(self.role_encoding), len(self.role_off_encoding), len(self.role_def_encoding),
+            )
 
         # --- Extra metric feature names ---------------------------------------
         extra_feature_names: List[str] = []
@@ -546,7 +550,7 @@ class PerformanceModel:
         all_feature_names = FEATURE_COLS + extra_feature_names
 
         if extra_metrics:
-            print(f"[PerformanceModel] Metriche extra ({len(extra_metrics)}): {extra_metrics}")
+            logger.info("[PerformanceModel] Metriche extra (%d): %s", len(extra_metrics), extra_metrics)
 
         birth_year_map: Dict[int, int] = {
             _to_int(row["id"]): 2024 - int(row["age"])
@@ -605,10 +609,10 @@ class PerformanceModel:
                            are returned as ``cv_mean_rmse`` and ``cv_std_rmse`` but
                            the final model is always re-fitted on the full dataset.
         """
-        print("[PerformanceModel] Building feature matrix …")
+        logger.info("[PerformanceModel] Building feature matrix …")
         X, y = self.prepare_features(data, extra_metrics=extra_metrics)
         self.feature_names = list(X.columns)
-        print(f"[PerformanceModel] Training on {len(X):,} samples, {len(self.feature_names)} features …")
+        logger.info("[PerformanceModel] Training on %d samples, %d features …", len(X), len(self.feature_names))
 
         X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.15, random_state=42)
         X_tr_sc = self.scaler.fit_transform(X_train)
@@ -620,16 +624,33 @@ class PerformanceModel:
             verbose=False,
         )
 
-        train_rmse = float(np.sqrt(np.mean((self.model.predict(X_tr_sc) - y_train) ** 2)))
-        val_rmse   = float(np.sqrt(np.mean((self.model.predict(X_va_sc) - y_val) ** 2)))
-        self.is_trained = True
-        print(f"[PerformanceModel] Train RMSE={train_rmse:.4f}  Val RMSE={val_rmse:.4f}")
+        y_tr_pred = self.model.predict(X_tr_sc)
+        y_va_pred = self.model.predict(X_va_sc)
 
-        metrics: Dict[str, float] = {"train_rmse": train_rmse, "val_rmse": val_rmse}
+        train_rmse = float(np.sqrt(np.mean((y_tr_pred - y_train) ** 2)))
+        val_rmse   = float(np.sqrt(np.mean((y_va_pred - y_val)   ** 2)))
+        val_mae    = float(np.mean(np.abs(y_va_pred - y_val)))
+        # R² = 1 − SS_res / SS_tot
+        ss_res = float(np.sum((y_va_pred - y_val) ** 2))
+        ss_tot = float(np.sum((y_val - np.mean(y_val)) ** 2))
+        val_r2 = 1.0 - ss_res / ss_tot if ss_tot > 0 else 0.0
+
+        self.is_trained = True
+        logger.info(
+            "[PerformanceModel] Train RMSE=%.4f  Val RMSE=%.4f  Val MAE=%.4f  Val R²=%.4f",
+            train_rmse, val_rmse, val_mae, val_r2,
+        )
+
+        metrics: Dict[str, float] = {
+            "train_rmse": train_rmse,
+            "val_rmse":   val_rmse,
+            "val_mae":    val_mae,
+            "val_r2":     val_r2,
+        }
 
         # Optional k-fold cross-validation for more robust evaluation
         if cv_folds > 1:
-            print(f"[PerformanceModel] Running {cv_folds}-fold cross-validation …")
+            logger.info("[PerformanceModel] Running %d-fold cross-validation …", cv_folds)
             kf = KFold(n_splits=cv_folds, shuffle=True, random_state=42)
             X_np = X.values.astype(float)
             cv_rmses: List[float] = []
@@ -647,10 +668,13 @@ class PerformanceModel:
                 _m.fit(Xtr_sc, ytr, verbose=False)
                 fold_rmse = float(np.sqrt(np.mean((_m.predict(Xva_sc) - yva) ** 2)))
                 cv_rmses.append(fold_rmse)
-                print(f"  Fold {fold}/{cv_folds}  RMSE={fold_rmse:.4f}")
+                logger.info("  Fold %d/%d  RMSE=%.4f", fold, cv_folds, fold_rmse)
             metrics["cv_mean_rmse"] = float(np.mean(cv_rmses))
             metrics["cv_std_rmse"]  = float(np.std(cv_rmses))
-            print(f"[PerformanceModel] CV RMSE={metrics['cv_mean_rmse']:.4f} ±{metrics['cv_std_rmse']:.4f}")
+            logger.info(
+                "[PerformanceModel] CV RMSE=%.4f ±%.4f",
+                metrics["cv_mean_rmse"], metrics["cv_std_rmse"],
+            )
 
         return metrics
 
@@ -698,7 +722,7 @@ class PerformanceModel:
             "role_off_encoding":  self.role_off_encoding,
             "role_def_encoding":  self.role_def_encoding,
         }, path)
-        print(f"[PerformanceModel] Saved to {path}")
+        logger.info("[PerformanceModel] Saved to %s", path)
 
     def load(self, path: str) -> None:
         payload = joblib.load(path)
@@ -710,4 +734,5 @@ class PerformanceModel:
         self.role_def_encoding  = payload.get("role_def_encoding", {})
         self.is_trained         = True
         self._shap_explainer    = None
-        print(f"[PerformanceModel] Loaded from {path}")
+        logger.info("[PerformanceModel] Loaded from %s", path)
+

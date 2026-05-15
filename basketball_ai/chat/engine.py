@@ -61,6 +61,8 @@ Here are some things you can ask me:
 • **Market value** – *"What is [player]'s market value?"*
 • **Individual profile** – *"Tell me about [player]'s individual stats"*
 • **Role fit** – *"Is [player] a good fit as a stretch big?"*
+• **Injury risk** – *"What is [player]'s injury risk?"*
+• **Scouting report** – *"Give me a full scouting report for [player]"*
 
 For the **lineup** question I will analyse:
   – Predicted rating of each named teammate at that team
@@ -75,6 +77,12 @@ For **clutch** questions I use:
 
 For **market value** I estimate based on:
   – Current rating, age curve, RAPTOR/LEBRON/SPM composite, league tier
+
+For **injury risk** I analyse:
+  – Historical games-played availability, age, and hustle index
+
+For **scouting reports** I provide:
+  – Statistical strengths and weaknesses, versatility, durability and role fit
 
 Just mention player and team names and I'll use the trained AI model to answer.\
 """
@@ -784,6 +792,188 @@ class ChatEngine:
             except Exception as exc:
                 return f"Could not evaluate role fit ({exc}).", {}, []
 
+        # --- INJURY RISK ------------------------------------------------
+        if intent == Intent.INJURY_RISK:
+            if not player_id:
+                return self._need_player(), {}, []
+            try:
+                player_row = pd_.get(_normalize_id(player_id), {})
+                age        = int(player_row.get("age", 26))
+
+                p_stats = self.data["player_stats"]
+                mask    = p_stats["player_id"] == _normalize_id(player_id)
+                pdf     = p_stats[mask].sort_values("season")
+
+                def _col_mean(col: str, default: float = 0.0) -> float:
+                    if col in pdf.columns and not pdf[col].dropna().empty:
+                        return float(pdf[col].mean())
+                    return default
+
+                def _col_std(col: str, default: float = 0.0) -> float:
+                    if col in pdf.columns and len(pdf[col].dropna()) > 1:
+                        return float(pdf[col].std())
+                    return default
+
+                avg_gp      = _col_mean("games_played", 60.0)
+                std_gp      = _col_std("games_played")
+                hustle      = _col_mean("hustle_index")
+                durability  = float(
+                    pdf["games_played"].mean() / 82.0
+                    if "games_played" in pdf.columns and not pdf.empty
+                    else 0.7
+                )
+                durability  = float(min(1.0, max(0.0, durability)))
+
+                # Simple risk score: low durability + high variation + high age → high risk
+                age_factor  = max(0.0, (age - 28) / 15.0)   # 0 at age 28, 1 at 43
+                var_factor  = min(1.0, std_gp / 25.0)        # 0 at low variance, 1 at high
+                risk_score  = float(
+                    (1.0 - durability) * 0.55
+                    + var_factor * 0.25
+                    + age_factor * 0.20
+                )
+                risk_score  = round(float(min(1.0, max(0.0, risk_score))), 3)
+
+                if risk_score < 0.20:
+                    risk_label = "🟢 **Low injury risk** – consistently available"
+                elif risk_score < 0.40:
+                    risk_label = "🟡 **Moderate injury risk** – generally available but some absences"
+                elif risk_score < 0.65:
+                    risk_label = "🟠 **Elevated injury risk** – notable durability concerns"
+                else:
+                    risk_label = "🔴 **High injury risk** – significant durability concerns"
+
+                reply = (
+                    f"**{player_name}** – injury risk & durability\n\n"
+                    f"Age: {age}\n"
+                    f"Avg games played/season: {avg_gp:.1f} / 82 ({durability:.0%} availability)\n"
+                    f"Games played variability: ±{std_gp:.1f} g\n"
+                    f"Hustle index (proxy for physical load): {hustle:.2f}\n\n"
+                    f"Risk score: **{risk_score:.0%}**\n"
+                    f"{risk_label}\n\n"
+                    f"_Note: risk estimate is based on availability history and age curve. "
+                    f"No actual medical data is used._"
+                )
+                return reply, {
+                    "risk_score": risk_score,
+                    "avg_games_played": round(avg_gp, 1),
+                    "availability_pct": round(durability, 3),
+                    "age": age,
+                }, [
+                    f"Individual stats for {player_name}?",
+                    f"When will {player_name} peak?",
+                    f"Scouting report for {player_name}?",
+                ]
+            except Exception as exc:
+                return f"Could not assess injury risk ({exc}).", {}, []
+
+        # --- SCOUTING REPORT --------------------------------------------
+        if intent == Intent.SCOUTING_REPORT:
+            if not player_id:
+                return self._need_player(), {}, []
+            try:
+                player_row = pd_.get(_normalize_id(player_id), {})
+                position   = str(player_row.get("position", "?"))
+                age        = int(player_row.get("age", 26))
+                cur_tid    = player_row.get("current_team_id")
+                team_name_cur = _team_display_name(
+                    td_.get(_normalize_id(cur_tid), {}), "—",
+                    league_id=str(td_.get(_normalize_id(cur_tid), {}).get("league_id", "") or ""),
+                ) if cur_tid else "—"
+
+                from basketball_ai.features.player_features import compute_player_features
+                p_feats = compute_player_features(player_id, self.data)
+                p_stats = self.data["player_stats"]
+                mask    = p_stats["player_id"] == _normalize_id(player_id)
+                pdf     = p_stats[mask].sort_values("season")
+
+                def _avg(col: str, default: float = 0.0) -> float:
+                    if col in pdf.columns and not pdf[col].dropna().empty:
+                        return float(pdf[col].mean())
+                    return default
+
+                pts    = _avg("points")
+                reb    = _avg("rebounds")
+                ast    = _avg("assists")
+                stl    = _avg("steals")
+                blk    = _avg("blocks")
+                ts     = _avg("ts_pct")
+                usg    = _avg("usg_pct")
+                bpm    = _avg("bpm")
+                raptor_o = _avg("raptor_off")
+                raptor_d = _avg("raptor_def")
+                hustle   = _avg("hustle_index")
+                durability = float(min(1.0, _avg("games_played", 60) / 82.0))
+
+                pm  = float(p_feats.get("playmaking_score", 0.0))
+                df  = float(p_feats.get("defensive_score", 0.0))
+                ver = float(p_feats.get("versatility_score", 0.5))
+
+                # Identify strengths (dimensions above threshold)
+                strengths = []
+                if pts > 18.0:  strengths.append("elite scorer")
+                elif pts > 12.0: strengths.append("reliable scorer")
+                if ast > 5.0:   strengths.append("strong playmaker")
+                elif pm > 0.6:  strengths.append("good ball-handler")
+                if reb > 8.0:   strengths.append("dominant rebounder")
+                elif reb > 5.0: strengths.append("solid rebounder")
+                if raptor_d > 2.0: strengths.append("defensive anchor")
+                elif df > 5.0:     strengths.append("good defender")
+                if hustle > 0.7:   strengths.append("high-hustle / energy")
+                if ts > 0.58:      strengths.append("efficient shooter (TS%)")
+                if durability > 0.85: strengths.append("durable / available")
+
+                # Identify weaknesses
+                weaknesses = []
+                if ts < 0.50:     weaknesses.append("shooting efficiency concerns")
+                if ast < 2.0 and position in ("SG", "SF", "PF"): weaknesses.append("limited creation")
+                if raptor_d < -2.0: weaknesses.append("defensive liability")
+                if hustle < 0.3:  weaknesses.append("below-average hustle")
+                if durability < 0.65: weaknesses.append("durability / injury concerns")
+                if ver < 0.3:     weaknesses.append("low positional versatility")
+
+                strengths_str  = ", ".join(strengths)  or "—"
+                weaknesses_str = ", ".join(weaknesses) or "—"
+
+                cur_tid_n = _normalize_id(cur_tid) if cur_tid else 1
+                try:
+                    pred  = self.engine.predict_in_team(player_id, cur_tid_n)
+                    rating_str = f"{pred.predicted_rating:.2f} / 10"
+                except Exception:
+                    rating_str = "N/A"
+
+                reply = (
+                    f"**🏀 SCOUTING REPORT – {player_name}**\n\n"
+                    f"Position: {position}  |  Age: {age}  |  Current team: {team_name_cur}\n\n"
+                    f"**Performance overview**\n"
+                    f"AI Rating: {rating_str}\n"
+                    f"PTS: {pts:.1f}  REB: {reb:.1f}  AST: {ast:.1f}  "
+                    f"STL: {stl:.1f}  BLK: {blk:.1f}\n"
+                    f"TS%: {ts:.1%}  USG%: {usg:.1f}%  BPM: {bpm:+.1f}\n"
+                    f"RAPTOR off: {raptor_o:+.2f}  RAPTOR def: {raptor_d:+.2f}\n\n"
+                    f"**Strengths**: {strengths_str}\n"
+                    f"**Weaknesses**: {weaknesses_str}\n\n"
+                    f"**Versatility**: {ver:.0%}  |  "
+                    f"**Durability**: {durability:.0%} avg availability\n\n"
+                    f"_This report is generated from statistical patterns and does not "
+                    f"incorporate film study or tactical scouting._"
+                )
+                return reply, {
+                    "player_id": player_id,
+                    "position": position,
+                    "age": age,
+                    "strengths": strengths,
+                    "weaknesses": weaknesses,
+                    "versatility": round(ver, 3),
+                    "durability_pct": round(durability, 3),
+                }, [
+                    f"Best teams for {player_name}?",
+                    f"Injury risk for {player_name}?",
+                    f"When will {player_name} peak?",
+                ]
+            except Exception as exc:
+                return f"Could not generate scouting report ({exc}).", {}, []
+
         # --- UNKNOWN ----------------------------------------------------
         # Smart fallback: if we found entities, try to infer the intent rather
         # than returning the generic help message.
@@ -848,21 +1038,36 @@ class ChatEngine:
                     f"**Statistiche per partita (ultima stagione)**\n"
                     f"PTS: {pts:.1f}  |  REB: {reb:.1f}  |  AST: {ast:.1f}"
                     f"  |  STL: {stl:.1f}  |  BLK: {blk:.1f}\n"
-                    f"TS%: {ts:.1%}  |  USG%: {usg:.1f}%  |  BPM: {bpm:+.1f}"
+                    f"TS%: {ts:.1%}  |  USG%: {usg:.1f}%  |  BPM: {bpm:+.1f}\n\n"
+                    f"💡 Puoi anche chiedere:\n"
+                    f"• _Scouting report di {player_name}_\n"
+                    f"• _Rischio infortuni di {player_name}_\n"
+                    f"• _Migliori squadre per {player_name}_"
                 )
                 return reply, {}, [
                     f"Come si comporterebbe {player_name} al [squadra]?",
                     f"Quando raggiungerà il picco {player_name}?",
-                    f"Migliori squadre per {player_name}?",
+                    f"Scouting report di {player_name}",
                 ]
             except Exception as exc:
                 pass
+        # Fully unknown – provide contextual suggestions
+        suggestions_out = [
+            "help",
+            "How good is [player] at [team]?",
+            "Best teams for [player]?",
+            "Scouting report for [player]?",
+            "Injury risk for [player]?",
+        ]
         return (
             "Non sono sicuro di cosa stai chiedendo. "
-            "Scrivi **help** per vedere cosa posso fare, oppure prova: "
-            "*Come si comporterebbe [giocatore] al [squadra]?*",
+            "Scrivi **help** per vedere cosa posso fare, oppure prova:\n"
+            "• *Come si comporterebbe [giocatore] al [squadra]?*\n"
+            "• *Scouting report di [giocatore]*\n"
+            "• *Migliori squadre per [giocatore]*\n"
+            "• *Rischio infortuni di [giocatore]*",
             {},
-            ["help", "Migliori squadre per [giocatore]?", "Quando raggiungerà il picco [giocatore]?"],
+            suggestions_out,
         )
 
     # ------------------------------------------------------------------

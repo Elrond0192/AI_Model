@@ -200,12 +200,16 @@ class TestCompatibilityModel:
     def test_score_in_range(self, tiny_data):
         model = CompatibilityModel()
         model.train(tiny_data)
-        s = model.score(1, tiny_data)
+        player_id = list(tiny_data["player_dict"].keys())[0]
+        team_id   = list(tiny_data["team_dict"].keys())[0]
+        s = model.score(player_id, team_id, tiny_data)
         assert 0.50 <= s <= 1.0
 
     def test_untrained_fallback(self, tiny_data):
         model = CompatibilityModel()
-        assert model.score(1, tiny_data) == pytest.approx(0.75)
+        player_id = list(tiny_data["player_dict"].keys())[0]
+        team_id   = list(tiny_data["team_dict"].keys())[0]
+        assert model.score(player_id, team_id, tiny_data) == pytest.approx(0.75)
 
 
 # ---------------------------------------------------------------------------
