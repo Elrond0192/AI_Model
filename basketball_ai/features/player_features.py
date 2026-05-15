@@ -14,24 +14,18 @@ import pandas as pd
 
 from basketball_ai.data.models import Player, PlayerStats
 from basketball_ai.utils.helpers import normalize_id as _normalize_id
+from basketball_ai.constants import (
+    POSITIONAL_PEAK_AGES,
+    _primary_pos,
+    _peak_age,
+)
 
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
-
-POSITIONAL_PEAK_AGES: Dict[str, int] = {
-    "PG": 26, "SG": 25, "SF": 26, "PF": 27, "C": 28,
-    "PG/SG": 25, "SG/SF": 25, "SF/PF": 26, "PF/C": 27, "SG/PF": 26,
-}
-
-
-def _primary_pos(pos: str) -> str:
-    """Return first component of a (potentially hybrid) position string."""
-    return pos.split("/")[0]
-
-
-def _peak_age(pos: str) -> int:
-    return POSITIONAL_PEAK_AGES.get(pos, POSITIONAL_PEAK_AGES.get(_primary_pos(pos), 26))
+# Re-export so that existing importers (e.g. tests) continue to work.
+__all__ = [
+    "POSITIONAL_PEAK_AGES",
+    "_primary_pos",
+    "_peak_age",
+]
 
 
 def _per36(stat: float, mpg: float) -> float:

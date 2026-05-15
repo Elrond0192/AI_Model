@@ -17,6 +17,8 @@ from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
+from basketball_ai.constants import _primary_pos
+
 logger = logging.getLogger(__name__)
 
 # Peak age per position (pure and hybrid)
@@ -41,10 +43,6 @@ _SIGMA_AFTER: Dict[str, float] = {
 _fitted_peak_ages:    Dict[str, float] = {}
 _fitted_sigma_before: Dict[str, float] = {}
 _fitted_sigma_after:  Dict[str, float] = {}
-
-
-def _primary_pos(pos: str) -> str:
-    return pos.split("/")[0]
 
 
 def age_performance_factor(age: int, position: str) -> float:

@@ -19,6 +19,7 @@ from sklearn.preprocessing import StandardScaler
 from xgboost import XGBRegressor
 
 from basketball_ai.data.loader import _to_int
+from basketball_ai.constants import POSITIONAL_PEAK_AGES, _primary_pos, _peak_age
 
 logger = logging.getLogger(__name__)
 
@@ -278,18 +279,6 @@ POSITION_ENCODING: Dict[str, int] = {
     "PG/SG": 5, "SG/SF": 6, "SF/PF": 7, "PF/C": 8, "SG/PF": 9,
 }
 
-POSITIONAL_PEAK_AGES: Dict[str, int] = {
-    "PG": 26, "SG": 25, "SF": 26, "PF": 27, "C": 28,
-    "PG/SG": 25, "SG/SF": 25, "SF/PF": 26, "PF/C": 27, "SG/PF": 26,
-}
-
-
-def _primary_pos(pos: str) -> str:
-    return pos.split("/")[0]
-
-
-def _peak_age(pos: str) -> int:
-    return POSITIONAL_PEAK_AGES.get(pos, POSITIONAL_PEAK_AGES.get(_primary_pos(pos), 26))
 
 
 class PerformanceModel:
@@ -329,7 +318,7 @@ class PerformanceModel:
         age: int,
         position: str,
         player_stats_history: pd.DataFrame,
-        extra_metrics: List[str] = [],
+        extra_metrics: Optional[List[str]] = None,
     ) -> Dict[str, float]:
         """Build a feature row from a player-stats row.
 
@@ -337,6 +326,8 @@ class PerformanceModel:
         DB-schema metrics, all three DB role encodings, interaction features)
         plus any extra_metrics requested by the caller.
         """
+        if extra_metrics is None:
+            extra_metrics = []
         _mpg_raw = stat_row.get("minutes_per_game", 0)
         mpg = float(_mpg_raw) if not pd.isna(_mpg_raw) and _mpg_raw > 0 else 1.0
 
@@ -504,7 +495,7 @@ class PerformanceModel:
         return row
 
     def prepare_features(
-        self, data: Dict[str, Any], extra_metrics: List[str] = []
+        self, data: Dict[str, Any], extra_metrics: Optional[List[str]] = None
     ) -> Tuple[pd.DataFrame, np.ndarray]:
         """Build training (X, y) from all player-season data.
 
@@ -517,6 +508,8 @@ class PerformanceModel:
             extra_metrics: additional columns from METRIC_CATALOG to include
                            as features (on top of the base FEATURE_COLS).
         """
+        if extra_metrics is None:
+            extra_metrics = []
         player_stats = data["player_stats"]
         players      = data["players"]
 
@@ -604,25 +597,59 @@ class PerformanceModel:
     def train(
         self,
         data: Dict[str, Any],
-        extra_metrics: List[str] = [],
+        extra_metrics: Optional[List[str]] = None,
         cv_folds: int = 0,
     ) -> Dict[str, float]:
         """Train the model and return RMSE metrics.
 
+        Uses a **three-way split** to prevent data leakage in conformal
+        calibration:
+
+        * **Train (70%)** – used to fit XGBoost weights.
+        * **Val (15%)** – used as eval_set for early-stopping; influences
+          when training stops but not the final model weights directly.
+        * **Conformal holdout (15%)** – reserved exclusively for computing
+          empirical residuals that calibrate the prediction-interval
+          quantiles.  This set is *never* used for fitting or early stopping.
+
+        The conformal residuals are returned in the ``metrics`` dict under
+        the key ``"conformal_residuals"`` so that ``EnsembleModel`` can
+        consume them without re-calling ``prepare_features``.
+
         Args:
             data:          dict with keys ``player_stats`` and ``players``.
             extra_metrics: additional METRIC_CATALOG columns to include as features.
-            cv_folds:      when > 1, run stratified k-fold cross-validation **in
-                           addition** to the standard train/val split.  The CV scores
-                           are returned as ``cv_mean_rmse`` and ``cv_std_rmse`` but
-                           the final model is always re-fitted on the full dataset.
+            cv_folds:      when > 1, run k-fold cross-validation **in addition**
+                           to the standard split.  CV scores are returned as
+                           ``cv_mean_rmse`` / ``cv_std_rmse`` but the final model
+                           is always re-fitted on the 70 % training portion.
         """
+        if extra_metrics is None:
+            extra_metrics = []
         logger.info("[PerformanceModel] Building feature matrix …")
         X, y = self.prepare_features(data, extra_metrics=extra_metrics)
         self.feature_names = list(X.columns)
         logger.info("[PerformanceModel] Training on %d samples, %d features …", len(X), len(self.feature_names))
 
-        X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.15, random_state=42)
+        # Three-way split: conformal holdout is never seen by the model.
+        # Splits (approximate): conformal 15% → train 70% / val 15% of total.
+        # random_state is deliberately different for the two splits so the
+        # conformal set is drawn independently of the val set.
+        if len(X) >= 40:
+            X_main, X_conformal, y_main, y_conformal = train_test_split(
+                X, y, test_size=0.15, random_state=43
+            )
+            # 0.176 ≈ 0.15 / 0.85 → val is ~15% of the original dataset
+            X_train, X_val, y_train, y_val = train_test_split(
+                X_main, y_main, test_size=0.176, random_state=42
+            )
+        else:
+            # Very small datasets: skip the conformal split to avoid tiny sets
+            X_conformal = y_conformal = None
+            X_train, X_val, y_train, y_val = train_test_split(
+                X, y, test_size=0.15, random_state=42
+            )
+
         X_tr_sc = self.scaler.fit_transform(X_train)
         X_va_sc = self.scaler.transform(X_val)
 
@@ -649,12 +676,24 @@ class PerformanceModel:
             train_rmse, val_rmse, val_mae, val_r2,
         )
 
-        metrics: Dict[str, float] = {
+        metrics: Dict[str, Any] = {
             "train_rmse": train_rmse,
             "val_rmse":   val_rmse,
             "val_mae":    val_mae,
             "val_r2":     val_r2,
         }
+
+        # Compute conformal residuals on the true holdout (never seen by model).
+        if X_conformal is not None and len(X_conformal) >= 10:
+            X_conf_sc = self.scaler.transform(X_conformal)
+            y_conf_pred = self.model.predict(X_conf_sc)
+            metrics["conformal_residuals"] = np.abs(y_conf_pred - y_conformal).tolist()
+            logger.info(
+                "[PerformanceModel] Conformal holdout: %d samples  "
+                "mean_residual=%.4f",
+                len(X_conformal),
+                float(np.mean(np.abs(y_conf_pred - y_conformal))),
+            )
 
         # Optional k-fold cross-validation for more robust evaluation
         if cv_folds > 1:
