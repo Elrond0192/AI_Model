@@ -23,6 +23,7 @@ dependencies = [
     "pyodbc>=5.0.0",
     "python-dotenv>=1.0.0",
     "streamlit>=1.30.0",
+    "extra-streamlit-components>=0.1.60",
 ]
 
 [project.optional-dependencies]
