@@ -338,9 +338,7 @@ class PerformanceModel:
         plus any extra_metrics requested by the caller.
         """
         _mpg_raw = stat_row.get("minutes_per_game", 0)
-        mpg = float(_mpg_raw) if not pd.isna(_mpg_raw) else 0.0
-        if mpg <= 0:
-            mpg = 1.0
+        mpg = float(_mpg_raw) if not pd.isna(_mpg_raw) and _mpg_raw > 0 else 1.0
 
         def per36(col: str) -> float:
             v = stat_row.get(col, 0)
@@ -592,6 +590,9 @@ class PerformanceModel:
                 targets.append(float(stat["rating"]))
 
         X = pd.DataFrame(rows, columns=all_feature_names)
+        nan_cols = X.columns[X.isna().any()].tolist()
+        if nan_cols:
+            logger.debug("[PerformanceModel] fillna(0) applied to %d column(s): %s", len(nan_cols), nan_cols)
         X = X.fillna(0.0)
         y = np.array(targets, dtype=float)
         return X, y
