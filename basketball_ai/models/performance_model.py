@@ -137,6 +137,8 @@ FEATURE_COLS: List[str] = [
     # --- Per-40 projection features -------------------------------------------
     "avg_pts_per_40",
     "avg_ast_per_40",
+    # --- Starter status (from Boxscore.SF) ------------------------------------
+    "avg_starter_pct",      # Fraction of games started (0–1) – role signal
     # --- Engineered interaction features (domain-specific) --------------------
     "obpm_x_usg",           # Offensive production at high usage (OBPM × USG%)
     "dbpm_x_reb",           # Defensive impact via rebounding (DBPM × REB%)

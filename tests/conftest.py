@@ -90,6 +90,8 @@ def tiny_data():
                 "ruolo_offensivo": _ROLES_OFF[int(p["id"]) % len(_ROLES_OFF)],
                 "ruolo_difensivo": _ROLES_DEF[int(p["id"]) % len(_ROLES_DEF)],
                 "rating": round(np.random.uniform(5.0, 8.5), 3),
+                "games_started": int(np.random.randint(0, 82)),
+                "starter_pct": round(np.random.uniform(0.0, 1.0), 3),
             })
     stats = pd.DataFrame(stat_rows)
 

@@ -160,6 +160,9 @@ TABLE_PLAYER_STATS: List[ColumnDef] = [
     ColumnDef("ORtg_On", "ortg_on", "Offensive rating when on court.", default=0.0),
     ColumnDef("ORtg_Off", "ortg_off", "Offensive rating when off court.", default=0.0),
     ColumnDef("ORtg_Diff", "ortg_diff", "ORtg on/off differential.", default=0.0),
+    # --- Starter status from Boxscore.SF ------------------------------------
+    ColumnDef("games_started", "games_started", "Games in starting five (from Boxscore.SF).", default=0),
+    ColumnDef("starter_pct", "starter_pct", "Fraction of games started (0–1).", default=0.0),
 ]
 
 
@@ -344,18 +347,40 @@ def _player_stats_cte(
     SELECT
         CAST(b.Id AS nvarchar(100)) AS player_id,
         CAST(b.TeamId AS nvarchar(100)) AS team_id,
+        -- SF = 1 when the player was in the starting five for that game
+        ISNULL(CAST(b.SF AS int), 0) AS is_starter,
         ROW_NUMBER() OVER (
             PARTITION BY CAST(b.Id AS nvarchar(100))
             ORDER BY b.[Timestamp] DESC, b.Game DESC
         ) AS rn
     FROM Boxscore.{tag} AS b
+),
+{slug}_starter AS (
+    -- Aggregate per-player: total games in starting five and starter pct
+    SELECT
+        CAST(b.Id AS nvarchar(100)) AS player_id,
+        SUM(ISNULL(CAST(b.SF AS int), 0)) AS games_started,
+        CASE WHEN COUNT(*) > 0
+             THEN CAST(SUM(ISNULL(CAST(b.SF AS int), 0)) AS float) / CAST(COUNT(*) AS float)
+             ELSE 0.0
+        END AS starter_pct
+    FROM Boxscore.{tag} AS b
+    GROUP BY CAST(b.Id AS nvarchar(100))
 )"""
     else:
         box_cte = f"""{slug}_box AS (
     SELECT
         CAST(NULL AS nvarchar(100)) AS player_id,
         CAST(NULL AS nvarchar(100)) AS team_id,
+        CAST(0 AS int) AS is_starter,
         CAST(1 AS int) AS rn
+    WHERE 1 = 0
+),
+{slug}_starter AS (
+    SELECT
+        CAST(NULL AS nvarchar(100)) AS player_id,
+        CAST(0 AS int) AS games_started,
+        CAST(0.0 AS float) AS starter_pct
     WHERE 1 = 0
 )"""
 
@@ -529,9 +554,13 @@ def _player_stats_select(league: str, season: str) -> str:
     -- On/Off offensive rating (schema_db.sql: Analisi.AdvancedStatsOnOffCourt_*)
     ISNULL(CAST(o.ORtg_On AS float), 0.0) AS ortg_on,
     ISNULL(CAST(o.ORtg_Off AS float), 0.0) AS ortg_off,
-    ISNULL(CAST(o.ORtg_Diff AS float), 0.0) AS ortg_diff
+    ISNULL(CAST(o.ORtg_Diff AS float), 0.0) AS ortg_diff,
+    -- Starter status from Boxscore.SF column
+    ISNULL(st.games_started, 0) AS games_started,
+    ISNULL(st.starter_pct, 0.0) AS starter_pct
 FROM Analisi.AdvancedStats_Player_{tag} AS s
 LEFT JOIN {slug}_box    AS b ON CAST(s.Id AS nvarchar(100)) = b.player_id AND b.rn = 1
+LEFT JOIN {slug}_starter AS st ON CAST(s.Id AS nvarchar(100)) = st.player_id
 LEFT JOIN {slug}_roles  AS r ON CAST(s.Id AS nvarchar(100)) = r.player_id AND r.rn = 1
 LEFT JOIN {slug}_onoff  AS o ON CAST(s.Id AS nvarchar(100)) = o.player_id AND o.rn = 1
 LEFT JOIN {slug}_clutch AS c ON CAST(s.Id AS nvarchar(100)) = c.player_id AND c.rn = 1
@@ -546,11 +575,20 @@ def _team_player_relations_block(league: str, season: str) -> str:
     CAST(b.TeamId AS nvarchar(100)) AS team_id,
     CAST(b.Id AS nvarchar(100)) AS player_id,
     '{season}' AS season,
-    ISNULL(p.Pos, '') AS role,
+    -- Use SF (starter flag) to derive role: starter when majority of appearances were in the starting five
+    CASE
+        WHEN CAST(SUM(ISNULL(CAST(b.SF AS int), 0)) AS float) / NULLIF(CAST(COUNT(*) AS float), 0) >= 0.5
+        THEN 'starter'
+        ELSE 'rotation'
+    END AS role,
     ISNULL(TRY_CAST(p.ShirtNumber AS int), 0) AS jersey_number
 FROM Boxscore.{tag} AS b
 LEFT JOIN Anagrafiche.{tag} AS p
-    ON CAST(b.Id AS nvarchar(100)) = CAST(p.Id AS nvarchar(100))"""
+    ON CAST(b.Id AS nvarchar(100)) = CAST(p.Id AS nvarchar(100))
+GROUP BY
+    CAST(b.TeamId AS nvarchar(100)),
+    CAST(b.Id AS nvarchar(100)),
+    ISNULL(TRY_CAST(p.ShirtNumber AS int), 0)"""
 
 
 def get_table_queries(

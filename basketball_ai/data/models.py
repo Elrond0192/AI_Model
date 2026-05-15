@@ -154,6 +154,10 @@ class PlayerStats:
     ortg_off: float = field(default=0.0)         # Offensive rating when player off court
     ortg_diff: float = field(default=0.0)        # ORtg on-court minus off-court delta
 
+    # --- Starter status from Boxscore.SF ------------------------------------
+    games_started: int = field(default=0)           # Games in starting five
+    starter_pct: float = field(default=0.0)         # Fraction of games started (0–1)
+
 
 @dataclass
 class TeamPlayerRelation:

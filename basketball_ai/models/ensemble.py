@@ -53,10 +53,11 @@ _CTX_MULT_LO:     float = 0.72   # hard lower bound
 _CTX_MULT_HI:     float = 1.08   # hard upper bound
 
 # Playing-time factor: scales down ratings for bench players with low minutes.
-# At _MPG_BASELINE minutes per game the factor reaches 1.0 (no discount).
-_MPG_FACTOR_BASE:     float = 0.60   # factor at 0 min/game (theoretical floor)
-_MPG_FACTOR_RANGE:    float = 0.40   # additive range: base + range = 1.0 at baseline
-_MPG_BASELINE:        float = 30.0   # minutes/game at which factor = 1.0
+# _MPG_BASELINE is computed from real data during training (75th pct of MPG).
+# The value below is only the initial fallback before any model is trained.
+_MPG_FACTOR_BASE:  float = 0.60   # factor at 0 min/game (theoretical floor)
+_MPG_FACTOR_RANGE: float = 0.40   # additive range: base + range = 1.0 at baseline
+_MPG_BASELINE:     float = 30.0   # overridden by calibrate_mpg_baseline() on train
 
 
 @dataclass
@@ -96,6 +97,8 @@ class EnsembleModel:
         self._conformal_q_hi: Optional[float] = None
         # Reference distribution for PSI drift monitoring
         self._drift_reference: Optional[Dict] = None
+        # Pre-calibrated per-league quality factors (from competitiveness_score)
+        self._league_factors: Dict = {}
         # In-memory LRU prediction cache with TTL
         self._cache_maxsize    = int(os.environ.get("CACHE_MAXSIZE", cache_maxsize))
         self._cache_ttl        = int(os.environ.get("CACHE_TTL_SECONDS", cache_ttl_seconds))
@@ -113,6 +116,15 @@ class EnsembleModel:
         logger.info("[Ensemble] Training compatibility model …")
         self.compat_model.train(data)
         self._calibrate_conformal(data)
+        # Calibrate data-derived constants (no hardcoded values)
+        self._calibrate_mpg_baseline(data)
+        self._calibrate_league_factors(data)
+        try:
+            from basketball_ai.features.team_features import calibrate_style_bounds
+            bounds = calibrate_style_bounds(data)
+            logger.info("[Ensemble] Style normalization bounds calibrated from data: %s", bounds)
+        except Exception as exc:
+            logger.warning("[Ensemble] Style bound calibration failed: %s", exc)
         # Capture reference distribution for drift monitoring
         try:
             from basketball_ai.monitoring.drift import capture_reference
@@ -122,6 +134,45 @@ class EnsembleModel:
             self._drift_reference: Optional[Dict] = None
         logger.info("[Ensemble] Training complete.")
         return metrics
+
+    def _calibrate_mpg_baseline(self, data: Dict[str, Any]) -> None:
+        """Set _MPG_BASELINE to the 75th percentile of MPG in the training data."""
+        global _MPG_BASELINE
+        try:
+            stats_df = data.get("player_stats")
+            if stats_df is not None and "minutes_per_game" in stats_df.columns:
+                vals = stats_df["minutes_per_game"].dropna()
+                if not vals.empty:
+                    baseline = float(np.percentile(vals, 75))
+                    _MPG_BASELINE = max(baseline, 20.0)  # floor of 20 min
+                    logger.info("[Ensemble] MPG baseline calibrated from data: %.1f min/game", _MPG_BASELINE)
+        except Exception as exc:
+            logger.warning("[Ensemble] MPG baseline calibration failed: %s", exc)
+
+    def _calibrate_league_factors(self, data: Dict[str, Any]) -> None:
+        """Pre-compute per-league quality factors from competitiveness_score."""
+        try:
+            leagues_df = data.get("leagues")
+            if leagues_df is None or leagues_df.empty:
+                return
+            if "competitiveness_score" not in leagues_df.columns:
+                return
+            max_cs = float(leagues_df["competitiveness_score"].max())
+            if max_cs <= 0:
+                return
+            self._league_factors: Dict = {
+                str(row.get("id", "")): float(
+                    np.clip(float(row.get("competitiveness_score", 1.0) or 1.0) / max_cs, 0.5, 1.0)
+                )
+                for _, row in leagues_df.iterrows()
+            }
+            logger.info(
+                "[Ensemble] League factors calibrated from data (%d leagues): %s",
+                len(self._league_factors), self._league_factors,
+            )
+        except Exception as exc:
+            logger.warning("[Ensemble] League factor calibration failed: %s", exc)
+            self._league_factors: Dict = {}
 
     def _calibrate_conformal(self, data: Dict[str, Any]) -> None:
         """Compute split-conformal residuals on the validation split.
@@ -293,12 +344,18 @@ class EnsembleModel:
         cf          = self.compat_model.score(player_id, team_id, data)
         compat_mult = 0.90 + cf * 0.20   # neutral ≈ 1.05
 
-        # 5. League quality factor
-        # Tier 1 = NBA/top EuroLeague (1.00); higher tiers are progressively discounted.
-        team_row = data["team_dict"].get(_normalize_id(team_id), {})
-        tier     = int(team_row.get("league_tier", 1))
-        tier_map = {1: 1.000, 2: 0.980, 3: 0.955, 4: 0.920, 5: 0.875, 6: 0.820, 7: 0.760}
-        lf       = tier_map.get(tier, 0.900)
+        # 5. League quality factor — derived from competitiveness_score in real data.
+        # No hardcoded tier map: the factor is proportional to the league's
+        # competitiveness_score relative to the best league in the loaded dataset.
+        team_row   = data["team_dict"].get(_normalize_id(team_id), {})
+        tier       = int(team_row.get("league_tier", 1))
+        league_id  = str(team_row.get("league_id", ""))
+        # Use pre-calibrated per-league factor when available
+        lf         = self._league_factors.get(league_id, None)
+        if lf is None:
+            # Fallback: look up from league_dict directly (loaded at prediction time)
+            from basketball_ai.features.team_features import _league_tier_factor as _ltf
+            lf = _ltf(team_row, data)
 
         # 6. Contextual adjustment (position fit, style, role, adaptation, spacing)
         # Using a wider mapping range so player-specific position/style fit creates
@@ -361,7 +418,7 @@ class EnsembleModel:
             f"Rating 0–10 basato su: "
             f"XGBoost ({len(self.perf_model.feature_names)} features, base {base_rating:.2f}) "
             f"× compatibilità stile ({compat_mult:.2f}) "
-            f"× qualità lega (tier {tier}, fattore {lf:.2f}) "
+            f"× qualità lega (league {league_id}, fattore {lf:.3f}) "
             f"× contesto (posizione+stile+adattamento, fattore {ctx_mult:.3f}) "
             f"× minuti ({latest_mpg:.0f} min/g, fattore {mpg_factor:.2f}) "
             f"| età: {age} (curva {af:.3f}) "
@@ -396,12 +453,13 @@ class EnsembleModel:
         self.compat_model.save(f"{directory}/compatibility_model.joblib")
 
         # Persist conformal calibration quantiles
-        conformal = {
+        calibration = {
             "conformal_q_lo": self._conformal_q_lo,
             "conformal_q_hi": self._conformal_q_hi,
+            "league_factors":  self._league_factors,
         }
         import joblib as _joblib
-        _joblib.dump(conformal, f"{directory}/conformal.joblib")
+        _joblib.dump(calibration, f"{directory}/conformal.joblib")
 
         # Persist drift reference if available
         if self._drift_reference:
@@ -428,9 +486,10 @@ class EnsembleModel:
         import joblib as _joblib
         conformal_path = Path(directory) / "conformal.joblib"
         if conformal_path.exists():
-            conformal = _joblib.load(str(conformal_path))
-            self._conformal_q_lo = conformal.get("conformal_q_lo")
-            self._conformal_q_hi = conformal.get("conformal_q_hi")
+            calibration = _joblib.load(str(conformal_path))
+            self._conformal_q_lo   = calibration.get("conformal_q_lo")
+            self._conformal_q_hi   = calibration.get("conformal_q_hi")
+            self._league_factors   = calibration.get("league_factors", {})
         # Load drift reference if available
         drift_path = Path(directory) / "drift_reference.joblib"
         if drift_path.exists():
