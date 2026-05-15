@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import time
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -53,11 +54,12 @@ _CTX_MULT_LO:     float = 0.72   # hard lower bound
 _CTX_MULT_HI:     float = 1.08   # hard upper bound
 
 # Playing-time factor: scales down ratings for bench players with low minutes.
-# _MPG_BASELINE is computed from real data during training (75th pct of MPG).
-# The value below is only the initial fallback before any model is trained.
+# The baseline is calibrated per-instance from real data during training
+# (75th percentile of MPG).  The value below is only the initial fallback
+# before any model is trained.
 _MPG_FACTOR_BASE:  float = 0.60   # factor at 0 min/game (theoretical floor)
 _MPG_FACTOR_RANGE: float = 0.40   # additive range: base + range = 1.0 at baseline
-_MPG_BASELINE:     float = 30.0   # overridden by calibrate_mpg_baseline() on train
+_MPG_BASELINE_DEFAULT: float = 30.0  # module-level default; overridden per-instance
 
 
 @dataclass
@@ -99,11 +101,15 @@ class EnsembleModel:
         self._drift_reference: Optional[Dict] = None
         # Pre-calibrated per-league quality factors (from competitiveness_score)
         self._league_factors: Dict = {}
-        # In-memory LRU prediction cache with TTL
-        self._cache_maxsize    = int(os.environ.get("CACHE_MAXSIZE", cache_maxsize))
-        self._cache_ttl        = int(os.environ.get("CACHE_TTL_SECONDS", cache_ttl_seconds))
-        self._prediction_cache: Dict[tuple, Any] = {}  # key → (result, timestamp)
-        self._cache_access_order: list = []  # for LRU eviction
+        # MPG baseline: 75th-percentile minutes/game from training data.
+        # Stored as an instance attribute (not a global) so multiple EnsembleModel
+        # instances don't interfere with each other.
+        self._mpg_baseline: float = _MPG_BASELINE_DEFAULT
+        # In-memory LRU prediction cache with TTL.
+        # Uses collections.OrderedDict for O(1) move_to_end / popitem operations.
+        self._cache_maxsize = int(os.environ.get("CACHE_MAXSIZE", cache_maxsize))
+        self._cache_ttl     = int(os.environ.get("CACHE_TTL_SECONDS", cache_ttl_seconds))
+        self._prediction_cache: OrderedDict = OrderedDict()  # key → (result, timestamp)
 
     # ------------------------------------------------------------------
     # Training
@@ -113,9 +119,13 @@ class EnsembleModel:
         """Train all sub-models and calibrate conformal prediction intervals."""
         logger.info("[Ensemble] Training performance model …")
         metrics = self.perf_model.train(data)
+        # Extract the conformal holdout residuals produced by the 3-way split
+        # inside PerformanceModel.train().  Removing them from metrics keeps the
+        # returned dict clean (just numeric scores).
+        conformal_residuals = metrics.pop("conformal_residuals", None)
         logger.info("[Ensemble] Training compatibility model …")
         self.compat_model.train(data)
-        self._calibrate_conformal(data)
+        self._calibrate_conformal(conformal_residuals)
         # Calibrate data-derived constants (no hardcoded values)
         self._calibrate_mpg_baseline(data)
         self._calibrate_league_factors(data)
@@ -136,16 +146,15 @@ class EnsembleModel:
         return metrics
 
     def _calibrate_mpg_baseline(self, data: Dict[str, Any]) -> None:
-        """Set _MPG_BASELINE to the 75th percentile of MPG in the training data."""
-        global _MPG_BASELINE
+        """Set self._mpg_baseline to the 75th percentile of MPG in the training data."""
         try:
             stats_df = data.get("player_stats")
             if stats_df is not None and "minutes_per_game" in stats_df.columns:
                 vals = stats_df["minutes_per_game"].dropna()
                 if not vals.empty:
                     baseline = float(np.percentile(vals, 75))
-                    _MPG_BASELINE = max(baseline, 20.0)  # floor of 20 min
-                    logger.info("[Ensemble] MPG baseline calibrated from data: %.1f min/game", _MPG_BASELINE)
+                    self._mpg_baseline = max(baseline, 20.0)  # floor of 20 min
+                    logger.info("[Ensemble] MPG baseline calibrated from data: %.1f min/game", self._mpg_baseline)
         except Exception as exc:
             logger.warning("[Ensemble] MPG baseline calibration failed: %s", exc)
 
@@ -174,27 +183,35 @@ class EnsembleModel:
             logger.warning("[Ensemble] League factor calibration failed: %s", exc)
             # _league_factors remains {} (set in __init__)
 
-    def _calibrate_conformal(self, data: Dict[str, Any]) -> None:
-        """Compute split-conformal residuals on the validation split.
+    def _calibrate_conformal(self, conformal_residuals: Optional[List[float]]) -> None:
+        """Calibrate split-conformal prediction intervals from held-out residuals.
 
-        Uses the residuals from the training data to derive empirical
-        quantiles for the 90 % prediction interval (5th and 95th percentile
-        of |y - ŷ|).  If calibration fails the heuristic fallback remains.
+        The residuals **must** come from a set that was never used for model
+        fitting or early-stopping (i.e. the conformal holdout produced by
+        ``PerformanceModel.train()``'s internal 3-way split).
+
+        If *conformal_residuals* is ``None`` or contains fewer than 10 samples
+        the heuristic fallback CI remains in effect.
+
+        Args:
+            conformal_residuals: List of ``|y_true - y_pred|`` values from the
+                conformal holdout set, as returned in
+                ``PerformanceModel.train()`` metrics.
         """
+        if not conformal_residuals or len(conformal_residuals) < 10:
+            logger.warning(
+                "[Ensemble] Conformal calibration skipped: too few residuals (%d). "
+                "Heuristic CI will be used.",
+                len(conformal_residuals) if conformal_residuals else 0,
+            )
+            return
         try:
-            X, y = self.perf_model.prepare_features(data)
-            if len(X) < 40:
-                return
-            from sklearn.model_selection import train_test_split as _tts
-            _, X_cal, _, y_cal = _tts(X, y, test_size=0.15, random_state=42)
-            X_cal_sc = self.perf_model.scaler.transform(X_cal)
-            y_hat    = self.perf_model.model.predict(X_cal_sc)
-            residuals = np.abs(y_hat - y_cal)
+            residuals = np.array(conformal_residuals, dtype=float)
             self._conformal_q_lo = float(np.percentile(residuals, 5))
             self._conformal_q_hi = float(np.percentile(residuals, 95))
             logger.info(
-                "[Ensemble] Conformal calibration: q_lo=%.4f  q_hi=%.4f",
-                self._conformal_q_lo, self._conformal_q_hi,
+                "[Ensemble] Conformal calibration: q_lo=%.4f  q_hi=%.4f  (n=%d held-out samples)",
+                self._conformal_q_lo, self._conformal_q_hi, len(residuals),
             )
         except Exception as exc:
             logger.warning("[Ensemble] Conformal calibration failed, using heuristic CI: %s", exc)
@@ -207,39 +224,31 @@ class EnsembleModel:
 
     def _cache_get(self, key: tuple) -> Optional[Any]:
         """Return cached prediction or None if missing/expired."""
-        entry = self._prediction_cache.get(key)
-        if entry is None:
+        if key not in self._prediction_cache:
             return None
-        result, ts = entry
+        result, ts = self._prediction_cache[key]
         if self._cache_ttl > 0 and (time.monotonic() - ts) > self._cache_ttl:
             # Expired – remove and return miss
             del self._prediction_cache[key]
-            if key in self._cache_access_order:
-                self._cache_access_order.remove(key)
             return None
-        # Refresh LRU position
-        if key in self._cache_access_order:
-            self._cache_access_order.remove(key)
-        self._cache_access_order.append(key)
+        # O(1) LRU update: move the key to the most-recently-used end.
+        self._prediction_cache.move_to_end(key)
         return result
 
     def _cache_set(self, key: tuple, result: Any) -> None:
         """Store a prediction result in the LRU cache."""
         if self._cache_maxsize <= 0:
             return  # caching disabled
-        # Evict oldest entries if at capacity
-        while len(self._prediction_cache) >= self._cache_maxsize:
-            if not self._cache_access_order:
-                break
-            oldest = self._cache_access_order.pop(0)
-            self._prediction_cache.pop(oldest, None)
+        # Overwrite the entry (new timestamp) and move it to the MRU end.
         self._prediction_cache[key] = (result, time.monotonic())
-        self._cache_access_order.append(key)
+        self._prediction_cache.move_to_end(key)
+        # Evict the least-recently-used entry when over capacity.
+        while len(self._prediction_cache) > self._cache_maxsize:
+            self._prediction_cache.popitem(last=False)
 
     def clear_cache(self) -> None:
         """Invalidate the entire prediction cache (e.g. after retraining)."""
         self._prediction_cache.clear()
-        self._cache_access_order.clear()
         logger.info("[Ensemble] Prediction cache cleared.")
 
     # ------------------------------------------------------------------
@@ -382,7 +391,7 @@ class EnsembleModel:
         # a 30-min starter even when per-36 stats look similar.
         # Factor: ≥30 min → 1.00; 20 min → 0.93; 10 min → 0.73
         mpg_factor = float(np.clip(
-            _MPG_FACTOR_BASE + (min(latest_mpg, _MPG_BASELINE) / _MPG_BASELINE) * _MPG_FACTOR_RANGE,
+            _MPG_FACTOR_BASE + (min(latest_mpg, self._mpg_baseline) / self._mpg_baseline) * _MPG_FACTOR_RANGE,
             _MPG_FACTOR_BASE,
             1.00,
         ))
@@ -452,11 +461,12 @@ class EnsembleModel:
         self.perf_model.save(f"{directory}/performance_model.joblib")
         self.compat_model.save(f"{directory}/compatibility_model.joblib")
 
-        # Persist conformal calibration quantiles
+        # Persist conformal calibration quantiles and instance-level calibrations
         calibration = {
             "conformal_q_lo": self._conformal_q_lo,
             "conformal_q_hi": self._conformal_q_hi,
             "league_factors":  self._league_factors,
+            "mpg_baseline":    self._mpg_baseline,
         }
         import joblib as _joblib
         _joblib.dump(calibration, f"{directory}/conformal.joblib")
@@ -487,9 +497,10 @@ class EnsembleModel:
         conformal_path = Path(directory) / "conformal.joblib"
         if conformal_path.exists():
             calibration = _joblib.load(str(conformal_path))
-            self._conformal_q_lo   = calibration.get("conformal_q_lo")
-            self._conformal_q_hi   = calibration.get("conformal_q_hi")
-            self._league_factors   = calibration.get("league_factors", {})
+            self._conformal_q_lo = calibration.get("conformal_q_lo")
+            self._conformal_q_hi = calibration.get("conformal_q_hi")
+            self._league_factors = calibration.get("league_factors", {})
+            self._mpg_baseline   = calibration.get("mpg_baseline", _MPG_BASELINE_DEFAULT)
         # Load drift reference if available
         drift_path = Path(directory) / "drift_reference.joblib"
         if drift_path.exists():

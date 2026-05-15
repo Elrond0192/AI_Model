@@ -60,20 +60,29 @@ class CompatibilityModel:
         try:
             team = Team(**{k: team_row.get(k) for k in Team.__dataclass_fields__})
             return compute_team_style_vector(team)
-        except Exception:
+        except Exception as exc:
+            logger.debug("[CompatibilityModel] _team_style_vector fallback for team row: %s", exc)
+            # Fallback uses the same data-driven _style_bounds used by the main
+            # compute_team_style_vector path, avoiding stale hardcoded constants.
+            from basketball_ai.features.team_features import _style_bounds
             pace  = float(team_row.get("pace", 97))
             tpar  = float(team_row.get("three_point_attempt_rate", 0.38))
             ast   = float(team_row.get("assists_per_game", 24))
             star  = float(team_row.get("star_player_usage", 0.28))
             ortg  = float(team_row.get("offensive_rating", 108))
             drtg  = float(team_row.get("defensive_rating", 108))
+            sb = _style_bounds
+            pace_range = max(sb.get("pace_max", 115.0) - sb.get("pace_min", 80.0), 1.0)
+            ast_range  = max(sb.get("ast_max", 35.0)  - sb.get("ast_min", 14.0),  1.0)
+            ortg_range = max(sb.get("ortg_max", 125.0) - sb.get("ortg_min", 90.0), 1.0)
+            drtg_range = max(sb.get("drtg_max", 120.0) - sb.get("drtg_min", 88.0), 1.0)
             v = np.array([
-                np.clip((pace - 80) / 35, 0, 1),
-                np.clip(tpar / 0.55, 0, 1),
-                np.clip((ast - 14) / 21, 0, 1),
-                np.clip(star / 0.45, 0, 1),
-                np.clip((ortg - 90) / 35, 0, 1),
-                np.clip(1.0 - (drtg - 88) / 32, 0, 1),
+                np.clip((pace - sb.get("pace_min", 80.0)) / pace_range, 0, 1),
+                np.clip(tpar / max(sb.get("tpar_max", 0.55), 0.01), 0, 1),
+                np.clip((ast - sb.get("ast_min", 14.0)) / ast_range, 0, 1),
+                np.clip(star / max(sb.get("star_max", 0.45), 0.01), 0, 1),
+                np.clip((ortg - sb.get("ortg_min", 90.0)) / ortg_range, 0, 1),
+                np.clip(1.0 - (drtg - sb.get("drtg_min", 88.0)) / drtg_range, 0, 1),
             ])
             return v.astype(float)
 

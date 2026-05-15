@@ -339,19 +339,19 @@ def generate_team_player_relations(players_df, teams_df, player_stats_df):
 def generate_and_save():
     out = "/home/runner/work/AI_Model/AI_Model/data/sample"
     os.makedirs(out,exist_ok=True)
-    print("Generating leagues...")
+    logger.info("Generating leagues...")
     leagues = generate_leagues()
     leagues.to_csv(f"{out}/leagues.csv",index=False)
-    print("Generating teams...")
+    logger.info("Generating teams...")
     teams = generate_teams(leagues)
     teams.to_csv(f"{out}/teams.csv",index=False)
-    print("Generating players...")
+    logger.info("Generating players...")
     players = generate_players(5000)
     players.to_csv(f"{out}/players.csv",index=False)
-    print("Generating player stats...")
+    logger.info("Generating player stats...")
     stats = generate_player_stats(players,teams)
     stats.to_csv(f"{out}/player_stats.csv",index=False)
-    print("Generating team-player relations...")
+    logger.info("Generating team-player relations...")
     rels = generate_team_player_relations(players,teams,stats)
     rels.to_csv(f"{out}/team_player_relations.csv",index=False)
     # update player current team/league
@@ -361,7 +361,10 @@ def generate_and_save():
     players["current_team_id"] = players["id"].map(pid_team)
     players["current_league_id"] = players["id"].map(pid_league)
     players.to_csv(f"{out}/players.csv",index=False)
-    print(f"Done. leagues={len(leagues)}, teams={len(teams)}, players={len(players)}, stats={len(stats)}, rels={len(rels)}")
+    logger.info(
+        "Done. leagues=%d, teams=%d, players=%d, stats=%d, rels=%d",
+        len(leagues), len(teams), len(players), len(stats), len(rels),
+    )
 
 def generate_data(output_dir: str = "data/sample", seed: int = 42) -> None:
     """Public entry point called by CLI and tests."""

@@ -14,24 +14,18 @@ import pandas as pd
 
 from basketball_ai.data.models import Player, PlayerStats
 from basketball_ai.utils.helpers import normalize_id as _normalize_id
+from basketball_ai.constants import (
+    POSITIONAL_PEAK_AGES,
+    _primary_pos,
+    _peak_age,
+)
 
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
-
-POSITIONAL_PEAK_AGES: Dict[str, int] = {
-    "PG": 26, "SG": 25, "SF": 26, "PF": 27, "C": 28,
-    "PG/SG": 25, "SG/SF": 25, "SF/PF": 26, "PF/C": 27, "SG/PF": 26,
-}
-
-
-def _primary_pos(pos: str) -> str:
-    """Return first component of a (potentially hybrid) position string."""
-    return pos.split("/")[0]
-
-
-def _peak_age(pos: str) -> int:
-    return POSITIONAL_PEAK_AGES.get(pos, POSITIONAL_PEAK_AGES.get(_primary_pos(pos), 26))
+# Re-export so that existing importers (e.g. tests) continue to work.
+__all__ = [
+    "POSITIONAL_PEAK_AGES",
+    "_primary_pos",
+    "_peak_age",
+]
 
 
 def _per36(stat: float, mpg: float) -> float:
@@ -150,6 +144,39 @@ def compute_player_features_from_objects(
     norms = [v / mx for v, mx in [(pts_per_36, 40), (ast_per_36, 15), (reb_per_36, 20), (stl_per_36, 4), (blk_per_36, 5)]]
     versatility_score = float(np.clip(1.0 - float(np.std(norms)), 0, 1))
 
+    # --- Features present in _build_row (training path) but previously
+    # absent from this dict-API function (inference path). Missing these
+    # caused a training/inference feature skew: the XGBoost model was
+    # trained with real values but received 0.0 at inference time.
+    avg_lebron_off = float(np.mean([s.lebron_off for s in stats_history]))
+    avg_lebron_def = float(np.mean([s.lebron_def for s in stats_history]))
+    avg_ows        = float(np.mean([s.ows        for s in stats_history]))
+    avg_dws        = float(np.mean([s.dws        for s in stats_history]))
+    avg_tov_pct    = float(np.mean([s.tov_pct    for s in stats_history]))
+    avg_ast_pct    = float(np.mean([s.ast_pct    for s in stats_history]))
+    avg_orb_pct    = float(np.mean([s.orb_pct    for s in stats_history]))
+    avg_drb_pct    = float(np.mean([s.drb_pct    for s in stats_history]))
+
+    # TS% efficiency trend (linear slope over career seasons)
+    if len(stats_history) >= 2:
+        ts_vals = [s.ts_pct for s in stats_history]
+        ts_efficiency_trend = float(
+            np.polyfit(np.arange(len(ts_vals), dtype=float), ts_vals, 1)[0]
+        )
+    else:
+        ts_efficiency_trend = 0.0
+
+    # Durability: avg games_played / 82 (proxy for league-max games)
+    durability_score = float(
+        np.clip(np.mean([s.games_played for s in stats_history]) / 82.0, 0.0, 1.0)
+    )
+
+    # Engineered interaction features (must match _build_row in performance_model.py)
+    avg_reb_pct_val = float(np.mean([s.reb_pct for s in stats_history]))
+    obpm_x_usg  = avg_obpm * avg_usg_pct / 100.0
+    dbpm_x_reb  = avg_dbpm * avg_reb_pct_val / 100.0
+    two_way_score = avg_raptor_off + abs(avg_raptor_def)
+
     return {
         # Legacy features
         "form_score":              round(form_score, 4),
@@ -199,6 +226,20 @@ def compute_player_features_from_objects(
         "avg_ast_per_40":          round(avg_ast_per_40, 2),
         # Starter status
         "avg_starter_pct":         round(avg_starter_pct, 4),
+        # Features previously missing from inference path (training/inference skew fix)
+        "avg_lebron_off":          round(avg_lebron_off, 3),
+        "avg_lebron_def":          round(avg_lebron_def, 3),
+        "avg_ows":                 round(avg_ows, 3),
+        "avg_dws":                 round(avg_dws, 3),
+        "avg_tov_pct":             round(avg_tov_pct, 3),
+        "avg_ast_pct":             round(avg_ast_pct, 3),
+        "avg_orb_pct":             round(avg_orb_pct, 3),
+        "avg_drb_pct":             round(avg_drb_pct, 3),
+        "ts_efficiency_trend":     round(ts_efficiency_trend, 5),
+        "durability_score":        round(durability_score, 4),
+        "obpm_x_usg":              round(obpm_x_usg, 4),
+        "dbpm_x_reb":              round(dbpm_x_reb, 4),
+        "two_way_score":           round(two_way_score, 4),
     }
 
 
@@ -226,6 +267,13 @@ def _empty_features(player: Player) -> Dict[str, Any]:
         "avg_pts_per_40": 0.0, "avg_ast_per_40": 0.0,
         # Starter status
         "avg_starter_pct": 0.5,
+        # Features previously missing from inference path (training/inference skew fix)
+        "avg_lebron_off": 0.0, "avg_lebron_def": 0.0,
+        "avg_ows": 0.0, "avg_dws": 0.0,
+        "avg_tov_pct": 10.0, "avg_ast_pct": 10.0,
+        "avg_orb_pct": 3.0, "avg_drb_pct": 12.0,
+        "ts_efficiency_trend": 0.0, "durability_score": 0.5,
+        "obpm_x_usg": 0.0, "dbpm_x_reb": 0.0, "two_way_score": 0.0,
     }
 
 
