@@ -95,6 +95,9 @@ def tiny_data():
                 "ruolo_offensivo": _ROLES_OFF[int(p["id"]) % len(_ROLES_OFF)],
                 "ruolo_difensivo": _ROLES_DEF[int(p["id"]) % len(_ROLES_DEF)],
                 "rating": round(np.random.uniform(5.0, 8.5), 3),
+                # Starter status (SF field)
+                "games_started": int(np.random.randint(0, 82)),
+                "starter_pct": round(np.random.uniform(0.0, 1.0), 3),
             })
     stats = pd.DataFrame(stat_rows)
 
@@ -200,12 +203,16 @@ class TestCompatibilityModel:
     def test_score_in_range(self, tiny_data):
         model = CompatibilityModel()
         model.train(tiny_data)
-        s = model.score(1, tiny_data)
+        player_id = list(tiny_data["player_dict"].keys())[0]
+        team_id   = list(tiny_data["team_dict"].keys())[0]
+        s = model.score(player_id, team_id, tiny_data)
         assert 0.50 <= s <= 1.0
 
     def test_untrained_fallback(self, tiny_data):
         model = CompatibilityModel()
-        assert model.score(1, tiny_data) == pytest.approx(0.75)
+        player_id = list(tiny_data["player_dict"].keys())[0]
+        team_id   = list(tiny_data["team_dict"].keys())[0]
+        assert model.score(player_id, team_id, tiny_data) == pytest.approx(0.75)
 
 
 # ---------------------------------------------------------------------------

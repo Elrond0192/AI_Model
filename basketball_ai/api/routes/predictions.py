@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import List, Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 
 from basketball_ai.api.schemas import PredictionOut, TrajectoryPointOut, PeakPredictionOut
+from basketball_ai.api.limiter import limiter, RATE_LIMIT_PREDICTIONS
 
 router = APIRouter(prefix="/predictions", tags=["predictions"])
 
@@ -22,7 +24,9 @@ def _get_data():
 
 
 @router.post("/player/{player_id}/team/{team_id}", response_model=PredictionOut)
-def predict_player_in_team(
+@limiter.limit(RATE_LIMIT_PREDICTIONS)
+async def predict_player_in_team(
+    request: Request,
     player_id: int,
     team_id: int,
     season: int = Query(2024, ge=2015, le=2035),
@@ -36,7 +40,8 @@ def predict_player_in_team(
     if team_id not in data["team_dict"]:
         raise HTTPException(status_code=404, detail=f"Team {team_id} not found")
 
-    result = engine.predict_in_team(player_id, team_id, season)
+    loop   = asyncio.get_event_loop()
+    result = await loop.run_in_executor(None, engine.predict_in_team, player_id, team_id, season)
     return PredictionOut(
         player_id=result.player_id,
         team_id=result.team_id,
@@ -55,7 +60,8 @@ def predict_player_in_team(
 
 
 @router.get("/player/{player_id}/trajectory", response_model=List[TrajectoryPointOut])
-def get_trajectory(
+async def get_trajectory(
+    request: Request,
     player_id: int,
     team_id: Optional[int] = Query(None),
     age_from: int = Query(None),
@@ -72,7 +78,10 @@ def get_trajectory(
     if age_from is not None and age_to is not None:
         age_range = (age_from, age_to)
 
-    traj = engine.predict_age_trajectory(player_id, age_range=age_range, team_id=team_id)
+    loop = asyncio.get_event_loop()
+    traj = await loop.run_in_executor(
+        None, lambda: engine.predict_age_trajectory(player_id, age_range=age_range, team_id=team_id)
+    )
     return [
         TrajectoryPointOut(
             age=p.age,
@@ -87,7 +96,11 @@ def get_trajectory(
 
 
 @router.get("/player/{player_id}/peak", response_model=PeakPredictionOut)
-def get_peak_prediction(player_id: int, team_id: Optional[int] = Query(None)):
+async def get_peak_prediction(
+    request: Request,
+    player_id: int,
+    team_id: Optional[int] = Query(None),
+):
     """Predict a player's career peak."""
     engine = _get_engine()
     data = _get_data()
@@ -95,7 +108,8 @@ def get_peak_prediction(player_id: int, team_id: Optional[int] = Query(None)):
     if player_id not in data["player_dict"]:
         raise HTTPException(status_code=404, detail=f"Player {player_id} not found")
 
-    peak = engine.predict_peak(player_id, team_id=team_id)
+    loop = asyncio.get_event_loop()
+    peak = await loop.run_in_executor(None, lambda: engine.predict_peak(player_id, team_id=team_id))
     return PeakPredictionOut(
         player_id=peak.player_id,
         player_name=peak.player_name,

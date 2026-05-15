@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import List, Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 
 from basketball_ai.api.schemas import (
     WhatIfRequest,
@@ -36,7 +37,7 @@ def _get_data():
 
 
 @router.post("/what-if", response_model=PredictionOut)
-def what_if_scenario(req: WhatIfRequest):
+async def what_if_scenario(request: Request, req: WhatIfRequest):
     """Predict performance for a specific player-team combination."""
     engine = _get_engine()
     data = _get_data()
@@ -44,12 +45,14 @@ def what_if_scenario(req: WhatIfRequest):
         raise HTTPException(status_code=404, detail="Player not found")
     if req.team_id not in data["team_dict"]:
         raise HTTPException(status_code=404, detail="Team not found")
-    result = engine.predict_in_team(req.player_id, req.team_id, req.season)
+    loop   = asyncio.get_event_loop()
+    result = await loop.run_in_executor(None, engine.predict_in_team, req.player_id, req.team_id, req.season)
     return PredictionOut(**result.__dict__)
 
 
 @router.get("/best-teams/{player_id}", response_model=List[TeamFitOut])
-def best_teams_for_player(
+async def best_teams_for_player(
+    request: Request,
     player_id: int,
     league_id: Optional[int] = Query(None),
     top_n: int = Query(10, ge=1, le=50),
@@ -59,7 +62,10 @@ def best_teams_for_player(
     data = _get_data()
     if player_id not in data["player_dict"]:
         raise HTTPException(status_code=404, detail="Player not found")
-    fits = engine.best_team_fit(player_id, league_id=league_id, top_n=top_n)
+    loop = asyncio.get_event_loop()
+    fits = await loop.run_in_executor(
+        None, lambda: engine.best_team_fit(player_id, league_id=league_id, top_n=top_n)
+    )
     return [
         TeamFitOut(
             team_id=f.team_id,
@@ -75,7 +81,8 @@ def best_teams_for_player(
 
 
 @router.get("/best-players/{team_id}", response_model=List[PlayerFitOut])
-def best_players_for_team(
+async def best_players_for_team(
+    request: Request,
     team_id: int,
     position: Optional[str] = Query(None),
     top_n: int = Query(10, ge=1, le=50),
@@ -85,7 +92,10 @@ def best_players_for_team(
     data = _get_data()
     if team_id not in data["team_dict"]:
         raise HTTPException(status_code=404, detail="Team not found")
-    players = engine.best_player_for_team(team_id, position=position, top_n=top_n)
+    loop    = asyncio.get_event_loop()
+    players = await loop.run_in_executor(
+        None, lambda: engine.best_player_for_team(team_id, position=position, top_n=top_n)
+    )
     return [
         PlayerFitOut(
             player_id=p.player_id,
@@ -100,13 +110,16 @@ def best_players_for_team(
 
 
 @router.post("/compare", response_model=CompareOut)
-def compare_scenarios(req: CompareRequest):
+async def compare_scenarios(request: Request, req: CompareRequest):
     """Compare player performance across multiple teams."""
     engine = _get_engine()
     data = _get_data()
     if req.player_id not in data["player_dict"]:
         raise HTTPException(status_code=404, detail="Player not found")
-    result = engine.compare_scenarios(req.player_id, req.team_ids, req.season)
+    loop   = asyncio.get_event_loop()
+    result = await loop.run_in_executor(
+        None, lambda: engine.compare_scenarios(req.player_id, req.team_ids, req.season)
+    )
     scenarios_out = [
         ScenarioOut(
             team_id=s["team_id"],
@@ -137,34 +150,37 @@ def compare_scenarios(req: CompareRequest):
 
 
 @router.post("/transfer-impact", response_model=TransferImpactOut)
-def transfer_impact(req: TransferImpactRequest):
+async def transfer_impact(request: Request, req: TransferImpactRequest):
     """Simulate transfer impact on player performance."""
     engine = _get_engine()
     data = _get_data()
     if req.player_id not in data["player_dict"]:
         raise HTTPException(status_code=404, detail="Player not found")
-    result = engine.simulate_transfer(
-        req.player_id, req.from_team_id, req.to_team_id, req.season
+    loop   = asyncio.get_event_loop()
+    result = await loop.run_in_executor(
+        None, lambda: engine.simulate_transfer(req.player_id, req.from_team_id, req.to_team_id, req.season)
     )
     return TransferImpactOut(**result.__dict__)
 
 
 @router.post("/what-if-teammates", response_model=PredictionOut)
-def what_if_teammates(req: WhatIfTeammatesRequest):
+async def what_if_teammates(request: Request, req: WhatIfTeammatesRequest):
     """What if the player had hypothetical-quality teammates?"""
     engine = _get_engine()
     data = _get_data()
     if req.player_id not in data["player_dict"]:
         raise HTTPException(status_code=404, detail="Player not found")
-    result = engine.what_if_teammates(
-        req.player_id, req.team_id,
-        req.hypothetical_avg_rating, req.season,
+    loop   = asyncio.get_event_loop()
+    result = await loop.run_in_executor(
+        None, lambda: engine.what_if_teammates(
+            req.player_id, req.team_id, req.hypothetical_avg_rating, req.season
+        )
     )
     return PredictionOut(**result.__dict__)
 
 
 @router.post("/what-if-lineup", response_model=LineupAnalysisOut)
-def what_if_lineup(req: WhatIfLineupRequest):
+async def what_if_lineup(request: Request, req: WhatIfLineupRequest):
     """Predict player performance with a specific named 5-man lineup."""
     engine = _get_engine()
     data = _get_data()
@@ -172,8 +188,11 @@ def what_if_lineup(req: WhatIfLineupRequest):
         raise HTTPException(status_code=404, detail="Player not found")
     if req.team_id not in data["team_dict"]:
         raise HTTPException(status_code=404, detail="Team not found")
-    result = engine.what_if_lineup(
-        req.player_id, req.team_id, req.lineup_player_ids, req.season
+    loop   = asyncio.get_event_loop()
+    result = await loop.run_in_executor(
+        None, lambda: engine.what_if_lineup(
+            req.player_id, req.team_id, req.lineup_player_ids, req.season
+        )
     )
     return LineupAnalysisOut(
         player_id=result.player_id,

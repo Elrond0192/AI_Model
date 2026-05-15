@@ -1,6 +1,9 @@
 """Basketball synthetic data generator."""
+import logging
 import os, random, numpy as np, pandas as pd
 from typing import List
+
+logger = logging.getLogger(__name__)
 
 random.seed(42)
 np.random.seed(42)
@@ -213,6 +216,9 @@ def generate_player_stats(players_df, teams_df):
                 "ortg_on":  round(_rng(112, 5, 90, 130), 1),
                 "ortg_off": round(_rng(109, 5, 88, 128), 1),
                 "ortg_diff": round(_rng(3, 3, -15, 15), 2),
+                # Starter status (SF field): starters get 50-82 games started
+                "games_started": int(_rng(40, 20, 0, int(games))),
+                "starter_pct":   round(min(1.0, max(0.0, _rng(0.55, 0.35, 0.0, 1.0))), 3),
                 # Clutch
                 "clutch_games":     int(_rng(8, 4, 0, 25)),
                 "clutch_pts":       round(_rng(pts * 0.9, 3, 0, 45), 2),
@@ -305,6 +311,9 @@ def generate_player_stats(players_df, teams_df):
                     "clutch_ast_to_tov": round(_rng(1.6, 0.8, 0, 6), 2),
                     "clutch_net_rtg":    round(_rng(2.5, 5, -25, 25), 2),
                     "clutch_efg_pct":    round(_rng(0.53, 0.07, 0.2, 0.75), 3),
+                    # Starter status (PO: typically all starters)
+                    "games_started": int(_rng(12, 5, 0, 25)),
+                    "starter_pct":   round(min(1.0, max(0.0, _rng(0.75, 0.25, 0.0, 1.0))), 3),
                     # Roles
                     "ruolo_offensivo": "", "ruolo_difensivo": "", "ruolo_combinato": "",
                 })
@@ -359,19 +368,19 @@ def generate_data(output_dir: str = "data/sample", seed: int = 42) -> None:
     random.seed(seed)
     np.random.seed(seed)
     os.makedirs(output_dir, exist_ok=True)
-    print("Generating leagues...")
+    logger.info("Generating leagues...")
     leagues = generate_leagues()
     leagues.to_csv(f"{output_dir}/leagues.csv", index=False)
-    print("Generating teams...")
+    logger.info("Generating teams...")
     teams = generate_teams(leagues)
     teams.to_csv(f"{output_dir}/teams.csv", index=False)
-    print("Generating players...")
+    logger.info("Generating players...")
     players = generate_players(5000)
     players.to_csv(f"{output_dir}/players.csv", index=False)
-    print("Generating player stats...")
+    logger.info("Generating player stats...")
     stats = generate_player_stats(players, teams)
     stats.to_csv(f"{output_dir}/player_stats.csv", index=False)
-    print("Generating team-player relations...")
+    logger.info("Generating team-player relations...")
     rels = generate_team_player_relations(players, teams, stats)
     rels.to_csv(f"{output_dir}/team_player_relations.csv", index=False)
     # update player current team/league
@@ -379,7 +388,10 @@ def generate_data(output_dir: str = "data/sample", seed: int = 42) -> None:
     players["current_team_id"]   = players["id"].map(dict(zip(latest["player_id"], latest["team_id"])))
     players["current_league_id"] = players["id"].map(dict(zip(latest["player_id"], latest["league_id"])))
     players.to_csv(f"{output_dir}/players.csv", index=False)
-    print(f"Done. leagues={len(leagues)}, teams={len(teams)}, players={len(players)}, stats={len(stats)}, rels={len(rels)}")
+    logger.info(
+        "Done. leagues=%d, teams=%d, players=%d, stats=%d, rels=%d",
+        len(leagues), len(teams), len(players), len(stats), len(rels),
+    )
 
 
 if __name__ == "__main__":

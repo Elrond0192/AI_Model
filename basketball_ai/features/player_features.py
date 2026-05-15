@@ -129,6 +129,12 @@ def compute_player_features_from_objects(
     avg_pts_per_40 = float(np.mean([s.pts_per_40 for s in stats_history])) if latest.pts_per_40 > 0 else _per36(latest.points, mpg) / 36 * 40
     avg_ast_per_40 = float(np.mean([s.ast_per_40 for s in stats_history])) if latest.ast_per_40 > 0 else _per36(latest.assists, mpg) / 36 * 40
 
+    # --- Starter status (from Boxscore.SF) ------------------------------------
+    # starter_pct is 0–1: fraction of games played as a starter.
+    # It is a strong role signal: starters typically operate under more playing
+    # time, higher usage, and direct comparison against opposing starters.
+    avg_starter_pct = float(np.mean([s.starter_pct for s in stats_history]))
+
     # --- Scoring profile (now using PPSA and scoring_efficiency too) -------
     if latest.three_point_pct > 0.37 and latest.usg_pct < 22:
         scoring_profile = "3pt_specialist"
@@ -191,6 +197,8 @@ def compute_player_features_from_objects(
         # Per-40
         "avg_pts_per_40":          round(avg_pts_per_40, 2),
         "avg_ast_per_40":          round(avg_ast_per_40, 2),
+        # Starter status
+        "avg_starter_pct":         round(avg_starter_pct, 4),
     }
 
 
@@ -216,6 +224,8 @@ def _empty_features(player: Player) -> Dict[str, Any]:
         "avg_clutch_net_rtg": 0.0, "avg_clutch_efg_pct": 0.5,
         "clutch_games_career": 0,
         "avg_pts_per_40": 0.0, "avg_ast_per_40": 0.0,
+        # Starter status
+        "avg_starter_pct": 0.5,
     }
 
 

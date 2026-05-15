@@ -9,6 +9,9 @@ Combines:
 from __future__ import annotations
 
 import json
+import logging
+import os
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -27,6 +30,8 @@ from basketball_ai.models.performance_model import (
 from basketball_ai.features.player_features import compute_player_features
 from basketball_ai.features.team_features import compute_team_features
 from basketball_ai.features.context_features import compute_context_features
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Tuning constants – centralised so that calibration changes require edits in
@@ -48,10 +53,11 @@ _CTX_MULT_LO:     float = 0.72   # hard lower bound
 _CTX_MULT_HI:     float = 1.08   # hard upper bound
 
 # Playing-time factor: scales down ratings for bench players with low minutes.
-# At _MPG_BASELINE minutes per game the factor reaches 1.0 (no discount).
-_MPG_FACTOR_BASE:     float = 0.60   # factor at 0 min/game (theoretical floor)
-_MPG_FACTOR_RANGE:    float = 0.40   # additive range: base + range = 1.0 at baseline
-_MPG_BASELINE:        float = 30.0   # minutes/game at which factor = 1.0
+# _MPG_BASELINE is computed from real data during training (75th pct of MPG).
+# The value below is only the initial fallback before any model is trained.
+_MPG_FACTOR_BASE:  float = 0.60   # factor at 0 min/game (theoretical floor)
+_MPG_FACTOR_RANGE: float = 0.40   # additive range: base + range = 1.0 at baseline
+_MPG_BASELINE:     float = 30.0   # overridden by calibrate_mpg_baseline() on train
 
 
 @dataclass
@@ -80,21 +86,161 @@ class EnsembleModel:
         self,
         performance_model: Optional[PerformanceModel] = None,
         compatibility_model: Optional[CompatibilityModel] = None,
+        cache_maxsize: int = 512,
+        cache_ttl_seconds: int = 300,
     ) -> None:
         self.perf_model   = performance_model   or PerformanceModel()
         self.compat_model = compatibility_model or CompatibilityModel()
+        # Split-conformal calibration quantiles [q_lo, q_hi] stored after training.
+        # When None the heuristic fallback is used.
+        self._conformal_q_lo: Optional[float] = None
+        self._conformal_q_hi: Optional[float] = None
+        # Reference distribution for PSI drift monitoring
+        self._drift_reference: Optional[Dict] = None
+        # Pre-calibrated per-league quality factors (from competitiveness_score)
+        self._league_factors: Dict = {}
+        # In-memory LRU prediction cache with TTL
+        self._cache_maxsize    = int(os.environ.get("CACHE_MAXSIZE", cache_maxsize))
+        self._cache_ttl        = int(os.environ.get("CACHE_TTL_SECONDS", cache_ttl_seconds))
+        self._prediction_cache: Dict[tuple, Any] = {}  # key → (result, timestamp)
+        self._cache_access_order: list = []  # for LRU eviction
 
     # ------------------------------------------------------------------
     # Training
     # ------------------------------------------------------------------
 
     def train(self, data: Dict[str, Any]) -> None:
-        """Train all sub-models."""
-        print("[Ensemble] Training performance model …")
-        self.perf_model.train(data)
-        print("[Ensemble] Training compatibility model …")
+        """Train all sub-models and calibrate conformal prediction intervals."""
+        logger.info("[Ensemble] Training performance model …")
+        metrics = self.perf_model.train(data)
+        logger.info("[Ensemble] Training compatibility model …")
         self.compat_model.train(data)
-        print("[Ensemble] Training complete.")
+        self._calibrate_conformal(data)
+        # Calibrate data-derived constants (no hardcoded values)
+        self._calibrate_mpg_baseline(data)
+        self._calibrate_league_factors(data)
+        try:
+            from basketball_ai.features.team_features import calibrate_style_bounds
+            bounds = calibrate_style_bounds(data)
+            logger.info("[Ensemble] Style normalization bounds calibrated from data: %s", bounds)
+        except Exception as exc:
+            logger.warning("[Ensemble] Style bound calibration failed: %s", exc)
+        # Capture reference distribution for drift monitoring
+        try:
+            from basketball_ai.monitoring.drift import capture_reference
+            self._drift_reference = capture_reference(data)
+        except Exception as exc:
+            logger.warning("[Ensemble] Could not capture drift reference: %s", exc)
+            # _drift_reference remains None (set in __init__)
+        logger.info("[Ensemble] Training complete.")
+        return metrics
+
+    def _calibrate_mpg_baseline(self, data: Dict[str, Any]) -> None:
+        """Set _MPG_BASELINE to the 75th percentile of MPG in the training data."""
+        global _MPG_BASELINE
+        try:
+            stats_df = data.get("player_stats")
+            if stats_df is not None and "minutes_per_game" in stats_df.columns:
+                vals = stats_df["minutes_per_game"].dropna()
+                if not vals.empty:
+                    baseline = float(np.percentile(vals, 75))
+                    _MPG_BASELINE = max(baseline, 20.0)  # floor of 20 min
+                    logger.info("[Ensemble] MPG baseline calibrated from data: %.1f min/game", _MPG_BASELINE)
+        except Exception as exc:
+            logger.warning("[Ensemble] MPG baseline calibration failed: %s", exc)
+
+    def _calibrate_league_factors(self, data: Dict[str, Any]) -> None:
+        """Pre-compute per-league quality factors from competitiveness_score."""
+        try:
+            leagues_df = data.get("leagues")
+            if leagues_df is None or leagues_df.empty:
+                return
+            if "competitiveness_score" not in leagues_df.columns:
+                return
+            max_cs = float(leagues_df["competitiveness_score"].max())
+            if max_cs <= 0:
+                return
+            self._league_factors = {
+                str(row.get("id", "")): float(
+                    np.clip(float(row.get("competitiveness_score", 1.0) or 1.0) / max_cs, 0.5, 1.0)
+                )
+                for _, row in leagues_df.iterrows()
+            }
+            logger.info(
+                "[Ensemble] League factors calibrated from data (%d leagues): %s",
+                len(self._league_factors), self._league_factors,
+            )
+        except Exception as exc:
+            logger.warning("[Ensemble] League factor calibration failed: %s", exc)
+            # _league_factors remains {} (set in __init__)
+
+    def _calibrate_conformal(self, data: Dict[str, Any]) -> None:
+        """Compute split-conformal residuals on the validation split.
+
+        Uses the residuals from the training data to derive empirical
+        quantiles for the 90 % prediction interval (5th and 95th percentile
+        of |y - ŷ|).  If calibration fails the heuristic fallback remains.
+        """
+        try:
+            X, y = self.perf_model.prepare_features(data)
+            if len(X) < 40:
+                return
+            from sklearn.model_selection import train_test_split as _tts
+            _, X_cal, _, y_cal = _tts(X, y, test_size=0.15, random_state=42)
+            X_cal_sc = self.perf_model.scaler.transform(X_cal)
+            y_hat    = self.perf_model.model.predict(X_cal_sc)
+            residuals = np.abs(y_hat - y_cal)
+            self._conformal_q_lo = float(np.percentile(residuals, 5))
+            self._conformal_q_hi = float(np.percentile(residuals, 95))
+            logger.info(
+                "[Ensemble] Conformal calibration: q_lo=%.4f  q_hi=%.4f",
+                self._conformal_q_lo, self._conformal_q_hi,
+            )
+        except Exception as exc:
+            logger.warning("[Ensemble] Conformal calibration failed, using heuristic CI: %s", exc)
+            self._conformal_q_lo = None
+            self._conformal_q_hi = None
+
+    # ------------------------------------------------------------------
+    # Prediction cache helpers
+    # ------------------------------------------------------------------
+
+    def _cache_get(self, key: tuple) -> Optional[Any]:
+        """Return cached prediction or None if missing/expired."""
+        entry = self._prediction_cache.get(key)
+        if entry is None:
+            return None
+        result, ts = entry
+        if self._cache_ttl > 0 and (time.monotonic() - ts) > self._cache_ttl:
+            # Expired – remove and return miss
+            del self._prediction_cache[key]
+            if key in self._cache_access_order:
+                self._cache_access_order.remove(key)
+            return None
+        # Refresh LRU position
+        if key in self._cache_access_order:
+            self._cache_access_order.remove(key)
+        self._cache_access_order.append(key)
+        return result
+
+    def _cache_set(self, key: tuple, result: Any) -> None:
+        """Store a prediction result in the LRU cache."""
+        if self._cache_maxsize <= 0:
+            return  # caching disabled
+        # Evict oldest entries if at capacity
+        while len(self._prediction_cache) >= self._cache_maxsize:
+            if not self._cache_access_order:
+                break
+            oldest = self._cache_access_order.pop(0)
+            self._prediction_cache.pop(oldest, None)
+        self._prediction_cache[key] = (result, time.monotonic())
+        self._cache_access_order.append(key)
+
+    def clear_cache(self) -> None:
+        """Invalidate the entire prediction cache (e.g. after retraining)."""
+        self._prediction_cache.clear()
+        self._cache_access_order.clear()
+        logger.info("[Ensemble] Prediction cache cleared.")
 
     # ------------------------------------------------------------------
     # Prediction
@@ -111,6 +257,11 @@ class EnsembleModel:
     ) -> PredictionResult:
         """Generate a full basketball prediction for a player in a given team.
 
+        Results are cached in-memory (LRU) with a configurable TTL.  The cache
+        key is ``(player_id, team_id, season, target_age, competition)``.
+        Data changes are NOT automatically detected; call ``clear_cache()`` if
+        the underlying data is reloaded.
+
         Args:
             player_id:   Target player.
             team_id:     Target team.
@@ -125,6 +276,25 @@ class EnsembleModel:
         Returns:
             PredictionResult with predicted rating and full breakdown.
         """
+        cache_key = (_normalize_id(player_id), _normalize_id(team_id), season, target_age, competition)
+        cached = self._cache_get(cache_key)
+        if cached is not None:
+            return cached
+
+        result = self._predict_uncached(player_id, team_id, data, season, target_age, competition)
+        self._cache_set(cache_key, result)
+        return result
+
+    def _predict_uncached(
+        self,
+        player_id: int,
+        team_id: int,
+        data: Dict[str, Any],
+        season: int = 2024,
+        target_age: Optional[int] = None,
+        competition: str = "RS",
+    ) -> PredictionResult:
+        """Internal uncached implementation of predict()."""
         player_row   = data["player_dict"].get(_normalize_id(player_id), {})
         position     = str(player_row.get("position", "PG"))
         current_age  = int(player_row.get("age", 26))
@@ -171,15 +341,21 @@ class EnsembleModel:
             base_rating = float(np.clip(base_rating * age_ratio, 3.5, 10.0))
 
         # 4. Compatibility: KNN score [0,1] → mapped to multiplier [0.90, 1.10]
-        cf          = self.compat_model.score(team_id, data)
+        cf          = self.compat_model.score(player_id, team_id, data)
         compat_mult = 0.90 + cf * 0.20   # neutral ≈ 1.05
 
-        # 5. League quality factor
-        # Tier 1 = NBA/top EuroLeague (1.00); higher tiers are progressively discounted.
-        team_row = data["team_dict"].get(_normalize_id(team_id), {})
-        tier     = int(team_row.get("league_tier", 1))
-        tier_map = {1: 1.000, 2: 0.980, 3: 0.955, 4: 0.920, 5: 0.875, 6: 0.820, 7: 0.760}
-        lf       = tier_map.get(tier, 0.900)
+        # 5. League quality factor — derived from competitiveness_score in real data.
+        # No hardcoded tier map: the factor is proportional to the league's
+        # competitiveness_score relative to the best league in the loaded dataset.
+        team_row   = data["team_dict"].get(_normalize_id(team_id), {})
+        tier       = int(team_row.get("league_tier", 1))
+        league_id  = str(team_row.get("league_id", ""))
+        # Use pre-calibrated per-league factor when available
+        lf         = self._league_factors.get(league_id, None)
+        if lf is None:
+            # Fallback: look up from league_dict directly (loaded at prediction time)
+            from basketball_ai.features.team_features import _league_tier_factor as _ltf
+            lf = _ltf(team_row, data)
 
         # 6. Contextual adjustment (position fit, style, role, adaptation, spacing)
         # Using a wider mapping range so player-specific position/style fit creates
@@ -215,13 +391,26 @@ class EnsembleModel:
         adjusted = float(np.clip(base_rating * compat_mult * lf * ctx_mult, 3.5, 10.0))
         adjusted = float(np.clip(adjusted * mpg_factor, 3.5, 10.0))
 
-        # Confidence interval – wider for inconsistent players, wider for small samples
-        consistency = float(player_feats.get("consistency_score", 0.5))
-        # Scale reliability 0.5 → 1.0 based on games_played (25+ games = full reliability)
+        # Confidence interval
+        # Prefer split-conformal quantiles from calibration (empirically grounded).
+        # Fall back to heuristic sigma when not calibrated (e.g. model not yet trained).
+        consistency      = float(player_feats.get("consistency_score", 0.5))
         games_reliability = float(np.clip(latest_games_played / 25.0, 0.4, 1.0))
-        sigma = max(0.15, 0.85 * (1.0 - consistency) / games_reliability)
-        ci_lo = float(np.clip(adjusted - 1.96 * sigma, 1.0, 10.0))
-        ci_hi = float(np.clip(adjusted + 1.96 * sigma, 1.0, 10.0))
+
+        if self._conformal_q_lo is not None and self._conformal_q_hi is not None:
+            # Scale the conformal quantiles by consistency and games_reliability so that
+            # the interval still widens for low-sample / inconsistent players, but the
+            # base width is anchored to the empirical calibration residuals.
+            reliability_factor = games_reliability * (0.5 + 0.5 * consistency)
+            ci_half_lo = max(0.10, self._conformal_q_lo / max(reliability_factor, 0.1))
+            ci_half_hi = max(0.10, self._conformal_q_hi / max(reliability_factor, 0.1))
+            ci_lo = float(np.clip(adjusted - ci_half_lo, 1.0, 10.0))
+            ci_hi = float(np.clip(adjusted + ci_half_hi, 1.0, 10.0))
+        else:
+            # Heuristic fallback (pre-calibration)
+            sigma = max(0.15, 0.85 * (1.0 - consistency) / games_reliability)
+            ci_lo = float(np.clip(adjusted - 1.96 * sigma, 1.0, 10.0))
+            ci_hi = float(np.clip(adjusted + 1.96 * sigma, 1.0, 10.0))
 
         shap_vals = self.perf_model.get_shap_values(player_feats)
 
@@ -229,7 +418,7 @@ class EnsembleModel:
             f"Rating 0–10 basato su: "
             f"XGBoost ({len(self.perf_model.feature_names)} features, base {base_rating:.2f}) "
             f"× compatibilità stile ({compat_mult:.2f}) "
-            f"× qualità lega (tier {tier}, fattore {lf:.2f}) "
+            f"× qualità lega (league {league_id}, fattore {lf:.3f}) "
             f"× contesto (posizione+stile+adattamento, fattore {ctx_mult:.3f}) "
             f"× minuti ({latest_mpg:.0f} min/g, fattore {mpg_factor:.2f}) "
             f"| età: {age} (curva {af:.3f}) "
@@ -263,22 +452,67 @@ class EnsembleModel:
         self.perf_model.save(f"{directory}/performance_model.joblib")
         self.compat_model.save(f"{directory}/compatibility_model.joblib")
 
+        # Persist conformal calibration quantiles
+        calibration = {
+            "conformal_q_lo": self._conformal_q_lo,
+            "conformal_q_hi": self._conformal_q_hi,
+            "league_factors":  self._league_factors,
+        }
+        import joblib as _joblib
+        _joblib.dump(calibration, f"{directory}/conformal.joblib")
+
+        # Persist drift reference if available
+        if self._drift_reference:
+            _joblib.dump(self._drift_reference, f"{directory}/drift_reference.joblib")
+
         # Write human-readable metadata alongside the model files.
         meta: Dict[str, Any] = {
             "trained_at": datetime.now(timezone.utc).isoformat(),
             "features":   self.perf_model.feature_names,
+            "conformal_q_lo": self._conformal_q_lo,
+            "conformal_q_hi": self._conformal_q_hi,
         }
         if metrics:
             meta.update(metrics)
         Path(directory, "metadata.json").write_text(
             json.dumps(meta, indent=2), encoding="utf-8"
         )
-        print(f"[Ensemble] Models saved to {directory}/")
+        logger.info("[Ensemble] Models saved to %s/", directory)
 
     def load(self, directory: str = "models_saved") -> None:
         self.perf_model.load(f"{directory}/performance_model.joblib")
         self.compat_model.load(f"{directory}/compatibility_model.joblib")
-        print(f"[Ensemble] Models loaded from {directory}/")
+        # Load conformal quantiles if available
+        import joblib as _joblib
+        conformal_path = Path(directory) / "conformal.joblib"
+        if conformal_path.exists():
+            calibration = _joblib.load(str(conformal_path))
+            self._conformal_q_lo   = calibration.get("conformal_q_lo")
+            self._conformal_q_hi   = calibration.get("conformal_q_hi")
+            self._league_factors   = calibration.get("league_factors", {})
+        # Load drift reference if available
+        drift_path = Path(directory) / "drift_reference.joblib"
+        if drift_path.exists():
+            self._drift_reference = _joblib.load(str(drift_path))
+        logger.info("[Ensemble] Models loaded from %s/", directory)
+
+    def check_data_drift(self, current_data: Dict[str, Any]) -> Dict[str, float]:
+        """Run PSI-based drift detection against the training reference.
+
+        Logs warnings when individual features show significant drift.
+
+        Args:
+            current_data: Full data dict (same format as loader output).
+
+        Returns:
+            Dict mapping feature → PSI value.  Empty if no reference stored.
+        """
+        try:
+            from basketball_ai.monitoring.drift import compute_psi_report
+            return compute_psi_report(current_data, self._drift_reference)
+        except Exception as exc:
+            logger.warning("[Ensemble] Drift check failed: %s", exc)
+            return {}
 
     @property
     def is_trained(self) -> bool:

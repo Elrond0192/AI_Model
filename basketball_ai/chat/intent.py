@@ -47,21 +47,23 @@ import numpy as np
 # ---------------------------------------------------------------------------
 
 class Intent(str, Enum):
-    PREDICT      = "predict"        # How will X perform at team Y?
-    TRAJECTORY   = "trajectory"     # Career arc / age-development curve
-    PEAK         = "peak"           # When / at what age does X peak?
-    TRANSFER     = "transfer"       # What if X moved from A to B?
-    LINEUP       = "lineup"         # X at team Y alongside named players A, B, …
-    COMPARE      = "compare"        # Compare X across multiple teams
-    BEST_TEAMS   = "best_teams"     # Best teams for player X
-    BEST_PLAYERS = "best_players"   # Best players for team Y
-    TEAMMATES    = "teammates"      # Impact of better/worse teammates
-    CLUTCH       = "clutch"         # Clutch / pressure-moment performance
-    MARKET_VALUE = "market_value"   # Transfer value / salary estimate
-    INDIVIDUAL   = "individual"     # Individual player profile & stats
-    ROLE_FIT     = "role_fit"       # Suitability for a given tactical role
-    HELP         = "help"           # Help / what can you do?
-    UNKNOWN      = "unknown"        # Below-confidence fallback
+    PREDICT        = "predict"          # How will X perform at team Y?
+    TRAJECTORY     = "trajectory"       # Career arc / age-development curve
+    PEAK           = "peak"             # When / at what age does X peak?
+    TRANSFER       = "transfer"         # What if X moved from A to B?
+    LINEUP         = "lineup"           # X at team Y alongside named players A, B, …
+    COMPARE        = "compare"          # Compare X across multiple teams
+    BEST_TEAMS     = "best_teams"       # Best teams for player X
+    BEST_PLAYERS   = "best_players"     # Best players for team Y
+    TEAMMATES      = "teammates"        # Impact of better/worse teammates
+    CLUTCH         = "clutch"           # Clutch / pressure-moment performance
+    MARKET_VALUE   = "market_value"     # Transfer value / salary estimate
+    INDIVIDUAL     = "individual"       # Individual player profile & stats
+    ROLE_FIT       = "role_fit"         # Suitability for a given tactical role
+    INJURY_RISK    = "injury_risk"      # Injury / durability / availability risk
+    SCOUTING_REPORT = "scouting_report" # Full scouting report / strengths & weaknesses
+    HELP           = "help"             # Help / what can you do?
+    UNKNOWN        = "unknown"          # Below-confidence fallback
 
 
 # ---------------------------------------------------------------------------
@@ -690,6 +692,126 @@ _EXAMPLES: Dict[Intent, List[str]] = {
         # PL
         "Czy nadaje się na rozgrywającego?",
         "Jaką rolę powinien pełnić?",
+    ],
+
+    # -----------------------------------------------------------------------
+    Intent.INJURY_RISK: [
+        # IT
+        "Qual è il rischio di infortuni di questo giocatore?",
+        "Quanto è fragile fisicamente?",
+        "Quante partite salta in media per infortuni?",
+        "Ha una storia di problemi fisici?",
+        "È un giocatore affidabile dal punto di vista della salute?",
+        "Rischio di infortuni e disponibilità del giocatore",
+        "Quanto è durevole fisicamente?",
+        "Ha mai saltato molte partite per infortuni?",
+        # EN
+        "What is his injury risk?",
+        "How durable is he?",
+        "Has he had a lot of injuries in his career?",
+        "Is he injury prone?",
+        "How many games does he miss on average per season?",
+        "What is his injury history?",
+        "How available is he during the season?",
+        "Is he a durable player?",
+        "Can he stay healthy all season?",
+        # ES
+        "Cuál es el riesgo de lesiones de este jugador?",
+        "Es propenso a las lesiones?",
+        "Cuántos partidos se pierde habitualmente por lesión?",
+        "Tiene historial de lesiones?",
+        "Es un jugador sano y disponible?",
+        # FR
+        "Quel est son risque de blessure?",
+        "Est-il souvent blessé?",
+        "Combien de matchs rate-t-il par saison en moyenne?",
+        "A-t-il un historique de blessures?",
+        # DE
+        "Wie hoch ist sein Verletzungsrisiko?",
+        "Ist er verletzungsanfällig?",
+        "Wie viele Spiele verpasst er durchschnittlich pro Saison?",
+        # PT
+        "Qual é o risco de lesão deste jogador?",
+        "É propenso a lesões?",
+        "Quantos jogos perde por temporada por lesão?",
+        # GR
+        "Ποιος είναι ο κίνδυνος τραυματισμού του;",
+        "Τραυματίζεται εύκολα;",
+        "Πόσα παιχνίδια χάνει κατά μέσο όρο λόγω τραυματισμών;",
+        # TR
+        "Sakatlık riski nedir?",
+        "Sakatlanmaya yatkın mı?",
+        "Sezon içinde kaç maç kaçırır?",
+        # RU
+        "Каков риск травм у этого игрока?",
+        "Насколько он подвержен травмам?",
+        "Сколько матчей он пропускает из-за травм?",
+        # PL
+        "Jakie jest ryzyko kontuzji tego gracza?",
+        "Czy jest podatny na kontuzje?",
+        "Ile meczów opuszcza z powodu urazów?",
+    ],
+
+    # -----------------------------------------------------------------------
+    Intent.SCOUTING_REPORT: [
+        # IT
+        "Dammi un report di scouting completo su questo giocatore",
+        "Quali sono i punti di forza e debolezza di questo giocatore?",
+        "Analisi completa del giocatore come talent scout",
+        "Cosa dicono gli scout su di lui?",
+        "Valutazione complessiva del giocatore a 360 gradi",
+        "Report tecnico-tattico del giocatore",
+        "Analisi delle qualità e dei limiti del giocatore",
+        "Profilo scout dettagliato",
+        # EN
+        "Give me a full scouting report for this player",
+        "What are his strengths and weaknesses?",
+        "Provide a complete player evaluation",
+        "Scout's report on this player",
+        "What do scouts say about him?",
+        "Full 360-degree player assessment",
+        "Detailed talent evaluation of this player",
+        "Breakdown of his game: pros and cons",
+        "What makes him effective and where does he struggle?",
+        # ES
+        "Dame un informe de scouting completo sobre este jugador",
+        "Cuáles son sus fortalezas y debilidades?",
+        "Análisis completo del jugador",
+        "Informe de exploradores sobre este jugador",
+        "Evaluación técnico-táctica del jugador",
+        # FR
+        "Donne-moi un rapport de scouting complet",
+        "Quels sont ses points forts et ses points faibles?",
+        "Évaluation complète du joueur",
+        "Rapport de scouts sur ce joueur",
+        # DE
+        "Gib mir einen vollständigen Scouting-Bericht",
+        "Was sind seine Stärken und Schwächen?",
+        "Vollständige Spielerbewertung",
+        "Was denken Scouts über ihn?",
+        # PT
+        "Dá-me um relatório de scouting completo",
+        "Quais são os seus pontos fortes e fracos?",
+        "Avaliação completa do jogador",
+        # GR
+        "Δώσε μου μια ολοκληρωμένη έκθεση scouting",
+        "Ποια είναι τα δυνατά και αδύνατα σημεία του;",
+        "Πλήρης αξιολόγηση του παίκτη",
+        # TR
+        "Bu oyuncu hakkında kapsamlı bir keşif raporu ver",
+        "Güçlü ve zayıf yönleri neler?",
+        "Oyuncunun tam değerlendirmesi",
+        # RU
+        "Дай полный скаутский отчёт по этому игроку",
+        "Каковы его сильные и слабые стороны?",
+        "Полная оценка игрока",
+        # PL
+        "Daj mi pełny raport skautów o tym graczu",
+        "Jakie są jego mocne i słabe strony?",
+        "Pełna ocena gracza",
+        # HU
+        "Adj egy teljes scouting-jelentést erről a játékosról",
+        "Mik az erős és gyenge pontjai?",
     ],
 
     # -----------------------------------------------------------------------

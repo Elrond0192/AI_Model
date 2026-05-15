@@ -13,6 +13,61 @@ from basketball_ai.data.models import Team
 from basketball_ai.utils.helpers import normalize_id as _normalize_id
 
 # ---------------------------------------------------------------------------
+# Data-derived normalization bounds for team style vectors.
+# Defaults represent conservative reference ranges; call calibrate_style_bounds()
+# after loading real data to replace them with data-driven percentile bounds.
+# ---------------------------------------------------------------------------
+_style_bounds: Dict[str, float] = {
+    "pace_min": 80.0, "pace_max": 115.0,
+    "tpar_max": 0.55,
+    "ast_min":  14.0, "ast_max":  35.0,
+    "star_max": 0.45,
+    "ortg_min": 90.0, "ortg_max": 125.0,
+    "drtg_min": 88.0, "drtg_max": 120.0,
+}
+
+
+def calibrate_style_bounds(data: Dict[str, Any], percentile_lo: float = 5.0, percentile_hi: float = 95.0) -> Dict[str, float]:
+    """Compute normalization bounds from the real teams distribution.
+
+    Call this once after data is loaded (e.g. in EnsembleModel.train()).
+    Stores results in the module-level ``_style_bounds`` dict so all
+    subsequent calls to ``compute_team_style_vector`` use data-driven bounds.
+
+    Args:
+        data:           Full data dict including a ``teams`` DataFrame.
+        percentile_lo:  Lower percentile used for the minimum bound (default 5).
+        percentile_hi:  Upper percentile used for the maximum bound (default 95).
+
+    Returns:
+        Updated bounds dict.
+    """
+    import pandas as _pd
+
+    teams_df = data.get("teams")
+    if teams_df is None or (isinstance(teams_df, _pd.DataFrame) and teams_df.empty):
+        return _style_bounds.copy()
+
+    def _pct(col: str, p: float, fallback: float) -> float:
+        if col not in teams_df.columns:
+            return fallback
+        vals = teams_df[col].dropna()
+        return float(np.percentile(vals, p)) if not vals.empty else fallback
+
+    _style_bounds["pace_min"] = _pct("pace", percentile_lo, 80.0)
+    _style_bounds["pace_max"] = _pct("pace", percentile_hi, 115.0)
+    _style_bounds["tpar_max"] = max(_pct("three_point_attempt_rate", percentile_hi, 0.55), 0.01)
+    _style_bounds["ast_min"]  = _pct("assists_per_game", percentile_lo, 14.0)
+    _style_bounds["ast_max"]  = _pct("assists_per_game", percentile_hi, 35.0)
+    _style_bounds["star_max"] = max(_pct("star_player_usage", percentile_hi, 0.45), 0.01)
+    _style_bounds["ortg_min"] = _pct("offensive_rating", percentile_lo, 90.0)
+    _style_bounds["ortg_max"] = _pct("offensive_rating", percentile_hi, 125.0)
+    _style_bounds["drtg_min"] = _pct("defensive_rating", percentile_lo, 88.0)
+    _style_bounds["drtg_max"] = _pct("defensive_rating", percentile_hi, 120.0)
+
+    return _style_bounds.copy()
+
+# ---------------------------------------------------------------------------
 # Style-vs-position compatibility table (all 10 positions incl. hybrids)
 # ---------------------------------------------------------------------------
 
@@ -55,17 +110,36 @@ def get_style_position_compat(style: str, position: str) -> float:
 # Style vector
 # ---------------------------------------------------------------------------
 
-def compute_team_style_vector(team: Team) -> np.ndarray:
+def compute_team_style_vector(team: Team, data: Optional[Dict[str, Any]] = None) -> np.ndarray:
     """Build a 6-d normalized style vector.
+
+    Normalization bounds are computed from the real data distribution when
+    `data` is provided, and fall back to historical reference percentiles
+    (stored as module-level defaults) otherwise.  This avoids hardcoded
+    constants that may not reflect the actual data range.
 
     Dimensions: [pace_norm, 3pt_rate, ast_norm, star_usage, ortg_norm, drtg_inv]
     """
-    pace_norm = float(np.clip((team.pace - 80) / 35, 0, 1))
-    tpar_norm = float(np.clip(team.three_point_attempt_rate / 0.55, 0, 1))
-    ast_norm  = float(np.clip((team.assists_per_game - 14) / 21, 0, 1))
-    star_norm = float(np.clip(team.star_player_usage / 0.45, 0, 1))
-    ortg_norm = float(np.clip((team.offensive_rating - 90) / 35, 0, 1))
-    drtg_norm = float(np.clip(1.0 - (team.defensive_rating - 88) / 32, 0, 1))
+    # Use data-derived bounds if available (set by _update_style_bounds(data))
+    _pb = _style_bounds
+    pace_min, pace_max = _pb.get("pace_min", 80.0), _pb.get("pace_max", 115.0)
+    tpar_max           = _pb.get("tpar_max", 0.55)
+    ast_min, ast_max   = _pb.get("ast_min", 14.0), _pb.get("ast_max", 35.0)
+    star_max           = _pb.get("star_max", 0.45)
+    ortg_min, ortg_max = _pb.get("ortg_min", 90.0), _pb.get("ortg_max", 125.0)
+    drtg_min, drtg_max = _pb.get("drtg_min", 88.0), _pb.get("drtg_max", 120.0)
+
+    pace_range = max(pace_max - pace_min, 1.0)
+    ast_range  = max(ast_max  - ast_min,  1.0)
+    ortg_range = max(ortg_max - ortg_min, 1.0)
+    drtg_range = max(drtg_max - drtg_min, 1.0)
+
+    pace_norm = float(np.clip((team.pace - pace_min) / pace_range, 0, 1))
+    tpar_norm = float(np.clip(team.three_point_attempt_rate / max(tpar_max, 0.01), 0, 1))
+    ast_norm  = float(np.clip((team.assists_per_game - ast_min) / ast_range, 0, 1))
+    star_norm = float(np.clip(team.star_player_usage / max(star_max, 0.01), 0, 1))
+    ortg_norm = float(np.clip((team.offensive_rating - ortg_min) / ortg_range, 0, 1))
+    drtg_norm = float(np.clip(1.0 - (team.defensive_rating - drtg_min) / drtg_range, 0, 1))
     return np.array([pace_norm, tpar_norm, ast_norm, star_norm, ortg_norm, drtg_norm])
 
 
@@ -81,11 +155,33 @@ def style_vector_similarity(v1: np.ndarray, v2: np.ndarray) -> float:
 # Object-API
 # ---------------------------------------------------------------------------
 
+def _league_tier_factor(team_row: Dict[str, Any], data: Dict[str, Any]) -> float:
+    """Return a league quality factor derived from the real competitiveness_score.
+
+    Uses ``leagues.competitiveness_score`` (loaded from the DB) normalised
+    relative to the maximum observed competitiveness score so that the best
+    league always scores 1.0 and weaker leagues are discounted proportionally.
+    No hardcoded tier map is used.
+    """
+    league_id  = team_row.get("league_id")
+    league_row = data.get("league_dict", {}).get(str(league_id), {})
+    comp_score = float(league_row.get("competitiveness_score", 1.0) or 1.0)
+
+    # Normalise to the max competitiveness in the loaded data
+    leagues_df = data.get("leagues")
+    if leagues_df is not None and not leagues_df.empty and "competitiveness_score" in leagues_df.columns:
+        max_cs = float(leagues_df["competitiveness_score"].max())
+        if max_cs > 0:
+            return float(np.clip(comp_score / max_cs, 0.5, 1.0))
+    return float(np.clip(comp_score, 0.5, 1.0))
+
+
 def compute_team_features_from_object(
     team: Team,
     all_player_stats: List[Any],
     all_relations: List[Any],
     exclude_player_id: Optional[int] = None,
+    data: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, float]:
     """Compute feature dictionary from Team dataclass and lists of stat objects."""
     roster_ids = {
@@ -101,8 +197,15 @@ def compute_team_features_from_object(
     ]
     avg_tm = float(np.mean(teammate_ratings)) if teammate_ratings else 6.0
 
-    tier_map = {1: 1.00, 2: 0.88, 3: 0.76, 4: 0.64, 5: 0.52}
-    tier_factor = tier_map.get(team.league_tier, 0.70)
+    # Use data-derived league factor when possible; otherwise fall back to tier
+    if data is not None:
+        tier_factor = _league_tier_factor(
+            {"league_id": team.league_tier, "league_tier": team.league_tier}, data
+        )
+    else:
+        _TIER_FALLBACK = {1: 1.00, 2: 0.88, 3: 0.76, 4: 0.64, 5: 0.52}
+        tier_factor = _TIER_FALLBACK.get(team.league_tier, 0.70)
+
     pace_cat = "fast" if team.pace > 100 else ("slow" if team.pace < 93 else "medium")
 
     v = compute_team_style_vector(team)
@@ -161,9 +264,9 @@ def compute_team_features(
     else:
         avg_tm = 6.0
 
-    tier_map = {1: 1.00, 2: 0.88, 3: 0.76, 4: 0.64, 5: 0.52}
+    # League quality factor – derived from competitiveness_score in real data
+    tier_factor = _league_tier_factor(team_row, data)
     tier = int(team_row.get("league_tier", 3))
-    tier_factor = tier_map.get(tier, 0.70)
     pace = float(team_row.get("pace", 95))
     pace_cat = "fast" if pace > 100 else ("slow" if pace < 93 else "medium")
 
