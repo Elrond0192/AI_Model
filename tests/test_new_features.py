@@ -187,6 +187,5 @@ class TestCORSOrigins:
         import basketball_ai.api.main as main_mod
         importlib.reload(main_mod)
         origins = main_mod._parse_allowed_origins()
-        assert "https://example.com" in origins
-        assert "https://app.example.com" in origins
+        assert set(origins) == {"https://example.com", "https://app.example.com"}
         assert len(origins) == 2

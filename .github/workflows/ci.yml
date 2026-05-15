@@ -6,11 +6,17 @@ on:
   pull_request:
     branches: ["main", "master"]
 
+# Minimal permissions for all jobs by default
+permissions:
+  contents: read
+
 jobs:
   # ─── test ────────────────────────────────────────────────────────────────
   test:
     name: Test (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     strategy:
       matrix:
         python-version: ["3.11", "3.12"]
@@ -37,6 +43,8 @@ jobs:
   lint:
     name: Lint (ruff + flake8)
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     needs: test
 
     steps:
@@ -61,6 +69,8 @@ jobs:
   build-docker:
     name: Build Docker image
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     needs: [test, lint]
     # Only build on pushes to main/master, not on every branch
     if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'

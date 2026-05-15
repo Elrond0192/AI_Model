@@ -131,7 +131,7 @@ class EnsembleModel:
             self._drift_reference = capture_reference(data)
         except Exception as exc:
             logger.warning("[Ensemble] Could not capture drift reference: %s", exc)
-            self._drift_reference: Optional[Dict] = None
+            # _drift_reference remains None (set in __init__)
         logger.info("[Ensemble] Training complete.")
         return metrics
 
@@ -160,7 +160,7 @@ class EnsembleModel:
             max_cs = float(leagues_df["competitiveness_score"].max())
             if max_cs <= 0:
                 return
-            self._league_factors: Dict = {
+            self._league_factors = {
                 str(row.get("id", "")): float(
                     np.clip(float(row.get("competitiveness_score", 1.0) or 1.0) / max_cs, 0.5, 1.0)
                 )
@@ -172,7 +172,7 @@ class EnsembleModel:
             )
         except Exception as exc:
             logger.warning("[Ensemble] League factor calibration failed: %s", exc)
-            self._league_factors: Dict = {}
+            # _league_factors remains {} (set in __init__)
 
     def _calibrate_conformal(self, data: Dict[str, Any]) -> None:
         """Compute split-conformal residuals on the validation split.

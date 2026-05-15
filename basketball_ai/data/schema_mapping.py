@@ -571,24 +571,25 @@ WHERE s.Competition NOT IN ('TOT')
 
 def _team_player_relations_block(league: str, season: str) -> str:
     tag = f"{league}_{season}"
-    return f"""SELECT DISTINCT
-    CAST(b.TeamId AS nvarchar(100)) AS team_id,
-    CAST(b.Id AS nvarchar(100)) AS player_id,
+    return f"""SELECT
+    agg.team_id,
+    agg.player_id,
     '{season}' AS season,
-    -- Use SF (starter flag) to derive role: starter when majority of appearances were in the starting five
-    CASE
-        WHEN CAST(SUM(ISNULL(CAST(b.SF AS int), 0)) AS float) / NULLIF(CAST(COUNT(*) AS float), 0) >= 0.5
-        THEN 'starter'
-        ELSE 'rotation'
-    END AS role,
+    -- Role derived from the SF (starting five) flag majority:
+    -- a player is "starter" when they started ≥50% of their appearances.
+    CASE WHEN agg.starter_pct >= 0.5 THEN 'starter' ELSE 'rotation' END AS role,
     ISNULL(TRY_CAST(p.ShirtNumber AS int), 0) AS jersey_number
-FROM Boxscore.{tag} AS b
+FROM (
+    SELECT
+        CAST(b.TeamId AS nvarchar(100)) AS team_id,
+        CAST(b.Id AS nvarchar(100)) AS player_id,
+        CAST(SUM(ISNULL(CAST(b.SF AS int), 0)) AS float)
+            / NULLIF(CAST(COUNT(*) AS float), 0) AS starter_pct
+    FROM Boxscore.{tag} AS b
+    GROUP BY CAST(b.TeamId AS nvarchar(100)), CAST(b.Id AS nvarchar(100))
+) AS agg
 LEFT JOIN Anagrafiche.{tag} AS p
-    ON CAST(b.Id AS nvarchar(100)) = CAST(p.Id AS nvarchar(100))
-GROUP BY
-    CAST(b.TeamId AS nvarchar(100)),
-    CAST(b.Id AS nvarchar(100)),
-    ISNULL(TRY_CAST(p.ShirtNumber AS int), 0)"""
+    ON agg.player_id = CAST(p.Id AS nvarchar(100))"""
 
 
 def get_table_queries(
