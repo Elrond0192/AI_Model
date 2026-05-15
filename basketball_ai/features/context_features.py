@@ -73,8 +73,8 @@ def compute_context_features(
     # 1. Style × position compatibility
     style_compat = get_style_position_compat(style, position)
 
-    # 2. Position fit: same as style_compat (basketball has no rigid formations)
-    position_fit = style_compat
+    # 2. Position fit (computed after role_opportunity below, since it needs
+    #    same_pos_count from the starter-slot calculation).
 
     # 3. Role opportunity: starters at same position on target team
     rels_df = data["team_player_relations"]
@@ -96,6 +96,11 @@ def compute_context_features(
     else:
         same_pos_count = 0
     role_opportunity = float(np.clip(1.0 - same_pos_count * 0.18, 0.35, 1.0))
+
+    # position_fit: weighted blend of style×position compat and slot availability.
+    # Gives position_team_fit a genuinely different meaning from style_compatibility,
+    # preventing the ctx_score from double-counting the same signal.
+    position_fit = float(np.clip(style_compat * 0.60 + role_opportunity * 0.40, 0.0, 1.0))
 
     # 4. League adaptation
     from_league_id = player_row.get("current_league_id")

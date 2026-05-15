@@ -1,6 +1,7 @@
 """Basketball What-If scenario engine."""
 from __future__ import annotations
 
+import logging
 from collections import Counter
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
@@ -17,6 +18,8 @@ from basketball_ai.models.age_curve import age_performance_factor, PEAK_AGES, pe
 from basketball_ai.features.context_features import compute_context_features
 from basketball_ai.features.player_features import compute_player_features
 from basketball_ai.features.team_features import compute_team_features, get_style_position_compat
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -201,8 +204,8 @@ def get_available_roles(
             })
             if roles:
                 return {r: r for r in roles}
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("[WhatIfEngine] get_available_roles failed for dimension=%s: %s", dimension, exc)
     return dict(ADVANCED_ROLES)
 
 
@@ -242,8 +245,8 @@ class WhatIfEngine:
                         val = str(latest.get(c, "") or "").strip()
                         if val:
                             return val
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("[WhatIfEngine] _get_player_db_role lookup failed for player_id=%s: %s", player_id, exc)
         return self._classify_role_advanced(player_feats, position)
 
     # ------------------------------------------------------------------
@@ -277,8 +280,8 @@ class WhatIfEngine:
                     latest = p_stats.iloc[-1]
                     for col in result:
                         result[col] = str(latest.get(col, "") or "").strip()
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("[WhatIfEngine] _get_all_player_db_roles failed for player_id=%s: %s", player_id, exc)
         return result
 
     # ------------------------------------------------------------------
@@ -383,7 +386,8 @@ class WhatIfEngine:
                     position_fit=ctx["position_team_fit"],
                     rank=0,
                 ))
-            except Exception:
+            except Exception as exc:
+                logger.debug("[WhatIfEngine] best_team_fit skipping team_id=%s: %s", tid, exc)
                 continue
 
         results.sort(key=lambda r: r.predicted_rating, reverse=True)
@@ -427,7 +431,8 @@ class WhatIfEngine:
                     ),
                     rank=0,
                 ))
-            except Exception:
+            except Exception as exc:
+                logger.debug("[WhatIfEngine] best_player_for_team skipping player_id=%s: %s", pid, exc)
                 continue
 
         results.sort(key=lambda r: r.predicted_rating, reverse=True)
@@ -673,7 +678,8 @@ class WhatIfEngine:
             try:
                 pred = self.ensemble.predict(pid, team_id, self.data, season)
                 r    = pred.predicted_rating
-            except Exception:
+            except Exception as exc:
+                logger.debug("[WhatIfEngine] what_if_lineup: prediction failed for player_id=%s: %s", pid, exc)
                 r = 6.0
             p_feats    = compute_player_features(pid, self.data)
             role       = self._get_player_db_role(pid, p_feats, pos)
@@ -801,7 +807,8 @@ class WhatIfEngine:
             try:
                 pred   = self.ensemble.predict(pid, team_id, self.data, season)
                 rating = pred.predicted_rating
-            except Exception:
+            except Exception as exc:
+                logger.debug("[WhatIfEngine] compute_lineup_synergy: prediction failed for player_id=%s: %s", pid, exc)
                 rating = 6.0
             p_feats  = compute_player_features(pid, self.data)
             role     = self._get_player_db_role(pid, p_feats, pos)
@@ -1007,10 +1014,9 @@ class WhatIfEngine:
                         ), 3
                     ),
                 })
-            except Exception:
+            except Exception as exc:
+                logger.debug("[WhatIfEngine] best_lineup_by_roles skipping player_id=%s: %s", pid, exc)
                 continue
-
-        # Build per-role candidate lists – description falls back to ADVANCED_ROLES
         # for heuristic labels; DB role strings are used as-is.
         available_role_map = get_available_roles(self.data, dimension=role_dimension)
         role_candidates: List[RoleCandidateResult] = []

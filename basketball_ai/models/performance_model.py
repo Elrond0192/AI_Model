@@ -464,6 +464,10 @@ class PerformanceModel:
             # --- Per-40 projection features ----------------------------------
             "avg_pts_per_40":       hist_avg("pts_per_40", 0.0),
             "avg_ast_per_40":       hist_avg("ast_per_40", 0.0),
+            # --- Starter status (from Boxscore.SF) ----------------------------
+            # NOTE: Was previously missing from _build_row, causing a reverse
+            # training/inference skew (training always 0, inference non-zero).
+            "avg_starter_pct":      hist_avg("starter_pct", 0.5),
             # --- Engineered interaction features -----------------------------
             "obpm_x_usg":           obpm_x_usg,
             "dbpm_x_reb":           dbpm_x_reb,
@@ -700,6 +704,10 @@ class PerformanceModel:
             logger.info("[PerformanceModel] Running %d-fold cross-validation …", cv_folds)
             kf = KFold(n_splits=cv_folds, shuffle=True, random_state=42)
             X_np = X.values.astype(float)
+            # Re-use the number of trees chosen by early-stopping in the main training
+            # run so that CV RMSE is directly comparable to val_rmse (same model depth).
+            # Fallback to 300 if best_iteration is not available.
+            best_n_estimators = int(getattr(self.model, "best_iteration", 300) or 300)
             cv_rmses: List[float] = []
             for fold, (tr_idx, va_idx) in enumerate(kf.split(X_np), 1):
                 Xtr, Xva = X_np[tr_idx], X_np[va_idx]
@@ -708,19 +716,19 @@ class PerformanceModel:
                 Xtr_sc = _sc.fit_transform(Xtr)
                 Xva_sc = _sc.transform(Xva)
                 _m = XGBRegressor(
-                    n_estimators=300, max_depth=5, learning_rate=0.05,
+                    n_estimators=best_n_estimators, max_depth=5, learning_rate=0.05,
                     subsample=0.8, colsample_bytree=0.8, min_child_weight=3,
                     reg_alpha=0.1, reg_lambda=1.0, random_state=42, verbosity=0,
                 )
                 _m.fit(Xtr_sc, ytr, verbose=False)
                 fold_rmse = float(np.sqrt(np.mean((_m.predict(Xva_sc) - yva) ** 2)))
                 cv_rmses.append(fold_rmse)
-                logger.info("  Fold %d/%d  RMSE=%.4f", fold, cv_folds, fold_rmse)
+                logger.info("  Fold %d/%d  RMSE=%.4f  (n_estimators=%d)", fold, cv_folds, fold_rmse, best_n_estimators)
             metrics["cv_mean_rmse"] = float(np.mean(cv_rmses))
             metrics["cv_std_rmse"]  = float(np.std(cv_rmses))
             logger.info(
-                "[PerformanceModel] CV RMSE=%.4f ±%.4f",
-                metrics["cv_mean_rmse"], metrics["cv_std_rmse"],
+                "[PerformanceModel] CV RMSE=%.4f ±%.4f  (n_estimators=%d)",
+                metrics["cv_mean_rmse"], metrics["cv_std_rmse"], best_n_estimators,
             )
 
         return metrics
