@@ -643,7 +643,8 @@ class PerformanceModel:
             X_main, X_conformal, y_main, y_conformal = train_test_split(
                 X, y, test_size=0.15, random_state=43
             )
-            # 0.176 ≈ 0.15 / 0.85 → val is ~15% of the original dataset
+            # 0.176 ≈ 0.15 / (1 - 0.15) ensures val is ~15% of the original
+            # dataset after the conformal holdout has been removed.
             X_train, X_val, y_train, y_val = train_test_split(
                 X_main, y_main, test_size=0.176, random_state=42
             )
