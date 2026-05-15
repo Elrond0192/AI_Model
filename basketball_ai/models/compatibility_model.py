@@ -173,7 +173,7 @@ class CompatibilityModel:
         """
         if not self.is_trained:
             return 0.75
-        team = data["team_dict"].get(int(team_id))
+        team = data["team_dict"].get(_to_int(team_id))
         if team is None:
             return 0.75
         cv    = self._combined_vector(player_id, team, data).reshape(1, -1)
