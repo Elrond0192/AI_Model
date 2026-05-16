@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import logging
 from collections import Counter
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
@@ -14,7 +14,7 @@ from basketball_ai.utils.helpers import (
     normalize_id as _normalize_id,
 )
 
-from basketball_ai.models.age_curve import age_performance_factor, PEAK_AGES, peak_age_window
+from basketball_ai.models.age_curve import PEAK_AGES, peak_age_window
 from basketball_ai.features.context_features import compute_context_features
 from basketball_ai.features.player_features import compute_player_features
 from basketball_ai.features.team_features import compute_team_features, get_style_position_compat
@@ -295,7 +295,6 @@ class WhatIfEngine:
         """Return rating predictions across an age range."""
         player      = self.data["player_dict"].get(_normalize_id(player_id), {})
         current_age = int(player.get("age", 25))
-        position    = str(player.get("position", "PG"))
 
         if team_id is None:
             ct = player.get("current_team_id")

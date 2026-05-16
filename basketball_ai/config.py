@@ -7,7 +7,6 @@ python-dotenv is installed).  Import and use ``settings`` directly:
     print(settings.data_dir)
 """
 from __future__ import annotations
-from typing import List, Optional
 try:
     from pydantic_settings import BaseSettings, SettingsConfigDict
 

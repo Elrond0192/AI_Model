@@ -297,7 +297,7 @@ class DataStore:
         self.players = load_players(data_dir)
         self.player_stats = load_player_stats(data_dir)
         self.relations = load_team_player_relations(data_dir)
-        self._league_map = {l.id: l for l in self.leagues}
+        self._league_map = {lg.id: lg for lg in self.leagues}
         self._team_map = {t.id: t for t in self.teams}
         self._player_map = {p.id: p for p in self.players}
 

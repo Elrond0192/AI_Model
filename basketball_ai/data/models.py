@@ -12,7 +12,7 @@ Extended with all columns available in the SQL Server DB schema (schema_db.sql):
   - Per-40 minute stats for cross-context comparisons
 """
 from dataclasses import dataclass, field
-from typing import Optional, List
+from typing import Optional
 
 @dataclass
 class League:

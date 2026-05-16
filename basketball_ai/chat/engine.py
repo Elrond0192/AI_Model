@@ -13,7 +13,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
-from basketball_ai.chat.intent import Intent, detect_intent, detect_intent_with_confidence
+from basketball_ai.chat.intent import Intent, detect_intent_with_confidence
 from basketball_ai.chat.entities import (
     extract_number,
     find_all_players,
@@ -701,7 +701,6 @@ class ChatEngine:
                 gm_sc  = _avg("gm_sc")
                 net_diff = _avg("net_rtg_diff")
                 clutch_ts = _avg("clutch_ts_pct")
-                ruolo = _latest("ruolo_combinato", 0.0)  # string col, special handling
                 if "ruolo_combinato" in pdf.columns and not pdf["ruolo_combinato"].dropna().empty:
                     ruolo_str = str(pdf["ruolo_combinato"].dropna().iloc[-1])
                 else:
@@ -932,26 +931,43 @@ class ChatEngine:
 
                 # Identify strengths (dimensions above threshold)
                 strengths = []
-                if pts > 18.0:  strengths.append("elite scorer")
-                elif pts > 12.0: strengths.append("reliable scorer")
-                if ast > 5.0:   strengths.append("strong playmaker")
-                elif pm > 0.6:  strengths.append("good ball-handler")
-                if reb > 8.0:   strengths.append("dominant rebounder")
-                elif reb > 5.0: strengths.append("solid rebounder")
-                if raptor_d > 2.0: strengths.append("defensive anchor")
-                elif df > 5.0:     strengths.append("good defender")
-                if hustle > 0.7:   strengths.append("high-hustle / energy")
-                if ts > 0.58:      strengths.append("efficient shooter (TS%)")
-                if durability > 0.85: strengths.append("durable / available")
+                if pts > 18.0:
+                    strengths.append("elite scorer")
+                elif pts > 12.0:
+                    strengths.append("reliable scorer")
+                if ast > 5.0:
+                    strengths.append("strong playmaker")
+                elif pm > 0.6:
+                    strengths.append("good ball-handler")
+                if reb > 8.0:
+                    strengths.append("dominant rebounder")
+                elif reb > 5.0:
+                    strengths.append("solid rebounder")
+                if raptor_d > 2.0:
+                    strengths.append("defensive anchor")
+                elif df > 5.0:
+                    strengths.append("good defender")
+                if hustle > 0.7:
+                    strengths.append("high-hustle / energy")
+                if ts > 0.58:
+                    strengths.append("efficient shooter (TS%)")
+                if durability > 0.85:
+                    strengths.append("durable / available")
 
                 # Identify weaknesses
                 weaknesses = []
-                if ts < 0.50:     weaknesses.append("shooting efficiency concerns")
-                if ast < 2.0 and position in ("SG", "SF", "PF"): weaknesses.append("limited creation")
-                if raptor_d < -2.0: weaknesses.append("defensive liability")
-                if hustle < 0.3:  weaknesses.append("below-average hustle")
-                if durability < 0.65: weaknesses.append("durability / injury concerns")
-                if ver < 0.3:     weaknesses.append("low positional versatility")
+                if ts < 0.50:
+                    weaknesses.append("shooting efficiency concerns")
+                if ast < 2.0 and position in ("SG", "SF", "PF"):
+                    weaknesses.append("limited creation")
+                if raptor_d < -2.0:
+                    weaknesses.append("defensive liability")
+                if hustle < 0.3:
+                    weaknesses.append("below-average hustle")
+                if durability < 0.65:
+                    weaknesses.append("durability / injury concerns")
+                if ver < 0.3:
+                    weaknesses.append("low positional versatility")
 
                 strengths_str  = ", ".join(strengths)  or "—"
                 weaknesses_str = ", ".join(weaknesses) or "—"
@@ -1039,7 +1055,6 @@ class ChatEngine:
                     league_id=str(td_.get(_normalize_id(cur_tid), {}).get("league_id", "") or ""),
                 ) if cur_tid else "—"
                 p_stats = self.data["player_stats"]
-                import pandas as _pd
                 mask    = p_stats["player_id"] == _normalize_id(player_id)
                 pdf     = p_stats[mask].sort_values("season")
 
@@ -1048,10 +1063,14 @@ class ChatEngine:
                         return float(pdf[col].dropna().iloc[-1])
                     return default
 
-                pts = _latest("points"); reb = _latest("rebounds")
-                ast = _latest("assists"); stl = _latest("steals")
-                blk = _latest("blocks"); ts  = _latest("ts_pct")
-                usg = _latest("usg_pct"); bpm = _latest("bpm")
+                pts = _latest("points")
+                reb = _latest("rebounds")
+                ast = _latest("assists")
+                stl = _latest("steals")
+                blk = _latest("blocks")
+                ts  = _latest("ts_pct")
+                usg = _latest("usg_pct")
+                bpm = _latest("bpm")
 
                 reply = (
                     f"**{player_name}** – profilo individuale\n\n"
@@ -1070,7 +1089,7 @@ class ChatEngine:
                     f"Quando raggiungerà il picco {player_name}?",
                     f"Scouting report di {player_name}",
                 ]
-            except Exception as exc:
+            except Exception:
                 pass
         # Fully unknown – provide contextual suggestions
         suggestions_out = [

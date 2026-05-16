@@ -656,11 +656,11 @@ def get_table_queries(
     # Skip branches where the primary Anagrafiche.Team_{tag} table is absent.
     teams_parts = [
         _teams_block(
-            l, s,
-            has_team_stats=_has(tags_with_team_stats, f"{l}_{s}"),
+            lg, s,
+            has_team_stats=_has(tags_with_team_stats, f"{lg}_{s}"),
         )
-        for l, s in league_seasons
-        if _has(tags_with_team_table, f"{l}_{s}")
+        for lg, s in league_seasons
+        if _has(tags_with_team_table, f"{lg}_{s}")
     ]
     teams_sql = "\nUNION ALL\n".join(teams_parts) if teams_parts else None
 
@@ -669,31 +669,31 @@ def get_table_queries(
     # AdvancedStats_Player_ JOIN may be absent.
     players_sql = "\nUNION ALL\n".join(
         _players_block(
-            l, s,
-            has_normalized_name=(f"{l}_{s}" in _norm_tags),
-            has_player_stats=_has(tags_with_player_stats, f"{l}_{s}"),
+            lg, s,
+            has_normalized_name=(f"{lg}_{s}" in _norm_tags),
+            has_player_stats=_has(tags_with_player_stats, f"{lg}_{s}"),
         )
-        for l, s in league_seasons
+        for lg, s in league_seasons
     )
 
     # --- player_stats --------------------------------------------------------
     # Skip branches where the primary AdvancedStats_Player_{tag} table is absent.
     stats_seasons = [
-        (l, s) for l, s in league_seasons
-        if _has(tags_with_player_stats, f"{l}_{s}")
+        (lg, s) for lg, s in league_seasons
+        if _has(tags_with_player_stats, f"{lg}_{s}")
     ]
     if stats_seasons:
         cte_parts = ",\n".join(
             _player_stats_cte(
-                l, s,
-                has_box=_has(tags_with_boxscore, f"{l}_{s}"),
-                has_roles=_has(tags_with_roles, f"{l}_{s}"),
-                has_onoff=_has(tags_with_onoff, f"{l}_{s}"),
-                has_clutch=_has(tags_with_clutch, f"{l}_{s}"),
+                lg, s,
+                has_box=_has(tags_with_boxscore, f"{lg}_{s}"),
+                has_roles=_has(tags_with_roles, f"{lg}_{s}"),
+                has_onoff=_has(tags_with_onoff, f"{lg}_{s}"),
+                has_clutch=_has(tags_with_clutch, f"{lg}_{s}"),
             )
-            for l, s in stats_seasons
+            for lg, s in stats_seasons
         )
-        stats_selects = "\nUNION ALL\n".join(_player_stats_select(l, s) for l, s in stats_seasons)
+        stats_selects = "\nUNION ALL\n".join(_player_stats_select(lg, s) for lg, s in stats_seasons)
         stats_sql: Optional[str] = f"WITH\n{cte_parts}\n{stats_selects}"
     else:
         stats_sql = None
@@ -701,9 +701,9 @@ def get_table_queries(
     # --- team_player_relations -----------------------------------------------
     # Skip branches where the primary Boxscore.{tag} table is absent.
     rels_parts = [
-        _team_player_relations_block(l, s)
-        for l, s in league_seasons
-        if _has(tags_with_boxscore, f"{l}_{s}")
+        _team_player_relations_block(lg, s)
+        for lg, s in league_seasons
+        if _has(tags_with_boxscore, f"{lg}_{s}")
     ]
     rels_sql = "\nUNION ALL\n".join(rels_parts) if rels_parts else None
 

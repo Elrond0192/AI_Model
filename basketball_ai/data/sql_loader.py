@@ -45,8 +45,6 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 from urllib.parse import quote_plus
 
-_logger = logging.getLogger(__name__)
-
 import pandas as pd
 
 # Load .env if present (no-op when python-dotenv is not installed or no file)
@@ -62,6 +60,8 @@ from basketball_ai.data.loader import (
     _fill_current_team_league,
     validate_dataframes,
 )
+
+_logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -472,7 +472,7 @@ def _discover_normalized_name_tags(engine, league_seasons: List[tuple]) -> set:
     )
     try:
         df = _execute_query(engine, sql)
-        known_tags = {f"{l}_{s}" for l, s in league_seasons}
+        known_tags = {f"{lg}_{s}" for lg, s in league_seasons}
         return set(df["TABLE_NAME"].str.strip().tolist()) & known_tags
     except Exception:
         return set()
@@ -516,7 +516,7 @@ def _discover_existing_table_tags(
     )
     try:
         df = _execute_query(engine, sql)
-        known_tags = {f"{l}_{s}" for l, s in league_seasons}
+        known_tags = {f"{lg}_{s}" for lg, s in league_seasons}
         table_names: List[str] = df["TABLE_NAME"].str.strip().tolist()
         if prefix:
             found = {
