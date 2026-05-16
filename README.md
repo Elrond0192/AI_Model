@@ -13,7 +13,7 @@ Built around an XGBoost-based ensemble, compatibility modelling, and a FastAPI b
 | **Package structure** | Codebase is now under the `basketball_ai` package namespace (legacy `src` layout removed) |
 | **Synthetic data generator** | Multi-league dataset generation with players, teams, stats, and relations |
 | **Advanced feature engineering** | Per-36/Per-40 stats, RAPTOR/LEBRON/SPM, OWS/DWS, FIC, clutch/on-off metrics, role signals, durability and interaction features |
-| **Performance model** | XGBoost regressor with an expanded feature set (57 features in `FEATURE_COLS`) and optional SHAP explainability |
+| **Performance model** | XGBoost regressor with an expanded feature set (57 engineered features) and optional SHAP explainability |
 | **Competition-aware predictions** | Handles competition context (`RS`, `PO`, `CUP`, `SUPERCUP`) in training and inference |
 | **Compatibility model** | Team-style compatibility via 6D style vectors with data-calibrated normalization bounds |
 | **Ensemble prediction** | Combines performance model, age curve, style fit, league context, and scenario modifiers |
@@ -54,6 +54,8 @@ python main.py --mode demo [--source file|sql]
 python main.py --mode api [--host 0.0.0.0] [--port 8000] [--source file|sql]
 python main.py --mode export-wordpress [--source file|sql] [--out-dir wp_export]
 ```
+
+`--source file` uses local CSV data (default), while `--source sql` loads data from the configured Azure SQL Server.
 
 ---
 
@@ -138,7 +140,7 @@ Position-specific modeling includes:
 - peak-age behavior by role archetype
 - different development/decline curve widths by position family
 - style-position compatibility matrices (including hybrid positions)
-- per-minute distribution signals used in feature generation
+- per-36 / per-40 statistical distribution signals used in feature generation
 
 ---
 
