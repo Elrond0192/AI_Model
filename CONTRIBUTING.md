@@ -14,7 +14,7 @@ development workflow, and quality standards for this project.
 1. Fork the repository and create a feature branch from `main`.
 2. Make your changes (see **Code conventions** below).
 3. Run the test suite: `pytest tests/ -q --tb=short`
-4. Run the linter: `ruff check basketball_ai/ --select E,F,W --ignore E501,W503`
+4. Run the linter: `ruff check basketball_ai/ --select E,F,W --ignore E501`
 5. Open a pull request against `main`.
 
 ## Code conventions

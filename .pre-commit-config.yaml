@@ -3,7 +3,7 @@ repos:
     rev: v0.4.0
     hooks:
       - id: ruff
-        args: [--fix, --select, "E,F,W", --ignore, "E501,W503"]
+        args: [--fix, --select, "E,F,W", --ignore, "E501"]
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v4.6.0
     hooks:
