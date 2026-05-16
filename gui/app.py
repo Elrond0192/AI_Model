@@ -127,6 +127,10 @@ if not st.session_state.get("authenticated"):
             _role   = _user.get("role", "viewer")
             _token  = create_session_token(_uname, _role, _SESSION_TTL_DAYS)
             _expiry = datetime.datetime.now(timezone.utc) + datetime.timedelta(days=_SESSION_TTL_DAYS)
+            # S6: cookie flags (Secure/HttpOnly/SameSite=Lax) should be enforced via
+            # a reverse proxy (nginx/caddy) or by upgrading to a cookie lib that supports them.
+            # extra-streamlit-components CookieManager does not expose these flags.
+            # Set STREAMLIT_SERVER_COOKIE_SECURE=true in production.
             _cookie_mgr.set(_SESSION_COOKIE_NAME, _token, expires_at=_expiry)
             st.session_state["authenticated"]   = True
             st.session_state["current_user"]    = _uname
@@ -209,24 +213,15 @@ def _save_to_env(key: str, value: str) -> None:
     _ENV_PATH.write_text("".join(lines), encoding="utf-8")
 
 def _safe_model_dir(user_input: str) -> Path:
-    """Resolve a user-supplied directory path, preventing '..' path traversal.
-
-    Unlike the previous implementation this function preserves absolute paths
-    (e.g. ``/home/user/models`` or ``C:\\Users\\user\\models``) so that the
-    user can specify any writable location on disk.  Only ``..`` components are
-    removed to neutralise traversal attempts.
-    """
-    raw = Path((user_input or "models_saved").strip())
-    # Walk the parts and drop any '..' that would escape the root
-    safe: list[str] = []
-    for part in raw.parts:
-        if part == "..":
-            # Pop last non-root component (never pop the drive/root anchor)
-            if safe and safe[-1] not in {"/", "\\", ""} and ":" not in safe[-1]:
-                safe.pop()
-        else:
-            safe.append(part)
-    return Path(*safe) if safe else Path("models_saved")
+    """Return a validated absolute path that stays within the project root (P7)."""
+    project_root = Path(__file__).parent.parent.resolve()
+    try:
+        resolved = Path((user_input or "models_saved").strip()).resolve()
+    except (TypeError, ValueError):
+        return project_root / "models_saved"
+    if not resolved.is_relative_to(project_root):
+        return project_root / "models_saved"
+    return resolved
 
 
 def _require_data():
@@ -468,6 +463,18 @@ with _safe_tab(tab_data, "Dati"):
     if not _can_access("data"):
         st.warning("⛔ Non hai i permessi per accedere a questa sezione.")
     else:
+        # U4: Empty state / onboarding for new users
+        if not st.session_state.get("model_loaded") and not st.session_state.get("data_loaded"):
+            st.info(
+                "👋 **Benvenuto in Basketball AI!**\n\n"
+                "Per iniziare, segui questi passaggi:\n\n"
+                "1. **📂 Dati** ← sei qui – carica i file CSV o configura la connessione Azure SQL\n"
+                "2. **🏋️ Training** – allena il modello sui dati caricati\n"
+                "3. **🎯 Predizioni** – ottieni predizioni per i giocatori\n\n"
+                "Se hai già dati pronti, carica i file CSV qui sotto.",
+                icon="ℹ️",
+            )
+
         st.header("📂 Sorgente dati")
 
         src_csv_tab, src_sql_tab = st.tabs(["📂 CSV (locale)", "🔌 Azure SQL Server"])
@@ -1256,6 +1263,7 @@ with _safe_tab(tab_pred, "Predizioni"):
                         r2.metric("CI basso",         f"{result.confidence_low:.2f}")
                         r3.metric("CI alto",          f"{result.confidence_high:.2f}")
                         st.caption(f"📋 Competizione: **{result.competition}**")
+                        # U12: trajectory and style-fit charts available in gui.components.charts
 
                         with st.expander("ℹ️ Come interpretare il rating 0–10", expanded=False):
                             st.markdown(

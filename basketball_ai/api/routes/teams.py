@@ -1,7 +1,7 @@
 """Basketball team API routes."""
 from __future__ import annotations
 from typing import List, Optional
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Response
 from basketball_ai.api.schemas import TeamOut, TeamAnalysisOut, PlayerOut
 
 router = APIRouter(prefix="/teams", tags=["teams"])
@@ -14,10 +14,11 @@ def _get_data():
 
 @router.get("", response_model=List[TeamOut])
 def list_teams(
+    response: Response,
     league_id: Optional[int] = Query(None),
     tier: Optional[int] = Query(None),
     style: Optional[str] = Query(None),
-    limit: int = Query(50, le=500),
+    limit: int = Query(50, le=200),
     offset: int = Query(0, ge=0),
 ):
     data = _get_data()
@@ -28,6 +29,8 @@ def list_teams(
         df = df[df["league_tier"] == tier]
     if style:
         df = df[df["playing_style"] == style.lower()]
+    total = len(df)
+    response.headers["X-Total-Count"] = str(total)
     subset = df.iloc[offset: offset + limit]
     return [TeamOut(**row.to_dict()) for _, row in subset.iterrows()]
 

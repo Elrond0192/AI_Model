@@ -1,0 +1,70 @@
+# Changelog
+
+All notable changes to Basketball Performance AI are documented here.
+Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
+
+---
+
+## [Unreleased]
+
+### Added
+- `has_po_history` feature to distinguish players with no playoff history from those
+  with equal RS/PO performance.
+- League-aware `durability_score` using per-league `max_games` (no longer hardcoded to 82).
+- Account lockout after configurable failed login attempts (`LOGIN_MAX_ATTEMPTS`,
+  `LOGIN_LOCKOUT_SECONDS` env vars).
+- Admin one-time credentials written to `.admin_credentials` (chmod 0600) instead of
+  displayed in the browser UI.
+- SQL injection guard: schema identifier validated in `sql_loader.py`.
+- Error boundaries on all 8 Streamlit tabs (`_safe_tab` context manager).
+- `/health/live` (liveness) and `/health/ready` (readiness) API endpoints.
+- CORS fail-fast at startup when `API_ENV=production` and `ALLOWED_ORIGINS` is unset.
+- Coverage reporting in CI (`--cov=basketball_ai`).
+- Lint failures now fail the CI build (removed `|| true`).
+- `python_requires = ">=3.11,<3.13"` in `pyproject.toml`.
+- `MODEL_CARD.md` documenting model characteristics, limitations, and bias notes.
+- Time-based chronological train/val split (no temporal leakage).
+- Baseline models (mean, linear, RandomForest) logged in every training run.
+- Dataset MD5 signature saved alongside model artifact.
+- Data lineage (input hashes, timestamp, sample count) in training metadata.
+- Schema validation on DataFrames at loader boundary.
+- SQL dataset parquet caching with configurable TTL.
+- Structured JSON logging (`LOG_FORMAT=json`).
+- Optional Prometheus metrics (`/metrics` endpoint).
+- Simple model registry (`registry.json`) updated on every `model.save()`.
+- `/predictions/{id}/explain` endpoint returning top-5 SHAP contributions.
+- `/predictions/batch` endpoint for bulk predictions.
+- `X-Total-Count` header on list endpoints (players, teams).
+- Security headers middleware (X-Content-Type-Options, X-Frame-Options, HSTS).
+- Argon2id password hashing (PBKDF2 fallback).
+- Persistent audit log (`audit.log`) for all auth/admin actions.
+- `pip-audit` security job in CI.
+- Centralised `Settings` class via `pydantic-settings`.
+- `.pre-commit-config.yaml` with ruff + pre-commit-hooks.
+- Intent handler registry (`@register_handler` decorator) for extensible chat intents.
+- Onboarding empty-state in the Data tab for new users.
+- `CONTRIBUTING.md` with development workflow and code conventions.
+- `CHANGELOG.md` (this file).
+- `docs/architecture/` directory with C4 overview.
+
+### Fixed
+- `datetime.utcnow()` deprecated call replaced with `datetime.now(timezone.utc)`.
+- Module-level `random.seed(42)` / `np.random.seed(42)` removed from `generator.py`.
+- `_safe_model_dir` now uses `Path.resolve().is_relative_to()` to prevent path traversal.
+
+### Changed
+- CI lint steps (`ruff`, `flake8`) no longer use `|| true`; lint failures fail the build.
+- Admin bootstrap: password no longer displayed in browser; written to file instead.
+
+---
+
+## [1.0.0] — 2024-01-01
+
+### Added
+- Initial release: XGBoost performance model, EnsembleModel, WhatIfEngine.
+- FastAPI REST API with JWT + API-key auth.
+- Streamlit multi-user GUI with RBAC.
+- Azure SQL Server + CSV dual-backend loader.
+- Chat engine with 15 intents.
+- Conformal prediction intervals.
+- WordPress JSON export.

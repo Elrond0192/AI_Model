@@ -5,3 +5,7 @@ __pycache__/
 .pytest_cache/
 .DS_Store
 users.json
+audit.log
+.admin_credentials
+.sql_cache/
+*.lock

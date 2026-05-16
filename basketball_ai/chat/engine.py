@@ -22,6 +22,7 @@ from basketball_ai.chat.entities import (
     find_team,
 )
 from basketball_ai.chat import session as _session
+from basketball_ai.chat.handlers import get_handler
 from basketball_ai.utils.helpers import team_display_name as _team_display_name
 from basketball_ai.utils.helpers import normalize_id as _normalize_id
 
@@ -193,6 +194,26 @@ class ChatEngine:
             player_id=player_id,
             team_id=team_id,
         )
+
+        # --- Registry-based handler (extension point for new intents) ---
+        handler = get_handler(intent)
+        if handler is not None:
+            context = {
+                "intent": intent,
+                "message": message,
+                "entities": {
+                    "player_id": player_id,
+                    "player_name": player_name,
+                    "team_id": team_id,
+                    "team_name": team_name,
+                    "all_players": all_players,
+                    "all_teams": all_teams,
+                },
+                "session": sess,
+                "engine": self,
+                "data": self.data,
+            }
+            return handler(context)
 
         # --- HELP -------------------------------------------------------
         if intent == Intent.HELP or (

@@ -251,3 +251,33 @@ class TestScenariosAPI:
         resp = client.post("/api/v1/scenarios/what-if-teammates", json={"player_id": 1, "team_id": 1, "hypothetical_avg_rating": 8.0, "season": 2024})
         assert resp.status_code == 200
         assert "predicted_rating" in resp.json()
+
+
+class TestExplainEndpoint:
+    def test_explain_returns_top_factors(self, client):
+        resp = client.get("/predictions/1/explain?team_id=1")
+        # May be 200 or 503 depending on shap availability
+        assert resp.status_code in (200, 503)
+        if resp.status_code == 200:
+            data = resp.json()
+            assert "top_factors" in data
+
+
+class TestBatchPrediction:
+    def test_batch_predict(self, client):
+        payload = {"pairs": [{"player_id": 1, "team_id": 1}, {"player_id": 2, "team_id": 2}]}
+        resp = client.post("/predictions/batch", json=payload)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "results" in data
+        assert data["count"] == 2
+
+    def test_batch_predict_pagination_headers(self, client):
+        resp = client.get("/api/v1/players?limit=10&offset=0")
+        assert resp.status_code == 200
+        assert "x-total-count" in resp.headers
+
+    def test_teams_pagination_headers(self, client):
+        resp = client.get("/api/v1/teams?limit=5&offset=0")
+        assert resp.status_code == 200
+        assert "x-total-count" in resp.headers

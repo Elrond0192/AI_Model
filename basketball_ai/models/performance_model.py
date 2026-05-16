@@ -7,6 +7,10 @@ OWS/DWS, FIC, interaction features, and career trajectory signals.
 """
 from __future__ import annotations
 
+import datetime
+import json as _json
+from datetime import datetime as _dt, timezone
+import hashlib
 import logging
 from pathlib import Path
 from typing import Any, Dict, List, NamedTuple, Optional, Tuple
@@ -14,7 +18,10 @@ from typing import Any, Dict, List, NamedTuple, Optional, Tuple
 import joblib
 import numpy as np
 import pandas as pd
-from sklearn.model_selection import train_test_split, KFold
+from sklearn.dummy import DummyRegressor
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.linear_model import LinearRegression
+from sklearn.model_selection import train_test_split, KFold, TimeSeriesSplit
 from sklearn.preprocessing import StandardScaler
 from xgboost import XGBRegressor
 
@@ -46,6 +53,34 @@ try:
     _SHAP_AVAILABLE = True
 except ImportError:
     _SHAP_AVAILABLE = False
+
+
+def _compute_data_signature(X: pd.DataFrame, y: np.ndarray) -> str:
+    """MD5 hash of feature matrix + targets for reproducibility."""
+    combined = pd.concat([X, pd.Series(y, name="_target")], axis=1)
+    return hashlib.md5(
+        pd.util.hash_pandas_object(combined, index=False).values.tobytes()
+    ).hexdigest()
+
+
+def compute_baselines(
+    X_train: np.ndarray,
+    y_train: np.ndarray,
+    X_val: np.ndarray,
+    y_val: np.ndarray,
+) -> Dict[str, float]:
+    """Fit simple baseline models and return their validation RMSEs."""
+    results: Dict[str, float] = {}
+    for name, model in [
+        ("baseline_mean_val_rmse",   DummyRegressor(strategy="mean")),
+        ("baseline_linear_val_rmse", LinearRegression()),
+        ("baseline_rf_val_rmse",     RandomForestRegressor(n_estimators=50, random_state=42)),
+    ]:
+        model.fit(X_train, y_train)
+        preds = model.predict(X_val)
+        results[name] = float(np.sqrt(np.mean((preds - y_val) ** 2)))
+    return results
+
 
 # Competition-type encoding used as a training feature and prediction context
 COMPETITION_ENCODING: Dict[str, int] = {
@@ -325,11 +360,13 @@ class PerformanceModel:
         self.feature_names: List[str] = FEATURE_COLS.copy()
         self.is_trained: bool = False
         self._shap_explainer: Optional[Any] = None
+        self.data_signature: str = ""
         #: Maps ruolo_combinato / ruolo_offensivo / ruolo_difensivo → ordinal int.
         #: Built during prepare_features(); unknown roles at inference default to 0.
         self.role_encoding:     Dict[str, int] = {}
         self.role_off_encoding: Dict[str, int] = {}
         self.role_def_encoding: Dict[str, int] = {}
+        self._last_metrics: Optional[dict] = None
 
     # ------------------------------------------------------------------
     # Training helpers
@@ -553,7 +590,10 @@ class PerformanceModel:
         return row
 
     def prepare_features(
-        self, data: Dict[str, Any], extra_metrics: Optional[List[str]] = None
+        self,
+        data: Dict[str, Any],
+        extra_metrics: Optional[List[str]] = None,
+        split_season: Optional[str] = None,
     ) -> Tuple[pd.DataFrame, np.ndarray]:
         """Build training (X, y) from all player-season data.
 
@@ -565,11 +605,17 @@ class PerformanceModel:
             data:          dict with keys ``player_stats`` and ``players``.
             extra_metrics: additional columns from METRIC_CATALOG to include
                            as features (on top of the base FEATURE_COLS).
+            split_season:  if provided (e.g. ``"2022-23"``), only rows from
+                           seasons ≤ split_season are used for training.
         """
         if extra_metrics is None:
             extra_metrics = []
         player_stats = data["player_stats"]
         players      = data["players"]
+
+        # Apply temporal filter if split_season is provided
+        if split_season is not None:
+            player_stats = player_stats[player_stats["season"] <= split_season]
 
         # --- Build role encodings for all three DB role columns ---------------
         def _build_encoding(col: str) -> Dict[str, int]:
@@ -619,6 +665,7 @@ class PerformanceModel:
 
         rows:    List[Dict[str, float]] = []
         targets: List[float]            = []
+        season_years: List[int]         = []
 
         # Build a {league_id: max_games} lookup for league-aware durability_score.
         # Uses the ``max_games`` column when present (generated data) or falls back
@@ -659,6 +706,7 @@ class PerformanceModel:
                 history_so_far = grp[grp["season"] <= stat["season"]]
                 rows.append(self._build_row(stat, age, pos, history_so_far, extra_metrics=extra_metrics, league_max_games=league_max_games))
                 targets.append(float(stat["rating"]))
+                season_years.append(year)
 
         X = pd.DataFrame(rows, columns=all_feature_names)
         nan_cols = X.columns[X.isna().any()].tolist()
@@ -666,6 +714,8 @@ class PerformanceModel:
             logger.debug("[PerformanceModel] fillna(0) applied to %d column(s): %s", len(nan_cols), nan_cols)
         X = X.fillna(0.0)
         y = np.array(targets, dtype=float)
+        # Store season years for chronological splitting in train()
+        self._last_season_years: List[int] = season_years
         return X, y
 
     # ------------------------------------------------------------------
@@ -677,30 +727,25 @@ class PerformanceModel:
         data: Dict[str, Any],
         extra_metrics: Optional[List[str]] = None,
         cv_folds: int = 0,
-    ) -> Dict[str, float]:
+    ) -> Dict[str, Any]:
         """Train the model and return RMSE metrics.
 
-        Uses a **three-way split** to prevent data leakage in conformal
-        calibration:
+        Uses a **chronological three-way split** to prevent temporal data
+        leakage in conformal calibration:
 
-        * **Train (70%)** – used to fit XGBoost weights.
-        * **Val (15%)** – used as eval_set for early-stopping; influences
-          when training stops but not the final model weights directly.
-        * **Conformal holdout (15%)** – reserved exclusively for computing
-          empirical residuals that calibrate the prediction-interval
-          quantiles.  This set is *never* used for fitting or early stopping.
-
-        The conformal residuals are returned in the ``metrics`` dict under
-        the key ``"conformal_residuals"`` so that ``EnsembleModel`` can
-        consume them without re-calling ``prepare_features``.
+        * **Train (70%)** – oldest seasons; used to fit XGBoost weights.
+        * **Val (15%)** – next chronological block; used for early-stopping.
+        * **Conformal holdout (15%)** – most-recent seasons; reserved for
+          computing empirical residuals for prediction-interval calibration.
 
         Args:
             data:          dict with keys ``player_stats`` and ``players``.
             extra_metrics: additional METRIC_CATALOG columns to include as features.
-            cv_folds:      when > 1, run k-fold cross-validation **in addition**
-                           to the standard split.  CV scores are returned as
-                           ``cv_mean_rmse`` / ``cv_std_rmse`` but the final model
-                           is always re-fitted on the 70 % training portion.
+            cv_folds:      when > 1, run TimeSeriesSplit cross-validation **in
+                           addition** to the standard split.  CV scores are
+                           returned as ``cv_mean_rmse`` / ``cv_std_rmse`` but
+                           the final model is always re-fitted on the training
+                           portion.
         """
         if extra_metrics is None:
             extra_metrics = []
@@ -709,25 +754,28 @@ class PerformanceModel:
         self.feature_names = list(X.columns)
         logger.info("[PerformanceModel] Training on %d samples, %d features …", len(X), len(self.feature_names))
 
-        # Three-way split: conformal holdout is never seen by the model.
-        # Splits (approximate): conformal 15% → train 70% / val 15% of total.
-        # Distinct random seeds ensure the two splits select different subsets
-        # without overlap.
-        if len(X) >= 40:
-            X_main, X_conformal, y_main, y_conformal = train_test_split(
-                X, y, test_size=0.15, random_state=43
-            )
-            # 0.176 ≈ 0.15 / (1 - 0.15) ensures val is ~15% of the original
-            # dataset after the conformal holdout has been removed.
-            X_train, X_val, y_train, y_val = train_test_split(
-                X_main, y_main, test_size=0.176, random_state=42
-            )
+        # --- Chronological split (A3) ----------------------------------------
+        # Sort rows by season year to prevent temporal leakage.
+        season_years = np.array(getattr(self, "_last_season_years", [0] * len(X)))
+        sort_idx = np.argsort(season_years, kind="stable")
+        X = X.iloc[sort_idx].reset_index(drop=True)
+        y = y[sort_idx]
+
+        n = len(X)
+        if n >= 40:
+            # Conformal holdout: most-recent 15%; val: next 15%; train: oldest 70%
+            conf_start = int(n * 0.85)
+            val_start  = int(n * 0.70)
+            X_train, y_train     = X.iloc[:val_start],   y[:val_start]
+            X_val,   y_val       = X.iloc[val_start:conf_start], y[val_start:conf_start]
+            X_conformal          = X.iloc[conf_start:]
+            y_conformal          = y[conf_start:]
         else:
             # Very small datasets: skip the conformal split to avoid tiny sets
             X_conformal = y_conformal = None
-            X_train, X_val, y_train, y_val = train_test_split(
-                X, y, test_size=0.15, random_state=42
-            )
+            split = max(1, int(n * 0.85))
+            X_train, y_train = X.iloc[:split],  y[:split]
+            X_val,   y_val   = X.iloc[split:],  y[split:]
 
         X_tr_sc = self.scaler.fit_transform(X_train)
         X_va_sc = self.scaler.transform(X_val)
@@ -762,6 +810,16 @@ class PerformanceModel:
             "val_r2":     val_r2,
         }
 
+        # --- Baseline models (A4) --------------------------------------------
+        baselines = compute_baselines(X_tr_sc, y_train, X_va_sc, y_val)
+        metrics.update(baselines)
+        metrics["xgboost_vs_baseline_delta"] = baselines["baseline_mean_val_rmse"] - val_rmse
+
+        # --- Dataset signature (A17) -----------------------------------------
+        sig = _compute_data_signature(X, y)
+        self.data_signature = sig
+        metrics["data_signature"] = sig
+
         # Compute conformal residuals on the true holdout (never seen by model).
         if X_conformal is not None and len(X_conformal) >= 10:
             X_conf_sc = self.scaler.transform(X_conformal)
@@ -774,17 +832,14 @@ class PerformanceModel:
                 float(np.mean(np.abs(y_conf_pred - y_conformal))),
             )
 
-        # Optional k-fold cross-validation for more robust evaluation
+        # --- TimeSeriesSplit cross-validation (A3) ----------------------------
         if cv_folds > 1:
-            logger.info("[PerformanceModel] Running %d-fold cross-validation …", cv_folds)
-            kf = KFold(n_splits=cv_folds, shuffle=True, random_state=42)
+            logger.info("[PerformanceModel] Running %d-fold TimeSeriesSplit CV …", cv_folds)
+            tss = TimeSeriesSplit(n_splits=cv_folds)
             X_np = X.values.astype(float)
-            # Re-use the number of trees chosen by early-stopping in the main training
-            # run so that CV RMSE is directly comparable to val_rmse (same model depth).
-            # Fallback to 300 if best_iteration is not available.
             best_n_estimators = int(getattr(self.model, "best_iteration", 300) or 300)
             cv_rmses: List[float] = []
-            for fold, (tr_idx, va_idx) in enumerate(kf.split(X_np), 1):
+            for fold, (tr_idx, va_idx) in enumerate(tss.split(X_np), 1):
                 Xtr, Xva = X_np[tr_idx], X_np[va_idx]
                 ytr, yva = y[tr_idx], y[va_idx]
                 _sc = StandardScaler()
@@ -806,12 +861,24 @@ class PerformanceModel:
                 metrics["cv_mean_rmse"], metrics["cv_std_rmse"], best_n_estimators,
             )
 
+        # --- Data lineage (D6) -----------------------------------------------
+        lineage = {
+            "trained_at":     _dt.now(timezone.utc).isoformat(),
+            "n_samples":      len(X),
+            "n_features":     len(self.feature_names),
+            "data_signature": metrics.get("data_signature", ""),
+        }
+        metrics["lineage"] = lineage
+        logger.info("[PerformanceModel] Lineage: %s", lineage)
+
+        self._last_metrics = metrics
         return metrics
 
     def predict_from_features(self, feature_dict: Dict[str, float]) -> float:
         """Predict rating from an already-engineered feature dict."""
         if not self.is_trained:
             return float(np.clip(feature_dict.get("form_score", 6.5), 4.0, 10.0))
+        logger.debug("[PerformanceModel] predict_from_features called; stored data_signature=%s", self.data_signature)
         # Use numpy array to bypass sklearn feature-name validation; values are
         # ordered to match self.feature_names (= scaler fit order), so scaling
         # is correct even when extra-metric keys are absent from feature_dict
@@ -842,6 +909,24 @@ class PerformanceModel:
     # Persistence
     # ------------------------------------------------------------------
 
+    def _update_registry(self, model_path: str, metrics: Optional[dict] = None) -> None:
+        """Append an entry to the model registry JSON in the model directory."""
+        registry_path = Path(model_path).parent / "registry.json"
+        try:
+            if registry_path.exists():
+                registry = _json.loads(registry_path.read_text())
+            else:
+                registry = []
+            entry = {
+                "path": str(Path(model_path).name),
+                "saved_at": _dt.now(timezone.utc).isoformat(),
+                "metrics": metrics or {},
+            }
+            registry.append(entry)
+            registry_path.write_text(_json.dumps(registry, indent=2))
+        except Exception as exc:
+            logger.warning("[O5] Could not update model registry: %s", exc)
+
     def save(self, path: str) -> None:
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         joblib.dump({
@@ -851,8 +936,10 @@ class PerformanceModel:
             "role_encoding":      self.role_encoding,
             "role_off_encoding":  self.role_off_encoding,
             "role_def_encoding":  self.role_def_encoding,
+            "data_signature":     self.data_signature,
         }, path)
         logger.info("[PerformanceModel] Saved to %s", path)
+        self._update_registry(path, self._last_metrics)
 
     def load(self, path: str) -> None:
         payload = joblib.load(path)
@@ -862,6 +949,7 @@ class PerformanceModel:
         self.role_encoding      = payload.get("role_encoding", {})
         self.role_off_encoding  = payload.get("role_off_encoding", {})
         self.role_def_encoding  = payload.get("role_def_encoding", {})
+        self.data_signature     = payload.get("data_signature", "")
         self.is_trained         = True
         self._shap_explainer    = None
         logger.info("[PerformanceModel] Loaded from %s", path)

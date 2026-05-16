@@ -65,6 +65,27 @@ jobs:
       - name: Run flake8
         run: flake8 basketball_ai/ --max-line-length=120 --extend-ignore=E501,W503
 
+  # ─── security ────────────────────────────────────────────────────────────
+  security:
+    name: Security audit (pip-audit)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+      - name: Install pip-audit
+        run: pip install pip-audit
+      - name: Install project deps
+        run: pip install -e . --quiet
+      - name: Run pip-audit
+        run: pip-audit --desc on --skip-editable || true
+        # || true: report vulnerabilities but don't fail build until baseline is set
+
   # ─── build-docker ────────────────────────────────────────────────────────
   build-docker:
     name: Build Docker image

@@ -40,6 +40,18 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 # ---------------------------------------------------------------------------
+# S2 – Argon2id password hashing (optional, falls back to PBKDF2)
+# ---------------------------------------------------------------------------
+
+try:
+    from argon2 import PasswordHasher as _Argon2Hasher
+    from argon2.exceptions import VerifyMismatchError as _VerifyMismatchError
+    _ARGON2_AVAILABLE = True
+    _argon2_hasher = _Argon2Hasher()
+except ImportError:
+    _ARGON2_AVAILABLE = False
+
+# ---------------------------------------------------------------------------
 # Storage
 # ---------------------------------------------------------------------------
 
@@ -132,17 +144,41 @@ _PBKDF2_DIGEST     = "sha256"
 
 
 # ---------------------------------------------------------------------------
-# Internal helpers
+# S4 – Audit log
 # ---------------------------------------------------------------------------
 
-def _hash_password(password: str, salt: str = "") -> Tuple[str, str]:
-    """Hash *password* with PBKDF2-HMAC-SHA-256.
+AUDIT_LOG_FILE = Path(
+    os.environ.get("BASKETBALL_AI_AUDIT_LOG", str(Path(__file__).parent.parent.parent / "audit.log"))
+)
 
-    Returns ``(hex_hash, hex_salt)``.  If *salt* is not supplied a fresh
+
+def _audit(action: str, actor: str, target: str = "", details: str = "") -> None:
+    """Append a structured audit log entry."""
+    entry = {
+        "ts": datetime.datetime.now(timezone.utc).isoformat(),
+        "action": action,
+        "actor": actor,
+        "target": target,
+        "details": details,
+    }
+    try:
+        with AUDIT_LOG_FILE.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(entry) + "\n")
+    except OSError:
+        pass  # Never let audit logging crash the app
+
+def _hash_password(password: str, salt: str = "") -> Tuple[str, str]:
+    """Hash *password* with Argon2id (when available) or PBKDF2-HMAC-SHA-256.
+
+    Returns ``(hash_string, hex_salt)``.  If *salt* is not supplied a fresh
     random 32-byte salt is generated.
     """
     if not salt:
         salt = secrets.token_hex(32)
+    if _ARGON2_AVAILABLE:
+        # argon2-cffi includes its own salt in the hash format; we still keep
+        # the external salt field for backward-compat with PBKDF2 records.
+        return _argon2_hasher.hash(password + salt), salt
     dk = hashlib.pbkdf2_hmac(
         _PBKDF2_DIGEST, password.encode("utf-8"), salt.encode("utf-8"),
         _PBKDF2_ITERATIONS,
@@ -151,9 +187,18 @@ def _hash_password(password: str, salt: str = "") -> Tuple[str, str]:
 
 
 def _verify_password(password: str, stored_hash: str, salt: str) -> bool:
-    """Constant-time comparison to prevent timing attacks."""
-    candidate_hash, _ = _hash_password(password, salt)
-    return hmac.compare_digest(candidate_hash, stored_hash)
+    """Constant-time comparison, supporting both Argon2id and PBKDF2 hashes."""
+    if _ARGON2_AVAILABLE and stored_hash.startswith("$argon2"):
+        try:
+            return _argon2_hasher.verify(stored_hash, password + salt)
+        except _VerifyMismatchError:
+            return False
+    # Fallback: PBKDF2
+    expected = hashlib.pbkdf2_hmac(
+        _PBKDF2_DIGEST, password.encode("utf-8"), salt.encode("utf-8"),
+        _PBKDF2_ITERATIONS,
+    ).hex()
+    return hmac.compare_digest(stored_hash, expected)
 
 
 # ---------------------------------------------------------------------------
@@ -205,6 +250,7 @@ def check_credentials(username: str, password: str) -> Tuple[bool, Dict]:
     if _verify_password(password, user["hash"], user["salt"]):
         # Success – clear any lockout state
         _lockout_registry.pop(key, None)
+        _audit("login_success", key)
         return True, user
 
     # --- Failed attempt ------------------------------------------------------
@@ -217,6 +263,7 @@ def check_credentials(username: str, password: str) -> Tuple[bool, Dict]:
         _lockout_registry[key] = (fail_count, locked_until)
     else:
         _lockout_registry[key] = (fail_count, "")
+    _audit("login_failure", key)
     return False, {}
 
 
@@ -239,10 +286,11 @@ def create_user(
         "created_by": created_by,
     }
     _save_users(users)
+    _audit("user_created", created_by, target=username)
     return True
 
 
-def delete_user(username: str) -> bool:
+def delete_user(username: str, deleted_by: str = "system") -> bool:
     """Delete *username*.  Returns ``False`` when the user does not exist."""
     key   = username.strip().lower()
     users = load_users()
@@ -250,6 +298,7 @@ def delete_user(username: str) -> bool:
         return False
     del users[key]
     _save_users(users)
+    _audit("user_deleted", deleted_by, target=username)
     return True
 
 
@@ -265,6 +314,7 @@ def change_password(username: str, old_password: str, new_password: str) -> bool
     hashed, salt = _hash_password(new_password)
     users[key].update({"hash": hashed, "salt": salt})
     _save_users(users)
+    _audit("password_changed", "self", target=username)
     return True
 
 
@@ -294,6 +344,7 @@ def ensure_default_admin() -> Optional[str]:
         return None
     password = secrets.token_urlsafe(12)
     create_user("admin", password, role="admin", created_by="system")
+    _audit("default_admin_created", "system")
     # Write credentials file (mode 0600 → owner read/write only)
     try:
         ADMIN_CREDENTIALS_FILE.parent.mkdir(parents=True, exist_ok=True)

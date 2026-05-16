@@ -1,7 +1,7 @@
 """Basketball player API routes."""
 from __future__ import annotations
 from typing import List, Optional
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Response
 from basketball_ai.api.schemas import PlayerOut, PlayerStatOut, PlayerProfileOut
 from basketball_ai.features.player_features import compute_form_score, compute_consistency_score, compute_career_trajectory
 from basketball_ai.utils.helpers import position_group
@@ -16,11 +16,12 @@ def _get_data():
 
 @router.get("", response_model=List[PlayerOut])
 def list_players(
+    response: Response,
     position: Optional[str] = Query(None, description="e.g. PG, SG/SF, PF/C"),
     nationality: Optional[str] = Query(None),
     min_age: Optional[int] = Query(None),
     max_age: Optional[int] = Query(None),
-    limit: int = Query(50, le=500),
+    limit: int = Query(50, le=200),
     offset: int = Query(0, ge=0),
 ):
     """List basketball players with optional filters."""
@@ -36,6 +37,8 @@ def list_players(
     if max_age is not None:
         df = df[df["age"] <= max_age]
 
+    total = len(df)
+    response.headers["X-Total-Count"] = str(total)
     subset = df.iloc[offset: offset + limit]
     results = []
     for _, row in subset.iterrows():

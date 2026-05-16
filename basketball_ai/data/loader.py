@@ -5,12 +5,43 @@ helper that returns the flat dict expected by the ensemble and API layer.
 """
 from __future__ import annotations
 
+import logging
 import os
 from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
 from basketball_ai.data.models import League, Team, Player, PlayerStats, TeamPlayerRelation
+
+logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# D1 – Schema validation at loader boundary
+# ---------------------------------------------------------------------------
+
+REQUIRED_COLUMNS = {
+    "leagues": ["id", "name"],
+    "teams": ["id", "name", "league_id"],
+    "players": ["id", "name", "position", "age"],
+    "player_stats": ["id", "player_id", "season", "games_played", "rating"],
+    "team_player_relations": ["player_id", "team_id"],
+}
+
+
+def validate_dataframes(data: dict) -> list:
+    """Validate that required columns are present in each DataFrame.
+    Returns list of warning strings (empty = all OK)."""
+    warnings_list = []
+    for table, cols in REQUIRED_COLUMNS.items():
+        df = data.get(table)
+        if df is None:
+            warnings_list.append(f"[D1] Missing table: {table}")
+            continue
+        missing = [c for c in cols if c not in df.columns]
+        if missing:
+            warnings_list.append(f"[D1] Table '{table}' missing columns: {missing}")
+    return warnings_list
 
 
 def _to_int(value) -> int:
@@ -345,7 +376,7 @@ def load_all_data(data_dir: str) -> Dict[str, Any]:
     for _, t in teams_df.iterrows():
         league_teams.setdefault(_to_int(t["league_id"]), []).append(_to_int(t["id"]))
 
-    return {
+    data = {
         "leagues": leagues_df,
         "teams": teams_df,
         "players": players_df,
@@ -356,6 +387,11 @@ def load_all_data(data_dir: str) -> Dict[str, Any]:
         "player_dict": player_dict,
         "league_teams": league_teams,
     }
+
+    for w in validate_dataframes(data):
+        logger.warning(w)
+
+    return data
 
 
 # ---------------------------------------------------------------------------
