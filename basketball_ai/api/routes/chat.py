@@ -29,27 +29,9 @@ from fastapi import APIRouter, Request
 
 from basketball_ai.api.schemas import ChatRequest, ChatMessageResponse
 from basketball_ai.api.limiter import limiter, RATE_LIMIT_CHAT
+from basketball_ai.api._deps import get_chat_engine
 
 router = APIRouter(prefix="/chat", tags=["chat"])
-
-
-def _get_chat_engine():
-    """Lazily instantiate ChatEngine on first request and cache in app_state."""
-    from basketball_ai.api.main import app_state
-
-    ce = app_state.get("chat_engine")
-    if ce is not None:
-        return ce
-
-    engine = app_state.get("engine")
-    data   = app_state.get("data")
-    if engine is None or not data or not data.get("player_dict"):
-        return None
-
-    from basketball_ai.chat.engine import ChatEngine
-    ce = ChatEngine(engine, data)
-    app_state["chat_engine"] = ce
-    return ce
 
 
 @router.post("", response_model=ChatMessageResponse)
@@ -61,7 +43,7 @@ async def chat(request: Request, req: ChatRequest):
     Omit ``session_id`` to start a new session; the server will generate one
     and return it – include it in subsequent requests to continue the thread.
     """
-    ce = _get_chat_engine()
+    ce = get_chat_engine(request)
 
     if ce is None:
         fallback_id = req.session_id or str(uuid.uuid4())

@@ -5,19 +5,16 @@ import json
 from typing import List, Optional
 from fastapi import APIRouter, HTTPException, Query, Request, Response
 from basketball_ai.api.schemas import PlayerOut, PlayerStatOut, PlayerProfileOut
+from basketball_ai.api._deps import get_data
 from basketball_ai.features.player_features import compute_form_score, compute_consistency_score, compute_career_trajectory
 from basketball_ai.utils.helpers import position_group
 
 router = APIRouter(prefix="/players", tags=["players"])
 
 
-def _get_data():
-    from basketball_ai.api.main import app_state
-    return app_state["data"]
-
-
 @router.get("", response_model=List[PlayerOut])
 def list_players(
+    request: Request,
     response: Response,
     position: Optional[str] = Query(None, description="e.g. PG, SG/SF, PF/C"),
     nationality: Optional[str] = Query(None),
@@ -27,7 +24,7 @@ def list_players(
     offset: int = Query(0, ge=0),
 ):
     """List basketball players with optional filters."""
-    data = _get_data()
+    data = get_data(request)
     df   = data["players"].copy()
 
     if position:
@@ -55,7 +52,7 @@ def list_players(
 
 @router.get("/{player_id}", response_model=PlayerOut)
 def get_player(player_id: int, request: Request, response: Response):
-    data   = _get_data()
+    data   = get_data(request)
     player = data["player_dict"].get(player_id)
     if player is None:
         raise HTTPException(status_code=404, detail=f"Player {player_id} not found")
@@ -68,8 +65,8 @@ def get_player(player_id: int, request: Request, response: Response):
 
 
 @router.get("/{player_id}/stats", response_model=List[PlayerStatOut])
-def get_player_stats(player_id: int):
-    data = _get_data()
+def get_player_stats(player_id: int, request: Request):
+    data = get_data(request)
     if player_id not in data["player_dict"]:
         raise HTTPException(status_code=404, detail=f"Player {player_id} not found")
     stats = data["player_stats"][data["player_stats"]["player_id"] == player_id]
@@ -77,8 +74,8 @@ def get_player_stats(player_id: int):
 
 
 @router.get("/{player_id}/profile", response_model=PlayerProfileOut)
-def get_player_profile(player_id: int):
-    data   = _get_data()
+def get_player_profile(player_id: int, request: Request):
+    data   = get_data(request)
     player = data["player_dict"].get(player_id)
     if player is None:
         raise HTTPException(status_code=404, detail=f"Player {player_id} not found")

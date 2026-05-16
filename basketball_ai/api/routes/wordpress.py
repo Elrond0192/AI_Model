@@ -16,25 +16,16 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 
 from basketball_ai.api.schemas import PlayerCardOut, TeamFitSummary
+from basketball_ai.api._deps import get_engine, get_data
 
 router = APIRouter(prefix="/wordpress", tags=["wordpress"])
 
 
-def _get_engine():
-    from basketball_ai.api.main import app_state
-    return app_state.get("engine")
-
-
-def _get_data():
-    from basketball_ai.api.main import app_state
-    return app_state.get("data")
-
-
 @router.get("/player-card/{player_id}", response_model=PlayerCardOut)
-def get_player_card(player_id: int):
+def get_player_card(player_id: int, request: Request):
     """Return a WordPress-ready player card for *player_id*.
 
     Suitable for use as::
@@ -43,8 +34,8 @@ def get_player_card(player_id: int):
 
     or fetched via ``WPGetAPI`` and rendered with a custom template.
     """
-    engine = _get_engine()
-    data   = _get_data()
+    engine = get_engine(request)
+    data   = get_data(request)
 
     if not data or player_id not in data.get("player_dict", {}):
         raise HTTPException(status_code=404, detail=f"Player {player_id} not found")
