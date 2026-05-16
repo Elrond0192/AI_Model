@@ -16,6 +16,8 @@ from basketball_ai.data.models import Player, PlayerStats
 from basketball_ai.utils.helpers import normalize_id as _normalize_id
 from basketball_ai.constants import (
     POSITIONAL_PEAK_AGES,
+    LEAGUE_MAX_GAMES_BY_NAME,
+    LEAGUE_MAX_GAMES_DEFAULT,
     _primary_pos,
     _peak_age,
 )
@@ -23,6 +25,8 @@ from basketball_ai.constants import (
 # Re-export so that existing importers (e.g. tests) continue to work.
 __all__ = [
     "POSITIONAL_PEAK_AGES",
+    "LEAGUE_MAX_GAMES_BY_NAME",
+    "LEAGUE_MAX_GAMES_DEFAULT",
     "_primary_pos",
     "_peak_age",
 ]
@@ -41,12 +45,21 @@ def _per36(stat: float, mpg: float) -> float:
 def compute_player_features_from_objects(
     player: Player,
     stats_history: List[PlayerStats],
+    league_max_games: Optional[Dict[int, int]] = None,
 ) -> Dict[str, Any]:
     """Compute basketball feature vector from typed dataclass objects.
 
     Includes all legacy features plus new DB-schema derived features:
     SPM, RAPTOR, LEBRON, on/off differentials, clutch performance,
     per-40 stats, hustle metrics, and scoring efficiency.
+
+    Args:
+        player:           The player for which to compute features.
+        stats_history:    Historical player-season stats (sorted by season).
+        league_max_games: Optional ``{league_id: max_games}`` mapping used to
+                          normalise ``durability_score`` per league.  When
+                          absent, the NBA default of 82 is used for all leagues
+                          (backwards-compatible but imprecise for European data).
     """
     if not stats_history:
         return _empty_features(player)
@@ -166,10 +179,18 @@ def compute_player_features_from_objects(
     else:
         ts_efficiency_trend = 0.0
 
-    # Durability: avg games_played / 82 (proxy for league-max games)
-    durability_score = float(
-        np.clip(np.mean([s.games_played for s in stats_history]) / 82.0, 0.0, 1.0)
-    )
+    # Durability: avg games_played / league_max_games (league-aware, not NBA-hardcoded)
+    dur_values = [
+        s.games_played / max(
+            1,
+            (league_max_games or {}).get(
+                s.league_id,
+                LEAGUE_MAX_GAMES_DEFAULT,
+            ),
+        )
+        for s in stats_history
+    ]
+    durability_score = float(np.clip(np.mean(dur_values), 0.0, 1.0))
 
     # Engineered interaction features (must match _build_row in performance_model.py)
     avg_reb_pct_val = float(np.mean([s.reb_pct for s in stats_history]))
@@ -328,7 +349,37 @@ def compute_player_features(
         except Exception:
             pass
 
-    return compute_player_features_from_objects(player, stat_objects)
+    # Build a league_id → max_games lookup from the leagues data if available
+    league_max_games: Optional[Dict[int, int]] = None
+    leagues_df = data.get("leagues")
+    if leagues_df is not None and not leagues_df.empty:
+        if "max_games" in leagues_df.columns:
+            try:
+                from basketball_ai.data.loader import _to_int as _lid_to_int
+                league_max_games = {
+                    int(_lid_to_int(r["id"])): int(r["max_games"])
+                    for _, r in leagues_df.iterrows()
+                    if r.get("max_games") and not (isinstance(r["max_games"], float) and np.isnan(r["max_games"]))
+                }
+            except Exception:
+                pass
+        if not league_max_games:
+            # Fall back to name-based lookup from constants
+            name_col = "name" if "name" in leagues_df.columns else None
+            id_col   = "id"   if "id"   in leagues_df.columns else None
+            if name_col and id_col:
+                try:
+                    from basketball_ai.data.loader import _to_int as _lid_to_int
+                    league_max_games = {
+                        int(_lid_to_int(r[id_col])): LEAGUE_MAX_GAMES_BY_NAME.get(
+                            str(r[name_col]).strip(), LEAGUE_MAX_GAMES_DEFAULT
+                        )
+                        for _, r in leagues_df.iterrows()
+                    }
+                except Exception:
+                    pass
+
+    return compute_player_features_from_objects(player, stat_objects, league_max_games)
 
 
 def compute_form_score(stats_df: pd.DataFrame) -> float:

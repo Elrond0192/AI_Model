@@ -112,6 +112,17 @@ class TestHealth:
         assert resp.status_code == 200
         assert resp.json()["status"] == "ok"
 
+    def test_health_live(self, client):
+        resp = client.get("/health/live")
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "alive"
+
+    def test_health_ready_with_data_and_model(self, client):
+        resp = client.get("/health/ready")
+        # The test client loads data and model, so should be ready
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "ready"
+
 
 class TestPlayersAPI:
     def test_list_players(self, client):

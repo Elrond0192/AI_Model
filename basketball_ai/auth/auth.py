@@ -35,6 +35,7 @@ import json
 import os
 import secrets
 import warnings
+from datetime import timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -66,8 +67,30 @@ SESSIONS_FILE = Path(
     )
 )
 
+#: Path where the one-time admin credentials are written on first boot (S1).
+#: chmod 0600 is applied automatically so only the owner can read it.
+ADMIN_CREDENTIALS_FILE = Path(
+    os.environ.get(
+        "BASKETBALL_AI_ADMIN_CREDENTIALS_FILE",
+        str(Path(__file__).parent.parent.parent / ".admin_credentials"),
+    )
+)
+
 #: Default session TTL in days (overridden by SESSION_COOKIE_TTL_DAYS env var).
 _SESSION_TTL_DAYS_DEFAULT = 7
+
+# ---------------------------------------------------------------------------
+# Login lockout (S3): 5 consecutive failed attempts → 15-minute lock.
+# ---------------------------------------------------------------------------
+
+#: Maximum consecutive failed attempts before lockout.
+_MAX_FAILED_ATTEMPTS = int(os.environ.get("LOGIN_MAX_ATTEMPTS", "5"))
+#: Lock duration in seconds.
+_LOCKOUT_SECONDS = int(os.environ.get("LOGIN_LOCKOUT_SECONDS", str(15 * 60)))
+
+# In-process lockout registry: {normalised_username: (fail_count, lockout_until_utc_iso | "")}
+# This is intentionally in-memory only (no persistence) so restarts clear all locks.
+_lockout_registry: Dict[str, Tuple[int, str]] = {}
 
 #: Ordered list of all section identifiers that map to GUI tabs.
 ALL_SECTIONS: List[str] = [
@@ -159,14 +182,41 @@ def check_credentials(username: str, password: str) -> Tuple[bool, Dict]:
     """Verify *username* / *password* against the stored users file.
 
     Returns ``(True, user_dict)`` on success, ``(False, {})`` on failure.
+
+    Implements a simple exponential-backoff lockout (S3): after
+    ``_MAX_FAILED_ATTEMPTS`` consecutive failures the account is locked for
+    ``_LOCKOUT_SECONDS`` seconds.  The counter resets on a successful login.
     """
+    key = username.strip().lower()
+    now_iso = datetime.datetime.now(timezone.utc).isoformat()
+
+    # --- Check lockout -------------------------------------------------------
+    fail_count, locked_until = _lockout_registry.get(key, (0, ""))
+    if locked_until and now_iso < locked_until:
+        # Still locked – return failure without touching the DB
+        return False, {"locked_until": locked_until}
+
     users = load_users()
-    key   = username.strip().lower()
     user  = users.get(key)
     if user is None:
+        # Unknown user: increment a shared counter to avoid username enumeration
+        _lockout_registry[key] = (fail_count + 1, "")
         return False, {}
     if _verify_password(password, user["hash"], user["salt"]):
+        # Success – clear any lockout state
+        _lockout_registry.pop(key, None)
         return True, user
+
+    # --- Failed attempt ------------------------------------------------------
+    fail_count += 1
+    if fail_count >= _MAX_FAILED_ATTEMPTS:
+        locked_until = (
+            datetime.datetime.now(timezone.utc)
+            + datetime.timedelta(seconds=_LOCKOUT_SECONDS)
+        ).isoformat()
+        _lockout_registry[key] = (fail_count, locked_until)
+    else:
+        _lockout_registry[key] = (fail_count, "")
     return False, {}
 
 
@@ -233,14 +283,33 @@ def reset_password(username: str, new_password: str) -> bool:
 def ensure_default_admin() -> Optional[str]:
     """Create a default admin account when no users exist.
 
-    Returns the generated one-time password (to be shown once in the UI),
-    or ``None`` when users already exist.
+    The generated one-time password is written to :data:`ADMIN_CREDENTIALS_FILE`
+    (chmod 0600) instead of being returned to the caller for display in the UI,
+    so it never appears in log files or browser DOM (S1).
+
+    Returns the path to the credentials file (``str``) so the UI can tell the
+    operator *where* to look, or ``None`` when users already exist.
     """
     if load_users():
         return None
     password = secrets.token_urlsafe(12)
     create_user("admin", password, role="admin", created_by="system")
-    return password
+    # Write credentials file (mode 0600 → owner read/write only)
+    try:
+        ADMIN_CREDENTIALS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        ADMIN_CREDENTIALS_FILE.write_text(
+            f"username: admin\npassword: {password}\n"
+            "# Delete this file after changing the password.\n",
+            encoding="utf-8",
+        )
+        ADMIN_CREDENTIALS_FILE.chmod(0o600)
+    except OSError as exc:
+        warnings.warn(
+            f"Could not write admin credentials file ({ADMIN_CREDENTIALS_FILE}): {exc}. "
+            "The admin password has been set but cannot be retrieved from disk.",
+            stacklevel=2,
+        )
+    return str(ADMIN_CREDENTIALS_FILE)
 
 
 # ---------------------------------------------------------------------------
@@ -355,7 +424,7 @@ def create_session_token(
     """
     raw_token = secrets.token_hex(32)
     token_hash = _hash_token(raw_token)
-    now = datetime.datetime.utcnow()
+    now = datetime.datetime.now(timezone.utc)
     expires_at = (now + datetime.timedelta(days=ttl_days)).isoformat()
     sessions = _load_sessions()
     # Prune expired entries while we're here
@@ -382,7 +451,7 @@ def validate_session_token(raw_token: str) -> Optional[Tuple[str, str]]:
     entry = sessions.get(token_hash)
     if entry is None:
         return None
-    if datetime.datetime.utcnow().isoformat() > entry.get("expires_at", ""):
+    if datetime.datetime.now(timezone.utc).isoformat() > entry.get("expires_at", ""):
         # Expired – clean up
         sessions.pop(token_hash, None)
         _save_sessions(sessions)

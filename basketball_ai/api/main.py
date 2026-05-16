@@ -105,6 +105,15 @@ async def lifespan(app: FastAPI):
         level=os.environ.get("LOG_LEVEL", "INFO").upper(),
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
+    # AP7: CORS fail-fast – refuse to start in production if ALLOWED_ORIGINS is unset.
+    _cors_origins = _parse_allowed_origins()
+    if not _cors_origins and os.environ.get("API_ENV", "development").lower() == "production":
+        raise RuntimeError(
+            "[API] ALLOWED_ORIGINS env var is required in production mode "
+            "(API_ENV=production). Set it to a comma-separated list of allowed "
+            "origins or set API_ENV=development to allow all origins during "
+            "local development."
+        )
     _load_app_state()
     yield
 
@@ -185,6 +194,29 @@ def create_app() -> FastAPI:
             "status": "ok",
             "data_loaded": bool(app_state.get("data", {}).get("player_dict")),
         }
+
+    @app.get("/health/live")
+    def health_live():
+        """Kubernetes / Docker liveness probe – always 200 when the process is up."""
+        return {"status": "alive"}
+
+    @app.get("/health/ready")
+    def health_ready():
+        """Readiness probe – 200 when data and models are loaded, 503 otherwise."""
+        data_loaded  = bool(app_state.get("data", {}).get("player_dict"))
+        model_loaded = app_state.get("engine") is not None
+        if data_loaded and model_loaded:
+            return {"status": "ready", "data": True, "model": True}
+        from fastapi.responses import JSONResponse as _JSONResponse
+        return _JSONResponse(
+            status_code=503,
+            content={
+                "status":  "not_ready",
+                "data":    data_loaded,
+                "model":   model_loaded,
+                "detail":  "data or model not yet loaded",
+            },
+        )
 
     return app
 

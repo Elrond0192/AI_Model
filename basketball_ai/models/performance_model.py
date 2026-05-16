@@ -19,7 +19,13 @@ from sklearn.preprocessing import StandardScaler
 from xgboost import XGBRegressor
 
 from basketball_ai.data.loader import _to_int
-from basketball_ai.constants import POSITIONAL_PEAK_AGES, _primary_pos, _peak_age
+from basketball_ai.constants import (
+    POSITIONAL_PEAK_AGES,
+    LEAGUE_MAX_GAMES_BY_NAME,
+    LEAGUE_MAX_GAMES_DEFAULT,
+    _primary_pos,
+    _peak_age,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +55,7 @@ def compute_po_features(player_stats_df: "pd.DataFrame") -> Dict[str, float]:
         one side is missing) and ``po_games_played`` (total PO games played).
     """
     if "competition" not in player_stats_df.columns:
-        return {"po_vs_rs_delta": 0.0, "po_games_played": 0.0}
+        return {"po_vs_rs_delta": 0.0, "po_games_played": 0.0, "has_po_history": 0.0}
 
     rs_hist = player_stats_df[player_stats_df["competition"] == "RS"]
     po_hist = player_stats_df[player_stats_df["competition"] == "PO"]
@@ -68,7 +74,11 @@ def compute_po_features(player_stats_df: "pd.DataFrame") -> Dict[str, float]:
         else 0.0
     )
 
-    return {"po_vs_rs_delta": po_vs_rs_delta, "po_games_played": po_gp}
+    return {
+        "po_vs_rs_delta":  po_vs_rs_delta,
+        "po_games_played": po_gp,
+        "has_po_history":  1.0 if po_gp > 0 else 0.0,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -107,6 +117,7 @@ FEATURE_COLS: List[str] = [
     # --- Competition context --------------------------------------------------
     "po_vs_rs_delta",
     "po_games_played",
+    "has_po_history",      # 1.0 if player has any PO history, 0.0 otherwise
     # --- Composite / model-based ratings (DB schema) --------------------------
     "avg_spm",
     "avg_raptor_off",       # RAPTOR offensive component
@@ -319,12 +330,23 @@ class PerformanceModel:
         position: str,
         player_stats_history: pd.DataFrame,
         extra_metrics: Optional[List[str]] = None,
+        league_max_games: Optional[Dict[int, int]] = None,
     ) -> Dict[str, float]:
         """Build a feature row from a player-stats row.
 
         Includes all base FEATURE_COLS (per-36 volume, career signals, advanced
         DB-schema metrics, all three DB role encodings, interaction features)
         plus any extra_metrics requested by the caller.
+
+        Args:
+            stat_row:             A single player-season stats row.
+            age:                  Player age for this season.
+            position:             Player position string (e.g. ``"PG"``).
+            player_stats_history: All stats rows for this player up to (and
+                                  including) the current season.
+            extra_metrics:        Additional METRIC_CATALOG columns to include.
+            league_max_games:     Optional ``{league_id: max_games}`` lookup for
+                                  league-aware ``durability_score`` normalisation.
         """
         if extra_metrics is None:
             extra_metrics = []
@@ -369,12 +391,31 @@ class PerformanceModel:
         else:
             ts_trend = 0.0
 
-        # Durability: average fraction of league max games played (proxy: 82)
+        # Durability: average fraction of league max games played (league-aware)
         if not player_stats_history.empty and "games_played" in player_stats_history.columns:
-            gp_vals = player_stats_history["games_played"].dropna().tolist()
-            durability = float(np.clip(np.mean(gp_vals) / 82.0, 0.0, 1.0)) if gp_vals else 0.5
+            gp_vals = player_stats_history["games_played"].dropna()
+            if league_max_games and "league_id" in player_stats_history.columns:
+                dur_list = [
+                    gp / max(1, league_max_games.get(
+                        int(lid) if not (isinstance(lid, float) and np.isnan(lid)) else 0,
+                        LEAGUE_MAX_GAMES_DEFAULT,
+                    ))
+                    for gp, lid in zip(
+                        gp_vals.tolist(),
+                        player_stats_history.loc[gp_vals.index, "league_id"].tolist(),
+                    )
+                ]
+                durability = float(np.clip(np.mean(dur_list), 0.0, 1.0)) if dur_list else 0.5
+            else:
+                durability = float(np.clip(np.mean(gp_vals.tolist()) / LEAGUE_MAX_GAMES_DEFAULT, 0.0, 1.0)) if not gp_vals.empty else 0.5
         else:
-            durability = float(np.clip(float(stat_row.get("games_played", 40)) / 82.0, 0.0, 1.0))
+            gp_cur = float(stat_row.get("games_played", 40))
+            lid_cur = stat_row.get("league_id", 0)
+            max_g = (league_max_games or {}).get(
+                int(lid_cur) if lid_cur and not (isinstance(lid_cur, float) and np.isnan(lid_cur)) else 0,
+                LEAGUE_MAX_GAMES_DEFAULT,
+            )
+            durability = float(np.clip(gp_cur / max(1, max_g), 0.0, 1.0))
 
         avg_per  = hist_avg("per",     12.0)
         avg_ts   = hist_avg("ts_pct",   0.52)
@@ -478,6 +519,7 @@ class PerformanceModel:
         po_feats = compute_po_features(player_stats_history)
         row["po_vs_rs_delta"]  = po_feats["po_vs_rs_delta"]
         row["po_games_played"] = po_feats["po_games_played"]
+        row["has_po_history"]  = po_feats["has_po_history"]
 
         # Extra metrics requested by the caller
         for col in extra_metrics:
@@ -566,6 +608,26 @@ class PerformanceModel:
         rows:    List[Dict[str, float]] = []
         targets: List[float]            = []
 
+        # Build a {league_id: max_games} lookup for league-aware durability_score.
+        # Uses the ``max_games`` column when present (generated data) or falls back
+        # to the LEAGUE_MAX_GAMES_BY_NAME constant dict keyed by league name.
+        league_max_games: Optional[Dict[int, int]] = None
+        leagues_df = data.get("leagues")
+        if leagues_df is not None and not leagues_df.empty and "id" in leagues_df.columns:
+            if "max_games" in leagues_df.columns:
+                league_max_games = {
+                    int(_to_int(r["id"])): int(r["max_games"])
+                    for _, r in leagues_df.iterrows()
+                    if r.get("max_games") and not (isinstance(r["max_games"], float) and np.isnan(r["max_games"]))
+                }
+            elif "name" in leagues_df.columns:
+                league_max_games = {
+                    int(_to_int(r["id"])): LEAGUE_MAX_GAMES_BY_NAME.get(
+                        str(r["name"]).strip(), LEAGUE_MAX_GAMES_DEFAULT
+                    )
+                    for _, r in leagues_df.iterrows()
+                }
+
         for pid, grp in player_stats.groupby("player_id"):
             grp = grp.sort_values("season")
             pid = _to_int(pid)
@@ -583,7 +645,7 @@ class PerformanceModel:
                 if age < 14 or age > 45:
                     continue
                 history_so_far = grp[grp["season"] <= stat["season"]]
-                rows.append(self._build_row(stat, age, pos, history_so_far, extra_metrics=extra_metrics))
+                rows.append(self._build_row(stat, age, pos, history_so_far, extra_metrics=extra_metrics, league_max_games=league_max_games))
                 targets.append(float(stat["rating"]))
 
         X = pd.DataFrame(rows, columns=all_feature_names)
