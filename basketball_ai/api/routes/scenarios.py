@@ -24,6 +24,7 @@ from basketball_ai.api.schemas import (
     LineupMemberProfileOut,
     LineupAnalysisOut,
 )
+from basketball_ai.api._deps import get_engine, get_data
 
 logger = logging.getLogger(__name__)
 
@@ -56,16 +57,6 @@ def _store_idempotency(key: str, result: Any) -> None:
         _IDEMPOTENCY_CACHE[key] = result
 
 
-def _get_engine():
-    from basketball_ai.api.main import app_state
-    return app_state["engine"]
-
-
-def _get_data():
-    from basketball_ai.api.main import app_state
-    return app_state["data"]
-
-
 @router.post("/what-if", response_model=PredictionOut)
 async def what_if_scenario(request: Request, req: WhatIfRequest):
     """Predict performance for a specific player-team combination."""
@@ -77,8 +68,8 @@ async def what_if_scenario(request: Request, req: WhatIfRequest):
             logger.debug("[AP9] Replaying idempotent response for key %s", ikey)
             return cached
 
-    engine = _get_engine()
-    data = _get_data()
+    engine = get_engine(request)
+    data = get_data(request)
     if req.player_id not in data["player_dict"]:
         raise HTTPException(status_code=404, detail="Player not found")
     if req.team_id not in data["team_dict"]:
@@ -100,8 +91,8 @@ async def best_teams_for_player(
     top_n: int = Query(10, ge=1, le=50),
 ):
     """Find the best-fitting teams for a player."""
-    engine = _get_engine()
-    data = _get_data()
+    engine = get_engine(request)
+    data = get_data(request)
     if player_id not in data["player_dict"]:
         raise HTTPException(status_code=404, detail="Player not found")
     loop = asyncio.get_event_loop()
@@ -130,8 +121,8 @@ async def best_players_for_team(
     top_n: int = Query(10, ge=1, le=50),
 ):
     """Find the best-fitting players for a team (by position)."""
-    engine = _get_engine()
-    data = _get_data()
+    engine = get_engine(request)
+    data = get_data(request)
     if team_id not in data["team_dict"]:
         raise HTTPException(status_code=404, detail="Team not found")
     loop    = asyncio.get_event_loop()
@@ -154,8 +145,8 @@ async def best_players_for_team(
 @router.post("/compare", response_model=CompareOut)
 async def compare_scenarios(request: Request, req: CompareRequest):
     """Compare player performance across multiple teams."""
-    engine = _get_engine()
-    data = _get_data()
+    engine = get_engine(request)
+    data = get_data(request)
     if req.player_id not in data["player_dict"]:
         raise HTTPException(status_code=404, detail="Player not found")
     loop   = asyncio.get_event_loop()
@@ -194,8 +185,8 @@ async def compare_scenarios(request: Request, req: CompareRequest):
 @router.post("/transfer-impact", response_model=TransferImpactOut)
 async def transfer_impact(request: Request, req: TransferImpactRequest):
     """Simulate transfer impact on player performance."""
-    engine = _get_engine()
-    data = _get_data()
+    engine = get_engine(request)
+    data = get_data(request)
     if req.player_id not in data["player_dict"]:
         raise HTTPException(status_code=404, detail="Player not found")
     loop   = asyncio.get_event_loop()
@@ -208,8 +199,8 @@ async def transfer_impact(request: Request, req: TransferImpactRequest):
 @router.post("/what-if-teammates", response_model=PredictionOut)
 async def what_if_teammates(request: Request, req: WhatIfTeammatesRequest):
     """What if the player had hypothetical-quality teammates?"""
-    engine = _get_engine()
-    data = _get_data()
+    engine = get_engine(request)
+    data = get_data(request)
     if req.player_id not in data["player_dict"]:
         raise HTTPException(status_code=404, detail="Player not found")
     loop   = asyncio.get_event_loop()
@@ -224,8 +215,8 @@ async def what_if_teammates(request: Request, req: WhatIfTeammatesRequest):
 @router.post("/what-if-lineup", response_model=LineupAnalysisOut)
 async def what_if_lineup(request: Request, req: WhatIfLineupRequest):
     """Predict player performance with a specific named 5-man lineup."""
-    engine = _get_engine()
-    data = _get_data()
+    engine = get_engine(request)
+    data = get_data(request)
     if req.player_id not in data["player_dict"]:
         raise HTTPException(status_code=404, detail="Player not found")
     if req.team_id not in data["team_dict"]:

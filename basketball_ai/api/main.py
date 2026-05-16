@@ -181,11 +181,10 @@ def create_app() -> FastAPI:
     )
 
     # -----------------------------------------------------------------------
-    # JWT or static API-key authentication.
-    # Set API_KEY env var for static key, or JWT_SECRET for JWT mode.
+    # AP1 – JWT-primary auth middleware.
+    # JWT_SECRET: JWT mode (primary). API_KEY: legacy mode with warning.
     # Leave both empty to disable (dev mode).
     # -----------------------------------------------------------------------
-    _api_key = os.environ.get("API_KEY", "").strip()
 
     @app.middleware("http")
     async def security_headers_middleware(request: Request, call_next):
@@ -202,18 +201,49 @@ def create_app() -> FastAPI:
         return response
 
     @app.middleware("http")
-    async def api_key_middleware(request: Request, call_next):
-        if _api_key:
-            # Allow unauthenticated access to health check, docs and auth endpoints
-            open_paths = {"/health", "/docs", "/redoc", "/openapi.json",
-                          "/api/v1/auth/token", "/api/v1/auth/refresh"}
-            if request.url.path not in open_paths:
-                key = request.headers.get("X-API-Key", "")
-                if key != _api_key:
-                    return JSONResponse(
-                        status_code=status.HTTP_401_UNAUTHORIZED,
-                        content={"detail": "Invalid or missing X-API-Key header"},
-                    )
+    async def auth_middleware(request: Request, call_next):
+        open_paths = {
+            "/health", "/health/live", "/health/ready",
+            "/docs", "/redoc", "/openapi.json",
+            "/api/v1/auth/token", "/api/v1/auth/refresh",
+        }
+        if request.url.path in open_paths:
+            return await call_next(request)
+
+        _jwt_secret = os.environ.get("JWT_SECRET", "").strip()
+        _api_key_val = os.environ.get("API_KEY", "").strip()
+
+        if _jwt_secret:
+            # JWT primary mode: reject legacy X-API-Key
+            if request.headers.get("X-API-Key"):
+                return JSONResponse(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    content={"detail": "X-API-Key is deprecated. Use Authorization: Bearer <token>"},
+                )
+            auth_header = request.headers.get("Authorization", "")
+            if not auth_header.startswith("Bearer "):
+                return JSONResponse(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    content={"detail": "Missing or invalid Authorization header"},
+                )
+            token = auth_header[7:]
+            try:
+                import jwt as _jwt
+                _jwt.decode(token, _jwt_secret, algorithms=["HS256"])
+            except Exception:
+                return JSONResponse(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    content={"detail": "Invalid or expired token"},
+                )
+        elif _api_key_val:
+            # Legacy API-key mode
+            logger.warning("[AP1] JWT_SECRET not set – using legacy API key mode")
+            key = request.headers.get("X-API-Key", "")
+            if key != _api_key_val:
+                return JSONResponse(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    content={"detail": "Invalid or missing X-API-Key header"},
+                )
         return await call_next(request)
 
     # CORS – whitelist explicit origins from env var (safe default: none)
@@ -256,10 +286,12 @@ def create_app() -> FastAPI:
     app.include_router(wordpress_router,   prefix=prefix)
 
     @app.get("/health")
-    def health():
+    def health(request: Request):
+        from basketball_ai.api import _deps
+        data = _deps.get_data(request)
         return {
             "status": "ok",
-            "data_loaded": bool(app_state.get("data", {}).get("player_dict")),
+            "data_loaded": bool(data.get("player_dict")),
         }
 
     @app.get("/health/live")
@@ -268,10 +300,13 @@ def create_app() -> FastAPI:
         return {"status": "alive"}
 
     @app.get("/health/ready")
-    def health_ready():
+    def health_ready(request: Request):
         """Readiness probe – 200 when data and models are loaded, 503 otherwise."""
-        data_loaded  = bool(app_state.get("data", {}).get("player_dict"))
-        model_loaded = app_state.get("engine") is not None
+        from basketball_ai.api import _deps
+        data  = _deps.get_data(request)
+        engine = _deps.get_engine(request)
+        data_loaded  = bool(data.get("player_dict"))
+        model_loaded = engine is not None
         if data_loaded and model_loaded:
             return {"status": "ready", "data": True, "model": True}
         from fastapi.responses import JSONResponse as _JSONResponse
@@ -294,8 +329,9 @@ def create_app() -> FastAPI:
     ):
         """Return top-5 SHAP feature contributions for this prediction."""
         from basketball_ai.features.player_features import compute_player_features
-        engine = app_state.get("engine")
-        data = app_state.get("data", {})
+        from basketball_ai.api import _deps
+        engine = _deps.get_engine(request)
+        data = _deps.get_data(request)
         if engine is None:
             return JSONResponse(status_code=503, content={"detail": "Model not loaded"})
         try:
@@ -330,10 +366,11 @@ app = create_app()
 
 
 @app.post("/predictions/batch", tags=["predictions"])
-def predict_batch(req: BatchPredictionRequest):
+def predict_batch(req: BatchPredictionRequest, request: Request):
     """Predict ratings for multiple (player_id, team_id) pairs in one call."""
-    engine = app_state.get("engine")
-    data = app_state.get("data", {})
+    from basketball_ai.api import _deps
+    engine = _deps.get_engine(request)
+    data = _deps.get_data(request)
     if engine is None:
         return JSONResponse(status_code=503, content={"detail": "Model not loaded"})
     results = []

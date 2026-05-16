@@ -9,6 +9,8 @@ The engine is stateless itself; all per-user state lives in
 from __future__ import annotations
 
 import dataclasses
+import logging
+import os
 import uuid
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
@@ -25,6 +27,8 @@ from basketball_ai.chat import session as _session
 from basketball_ai.chat.handlers import get_handler
 from basketball_ai.utils.helpers import team_display_name as _team_display_name
 from basketball_ai.utils.helpers import normalize_id as _normalize_id
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -1092,6 +1096,39 @@ class ChatEngine:
             except Exception:
                 pass
         # Fully unknown – provide contextual suggestions
+        # C1: Optional LLM fallback when LLM_ENDPOINT env var is configured.
+        _llm_endpoint = os.environ.get("LLM_ENDPOINT", "").strip()
+        if _llm_endpoint:
+            try:
+                import urllib.request as _urllib_req
+                import json as _json_lib
+                _payload = _json_lib.dumps({
+                    "message": message,
+                    "context": "You are a basketball analytics assistant.",
+                }).encode()
+                _req_obj = _urllib_req.Request(
+                    _llm_endpoint,
+                    data=_payload,
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                _timeout_env = os.environ.get("LLM_TIMEOUT", "5")
+                try:
+                    _timeout = int(_timeout_env)
+                except ValueError:
+                    logger.warning("[C1] Invalid LLM_TIMEOUT value %r – using default 5s", _timeout_env)
+                    _timeout = 5
+                with _urllib_req.urlopen(_req_obj, timeout=_timeout) as _resp:
+                    _body = _json_lib.loads(_resp.read())
+                    _llm_reply = _body.get("reply") or _body.get("text") or _body.get("content", "")
+                if _llm_reply:
+                    return (
+                        f"🤖 _{_llm_reply}_",
+                        {"source": "llm_fallback"},
+                        ["How good is [player] at [team]?", "Best teams for [player]?"],
+                    )
+            except Exception as _exc:
+                logger.debug("[C1] LLM fallback failed: %s", _exc)
         suggestions_out = [
             "help",
             "How good is [player] at [team]?",

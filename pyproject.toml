@@ -44,3 +44,8 @@ py-modules = ["main"]
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["basketball_ai*"]
+
+[tool.pytest.ini_options]
+markers = [
+    "smoke: smoke tests (playwright-based UI tests, skipped unless playwright is installed)",
+]

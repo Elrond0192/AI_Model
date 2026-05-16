@@ -5,17 +5,14 @@ import json
 from typing import List, Optional
 from fastapi import APIRouter, HTTPException, Query, Request, Response
 from basketball_ai.api.schemas import TeamOut, TeamAnalysisOut, PlayerOut
+from basketball_ai.api._deps import get_data
 
 router = APIRouter(prefix="/teams", tags=["teams"])
 
 
-def _get_data():
-    from basketball_ai.api.main import app_state
-    return app_state["data"]
-
-
 @router.get("", response_model=List[TeamOut])
 def list_teams(
+    request: Request,
     response: Response,
     league_id: Optional[int] = Query(None),
     tier: Optional[int] = Query(None),
@@ -23,7 +20,7 @@ def list_teams(
     limit: int = Query(50, le=200),
     offset: int = Query(0, ge=0),
 ):
-    data = _get_data()
+    data = get_data(request)
     df   = data["teams"].copy()
     if league_id is not None:
         df = df[df["league_id"] == league_id]
@@ -39,7 +36,7 @@ def list_teams(
 
 @router.get("/{team_id}", response_model=TeamOut)
 def get_team(team_id: int, request: Request, response: Response):
-    data = _get_data()
+    data = get_data(request)
     team = data["team_dict"].get(team_id)
     if team is None:
         raise HTTPException(status_code=404, detail=f"Team {team_id} not found")
@@ -52,8 +49,8 @@ def get_team(team_id: int, request: Request, response: Response):
 
 
 @router.get("/{team_id}/roster", response_model=List[PlayerOut])
-def get_team_roster(team_id: int, season: str = Query("2023-24")):
-    data = _get_data()
+def get_team_roster(team_id: int, request: Request, season: str = Query("2023-24")):
+    data = get_data(request)
     if team_id not in data["team_dict"]:
         raise HTTPException(status_code=404, detail=f"Team {team_id} not found")
     rels    = data["team_player_relations"]
@@ -71,8 +68,8 @@ def get_team_roster(team_id: int, season: str = Query("2023-24")):
 
 
 @router.get("/{team_id}/analysis", response_model=TeamAnalysisOut)
-def get_team_analysis(team_id: int):
-    data = _get_data()
+def get_team_analysis(team_id: int, request: Request):
+    data = get_data(request)
     team = data["team_dict"].get(team_id)
     if team is None:
         raise HTTPException(status_code=404, detail=f"Team {team_id} not found")
