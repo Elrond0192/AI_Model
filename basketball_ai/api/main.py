@@ -229,7 +229,12 @@ def create_app() -> FastAPI:
             token = auth_header[7:]
             try:
                 import jwt as _jwt
-                _jwt.decode(token, _jwt_secret, algorithms=["HS256"])
+                _jwt.decode(
+                    token,
+                    _jwt_secret,
+                    algorithms=["HS256"],
+                    options={"verify_exp": True},
+                )
             except Exception:
                 return JSONResponse(
                     status_code=status.HTTP_401_UNAUTHORIZED,

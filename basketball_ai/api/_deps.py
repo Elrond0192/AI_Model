@@ -12,8 +12,8 @@ def get_data(request: Request) -> Dict[str, Any]:
         data = app_state.get("data", {})
         if data and data.get("player_dict"):
             return data
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("[_deps] get_data app_state access failed: %s", exc)
     return getattr(request.app.state, "data", {})
 
 def get_engine(request: Request) -> Optional[Any]:
@@ -22,8 +22,8 @@ def get_engine(request: Request) -> Optional[Any]:
         engine = app_state.get("engine")
         if engine is not None:
             return engine
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("[_deps] get_engine app_state access failed: %s", exc)
     return getattr(request.app.state, "engine", None)
 
 def get_chat_engine(request: Request) -> Optional[Any]:
@@ -31,8 +31,8 @@ def get_chat_engine(request: Request) -> Optional[Any]:
     try:
         from basketball_ai.api.main import app_state
         ce = app_state.get("chat_engine")
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("[_deps] get_chat_engine app_state access failed: %s", exc)
     if ce is None:
         ce = getattr(request.app.state, "chat_engine", None)
     if ce is not None:

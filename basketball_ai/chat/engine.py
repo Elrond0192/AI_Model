@@ -30,6 +30,8 @@ from basketball_ai.utils.helpers import normalize_id as _normalize_id
 
 logger = logging.getLogger(__name__)
 
+# C1 – LLM fallback system context for UNKNOWN intent
+_LLM_SYSTEM_CONTEXT = "You are a basketball analytics assistant."
 
 # ---------------------------------------------------------------------------
 # Response type
@@ -1104,7 +1106,7 @@ class ChatEngine:
                 import json as _json_lib
                 _payload = _json_lib.dumps({
                     "message": message,
-                    "context": "You are a basketball analytics assistant.",
+                    "context": _LLM_SYSTEM_CONTEXT,
                 }).encode()
                 _req_obj = _urllib_req.Request(
                     _llm_endpoint,
