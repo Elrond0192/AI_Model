@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
-from typing import List, Optional
+import logging
+import threading
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
@@ -23,7 +25,35 @@ from basketball_ai.api.schemas import (
     LineupAnalysisOut,
 )
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/scenarios", tags=["scenarios"])
+
+# AP9 – Idempotency cache: stores response keyed by Idempotency-Key header.
+# In-process only; safe for single-worker deployments.
+_IDEMPOTENCY_CACHE: Dict[str, Any] = {}
+_IDEMPOTENCY_CACHE_MAX = 1000   # evict oldest entry when this limit is reached
+_IDEMPOTENCY_LOCK = threading.Lock()
+
+
+def _idempotency_key(request: Request) -> Optional[str]:
+    """Return the Idempotency-Key header value, or None if absent."""
+    return request.headers.get("Idempotency-Key") or request.headers.get("X-Idempotency-Key")
+
+
+def _check_idempotency(key: str) -> Optional[Any]:
+    """Return cached result for *key*, or None if not yet seen."""
+    with _IDEMPOTENCY_LOCK:
+        return _IDEMPOTENCY_CACHE.get(key)
+
+
+def _store_idempotency(key: str, result: Any) -> None:
+    """Cache *result* for *key*, evicting the oldest entry if the cache is full."""
+    with _IDEMPOTENCY_LOCK:
+        if len(_IDEMPOTENCY_CACHE) >= _IDEMPOTENCY_CACHE_MAX:
+            oldest = next(iter(_IDEMPOTENCY_CACHE))
+            del _IDEMPOTENCY_CACHE[oldest]
+        _IDEMPOTENCY_CACHE[key] = result
 
 
 def _get_engine():
@@ -39,6 +69,14 @@ def _get_data():
 @router.post("/what-if", response_model=PredictionOut)
 async def what_if_scenario(request: Request, req: WhatIfRequest):
     """Predict performance for a specific player-team combination."""
+    # AP9 – Idempotency-Key: replay cached response for duplicate requests.
+    ikey = _idempotency_key(request)
+    if ikey:
+        cached = _check_idempotency(ikey)
+        if cached is not None:
+            logger.debug("[AP9] Replaying idempotent response for key %s", ikey)
+            return cached
+
     engine = _get_engine()
     data = _get_data()
     if req.player_id not in data["player_dict"]:
@@ -47,7 +85,11 @@ async def what_if_scenario(request: Request, req: WhatIfRequest):
         raise HTTPException(status_code=404, detail="Team not found")
     loop   = asyncio.get_event_loop()
     result = await loop.run_in_executor(None, engine.predict_in_team, req.player_id, req.team_id, req.season)
-    return PredictionOut(**result.__dict__)
+    out = PredictionOut(**result.__dict__)
+
+    if ikey:
+        _store_idempotency(ikey, out)
+    return out
 
 
 @router.get("/best-teams/{player_id}", response_model=List[TeamFitOut])

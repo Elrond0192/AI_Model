@@ -1,7 +1,9 @@
 """Basketball player API routes."""
 from __future__ import annotations
+import hashlib
+import json
 from typing import List, Optional
-from fastapi import APIRouter, HTTPException, Query, Response
+from fastapi import APIRouter, HTTPException, Query, Request, Response
 from basketball_ai.api.schemas import PlayerOut, PlayerStatOut, PlayerProfileOut
 from basketball_ai.features.player_features import compute_form_score, compute_consistency_score, compute_career_trajectory
 from basketball_ai.utils.helpers import position_group
@@ -52,11 +54,16 @@ def list_players(
 
 
 @router.get("/{player_id}", response_model=PlayerOut)
-def get_player(player_id: int):
+def get_player(player_id: int, request: Request, response: Response):
     data   = _get_data()
     player = data["player_dict"].get(player_id)
     if player is None:
         raise HTTPException(status_code=404, detail=f"Player {player_id} not found")
+    # AP5 – ETag for deterministic GET
+    etag = '"' + hashlib.sha256(json.dumps(player, sort_keys=True, default=str).encode()).hexdigest() + '"'
+    if request.headers.get("If-None-Match") == etag:
+        return Response(status_code=304)
+    response.headers["ETag"] = etag
     return PlayerOut(**player)
 
 

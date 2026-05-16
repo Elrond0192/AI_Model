@@ -477,17 +477,26 @@ def create_session_token(
     Returns the raw (unhashed) token that must be stored in the browser cookie.
     Only the SHA-256 hash is persisted server-side in ``sessions.json``.
     Expired entries are pruned automatically on each call.
+
+    S6 – token rotation: all pre-existing sessions for *username* are
+    invalidated before the new token is issued, preventing session fixation.
     """
     raw_token = secrets.token_hex(32)
     token_hash = _hash_token(raw_token)
     now = datetime.datetime.now(timezone.utc)
     expires_at = (now + datetime.timedelta(days=ttl_days)).isoformat()
     sessions = _load_sessions()
-    # Prune expired entries while we're here
+    # Prune expired entries and invalidate previous sessions for this user in one pass.
+    # S6 – token rotation: existing sessions for the same user are discarded so that
+    # only the newly issued token is valid (prevents session fixation).
     now_iso = now.isoformat()
-    sessions = {h: e for h, e in sessions.items() if e.get("expires_at", "") > now_iso}
+    key = username.strip().lower()
+    sessions = {
+        h: e for h, e in sessions.items()
+        if e.get("expires_at", "") > now_iso and e.get("username") != key
+    }
     sessions[token_hash] = {
-        "username":   username.strip().lower(),
+        "username":   key,
         "role":       role,
         "expires_at": expires_at,
     }
