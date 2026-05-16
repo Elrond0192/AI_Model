@@ -60,7 +60,7 @@ jobs:
         run: pip install ruff flake8
 
       - name: Run ruff
-        run: ruff check basketball_ai/ --select E,F,W --ignore E501,W503
+        run: ruff check basketball_ai/ --select E,F,W --ignore E501
 
       - name: Run flake8
         run: flake8 basketball_ai/ --max-line-length=120 --extend-ignore=E501,W503
