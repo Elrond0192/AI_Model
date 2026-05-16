@@ -1,7 +1,9 @@
 """Basketball team API routes."""
 from __future__ import annotations
+import hashlib
+import json
 from typing import List, Optional
-from fastapi import APIRouter, HTTPException, Query, Response
+from fastapi import APIRouter, HTTPException, Query, Request, Response
 from basketball_ai.api.schemas import TeamOut, TeamAnalysisOut, PlayerOut
 
 router = APIRouter(prefix="/teams", tags=["teams"])
@@ -36,11 +38,16 @@ def list_teams(
 
 
 @router.get("/{team_id}", response_model=TeamOut)
-def get_team(team_id: int):
+def get_team(team_id: int, request: Request, response: Response):
     data = _get_data()
     team = data["team_dict"].get(team_id)
     if team is None:
         raise HTTPException(status_code=404, detail=f"Team {team_id} not found")
+    # AP5 – ETag for deterministic GET
+    etag = '"' + hashlib.md5(json.dumps(team, sort_keys=True, default=str).encode()).hexdigest() + '"'
+    if request.headers.get("If-None-Match") == etag:
+        return Response(status_code=304)
+    response.headers["ETag"] = etag
     return TeamOut(**team)
 
 

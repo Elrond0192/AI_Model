@@ -39,6 +39,12 @@ def parse_args(argv=None):
         default="wp_export",
         help="Output directory for export-wordpress JSON files",
     )
+    parser.add_argument(
+        "--anonymize",
+        action="store_true",
+        default=False,
+        help="D8: Replace player names with anonymous IDs in export output",
+    )
     return parser.parse_args(argv)
 
 
@@ -264,6 +270,9 @@ def mode_export_wordpress(args) -> None:
         pid = int(row["id"])
         cur_tid = row.get("current_team_id")
 
+        # D8 – anonymisation: replace real name with a token when requested
+        display_name = f"Player_{pid}" if getattr(args, "anonymize", False) else str(row.get("name", ""))
+
         current_rating = confidence_low = confidence_high = None
         if cur_tid and int(cur_tid) in team_dict:
             try:
@@ -296,7 +305,7 @@ def mode_export_wordpress(args) -> None:
 
         card = {
             "player_id":       pid,
-            "name":            str(row.get("name", "")),
+            "name":            display_name,
             "position":        str(row.get("position", "")),
             "age":             int(row.get("age", 0)),
             "current_team":    str(team_dict.get(int(cur_tid), {}).get("name", "—"))

@@ -153,6 +153,12 @@ async def lifespan(app: FastAPI):
             "origins or set API_ENV=development to allow all origins during "
             "local development."
         )
+    # AP6: rate limiting must be available in production.
+    if not SLOWAPI_AVAILABLE and os.environ.get("API_ENV", "development").lower() == "production":
+        raise RuntimeError(
+            "[API] slowapi is required for rate limiting in production mode "
+            "(API_ENV=production). Install it with: pip install slowapi"
+        )
     _load_app_state()
     # Sync app.state for DI-based access (P5 – gradual migration)
     app.state.data = app_state.get("data", {})
