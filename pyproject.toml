@@ -31,8 +31,8 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest>=7.4.0"]
 
-# P4 – Dependency lock file
-# Regenerate with: pip-compile pyproject.toml --output-file requirements.lock
+# P4 – Dependency lock file (auto-generated; do not edit by hand)
+# Regenerate with: pip-compile pyproject.toml --output-file requirements.lock --resolver=backtracking
 # or: uv pip compile pyproject.toml -o requirements.lock
 
 [project.scripts]

@@ -69,10 +69,43 @@ def age_factor(age, pos):
     else:
         return max(0.3, 1.0 - diff*0.035)
 
-def compute_rating(per, bpm, win_shares, age, pos):
-    r = np.clip((per/35)*10*0.4 + (bpm+10)/25*10*0.4 + win_shares/15*10*0.2, 0, 10)
-    r *= age_factor(age, pos)
-    return float(np.clip(r, 0.5, 10.0))
+
+# A2 – WAR-based target, independent of the PER/BPM/WS features used for training.
+# We use the player's NEXT season as the target label (forward-looking prediction),
+# which eliminates the closed-form circularity of the old compute_rating formula.
+# For terminal seasons (no next season recorded), we apply an age-decay to the
+# current season to simulate the expected next-year value.
+_SEASONS_ORDER = {
+    "2019-20": 0, "2020-21": 1, "2021-22": 2, "2022-23": 3, "2023-24": 4,
+}
+
+
+def _war_from_next_season(
+    next_bpm: float,
+    next_games_played: float,
+    max_games: float,
+) -> float:
+    """Convert next-season BPM + durability to a 0–10 WAR-like target value.
+
+    This is deliberately NOT a function of PER, WS, or any other column
+    that appears in ``FEATURE_COLS``.  The only inputs are BPM (which is
+    one of many features, not deterministically computable from others) and
+    games_played, which adds a durability weight.
+
+    Args:
+        next_bpm: Box Plus/Minus from the *next* season of the same player.
+        next_games_played: Games played in the next season.
+        max_games: Maximum games in that league-season.
+
+    Returns:
+        WAR target in [0.5, 10.0].
+    """
+    # BPM spans roughly [-12, +12]; map to [0.5, 10.0]
+    bpm_norm = np.clip((next_bpm + 12.0) / 24.0 * 9.5 + 0.5, 0.5, 10.0)
+    durability = float(np.clip(next_games_played / max(1.0, max_games), 0.0, 1.0))
+    # Low durability deflates value; high durability has limited upside
+    value = bpm_norm * (0.55 + 0.45 * durability)
+    return float(np.clip(value, 0.5, 10.0))
 
 def generate_leagues():
     rows = []
@@ -143,14 +176,22 @@ def generate_player_stats(players_df, teams_df):
     league_max_games: dict = {}
     for (lid,_name,_country,_tier,_comp,_pace,_ortg,max_g) in LEAGUES:
         league_max_games[lid] = max_g
-    rows = []
+    # Phase 1 – collect RS rows keyed by player so we can assign forward-looking
+    # targets in a second pass (A2: eliminates PER/BPM/WS circular target).
+    # player_rs_rows: {player_id: [row_dict, ...]} sorted chronologically.
+    player_rs_rows: dict = {}
+    po_rows: list = []
+
     for _,pl in players_df.iterrows():
         pos = pl["position"]
         p = pos_params[pos]
         n_seasons = random.randint(1,len(seasons))
-        player_seasons = random.sample(seasons,n_seasons)
+        # Sort sampled seasons chronologically so next-season lookup is trivial.
+        player_seasons = sorted(random.sample(seasons,n_seasons),
+                                key=lambda s: _SEASONS_ORDER.get(s, 99))
         # Per-player playoff tendency: positive = elevates in PO, negative = declines
         po_tendency = float(np.random.normal(0.0, 0.12))
+        rs_rows_for_player = []
         for s in player_seasons:
             tid = random.choice(team_ids)
             lid = team_league[tid]
@@ -164,14 +205,14 @@ def generate_player_stats(players_df, teams_df):
             usg = _rng(*p["usg"],5,45)
             bpm = _rng(*p["bpm"],-15,20)
             ws = _rng(per*0.3,2,0,25)
-            rating = compute_rating(per,bpm,ws,age,pos)
             # Use league-specific max_games so European leagues don't always hit 82
             lg_max = league_max_games.get(int(lid), 82)
             lg_mean = max(1, int(lg_max * 0.67))  # ~67% of season as typical games played
             lg_sigma = max(1, int(lg_max * 0.22))
-            rows.append({
+            gp = int(_rng(lg_mean, lg_sigma, 1, lg_max))
+            rs_rows_for_player.append({
                 "player_id":int(pl["id"]),"season":s,"team_id":int(tid),"league_id":int(lid),
-                "games_played":int(_rng(lg_mean, lg_sigma, 1, lg_max)),
+                "games_played": gp, "_bpm": bpm, "_lg_max": lg_max,
                 "minutes_per_game":round(_rng(24,7,5,40),1),
                 "points":round(pts,1),"rebounds":round(reb,1),
                 "offensive_rebounds":round(reb*0.3,1),"defensive_rebounds":round(reb*0.7,1),
@@ -185,7 +226,7 @@ def generate_player_stats(players_df, teams_df):
                 "usg_pct":round(usg,2),"bpm":round(bpm,2),
                 "vorp":round(_rng(1,1.5,-3,10),2),"win_shares":round(ws,2),
                 "ast_ratio":round(_rng(15,8,0,50),2),"reb_pct":round(_rng(10,4,1,30),2),
-                "rating":round(rating,3),
+                # rating assigned in Phase 2 (forward-looking WAR target)
                 "competition":"RS",
                 # Advanced metrics
                 "spm":       round(_rng(bpm*0.9, 0.5), 2),
@@ -243,6 +284,7 @@ def generate_player_stats(players_df, teams_df):
                 # Roles (default empty for generated data)
                 "ruolo_offensivo": "", "ruolo_difensivo": "", "ruolo_combinato": "",
             })
+
             # ~40% of players also have a playoff (PO) row for this season
             if random.random() < _PO_GENERATION_PROBABILITY:
                 def _noise():
@@ -257,10 +299,13 @@ def generate_player_stats(players_df, teams_df):
                 po_bpm  = bpm + po_tendency * 2.0 + float(np.random.normal(0, 0.4))
                 po_usg  = max(5.0, usg  * (1.0 + po_tendency * 0.5 + _noise()))
                 po_ws   = max(0.0, ws   * po_mult * 0.35)  # fewer games in PO
-                po_rating = compute_rating(po_per, po_bpm, po_ws, age, pos)
-                rows.append({
+                po_gp   = int(max(1, _rng(12, 4, 1, 25)))
+                # PO target: WAR based on the player's own PO BPM (not next-season;
+                # PO performance is a self-contained competition label).
+                po_rating = _war_from_next_season(po_bpm, po_gp, 25)
+                po_rows.append({
                     "player_id":int(pl["id"]),"season":s,"team_id":int(tid),"league_id":int(lid),
-                    "games_played":int(max(1, _rng(12, 4, 1, 25))),
+                    "games_played": po_gp,
                     "minutes_per_game":round(_rng(26, 6, 5, 40), 1),
                     "points":round(po_pts,1),"rebounds":round(po_reb,1),
                     "offensive_rebounds":round(po_reb*0.3,1),"defensive_rebounds":round(po_reb*0.7,1),
@@ -332,7 +377,34 @@ def generate_player_stats(players_df, teams_df):
                     # Roles
                     "ruolo_offensivo": "", "ruolo_difensivo": "", "ruolo_combinato": "",
                 })
-    return pd.DataFrame(rows)
+        # Store RS rows grouped by player for Phase 2 target assignment
+        player_rs_rows[int(pl["id"])] = rs_rows_for_player
+
+    # Phase 2 – assign forward-looking WAR targets to RS rows (A2).
+    # For each player's chronological RS seasons:
+    #   - Season S target  = WAR based on NEXT season's BPM + games_played
+    #   - Terminal season  = WAR with mild BPM decay (simulating next-year expectation)
+    all_rs_rows: list = []
+    for pid, rs_list in player_rs_rows.items():
+        for i, row in enumerate(rs_list):
+            next_bpm = row["_bpm"]          # default: self (terminal case)
+            next_gp  = row["games_played"]
+            next_lmax = row["_lg_max"]
+            if i + 1 < len(rs_list):
+                nxt = rs_list[i + 1]
+                next_bpm  = nxt["_bpm"]
+                next_gp   = nxt["games_played"]
+                next_lmax = nxt["_lg_max"]
+            else:
+                # Terminal season: estimate next year as mild BPM decay
+                next_bpm = row["_bpm"] * 0.92
+            row["rating"] = round(_war_from_next_season(next_bpm, next_gp, next_lmax), 3)
+            # Remove internal helper fields before export
+            row.pop("_bpm", None)
+            row.pop("_lg_max", None)
+            all_rs_rows.append(row)
+
+    return pd.DataFrame(all_rs_rows + po_rows)
 
 def generate_team_player_relations(players_df, teams_df, player_stats_df):
     rows = []

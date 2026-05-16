@@ -26,6 +26,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 import numpy as np
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as _st_components
 import extra_streamlit_components as stx
 from basketball_ai.data.loader import _to_int
 from basketball_ai.utils.helpers import (
@@ -62,6 +63,59 @@ from basketball_ai.auth.auth import (
 
 _SESSION_COOKIE_NAME = "ba_session"
 _SESSION_TTL_DAYS    = int(os.environ.get("SESSION_COOKIE_TTL_DAYS", "7"))
+
+# S6: Whether to add the Secure flag to cookies.  Enable by setting the env
+# var STREAMLIT_SERVER_COOKIE_SECURE=true (appropriate for HTTPS deployments).
+_COOKIE_SECURE = os.environ.get("STREAMLIT_SERVER_COOKIE_SECURE", "").lower() in (
+    "true", "1", "yes"
+)
+
+
+def _json_dumps_str(s: str) -> str:
+    """Return *s* as a JSON string literal (double-quoted, all chars escaped)."""
+    return json.dumps(s)
+
+
+def _js_set_cookie(name: str, value: str, expires_at: datetime.datetime) -> None:
+    """Set a browser cookie with SameSite=Lax (and Secure when configured).
+
+    ``extra_streamlit_components.CookieManager`` does not expose the
+    ``SameSite`` or ``Secure`` flags.  This helper injects a tiny JavaScript
+    snippet via ``st.components.v1.html`` that re-writes the cookie with the
+    proper security attributes.
+
+    The cookie value is set via a JS variable (not embedded in a string
+    literal) so any character in *value* is handled safely.
+
+    ``HttpOnly`` cannot be set from JavaScript (browser security model). That
+    flag must be enforced at the reverse-proxy layer (nginx ``proxy_cookie_flags``
+    or a Set-Cookie header from the backend).
+    """
+    max_age = max(
+        0,
+        int((expires_at - datetime.datetime.now(timezone.utc)).total_seconds()),
+    )
+    secure_attr = "Secure;" if _COOKIE_SECURE else ""
+    # Pass the value through a JS variable so that any characters in the
+    # token (e.g. newlines, quotes) cannot break out of the string literal.
+    js = f"""<script>
+(function() {{
+  var v = {_json_dumps_str(value)};
+  document.cookie = "{name}=" + encodeURIComponent(v) + "; Max-Age={max_age}; Path=/; SameSite=Lax; {secure_attr}";
+}})();
+</script>"""
+    _st_components.html(js, height=0, scrolling=False)
+
+
+def _js_delete_cookie(name: str) -> None:
+    """Expire a browser cookie immediately, respecting the same SameSite flag."""
+    secure_attr = "Secure;" if _COOKIE_SECURE else ""
+    js = (
+        f'<script>'
+        f'document.cookie = "{name}=; Max-Age=0; Path=/; SameSite=Lax; {secure_attr}";'
+        f'</script>'
+    )
+    _st_components.html(js, height=0, scrolling=False)
 
 # ---------------------------------------------------------------------------
 # Page config – must be the very first Streamlit call
@@ -127,11 +181,11 @@ if not st.session_state.get("authenticated"):
             _role   = _user.get("role", "viewer")
             _token  = create_session_token(_uname, _role, _SESSION_TTL_DAYS)
             _expiry = datetime.datetime.now(timezone.utc) + datetime.timedelta(days=_SESSION_TTL_DAYS)
-            # S6: cookie flags (Secure/HttpOnly/SameSite=Lax) should be enforced via
-            # a reverse proxy (nginx/caddy) or by upgrading to a cookie lib that supports them.
-            # extra-streamlit-components CookieManager does not expose these flags.
-            # Set STREAMLIT_SERVER_COOKIE_SECURE=true in production.
+            # S6: set cookie via CookieManager (for readability) and immediately
+            # re-write it with SameSite=Lax (+ Secure when configured) via JS.
+            # HttpOnly cannot be set from JS; enforce it at the reverse proxy.
             _cookie_mgr.set(_SESSION_COOKIE_NAME, _token, expires_at=_expiry)
+            _js_set_cookie(_SESSION_COOKIE_NAME, _token, _expiry)
             st.session_state["authenticated"]   = True
             st.session_state["current_user"]    = _uname
             st.session_state["current_role"]    = _role
@@ -435,6 +489,7 @@ with st.sidebar:
         if _tok:
             revoke_session_token(_tok)
         _cookie_mgr.delete(_SESSION_COOKIE_NAME)
+        _js_delete_cookie(_SESSION_COOKIE_NAME)  # S6: clear with SameSite=Lax flag
         st.session_state.clear()
         st.rerun()
 
