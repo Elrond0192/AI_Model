@@ -1,9 +1,8 @@
 # AI_Model — Basketball Player Performance Prediction System
 
-A professional-grade AI system for estimating basketball player performance
-across leagues and teams, with full **What-If scenario analysis**.
+A production-oriented basketball AI platform to estimate player performance across teams and leagues, simulate scenarios, and expose results via API and chat.
 
-Built with XGBoost, KNN compatibility modelling, and a FastAPI REST backend.
+Built around an XGBoost-based ensemble, compatibility modelling, and a FastAPI backend.
 
 ---
 
@@ -11,16 +10,16 @@ Built with XGBoost, KNN compatibility modelling, and a FastAPI REST backend.
 
 | Capability | Details |
 |---|---|
-| **Synthetic data generator** | 20 leagues (NBA, EuroLeague, ACB, Lega Basket, …), 300 teams, 5 000 players, 5 seasons of per-game & advanced stats |
-| **Mixed / hybrid positions** | PG, SG, SF, PF, C, PG/SG, SG/SF, SF/PF, PF/C, SG/PF — full support |
-| **Feature engineering** | Per-36 stats, PER, BPM, TS%, USG%, form score, consistency, age-vs-peak, versatility, playmaking & defensive scores |
-| **XGBoost performance model** | 15-feature regressor; SHAP explanations available |
-| **KNN compatibility model** | Scores player-team style fit using 6-d basketball style vectors |
-| **Asymmetric age curves** | Position-specific peak ages with faster post-peak decline for guards vs bigs |
-| **Ensemble prediction** | XGBoost base × age-curve ratio × style compatibility × league tier × context adjustments |
-| **What-If engine** | Trajectory, transfer impact, peak prediction, best-team-fit, teammate quality scenarios |
-| **FastAPI REST API** | Full CRUD + prediction endpoints under `/api/v1`, Pydantic v2 validated |
-| **73 pytest tests** | Feature engineering, model, and API endpoint coverage |
+| **Package structure** | Codebase is now under the `basketball_ai` package namespace (legacy `src` layout removed) |
+| **Synthetic data generator** | Multi-league dataset generation with players, teams, stats, and relations |
+| **Advanced feature engineering** | Per-36/Per-40 stats, RAPTOR/LEBRON/SPM, OWS/DWS, FIC, clutch/on-off metrics, role signals, durability and interaction features |
+| **Performance model** | XGBoost regressor with an expanded feature set (57 features in `FEATURE_COLS`) and optional SHAP explainability |
+| **Competition-aware predictions** | Handles competition context (`RS`, `PO`, `CUP`, `SUPERCUP`) in training and inference |
+| **Compatibility model** | Team-style compatibility via 6D style vectors with data-calibrated normalization bounds |
+| **Ensemble prediction** | Combines performance model, age curve, style fit, league context, and scenario modifiers |
+| **What-If engine** | Trajectory, transfer impact, peak, best-team/best-player fit, teammate quality, and lineup what-if analysis |
+| **FastAPI REST API** | Endpoints under `/api/v1` for players, teams, predictions, scenarios, auth, chat, and WordPress export |
+| **Chat interface** | Natural-language endpoint (`/api/v1/chat`) with intent detection and session continuity |
 
 ---
 
@@ -30,17 +29,30 @@ Built with XGBoost, KNN compatibility modelling, and a FastAPI REST backend.
 # 1. Install dependencies
 pip install -r requirements.txt
 
-# 2. Generate synthetic basketball dataset
+# 2. (optional) install package in editable mode
+pip install -e .
+
+# 3. Generate synthetic basketball dataset
 python main.py --mode generate-data
 
-# 3. Train models
+# 4. Train models (CSV source by default)
 python main.py --mode train
 
-# 4. Run interactive demo
+# 5. Run interactive demo
 python main.py --mode demo
 
-# 5. Start REST API server
+# 6. Start REST API server
 python main.py --mode api
+```
+
+### CLI modes
+
+```bash
+python main.py --mode generate-data
+python main.py --mode train [--source file|sql]
+python main.py --mode demo [--source file|sql]
+python main.py --mode api [--host 0.0.0.0] [--port 8000] [--source file|sql]
+python main.py --mode export-wordpress [--source file|sql] [--out-dir wp_export]
 ```
 
 ---
@@ -49,88 +61,84 @@ python main.py --mode api
 
 Base URL: `http://localhost:8000/api/v1`
 
+### Auth
+| Method | Endpoint | Description |
+|---|---|---|
+| POST | `/auth/token` | Obtain access + refresh tokens |
+| POST | `/auth/refresh` | Refresh access token |
+
 ### Players
 | Method | Endpoint | Description |
 |---|---|---|
-| GET | `/players` | List players (filter by position, nationality, age) |
-| GET | `/players/{id}` | Get player details |
-| GET | `/players/{id}/stats` | All season stats for a player |
-| GET | `/players/{id}/profile` | Enriched profile (form, consistency, trajectory) |
+| GET | `/players` | List players |
+| GET | `/players/{player_id}` | Get player details |
+| GET | `/players/{player_id}/stats` | Season stats for player |
+| GET | `/players/{player_id}/profile` | Enriched player profile |
 
 ### Teams
 | Method | Endpoint | Description |
 |---|---|---|
-| GET | `/teams` | List teams (filter by league, tier, style) |
-| GET | `/teams/{id}` | Get team details |
-| GET | `/teams/{id}/roster` | Current roster |
-| GET | `/teams/{id}/analysis` | Squad stats + style strengths |
+| GET | `/teams` | List teams |
+| GET | `/teams/{team_id}` | Get team details |
+| GET | `/teams/{team_id}/roster` | Team roster |
+| GET | `/teams/{team_id}/analysis` | Team analysis |
 
 ### Predictions
 | Method | Endpoint | Description |
 |---|---|---|
-| POST | `/predictions/player/{id}/team/{id}` | Predict player rating at team |
-| GET | `/predictions/player/{id}/trajectory` | Age-trajectory projection |
-| GET | `/predictions/player/{id}/peak` | Career peak prediction |
+| POST | `/predictions/player/{player_id}/team/{team_id}` | Predict rating in team context |
+| GET | `/predictions/player/{player_id}/trajectory` | Age trajectory |
+| GET | `/predictions/player/{player_id}/peak` | Peak projection |
 
-### What-If Scenarios
+### Scenarios
 | Method | Endpoint | Description |
 |---|---|---|
-| POST | `/scenarios/what-if` | Predict performance in a specific team |
-| GET | `/scenarios/best-teams/{player_id}` | Top-N teams for a player |
-| GET | `/scenarios/best-players/{team_id}` | Top-N players for a team |
-| POST | `/scenarios/compare` | Compare performance across multiple teams |
-| POST | `/scenarios/transfer-impact` | Simulate transfer performance delta |
-| POST | `/scenarios/what-if-teammates` | What if teammates had a different quality? |
+| POST | `/scenarios/what-if` | One-team scenario prediction |
+| GET | `/scenarios/best-teams/{player_id}` | Best team fits for player |
+| GET | `/scenarios/best-players/{team_id}` | Best player fits for team |
+| POST | `/scenarios/compare` | Compare multiple team scenarios |
+| POST | `/scenarios/transfer-impact` | Transfer impact simulation |
+| POST | `/scenarios/what-if-teammates` | Teammate-quality what-if |
+| POST | `/scenarios/what-if-lineup` | Custom lineup what-if |
+
+### Chat & WordPress
+| Method | Endpoint | Description |
+|---|---|---|
+| POST | `/chat` | Natural-language analysis endpoint |
+| GET | `/wordpress/player-card/{player_id}` | WordPress-ready player card payload |
 
 ---
 
 ## Architecture
 
 ```
-src/
-├── data/
-│   ├── models.py          # Dataclasses: League, Team, Player, PlayerStats, ...
-│   ├── generator.py       # Synthetic basketball data generator
-│   └── loader.py          # CSV loaders + load_all_data() dict API
-├── features/
-│   ├── player_features.py # Per-36, PER, BPM, form, consistency, age-vs-peak
-│   ├── team_features.py   # 6-d style vector, teammate quality
-│   └── context_features.py# Position-style fit, role opportunity, league adaptation
-├── models/
-│   ├── age_curve.py       # Asymmetric Gaussian age curves per position
-│   ├── performance_model.py # XGBoost rating predictor
-│   ├── compatibility_model.py # KNN style compatibility
-│   └── ensemble.py        # Prediction pipeline
-├── scenarios/
-│   └── engine.py          # WhatIfEngine: trajectory, transfer, peak, best-fit
+basketball_ai/
 ├── api/
-│   ├── main.py            # FastAPI app factory + lifespan
-│   ├── schemas.py         # Pydantic v2 request/response models
-│   └── routes/            # players, teams, predictions, scenarios
-└── utils/
-    └── helpers.py         # Formatting, position grouping, normalization
+│   ├── main.py            # FastAPI app and lifecycle
+│   ├── schemas.py         # Pydantic request/response models
+│   └── routes/            # auth, players, teams, predictions, scenarios, chat, wordpress
+├── auth/                  # RBAC/auth helpers
+├── chat/                  # Intent detection and chat engine
+├── data/                  # Data models, generator, loaders, schema mapping
+├── features/              # Player/team/context feature engineering
+├── models/                # Performance, compatibility, age curves, ensemble
+├── monitoring/            # Monitoring utilities
+├── scenarios/             # What-if simulation engine
+└── utils/                 # Shared helpers
 ```
 
 ---
 
-## Basketball positions supported
+## Basketball positions and styles
 
-Pure: `PG · SG · SF · PF · C`  
-Hybrid: `PG/SG · SG/SF · SF/PF · PF/C · SG/PF`
+**Positions:** `PG · SG · SF · PF · C · PG/SG · SG/SF · SF/PF · PF/C · SG/PF`  
+**Styles:** `pace_and_space · pick_and_roll · isolation · defensive · motion_offense · post_up`
 
-All positions have their own:
-- Peak age (guards peak 24-26, wings 26, bigs 27-28)
-- Age curve width (bigs develop & decline more slowly)
-- Style-position compatibility matrix
-- Per-36 stat generation distributions
-
----
-
-## Playing styles
-
-`pace_and_space · pick_and_roll · isolation · defensive · motion_offense · post_up`
-
-Each style has a full compatibility matrix across all 10 positions.
+Position-specific modeling includes:
+- peak-age behavior by role archetype
+- different development/decline curve widths by position family
+- style-position compatibility matrices (including hybrid positions)
+- per-minute distribution signals used in feature generation
 
 ---
 
