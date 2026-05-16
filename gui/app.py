@@ -71,6 +71,11 @@ _COOKIE_SECURE = os.environ.get("STREAMLIT_SERVER_COOKIE_SECURE", "").lower() in
 )
 
 
+def _json_dumps_str(s: str) -> str:
+    """Return *s* as a JSON string literal (double-quoted, all chars escaped)."""
+    return json.dumps(s)
+
+
 def _js_set_cookie(name: str, value: str, expires_at: datetime.datetime) -> None:
     """Set a browser cookie with SameSite=Lax (and Secure when configured).
 
@@ -78,6 +83,9 @@ def _js_set_cookie(name: str, value: str, expires_at: datetime.datetime) -> None
     ``SameSite`` or ``Secure`` flags.  This helper injects a tiny JavaScript
     snippet via ``st.components.v1.html`` that re-writes the cookie with the
     proper security attributes.
+
+    The cookie value is set via a JS variable (not embedded in a string
+    literal) so any character in *value* is handled safely.
 
     ``HttpOnly`` cannot be set from JavaScript (browser security model). That
     flag must be enforced at the reverse-proxy layer (nginx ``proxy_cookie_flags``
@@ -88,14 +96,14 @@ def _js_set_cookie(name: str, value: str, expires_at: datetime.datetime) -> None
         int((expires_at - datetime.datetime.now(timezone.utc)).total_seconds()),
     )
     secure_attr = "Secure;" if _COOKIE_SECURE else ""
-    # Escape the value minimally for safe embedding in a JS string literal.
-    safe_value = value.replace("\\", "\\\\").replace('"', '\\"')
-    js = (
-        f'<script>'
-        f'document.cookie = "{name}={safe_value}; '
-        f'Max-Age={max_age}; Path=/; SameSite=Lax; {secure_attr}";'
-        f'</script>'
-    )
+    # Pass the value through a JS variable so that any characters in the
+    # token (e.g. newlines, quotes) cannot break out of the string literal.
+    js = f"""<script>
+(function() {{
+  var v = {_json_dumps_str(value)};
+  document.cookie = "{name}=" + encodeURIComponent(v) + "; Max-Age={max_age}; Path=/; SameSite=Lax; {secure_attr}";
+}})();
+</script>"""
     _st_components.html(js, height=0, scrolling=False)
 
 
