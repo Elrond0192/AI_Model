@@ -5,8 +5,9 @@ from typing import List
 
 logger = logging.getLogger(__name__)
 
-random.seed(42)
-np.random.seed(42)
+# NOTE: random seeds are NOT set at module level (they would affect the global
+# RNG state of every caller).  Instead, callers pass ``--seed`` via the CLI,
+# which seeds only the intended run (see main.py / generate_data()).
 
 # Pure and hybrid/mixed positions
 POSITIONS = ["PG","SG","SF","PF","C","PG/SG","SG/SF","SF/PF","PF/C","SG/PF"]
@@ -18,26 +19,27 @@ NATIONALITIES = ["American","Spanish","French","German","Italian","Australian","
 _PO_GENERATION_PROBABILITY = 0.40
 
 LEAGUES = [
-    (1,"NBA","USA",1,1.0,100.0,113.0),
-    (2,"EuroLeague","Europe",2,0.85,93.0,108.0),
-    (3,"BCL","Europe",2,0.78,91.0,106.0),
-    (4,"ACB","Spain",3,0.72,89.0,105.0),
-    (5,"Bundesliga","Germany",3,0.68,88.0,104.0),
-    (6,"Lega Basket","Italy",3,0.70,87.0,104.0),
-    (7,"BSL","Turkey",3,0.71,88.0,105.0),
-    (8,"LNB Pro A","France",3,0.65,87.0,103.0),
-    (9,"NBL","Australia",4,0.60,90.0,102.0),
-    (10,"VTB League","Russia",4,0.58,86.0,101.0),
-    (11,"Adriatic","Balkans",4,0.55,85.0,100.0),
-    (12,"Liga ACB B","Spain",5,0.45,84.0,99.0),
-    (13,"Pro B","Germany",5,0.43,83.0,98.0),
-    (14,"Serie A2","Italy",5,0.44,82.0,98.0),
-    (15,"BSL B","Turkey",5,0.42,83.0,97.0),
-    (16,"Pro B France","France",5,0.40,82.0,96.0),
-    (17,"NBL1","Australia",5,0.38,81.0,95.0),
-    (18,"FIBA EuroCup","Europe",4,0.62,88.0,102.0),
-    (19,"CBA","China",4,0.55,87.0,101.0),
-    (20,"Liga Nacional","Argentina",5,0.40,83.0,98.0),
+    # (id, name, country, tier, competitiveness, avg_pace, avg_offensive_rating, max_games)
+    (1,"NBA","USA",1,1.0,100.0,113.0,82),
+    (2,"EuroLeague","Europe",2,0.85,93.0,108.0,34),
+    (3,"BCL","Europe",2,0.78,91.0,106.0,32),
+    (4,"ACB","Spain",3,0.72,89.0,105.0,32),
+    (5,"Bundesliga","Germany",3,0.68,88.0,104.0,32),
+    (6,"Lega Basket","Italy",3,0.70,87.0,104.0,30),
+    (7,"BSL","Turkey",3,0.71,88.0,105.0,34),
+    (8,"LNB Pro A","France",3,0.65,87.0,103.0,32),
+    (9,"NBL","Australia",4,0.60,90.0,102.0,28),
+    (10,"VTB League","Russia",4,0.58,86.0,101.0,30),
+    (11,"Adriatic","Balkans",4,0.55,85.0,100.0,28),
+    (12,"Liga ACB B","Spain",5,0.45,84.0,99.0,30),
+    (13,"Pro B","Germany",5,0.43,83.0,98.0,30),
+    (14,"Serie A2","Italy",5,0.44,82.0,98.0,30),
+    (15,"BSL B","Turkey",5,0.42,83.0,97.0,30),
+    (16,"Pro B France","France",5,0.40,82.0,96.0,30),
+    (17,"NBL1","Australia",5,0.38,81.0,95.0,22),
+    (18,"FIBA EuroCup","Europe",4,0.62,88.0,102.0,22),
+    (19,"CBA","China",4,0.55,87.0,101.0,46),
+    (20,"Liga Nacional","Argentina",5,0.40,83.0,98.0,30),
 ]
 
 FIRST_NAMES = ["James","Kevin","Stephen","LeBron","Giannis","Luka","Joel","Nikola","Jayson","Damian","Trae","Zion","Anthony","Karl","Devin","Paul","Chris","Kawhi","Jimmy","Bam","Pascal","Rudy","Draymond","Klay","Jordan","Marcus","Tyler","Miles","Brandon","Cade","Evan","OG","Scottie","Jalen","De'Aaron","Shai","Donovan","Ja","Zach","Julius","Khris","Tobias","Al","Domantas","Jonas","Kristaps","Brook","Serge","Myles","Aaron"]
@@ -70,8 +72,8 @@ def compute_rating(per, bpm, win_shares, age, pos):
 
 def generate_leagues():
     rows = []
-    for (lid,name,country,tier,comp,pace,ortg) in LEAGUES:
-        rows.append({"id":lid,"name":name,"country":country,"tier":tier,"competitiveness_score":comp,"avg_pace":pace,"avg_offensive_rating":ortg})
+    for (lid,name,country,tier,comp,pace,ortg,max_games) in LEAGUES:
+        rows.append({"id":lid,"name":name,"country":country,"tier":tier,"competitiveness_score":comp,"avg_pace":pace,"avg_offensive_rating":ortg,"max_games":max_games})
     return pd.DataFrame(rows)
 
 def generate_teams(leagues_df):
@@ -133,6 +135,10 @@ def generate_player_stats(players_df, teams_df):
     seasons = ["2019-20","2020-21","2021-22","2022-23","2023-24"]
     team_ids = teams_df["id"].tolist()
     team_league = dict(zip(teams_df["id"],teams_df["league_id"]))
+    # Build a lookup of league_id → max_games for league-aware durability generation
+    league_max_games: dict = {}
+    for (lid,_name,_country,_tier,_comp,_pace,_ortg,max_g) in LEAGUES:
+        league_max_games[lid] = max_g
     rows = []
     for _,pl in players_df.iterrows():
         pos = pl["position"]
@@ -155,9 +161,13 @@ def generate_player_stats(players_df, teams_df):
             bpm = _rng(*p["bpm"],-15,20)
             ws = _rng(per*0.3,2,0,25)
             rating = compute_rating(per,bpm,ws,age,pos)
+            # Use league-specific max_games so European leagues don't always hit 82
+            lg_max = league_max_games.get(int(lid), 82)
+            lg_mean = max(1, int(lg_max * 0.67))  # ~67% of season as typical games played
+            lg_sigma = max(1, int(lg_max * 0.22))
             rows.append({
                 "player_id":int(pl["id"]),"season":s,"team_id":int(tid),"league_id":int(lid),
-                "games_played":int(_rng(55,18,1,82)),
+                "games_played":int(_rng(lg_mean, lg_sigma, 1, lg_max)),
                 "minutes_per_game":round(_rng(24,7,5,40),1),
                 "points":round(pts,1),"rebounds":round(reb,1),
                 "offensive_rebounds":round(reb*0.3,1),"defensive_rebounds":round(reb*0.7,1),

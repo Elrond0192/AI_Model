@@ -6,11 +6,12 @@ build-backend = "setuptools.build_meta"
 name = "basketball-ai"
 version = "2.0.0"
 description = "Basketball Player Performance AI – prediction, scenarios, and chat API"
-requires-python = ">=3.10"
+requires-python = ">=3.11,<3.13"
 dependencies = [
     "fastapi>=0.104.0",
     "uvicorn>=0.24.0",
     "pydantic>=2.0.0",
+    "pydantic-settings>=2.0",
     "scikit-learn>=1.3.0",
     "xgboost>=2.0.0",
     "pandas>=2.0.0",
@@ -24,10 +25,15 @@ dependencies = [
     "python-dotenv>=1.0.0",
     "streamlit>=1.30.0",
     "extra-streamlit-components>=0.1.60",
+    "argon2-cffi>=21.3.0",
 ]
 
 [project.optional-dependencies]
 dev = ["pytest>=7.4.0"]
+
+# P4 – Dependency lock file
+# Regenerate with: pip-compile pyproject.toml --output-file requirements.lock
+# or: uv pip compile pyproject.toml -o requirements.lock
 
 [project.scripts]
 basketball-ai = "basketball_ai.__main__:main"

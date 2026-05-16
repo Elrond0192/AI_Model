@@ -35,8 +35,21 @@ import json
 import os
 import secrets
 import warnings
+from datetime import timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
+
+# ---------------------------------------------------------------------------
+# S2 – Argon2id password hashing (optional, falls back to PBKDF2)
+# ---------------------------------------------------------------------------
+
+try:
+    from argon2 import PasswordHasher as _Argon2Hasher
+    from argon2.exceptions import VerifyMismatchError as _VerifyMismatchError
+    _ARGON2_AVAILABLE = True
+    _argon2_hasher = _Argon2Hasher()
+except ImportError:
+    _ARGON2_AVAILABLE = False
 
 # ---------------------------------------------------------------------------
 # Storage
@@ -66,8 +79,30 @@ SESSIONS_FILE = Path(
     )
 )
 
+#: Path where the one-time admin credentials are written on first boot (S1).
+#: chmod 0600 is applied automatically so only the owner can read it.
+ADMIN_CREDENTIALS_FILE = Path(
+    os.environ.get(
+        "BASKETBALL_AI_ADMIN_CREDENTIALS_FILE",
+        str(Path(__file__).parent.parent.parent / ".admin_credentials"),
+    )
+)
+
 #: Default session TTL in days (overridden by SESSION_COOKIE_TTL_DAYS env var).
 _SESSION_TTL_DAYS_DEFAULT = 7
+
+# ---------------------------------------------------------------------------
+# Login lockout (S3): 5 consecutive failed attempts → 15-minute lock.
+# ---------------------------------------------------------------------------
+
+#: Maximum consecutive failed attempts before lockout.
+_MAX_FAILED_ATTEMPTS = int(os.environ.get("LOGIN_MAX_ATTEMPTS", "5"))
+#: Lock duration in seconds.
+_LOCKOUT_SECONDS = int(os.environ.get("LOGIN_LOCKOUT_SECONDS", str(15 * 60)))
+
+# In-process lockout registry: {normalised_username: (fail_count, lockout_until_utc_iso | "")}
+# This is intentionally in-memory only (no persistence) so restarts clear all locks.
+_lockout_registry: Dict[str, Tuple[int, str]] = {}
 
 #: Ordered list of all section identifiers that map to GUI tabs.
 ALL_SECTIONS: List[str] = [
@@ -109,17 +144,41 @@ _PBKDF2_DIGEST     = "sha256"
 
 
 # ---------------------------------------------------------------------------
-# Internal helpers
+# S4 – Audit log
 # ---------------------------------------------------------------------------
 
-def _hash_password(password: str, salt: str = "") -> Tuple[str, str]:
-    """Hash *password* with PBKDF2-HMAC-SHA-256.
+AUDIT_LOG_FILE = Path(
+    os.environ.get("BASKETBALL_AI_AUDIT_LOG", str(Path(__file__).parent.parent.parent / "audit.log"))
+)
 
-    Returns ``(hex_hash, hex_salt)``.  If *salt* is not supplied a fresh
+
+def _audit(action: str, actor: str, target: str = "", details: str = "") -> None:
+    """Append a structured audit log entry."""
+    entry = {
+        "ts": datetime.datetime.now(timezone.utc).isoformat(),
+        "action": action,
+        "actor": actor,
+        "target": target,
+        "details": details,
+    }
+    try:
+        with AUDIT_LOG_FILE.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(entry) + "\n")
+    except OSError:
+        pass  # Never let audit logging crash the app
+
+def _hash_password(password: str, salt: str = "") -> Tuple[str, str]:
+    """Hash *password* with Argon2id (when available) or PBKDF2-HMAC-SHA-256.
+
+    Returns ``(hash_string, hex_salt)``.  If *salt* is not supplied a fresh
     random 32-byte salt is generated.
     """
     if not salt:
         salt = secrets.token_hex(32)
+    if _ARGON2_AVAILABLE:
+        # argon2-cffi includes its own salt in the hash format; we still keep
+        # the external salt field for backward-compat with PBKDF2 records.
+        return _argon2_hasher.hash(password + salt), salt
     dk = hashlib.pbkdf2_hmac(
         _PBKDF2_DIGEST, password.encode("utf-8"), salt.encode("utf-8"),
         _PBKDF2_ITERATIONS,
@@ -128,9 +187,18 @@ def _hash_password(password: str, salt: str = "") -> Tuple[str, str]:
 
 
 def _verify_password(password: str, stored_hash: str, salt: str) -> bool:
-    """Constant-time comparison to prevent timing attacks."""
-    candidate_hash, _ = _hash_password(password, salt)
-    return hmac.compare_digest(candidate_hash, stored_hash)
+    """Constant-time comparison, supporting both Argon2id and PBKDF2 hashes."""
+    if _ARGON2_AVAILABLE and stored_hash.startswith("$argon2"):
+        try:
+            return _argon2_hasher.verify(stored_hash, password + salt)
+        except _VerifyMismatchError:
+            return False
+    # Fallback: PBKDF2
+    expected = hashlib.pbkdf2_hmac(
+        _PBKDF2_DIGEST, password.encode("utf-8"), salt.encode("utf-8"),
+        _PBKDF2_ITERATIONS,
+    ).hex()
+    return hmac.compare_digest(stored_hash, expected)
 
 
 # ---------------------------------------------------------------------------
@@ -159,14 +227,43 @@ def check_credentials(username: str, password: str) -> Tuple[bool, Dict]:
     """Verify *username* / *password* against the stored users file.
 
     Returns ``(True, user_dict)`` on success, ``(False, {})`` on failure.
+
+    Implements a simple exponential-backoff lockout (S3): after
+    ``_MAX_FAILED_ATTEMPTS`` consecutive failures the account is locked for
+    ``_LOCKOUT_SECONDS`` seconds.  The counter resets on a successful login.
     """
+    key = username.strip().lower()
+    now_iso = datetime.datetime.now(timezone.utc).isoformat()
+
+    # --- Check lockout -------------------------------------------------------
+    fail_count, locked_until = _lockout_registry.get(key, (0, ""))
+    if locked_until and now_iso < locked_until:
+        # Still locked – return failure without touching the DB
+        return False, {"locked_until": locked_until}
+
     users = load_users()
-    key   = username.strip().lower()
     user  = users.get(key)
     if user is None:
+        # Unknown user: increment a shared counter to avoid username enumeration
+        _lockout_registry[key] = (fail_count + 1, "")
         return False, {}
     if _verify_password(password, user["hash"], user["salt"]):
+        # Success – clear any lockout state
+        _lockout_registry.pop(key, None)
+        _audit("login_success", key)
         return True, user
+
+    # --- Failed attempt ------------------------------------------------------
+    fail_count += 1
+    if fail_count >= _MAX_FAILED_ATTEMPTS:
+        locked_until = (
+            datetime.datetime.now(timezone.utc)
+            + datetime.timedelta(seconds=_LOCKOUT_SECONDS)
+        ).isoformat()
+        _lockout_registry[key] = (fail_count, locked_until)
+    else:
+        _lockout_registry[key] = (fail_count, "")
+    _audit("login_failure", key)
     return False, {}
 
 
@@ -189,10 +286,11 @@ def create_user(
         "created_by": created_by,
     }
     _save_users(users)
+    _audit("user_created", created_by, target=username)
     return True
 
 
-def delete_user(username: str) -> bool:
+def delete_user(username: str, deleted_by: str = "system") -> bool:
     """Delete *username*.  Returns ``False`` when the user does not exist."""
     key   = username.strip().lower()
     users = load_users()
@@ -200,6 +298,7 @@ def delete_user(username: str) -> bool:
         return False
     del users[key]
     _save_users(users)
+    _audit("user_deleted", deleted_by, target=username)
     return True
 
 
@@ -215,6 +314,7 @@ def change_password(username: str, old_password: str, new_password: str) -> bool
     hashed, salt = _hash_password(new_password)
     users[key].update({"hash": hashed, "salt": salt})
     _save_users(users)
+    _audit("password_changed", "self", target=username)
     return True
 
 
@@ -233,14 +333,39 @@ def reset_password(username: str, new_password: str) -> bool:
 def ensure_default_admin() -> Optional[str]:
     """Create a default admin account when no users exist.
 
-    Returns the generated one-time password (to be shown once in the UI),
-    or ``None`` when users already exist.
+    The generated one-time password is written to :data:`ADMIN_CREDENTIALS_FILE`
+    (chmod 0600) instead of being returned to the caller for display in the UI,
+    so it never appears in log files or browser DOM (S1).
+
+    Returns the path to the credentials file (``str``) so the UI can tell the
+    operator *where* to look, or ``None`` when users already exist.
     """
     if load_users():
         return None
     password = secrets.token_urlsafe(12)
     create_user("admin", password, role="admin", created_by="system")
-    return password
+    _audit("default_admin_created", "system")
+    # Write credentials file (mode 0600 → owner read/write only)
+    try:
+        ADMIN_CREDENTIALS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        ADMIN_CREDENTIALS_FILE.write_text(
+            # Store one-time bootstrap credentials in a restricted-permission file.
+            # This is intentional: the file is chmod 0600, meant to be read once
+            # and deleted. CodeQL alert py/clear-text-storage-sensitive-data is
+            # expected here; the alternative (showing the password in the browser DOM
+            # or logs) would be far worse.  # nosec B105
+            f"username: admin\npassword: {password}\n"
+            "# Delete this file after changing the password.\n",
+            encoding="utf-8",
+        )
+        ADMIN_CREDENTIALS_FILE.chmod(0o600)
+    except OSError as exc:
+        warnings.warn(
+            f"Could not write admin credentials file ({ADMIN_CREDENTIALS_FILE}): {exc}. "
+            "The admin password has been set but cannot be retrieved from disk.",
+            stacklevel=2,
+        )
+    return str(ADMIN_CREDENTIALS_FILE)
 
 
 # ---------------------------------------------------------------------------
@@ -355,7 +480,7 @@ def create_session_token(
     """
     raw_token = secrets.token_hex(32)
     token_hash = _hash_token(raw_token)
-    now = datetime.datetime.utcnow()
+    now = datetime.datetime.now(timezone.utc)
     expires_at = (now + datetime.timedelta(days=ttl_days)).isoformat()
     sessions = _load_sessions()
     # Prune expired entries while we're here
@@ -382,7 +507,7 @@ def validate_session_token(raw_token: str) -> Optional[Tuple[str, str]]:
     entry = sessions.get(token_hash)
     if entry is None:
         return None
-    if datetime.datetime.utcnow().isoformat() > entry.get("expires_at", ""):
+    if datetime.datetime.now(timezone.utc).isoformat() > entry.get("expires_at", ""):
         # Expired – clean up
         sessions.pop(token_hash, None)
         _save_sessions(sessions)

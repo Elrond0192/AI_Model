@@ -17,6 +17,9 @@ import json
 import os
 import uuid
 import sys
+import contextlib
+import logging
+from datetime import timezone
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -46,6 +49,7 @@ from basketball_ai.auth.auth import (
     ALL_SECTIONS,
     SECTION_LABELS,
     DEFAULT_ROLES,
+    ADMIN_CREDENTIALS_FILE,
     create_session_token,
     validate_session_token,
     revoke_session_token,
@@ -104,9 +108,10 @@ if not st.session_state.get("authenticated"):
 
     if _default_pw:
         st.warning(
-            f"**Primo avvio**: account `admin` creato con password temporanea.\n\n"
-            f"Password: `{_default_pw}`\n\n"
-            "Cambiala subito dopo il primo accesso.",
+            f"**Primo avvio**: account `admin` creato.\n\n"
+            f"Le credenziali sono state scritte in: `{_default_pw}`\n\n"
+            "Leggi il file, accedi e cambia la password. "
+            "Poi elimina il file delle credenziali.",
             icon="⚠️",
         )
 
@@ -121,7 +126,11 @@ if not st.session_state.get("authenticated"):
             _uname  = _username.strip().lower()
             _role   = _user.get("role", "viewer")
             _token  = create_session_token(_uname, _role, _SESSION_TTL_DAYS)
-            _expiry = datetime.datetime.utcnow() + datetime.timedelta(days=_SESSION_TTL_DAYS)
+            _expiry = datetime.datetime.now(timezone.utc) + datetime.timedelta(days=_SESSION_TTL_DAYS)
+            # S6: cookie flags (Secure/HttpOnly/SameSite=Lax) should be enforced via
+            # a reverse proxy (nginx/caddy) or by upgrading to a cookie lib that supports them.
+            # extra-streamlit-components CookieManager does not expose these flags.
+            # Set STREAMLIT_SERVER_COOKIE_SECURE=true in production.
             _cookie_mgr.set(_SESSION_COOKIE_NAME, _token, expires_at=_expiry)
             st.session_state["authenticated"]   = True
             st.session_state["current_user"]    = _uname
@@ -129,7 +138,10 @@ if not st.session_state.get("authenticated"):
             st.session_state["_session_token"]  = _token
             st.rerun()
         else:
-            st.error("Credenziali non valide. Riprova.")
+            if _user.get("locked_until"):
+                st.error("Account temporaneamente bloccato per troppi tentativi. Riprova più tardi.")
+            else:
+                st.error("Credenziali non valide. Riprova.")
 
     st.stop()
 
@@ -142,6 +154,38 @@ def _can_access(section: str) -> bool:
     """Return True when the logged-in user's role is permitted to access *section*."""
     role = st.session_state.get("current_role", "viewer")
     return can_access(role, section)
+
+
+# ---------------------------------------------------------------------------
+# Error boundary – U10
+# ---------------------------------------------------------------------------
+
+_tab_logger = logging.getLogger("gui.tabs")
+
+
+@contextlib.contextmanager
+def _safe_tab(tab, tab_name: str):
+    """Context manager that enters a Streamlit tab and catches unhandled exceptions.
+
+    Usage::
+
+        with _safe_tab(tab_data, "Dati"):
+            # tab content here
+
+    If the body raises an unexpected exception the user sees a friendly error
+    message instead of a raw traceback, and the exception is logged.
+    """
+    with tab:
+        try:
+            yield
+        except Exception as _tab_exc:
+            # `except Exception` intentionally does NOT catch BaseException subclasses
+            # like KeyboardInterrupt, SystemExit, or GeneratorExit, which must propagate.
+            _tab_logger.exception("Unexpected error in tab '%s'", tab_name)
+            st.error(
+                f"⚠️ Errore inatteso nel tab **{tab_name}**: `{_tab_exc}`\n\n"
+                "Controlla i dati caricati o contatta l'amministratore."
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -169,24 +213,15 @@ def _save_to_env(key: str, value: str) -> None:
     _ENV_PATH.write_text("".join(lines), encoding="utf-8")
 
 def _safe_model_dir(user_input: str) -> Path:
-    """Resolve a user-supplied directory path, preventing '..' path traversal.
-
-    Unlike the previous implementation this function preserves absolute paths
-    (e.g. ``/home/user/models`` or ``C:\\Users\\user\\models``) so that the
-    user can specify any writable location on disk.  Only ``..`` components are
-    removed to neutralise traversal attempts.
-    """
-    raw = Path((user_input or "models_saved").strip())
-    # Walk the parts and drop any '..' that would escape the root
-    safe: list[str] = []
-    for part in raw.parts:
-        if part == "..":
-            # Pop last non-root component (never pop the drive/root anchor)
-            if safe and safe[-1] not in {"/", "\\", ""} and ":" not in safe[-1]:
-                safe.pop()
-        else:
-            safe.append(part)
-    return Path(*safe) if safe else Path("models_saved")
+    """Return a validated absolute path that stays within the project root (P7)."""
+    project_root = Path(__file__).parent.parent.resolve()
+    try:
+        resolved = Path((user_input or "models_saved").strip()).resolve()
+    except (TypeError, ValueError):
+        return project_root / "models_saved"
+    if not resolved.is_relative_to(project_root):
+        return project_root / "models_saved"
+    return resolved
 
 
 def _require_data():
@@ -424,10 +459,22 @@ tab_data, tab_train, tab_pred, tab_scen, tab_chat, tab_scout, tab_mapping, tab_a
 # TAB 1 – DATI
 # ===========================================================================
 
-with tab_data:
+with _safe_tab(tab_data, "Dati"):
     if not _can_access("data"):
         st.warning("⛔ Non hai i permessi per accedere a questa sezione.")
     else:
+        # U4: Empty state / onboarding for new users
+        if not st.session_state.get("model_loaded") and not st.session_state.get("data_loaded"):
+            st.info(
+                "👋 **Benvenuto in Basketball AI!**\n\n"
+                "Per iniziare, segui questi passaggi:\n\n"
+                "1. **📂 Dati** ← sei qui – carica i file CSV o configura la connessione Azure SQL\n"
+                "2. **🏋️ Training** – allena il modello sui dati caricati\n"
+                "3. **🎯 Predizioni** – ottieni predizioni per i giocatori\n\n"
+                "Se hai già dati pronti, carica i file CSV qui sotto.",
+                icon="ℹ️",
+            )
+
         st.header("📂 Sorgente dati")
 
         src_csv_tab, src_sql_tab = st.tabs(["📂 CSV (locale)", "🔌 Azure SQL Server"])
@@ -609,7 +656,7 @@ with tab_data:
 # TAB 2 – TRAINING
 # ===========================================================================
 
-with tab_train:
+with _safe_tab(tab_train, "Training"):
     if not _can_access("training"):
         st.warning("⛔ Non hai i permessi per accedere a questa sezione.")
     else:
@@ -1087,7 +1134,7 @@ Il modello usa **{n_features} feature** tra cui:
 # TAB 3 – PREDIZIONI
 # ===========================================================================
 
-with tab_pred:
+with _safe_tab(tab_pred, "Predizioni"):
     st.header("🎯 Predizioni")
     if not _can_access("predictions"):
         st.warning("⛔ Non hai i permessi per accedere a questa sezione.")
@@ -1216,6 +1263,7 @@ with tab_pred:
                         r2.metric("CI basso",         f"{result.confidence_low:.2f}")
                         r3.metric("CI alto",          f"{result.confidence_high:.2f}")
                         st.caption(f"📋 Competizione: **{result.competition}**")
+                        # U12: trajectory and style-fit charts available in gui.components.charts
 
                         with st.expander("ℹ️ Come interpretare il rating 0–10", expanded=False):
                             st.markdown(
@@ -1429,7 +1477,7 @@ with tab_pred:
 # TAB 4 – SCENARI
 # ===========================================================================
 
-with tab_scen:
+with _safe_tab(tab_scen, "Scenari"):
     st.header("🔀 Scenari")
     if not _can_access("scenarios"):
         st.warning("⛔ Non hai i permessi per accedere a questa sezione.")
@@ -1867,7 +1915,7 @@ with tab_scen:
 # TAB 5 – CHAT
 # ===========================================================================
 
-with tab_chat:
+with _safe_tab(tab_chat, "Chat"):
     st.header("💬 Assistente AI")
     if not _can_access("chat"):
         st.warning("⛔ Non hai i permessi per accedere a questa sezione.")
@@ -1942,7 +1990,7 @@ with tab_chat:
 # TAB 6 – SCOUTING AI
 # ===========================================================================
 
-with tab_scout:
+with _safe_tab(tab_scout, "Scouting AI"):
     st.header("🔬 Scouting AI — Intelligence Platform")
     if not _can_access("scouting"):
         st.warning("⛔ Non hai i permessi per accedere a questa sezione.")
@@ -2389,7 +2437,7 @@ with tab_scout:
                                 st.info("Nessuna statistica disponibile nel database per questo giocatore.")
 
 
-with tab_mapping:
+with _safe_tab(tab_mapping, "Mapping"):
     if not _can_access("mapping"):
         st.warning("⛔ Non hai i permessi per accedere a questa sezione.")
     else:
@@ -2720,7 +2768,7 @@ with tab_mapping:
 # TAB 7 – GESTIONE UTENTI (solo admin)
 # ===========================================================================
 
-with tab_admin:
+with _safe_tab(tab_admin, "Utenti"):
     st.header("👥 Gestione Utenti")
     _is_admin = st.session_state.get("current_role") == "admin"
 

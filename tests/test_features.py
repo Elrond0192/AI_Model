@@ -113,6 +113,26 @@ class TestPlayerFeatures:
         for pos in ["PG", "SG", "SF", "PF", "C", "PG/SG", "SG/SF", "SF/PF", "PF/C", "SG/PF"]:
             assert _peak_age(pos) >= 24
 
+    def test_durability_league_aware_european(self):
+        """European player (30-game league) should have higher durability than NBA calc."""
+        player = _make_player("C", 27)
+        # 25 games played in a 30-game league → 83% durability
+        stat = _make_stat("2023-24", 7.0, games_played=25, league_id=99)
+        feats_euro = compute_player_features_from_objects(
+            player, [stat], league_max_games={99: 30}
+        )
+        feats_nba = compute_player_features_from_objects(player, [stat])  # defaults to 82
+        assert feats_euro["durability_score"] > feats_nba["durability_score"]
+        assert feats_euro["durability_score"] == pytest.approx(25 / 30, abs=0.01)
+
+    def test_durability_missing_league_defaults_to_82(self):
+        """Unknown league_id should fall back to 82 (NBA default)."""
+        from basketball_ai.constants import LEAGUE_MAX_GAMES_DEFAULT
+        player = _make_player()
+        stat = _make_stat("2023-24", 7.0, games_played=50, league_id=9999)
+        feats = compute_player_features_from_objects(player, [stat])
+        assert feats["durability_score"] == pytest.approx(50 / LEAGUE_MAX_GAMES_DEFAULT, abs=0.01)
+
 
 # ---------------------------------------------------------------------------
 # Standalone helpers

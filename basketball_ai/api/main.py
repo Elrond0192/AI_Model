@@ -1,20 +1,51 @@
 """FastAPI application factory and startup lifecycle."""
 from __future__ import annotations
+import json as _json
 import logging
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI, Request, status
+from fastapi import Body, FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel as _BaseModel
 
 from basketball_ai.api.limiter import limiter, SLOWAPI_AVAILABLE
 
 logger = logging.getLogger(__name__)
 
 app_state: Dict[str, Any] = {}
+
+
+# ---------------------------------------------------------------------------
+# O1 – Structured JSON logging
+# ---------------------------------------------------------------------------
+
+class _JsonFormatter(logging.Formatter):
+    """Emit log records as single-line JSON for structured log aggregators."""
+    def format(self, record: logging.LogRecord) -> str:
+        d = {
+            "ts":      self.formatTime(record, "%Y-%m-%dT%H:%M:%S"),
+            "level":   record.levelname,
+            "logger":  record.name,
+            "msg":     record.getMessage(),
+        }
+        if record.exc_info:
+            d["exc"] = self.formatException(record.exc_info)
+        return _json.dumps(d, ensure_ascii=False)
+
+
+# ---------------------------------------------------------------------------
+# O2 – Prometheus metrics (optional)
+# ---------------------------------------------------------------------------
+
+try:
+    from prometheus_fastapi_instrumentator import Instrumentator as _Instrumentator
+    _PROMETHEUS_AVAILABLE = True
+except ImportError:
+    _PROMETHEUS_AVAILABLE = False
 
 
 def _parse_allowed_origins() -> List[str]:
@@ -101,11 +132,32 @@ def _empty_data() -> Dict[str, Any]:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logging.basicConfig(
-        level=os.environ.get("LOG_LEVEL", "INFO").upper(),
-        format="%(asctime)s %(levelname)s %(name)s %(message)s",
-    )
+    log_format = os.environ.get("LOG_FORMAT", "text").lower()
+    if log_format == "json":
+        handler = logging.StreamHandler()
+        handler.setFormatter(_JsonFormatter())
+        logging.root.handlers.clear()
+        logging.root.addHandler(handler)
+        logging.root.setLevel(os.environ.get("LOG_LEVEL", "INFO").upper())
+    else:
+        logging.basicConfig(
+            level=os.environ.get("LOG_LEVEL", "INFO").upper(),
+            format="%(asctime)s %(levelname)s %(name)s %(message)s",
+        )
+    # AP7: CORS fail-fast – refuse to start in production if ALLOWED_ORIGINS is unset.
+    _cors_origins = _parse_allowed_origins()
+    if not _cors_origins and os.environ.get("API_ENV", "development").lower() == "production":
+        raise RuntimeError(
+            "[API] ALLOWED_ORIGINS env var is required in production mode "
+            "(API_ENV=production). Set it to a comma-separated list of allowed "
+            "origins or set API_ENV=development to allow all origins during "
+            "local development."
+        )
     _load_app_state()
+    # Sync app.state for DI-based access (P5 – gradual migration)
+    app.state.data = app_state.get("data", {})
+    app.state.engine = app_state.get("engine")
+    app.state.chat_engine = app_state.get("chat_engine")
     yield
 
 
@@ -128,6 +180,20 @@ def create_app() -> FastAPI:
     # Leave both empty to disable (dev mode).
     # -----------------------------------------------------------------------
     _api_key = os.environ.get("API_KEY", "").strip()
+
+    @app.middleware("http")
+    async def security_headers_middleware(request: Request, call_next):
+        """Add OWASP-recommended security headers to every response (S8)."""
+        response = await call_next(request)
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault("X-Frame-Options", "DENY")
+        response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+        response.headers.setdefault("X-XSS-Protection", "0")  # modern browsers: use CSP instead
+        if request.url.scheme == "https":
+            response.headers.setdefault(
+                "Strict-Transport-Security", "max-age=31536000; includeSubDomains"
+            )
+        return response
 
     @app.middleware("http")
     async def api_key_middleware(request: Request, call_next):
@@ -162,6 +228,10 @@ def create_app() -> FastAPI:
         app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
         logger.info("[API] Rate limiting enabled")
 
+    if _PROMETHEUS_AVAILABLE:
+        _Instrumentator().instrument(app).expose(app, endpoint="/metrics")
+        logger.info("[O2] Prometheus metrics exposed at /metrics")
+
     from basketball_ai.api.routes.players     import router as players_router
     from basketball_ai.api.routes.teams       import router as teams_router
     from basketball_ai.api.routes.predictions import router as predictions_router
@@ -186,7 +256,98 @@ def create_app() -> FastAPI:
             "data_loaded": bool(app_state.get("data", {}).get("player_dict")),
         }
 
+    @app.get("/health/live")
+    def health_live():
+        """Kubernetes / Docker liveness probe – always 200 when the process is up."""
+        return {"status": "alive"}
+
+    @app.get("/health/ready")
+    def health_ready():
+        """Readiness probe – 200 when data and models are loaded, 503 otherwise."""
+        data_loaded  = bool(app_state.get("data", {}).get("player_dict"))
+        model_loaded = app_state.get("engine") is not None
+        if data_loaded and model_loaded:
+            return {"status": "ready", "data": True, "model": True}
+        from fastapi.responses import JSONResponse as _JSONResponse
+        return _JSONResponse(
+            status_code=503,
+            content={
+                "status":  "not_ready",
+                "data":    data_loaded,
+                "model":   model_loaded,
+                "detail":  "data or model not yet loaded",
+            },
+        )
+
+    @app.get("/predictions/{player_id}/explain")
+    def explain_prediction(
+        player_id: int,
+        team_id: int = 1,
+        season: Optional[str] = None,
+        request: Request = None,
+    ):
+        """Return top-5 SHAP feature contributions for this prediction."""
+        from basketball_ai.features.player_features import compute_player_features
+        engine = app_state.get("engine")
+        data = app_state.get("data", {})
+        if engine is None:
+            return JSONResponse(status_code=503, content={"detail": "Model not loaded"})
+        try:
+            shap_vals = engine.ensemble.perf_model.get_shap_values(
+                compute_player_features(player_id, data, season=season)
+            )
+            if not shap_vals:
+                return JSONResponse(status_code=503, content={"detail": "SHAP not available"})
+            top5 = sorted(shap_vals.items(), key=lambda x: abs(x[1]), reverse=True)[:5]
+            return {
+                "player_id":   player_id,
+                "top_factors": [{"feature": k, "shap_value": v} for k, v in top5],
+            }
+        except Exception as exc:
+            logger.error("[explain_prediction] player_id=%s: %s", player_id, exc, exc_info=True)
+            return JSONResponse(status_code=500, content={"detail": "Internal server error"})
+
     return app
 
 
+# ---------------------------------------------------------------------------
+# AP8 – Batch predictions
+# ---------------------------------------------------------------------------
+
+class BatchPredictionRequest(_BaseModel):
+    pairs: List[dict]  # list of {"player_id": int, "team_id": int}
+    season: Optional[str] = None
+    competition: str = "RS"
+
+
 app = create_app()
+
+
+@app.post("/predictions/batch", tags=["predictions"])
+def predict_batch(req: BatchPredictionRequest):
+    """Predict ratings for multiple (player_id, team_id) pairs in one call."""
+    engine = app_state.get("engine")
+    data = app_state.get("data", {})
+    if engine is None:
+        return JSONResponse(status_code=503, content={"detail": "Model not loaded"})
+    results = []
+    for pair in req.pairs[:50]:  # limit to 50 pairs
+        try:
+            player_id = int(pair.get("player_id", 0))
+            team_id = int(pair.get("team_id", 0))
+            result = engine.predict(player_id, team_id, data,
+                                    season=req.season,
+                                    competition=req.competition)
+            results.append({
+                "player_id": player_id,
+                "team_id": team_id,
+                "rating": result.rating,
+                "confidence_interval": list(result.confidence_interval),
+            })
+        except Exception as exc:
+            results.append({
+                "player_id": pair.get("player_id"),
+                "team_id": pair.get("team_id"),
+                "error": str(exc),
+            })
+    return {"count": len(results), "results": results}

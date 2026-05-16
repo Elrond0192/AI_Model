@@ -36,10 +36,12 @@ AZURE_SQL_TABLE_PLAYER_STATS, AZURE_SQL_TABLE_TEAM_PLAYER_RELATIONS
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 import re
 import time
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 from urllib.parse import quote_plus
 
@@ -58,7 +60,55 @@ from basketball_ai.data.loader import (
     _derive_playing_style,
     _compute_star_player_usage,
     _fill_current_team_league,
+    validate_dataframes,
 )
+
+
+# ---------------------------------------------------------------------------
+# D9 – SQL parquet caching with TTL
+# ---------------------------------------------------------------------------
+
+PARQUET_CACHE_DIR = Path(os.environ.get("SQL_CACHE_DIR", ".sql_cache"))
+PARQUET_CACHE_TTL = int(os.environ.get("SQL_CACHE_TTL_SECONDS", str(4 * 3600)))  # 4h default
+
+
+def _cache_key(conn_str: str) -> str:
+    return hashlib.md5(conn_str.encode()).hexdigest()[:12]
+
+
+def _save_to_parquet_cache(data: dict, key: str) -> None:
+    """Save loaded DataFrames to parquet files."""
+    cache_dir = PARQUET_CACHE_DIR / key
+    try:
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        for name, df in data.items():
+            if isinstance(df, pd.DataFrame) and not df.empty:
+                df.to_parquet(cache_dir / f"{name}.parquet", index=False)
+        (cache_dir / "timestamp").write_text(str(time.time()))
+        _logger.info("[D9] SQL data cached to %s", cache_dir)
+    except Exception as exc:
+        _logger.warning("[D9] Could not write parquet cache: %s", exc)
+
+
+def _load_from_parquet_cache(key: str) -> Optional[dict]:
+    """Load DataFrames from parquet cache if fresh."""
+    cache_dir = PARQUET_CACHE_DIR / key
+    ts_file = cache_dir / "timestamp"
+    if not ts_file.exists():
+        return None
+    try:
+        ts = float(ts_file.read_text())
+        if time.time() - ts > PARQUET_CACHE_TTL:
+            _logger.info("[D9] Parquet cache expired")
+            return None
+        data = {}
+        for f in cache_dir.glob("*.parquet"):
+            data[f.stem] = pd.read_parquet(f)
+        _logger.info("[D9] Loaded %d tables from parquet cache", len(data))
+        return data
+    except Exception as exc:
+        _logger.warning("[D9] Could not read parquet cache: %s", exc)
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -452,6 +502,14 @@ def _discover_existing_table_tags(
     """
     if not league_seasons:
         return set()
+    # Validate that schema is a safe SQL identifier (alphanumerics + underscore only).
+    # All callers pass hardcoded string literals, but an explicit check prevents
+    # accidental injection if the call-site is ever refactored.
+    if not re.match(r'^[A-Za-z_][A-Za-z0-9_]*$', schema):
+        raise ValueError(
+            f"_discover_existing_table_tags: invalid schema name {schema!r}. "
+            "Schema names must be alphanumeric identifiers."
+        )
     sql = (
         "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES "
         f"WHERE TABLE_SCHEMA = '{schema}'"
@@ -703,6 +761,14 @@ def get_table_mapping(engine=None) -> Dict[str, str]:
 
 def load_all_data_from_sql(engine=None, table_mapping: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
     """Load all basketball data from Azure SQL Server."""
+    conn_str = os.environ.get("AZURE_SQL_CONNECTION_STRING", "default")
+    cache_key = _cache_key(conn_str)
+    cached = _load_from_parquet_cache(cache_key)
+    if cached is not None:
+        for w in validate_dataframes(cached):
+            _logger.warning(w)
+        return cached
+
     if engine is None:
         engine = _get_engine()
 
@@ -785,7 +851,7 @@ def load_all_data_from_sql(engine=None, table_mapping: Optional[Dict[str, str]] 
         team_id = _normalize_identifier(t["id"])
         league_teams.setdefault(league_id, []).append(team_id)
 
-    return {
+    data = {
         "leagues": leagues_df,
         "teams": teams_df,
         "players": players_df,
@@ -796,6 +862,12 @@ def load_all_data_from_sql(engine=None, table_mapping: Optional[Dict[str, str]] 
         "player_dict": player_dict,
         "league_teams": league_teams,
     }
+
+    for w in validate_dataframes(data):
+        _logger.warning(w)
+
+    _save_to_parquet_cache(data, cache_key)
+    return data
 
 
 # Alias so callers can do: from basketball_ai.data.sql_loader import load_all_data
