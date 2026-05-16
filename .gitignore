@@ -9,3 +9,5 @@ audit.log
 .admin_credentials
 .sql_cache/
 *.lock
+# P4: requirements.lock is intentionally committed for reproducible builds
+!requirements.lock
