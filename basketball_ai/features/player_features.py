@@ -14,6 +14,7 @@ import pandas as pd
 
 from basketball_ai.data.models import Player, PlayerStats
 from basketball_ai.utils.helpers import normalize_id as _normalize_id
+from basketball_ai.data.loader import _to_int as _lid_to_int
 from basketball_ai.constants import (
     POSITIONAL_PEAK_AGES,
     LEAGUE_MAX_GAMES_BY_NAME,
@@ -355,7 +356,6 @@ def compute_player_features(
     if leagues_df is not None and not leagues_df.empty:
         if "max_games" in leagues_df.columns:
             try:
-                from basketball_ai.data.loader import _to_int as _lid_to_int
                 league_max_games = {
                     int(_lid_to_int(r["id"])): int(r["max_games"])
                     for _, r in leagues_df.iterrows()
@@ -369,7 +369,6 @@ def compute_player_features(
             id_col   = "id"   if "id"   in leagues_df.columns else None
             if name_col and id_col:
                 try:
-                    from basketball_ai.data.loader import _to_int as _lid_to_int
                     league_max_games = {
                         int(_lid_to_int(r[id_col])): LEAGUE_MAX_GAMES_BY_NAME.get(
                             str(r[name_col]).strip(), LEAGUE_MAX_GAMES_DEFAULT

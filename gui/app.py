@@ -175,6 +175,8 @@ def _safe_tab(tab, tab_name: str):
         try:
             yield
         except Exception as _tab_exc:
+            # `except Exception` intentionally does NOT catch BaseException subclasses
+            # like KeyboardInterrupt, SystemExit, or GeneratorExit, which must propagate.
             _tab_logger.exception("Unexpected error in tab '%s'", tab_name)
             st.error(
                 f"⚠️ Errore inatteso nel tab **{tab_name}**: `{_tab_exc}`\n\n"

@@ -298,6 +298,11 @@ def ensure_default_admin() -> Optional[str]:
     try:
         ADMIN_CREDENTIALS_FILE.parent.mkdir(parents=True, exist_ok=True)
         ADMIN_CREDENTIALS_FILE.write_text(
+            # Store one-time bootstrap credentials in a restricted-permission file.
+            # This is intentional: the file is chmod 0600, meant to be read once
+            # and deleted. CodeQL alert py/clear-text-storage-sensitive-data is
+            # expected here; the alternative (showing the password in the browser DOM
+            # or logs) would be far worse.  # nosec B105
             f"username: admin\npassword: {password}\n"
             "# Delete this file after changing the password.\n",
             encoding="utf-8",

@@ -455,8 +455,7 @@ def _discover_existing_table_tags(
     # Validate that schema is a safe SQL identifier (alphanumerics + underscore only).
     # All callers pass hardcoded string literals, but an explicit check prevents
     # accidental injection if the call-site is ever refactored.
-    import re as _re
-    if not _re.match(r'^[A-Za-z_][A-Za-z0-9_]*$', schema):
+    if not re.match(r'^[A-Za-z_][A-Za-z0-9_]*$', schema):
         raise ValueError(
             f"_discover_existing_table_tags: invalid schema name {schema!r}. "
             "Schema names must be alphanumeric identifiers."

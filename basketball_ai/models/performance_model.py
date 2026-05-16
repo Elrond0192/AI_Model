@@ -29,6 +29,18 @@ from basketball_ai.constants import (
 
 logger = logging.getLogger(__name__)
 
+
+def _safe_league_id(lid: Any) -> int:
+    """Convert a raw league_id value to ``int``, returning 0 on failure."""
+    if lid is None:
+        return 0
+    if isinstance(lid, float) and np.isnan(lid):
+        return 0
+    try:
+        return int(lid)
+    except (TypeError, ValueError):
+        return 0
+
 try:
     import shap as _shap
     _SHAP_AVAILABLE = True
@@ -397,7 +409,7 @@ class PerformanceModel:
             if league_max_games and "league_id" in player_stats_history.columns:
                 dur_list = [
                     gp / max(1, league_max_games.get(
-                        int(lid) if not (isinstance(lid, float) and np.isnan(lid)) else 0,
+                        _safe_league_id(lid),
                         LEAGUE_MAX_GAMES_DEFAULT,
                     ))
                     for gp, lid in zip(
@@ -412,7 +424,7 @@ class PerformanceModel:
             gp_cur = float(stat_row.get("games_played", 40))
             lid_cur = stat_row.get("league_id", 0)
             max_g = (league_max_games or {}).get(
-                int(lid_cur) if lid_cur and not (isinstance(lid_cur, float) and np.isnan(lid_cur)) else 0,
+                _safe_league_id(lid_cur),
                 LEAGUE_MAX_GAMES_DEFAULT,
             )
             durability = float(np.clip(gp_cur / max(1, max_g), 0.0, 1.0))
