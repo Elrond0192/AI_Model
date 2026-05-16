@@ -1,7 +1,9 @@
 """Basketball synthetic data generator."""
 import logging
-import os, random, numpy as np, pandas as pd
-from typing import List
+import os
+import random
+import numpy as np
+import pandas as pd
 
 logger = logging.getLogger(__name__)
 
@@ -47,8 +49,10 @@ LAST_NAMES = ["Smith","Johnson","Williams","Brown","Jones","Davis","Miller","Wil
 
 def _rng(mu, sigma, lo=None, hi=None):
     v = np.random.normal(mu, sigma)
-    if lo is not None: v = max(lo, v)
-    if hi is not None: v = min(hi, v)
+    if lo is not None:
+        v = max(lo, v)
+    if hi is not None:
+        v = min(hi, v)
     return float(v)
 
 def _primary_pos(pos: str) -> str:
@@ -227,7 +231,7 @@ def generate_player_stats(players_df, teams_df):
                 "ortg_off": round(_rng(109, 5, 88, 128), 1),
                 "ortg_diff": round(_rng(3, 3, -15, 15), 2),
                 # Starter status (SF field): starters get 50-82 games started
-                "games_started": int(_rng(40, 20, 0, int(games))),
+                "games_started": int(_rng(40, 20, 0, lg_max)),
                 "starter_pct":   round(min(1.0, max(0.0, _rng(0.55, 0.35, 0.0, 1.0))), 3),
                 # Clutch
                 "clutch_games":     int(_rng(8, 4, 0, 25)),
@@ -241,7 +245,8 @@ def generate_player_stats(players_df, teams_df):
             })
             # ~40% of players also have a playoff (PO) row for this season
             if random.random() < _PO_GENERATION_PROBABILITY:
-                _noise = lambda: float(np.random.normal(0, 0.04))
+                def _noise():
+                    return float(np.random.normal(0, 0.04))
                 po_mult = 1.0 + po_tendency + _noise()
                 po_pts  = max(0.0, pts  * po_mult)
                 po_ast  = max(0.0, ast  * (1.0 + po_tendency * 0.7 + _noise()))
@@ -331,7 +336,6 @@ def generate_player_stats(players_df, teams_df):
 
 def generate_team_player_relations(players_df, teams_df, player_stats_df):
     rows = []
-    seasons = ["2023-24"]
     team_ids = teams_df["id"].tolist()
     for tid in team_ids:
         n = random.randint(12,15)

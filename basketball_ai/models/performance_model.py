@@ -7,7 +7,6 @@ OWS/DWS, FIC, interaction features, and career trajectory signals.
 """
 from __future__ import annotations
 
-import datetime
 import json as _json
 from datetime import datetime as _dt, timezone
 import hashlib
@@ -21,13 +20,12 @@ import pandas as pd
 from sklearn.dummy import DummyRegressor
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.linear_model import LinearRegression
-from sklearn.model_selection import train_test_split, KFold, TimeSeriesSplit
+from sklearn.model_selection import TimeSeriesSplit
 from sklearn.preprocessing import StandardScaler
 from xgboost import XGBRegressor
 
 from basketball_ai.data.loader import _to_int
 from basketball_ai.constants import (
-    POSITIONAL_PEAK_AGES,
     LEAGUE_MAX_GAMES_BY_NAME,
     LEAGUE_MAX_GAMES_DEFAULT,
     _primary_pos,

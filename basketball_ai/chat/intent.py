@@ -34,10 +34,9 @@ Never add regular expressions.
 from __future__ import annotations
 
 import functools
-import re as _re  # used ONLY for the normalisation helper, not for intent matching
 import string
 from enum import Enum
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Tuple
 
 import numpy as np
 

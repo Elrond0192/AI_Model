@@ -20,7 +20,7 @@ from typing import Any, Dict, List, Optional
 
 import numpy as np
 
-from basketball_ai.models.age_curve import age_performance_factor, PEAK_AGES
+from basketball_ai.models.age_curve import age_performance_factor
 
 
 from basketball_ai.utils.helpers import normalize_id as _normalize_id
@@ -29,7 +29,6 @@ from basketball_ai.models.performance_model import (
     PerformanceModel, COMPETITION_ENCODING, compute_po_features,
 )
 from basketball_ai.features.player_features import compute_player_features
-from basketball_ai.features.team_features import compute_team_features
 from basketball_ai.features.context_features import compute_context_features
 
 logger = logging.getLogger(__name__)
@@ -357,7 +356,6 @@ class EnsembleModel:
         # No hardcoded tier map: the factor is proportional to the league's
         # competitiveness_score relative to the best league in the loaded dataset.
         team_row   = data["team_dict"].get(_normalize_id(team_id), {})
-        tier       = int(team_row.get("league_tier", 1))
         league_id  = str(team_row.get("league_id", ""))
         # Use pre-calibrated per-league factor when available
         lf         = self._league_factors.get(league_id, None)
