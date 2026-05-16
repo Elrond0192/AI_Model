@@ -44,7 +44,7 @@ def get_team(team_id: int, request: Request, response: Response):
     if team is None:
         raise HTTPException(status_code=404, detail=f"Team {team_id} not found")
     # AP5 – ETag for deterministic GET
-    etag = '"' + hashlib.md5(json.dumps(team, sort_keys=True, default=str).encode()).hexdigest() + '"'
+    etag = '"' + hashlib.sha256(json.dumps(team, sort_keys=True, default=str).encode()).hexdigest() + '"'
     if request.headers.get("If-None-Match") == etag:
         return Response(status_code=304)
     response.headers["ETag"] = etag

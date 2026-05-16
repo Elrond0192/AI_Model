@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -28,10 +29,11 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/scenarios", tags=["scenarios"])
 
-# AP9 – Idempotency cache: stores (status_code, response_body) keyed by
-# Idempotency-Key header.  In-process only; safe for single-worker deployments.
+# AP9 – Idempotency cache: stores response keyed by Idempotency-Key header.
+# In-process only; safe for single-worker deployments.
 _IDEMPOTENCY_CACHE: Dict[str, Any] = {}
-_IDEMPOTENCY_CACHE_MAX = 1000   # evict oldest entries after this limit
+_IDEMPOTENCY_CACHE_MAX = 1000   # evict oldest entry when this limit is reached
+_IDEMPOTENCY_LOCK = threading.Lock()
 
 
 def _idempotency_key(request: Request) -> Optional[str]:
@@ -41,15 +43,17 @@ def _idempotency_key(request: Request) -> Optional[str]:
 
 def _check_idempotency(key: str) -> Optional[Any]:
     """Return cached result for *key*, or None if not yet seen."""
-    return _IDEMPOTENCY_CACHE.get(key)
+    with _IDEMPOTENCY_LOCK:
+        return _IDEMPOTENCY_CACHE.get(key)
 
 
 def _store_idempotency(key: str, result: Any) -> None:
     """Cache *result* for *key*, evicting the oldest entry if the cache is full."""
-    if len(_IDEMPOTENCY_CACHE) >= _IDEMPOTENCY_CACHE_MAX:
-        oldest = next(iter(_IDEMPOTENCY_CACHE))
-        del _IDEMPOTENCY_CACHE[oldest]
-    _IDEMPOTENCY_CACHE[key] = result
+    with _IDEMPOTENCY_LOCK:
+        if len(_IDEMPOTENCY_CACHE) >= _IDEMPOTENCY_CACHE_MAX:
+            oldest = next(iter(_IDEMPOTENCY_CACHE))
+            del _IDEMPOTENCY_CACHE[oldest]
+        _IDEMPOTENCY_CACHE[key] = result
 
 
 def _get_engine():

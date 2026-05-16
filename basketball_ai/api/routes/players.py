@@ -60,7 +60,7 @@ def get_player(player_id: int, request: Request, response: Response):
     if player is None:
         raise HTTPException(status_code=404, detail=f"Player {player_id} not found")
     # AP5 – ETag for deterministic GET
-    etag = '"' + hashlib.md5(json.dumps(player, sort_keys=True, default=str).encode()).hexdigest() + '"'
+    etag = '"' + hashlib.sha256(json.dumps(player, sort_keys=True, default=str).encode()).hexdigest() + '"'
     if request.headers.get("If-None-Match") == etag:
         return Response(status_code=304)
     response.headers["ETag"] = etag

@@ -486,12 +486,15 @@ def create_session_token(
     now = datetime.datetime.now(timezone.utc)
     expires_at = (now + datetime.timedelta(days=ttl_days)).isoformat()
     sessions = _load_sessions()
-    # Prune expired entries while we're here
+    # Prune expired entries and invalidate previous sessions for this user in one pass.
+    # S6 – token rotation: existing sessions for the same user are discarded so that
+    # only the newly issued token is valid (prevents session fixation).
     now_iso = now.isoformat()
-    sessions = {h: e for h, e in sessions.items() if e.get("expires_at", "") > now_iso}
-    # S6 – invalidate any previous sessions for the same user (token rotation)
     key = username.strip().lower()
-    sessions = {h: e for h, e in sessions.items() if e.get("username") != key}
+    sessions = {
+        h: e for h, e in sessions.items()
+        if e.get("expires_at", "") > now_iso and e.get("username") != key
+    }
     sessions[token_hash] = {
         "username":   key,
         "role":       role,
