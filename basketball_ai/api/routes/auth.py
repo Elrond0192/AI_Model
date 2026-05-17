@@ -151,7 +151,7 @@ def get_token(req: TokenRequest):
                 detail="Incorrect username or password",
             )
         # Carry tenant_id and role from the user record when available.
-        tenant_id = user_dict.get("tenant_id", _JWT_TENANT_ID) or _JWT_TENANT_ID
+        tenant_id = user_dict.get("tenant_id") or _JWT_TENANT_ID
         role = user_dict.get("role", "")
 
     access_delta   = timedelta(minutes=_ACCESS_EXPIRE_MIN)

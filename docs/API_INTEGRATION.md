@@ -138,7 +138,7 @@ log entries (when `LOG_FORMAT=json`).
 | `GET` | `/api/v1/predictions/{player_id}/trajectory` | Age trajectory |
 | `GET` | `/api/v1/predictions/{player_id}/peak` | Peak prediction |
 | `POST` | `/api/v1/predictions/batch` | Batch ratings for up to 50 (player, team) pairs |
-| `GET` | `/predictions/{player_id}/explain` | Top-5 SHAP feature contributions |
+| `GET` | `/api/v1/predictions/{player_id}/explain` | Top-5 SHAP feature contributions |
 
 ### Scenarios
 

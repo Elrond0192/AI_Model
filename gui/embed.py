@@ -167,6 +167,7 @@ if prompt:
     if _API_TOKEN:
         headers["Authorization"] = f"Bearer {_API_TOKEN}"
 
+    suggestions: list = []
     try:
         resp = requests.post(
             f"{_API_URL}/api/v1/chat",
@@ -180,22 +181,22 @@ if prompt:
         resp.raise_for_status()
         data = resp.json()
         reply = data.get("reply", "")
+        suggestions = data.get("suggestions", [])
         # Update session_id from server so context is preserved across turns.
         st.session_state.embed_session_id = data.get(
             "session_id", st.session_state.embed_session_id
         )
     except requests.exceptions.ConnectionError:
-        reply = "⚠️ Cannot reach the AI server. Please check that the API is running."
+        reply = "⚠️ Cannot reach the AI server. Please try again later."
     except requests.exceptions.Timeout:
         reply = "⚠️ The AI server took too long to respond. Please try again."
-    except Exception as exc:  # noqa: BLE001
-        reply = f"⚠️ Unexpected error: {exc}"
+    except Exception:  # noqa: BLE001
+        reply = "⚠️ An unexpected error occurred. Please try again later."
 
     st.session_state.embed_messages.append({"role": "assistant", "content": reply})
     st.markdown(f'<div class="msg-ai">{reply}</div>', unsafe_allow_html=True)
 
     # Render suggestion chips if present.
-    suggestions = data.get("suggestions", []) if "data" in dir() else []
     if suggestions:
         st.markdown("**Suggestions:**")
         cols = st.columns(min(len(suggestions), 3))
