@@ -98,7 +98,7 @@ def compute_player_features_from_objects(
     )
 
     peak_age = _peak_age(player.position)
-    age_vs_peak_age = player.age - peak_age
+    age_vs_peak_age = (player.age - peak_age) if player.age is not None else 0
 
     # --- New DB-schema advanced metrics ------------------------------------
     avg_spm          = float(np.mean([s.spm          for s in stats_history]))
@@ -273,7 +273,7 @@ def _empty_features(player: Player) -> Dict[str, Any]:
         "stl_per_36": 1.0, "blk_per_36": 0.5,
         "avg_per": 12.0, "avg_ts_pct": 0.52, "avg_usg_pct": 18.0, "avg_bpm": -1.0,
         "peak_rating": 5.0, "career_trajectory": 0.0,
-        "age_vs_peak_age": player.age - peak_age, "positional_peak_age": peak_age,
+        "age_vs_peak_age": (player.age - peak_age) if player.age is not None else 0, "positional_peak_age": peak_age,
         "scoring_profile": "efficient_scorer", "playmaking_score": 0.1,
         "defensive_score": 1.0, "versatility_score": 0.5,
         # New advanced metrics – neutral defaults

@@ -45,7 +45,7 @@ class Team:
 class Player:
     id: int
     name: str
-    age: int
+    age: Optional[int]
     position: str
     nationality: str
     height_cm: int

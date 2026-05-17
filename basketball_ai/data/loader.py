@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 REQUIRED_COLUMNS = {
     "leagues": ["id", "name"],
     "teams": ["id", "name", "league_id"],
-    "players": ["id", "name", "position", "age"],
+    "players": ["id", "name", "position"],
     "player_stats": ["id", "player_id", "season", "games_played", "rating"],
     "team_player_relations": ["player_id", "team_id"],
 }

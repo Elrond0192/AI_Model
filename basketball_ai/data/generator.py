@@ -59,17 +59,6 @@ def _primary_pos(pos: str) -> str:
     """Return the primary (first) position for a potentially mixed role."""
     return pos.split("/")[0]
 
-def age_factor(age, pos):
-    peaks = {"PG":26,"SG":25,"SF":26,"PF":27,"C":28,
-             "PG/SG":25,"SG/SF":25,"SF/PF":26,"PF/C":27,"SG/PF":26}
-    peak = peaks.get(pos, 26)
-    diff = age - peak
-    if diff <= 0:
-        return max(0.3, 1.0 - abs(diff)*0.04)
-    else:
-        return max(0.3, 1.0 - diff*0.035)
-
-
 # A2 – WAR-based target, independent of the PER/BPM/WS features used for training.
 # We use the player's NEXT season as the target label (forward-looking prediction),
 # which eliminates the closed-form circularity of the old compute_rating formula.
@@ -140,11 +129,10 @@ def generate_players(n=5000):
     rows = []
     for pid in range(1,n+1):
         pos = np.random.choice(POSITIONS,p=POS_WEIGHTS)
-        age = int(_rng(26,5,18,40))
         rows.append({
             "id":pid,
             "name":f"{random.choice(FIRST_NAMES)} {random.choice(LAST_NAMES)}",
-            "age":age,"position":pos,
+            "position":pos,
             "nationality":random.choice(NATIONALITIES),
             "height_cm":int(_rng(195,8,175,225)),
             "weight_kg":int(_rng(95,12,70,140)),
