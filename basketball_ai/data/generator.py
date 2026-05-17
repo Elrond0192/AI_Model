@@ -195,7 +195,6 @@ def generate_player_stats(players_df, teams_df):
         for s in player_seasons:
             tid = random.choice(team_ids)
             lid = team_league[tid]
-            age = pl["age"]
             pts = _rng(*p["pts"],0,50)
             ast = _rng(*p["ast"],0,15)
             reb = _rng(*p["reb"],0,20)
