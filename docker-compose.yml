@@ -1,0 +1,112 @@
+# Basketball Performance AI – self-hosted deployment
+#
+# Usage
+# -----
+#   1. Copy .env.example to .env and fill in JWT_SECRET, JWT_TENANT_ID, etc.
+#   2. Generate synthetic data / train the model on your local machine:
+#        python main.py --mode generate-data
+#        python main.py --mode train
+#   3. Start all services:
+#        docker compose up -d
+#   4. Open http://localhost:8000/docs to explore the API.
+#      Open http://localhost:8501 for the Streamlit admin panel.
+#      Open http://localhost:8502 for the brandable embed widget.
+#
+# Volumes
+# -------
+# - ./data        → /app/data        (CSV datasets; mount read-only in production)
+# - ./models_saved → /app/models_saved (trained model artefacts; read-only in prod)
+# - ./users.json  → /app/users.json  (user accounts managed by admin panel)
+# - ./roles.json  → /app/roles.json  (RBAC role definitions)
+
+version: "3.9"
+
+services:
+  # ── FastAPI REST API ────────────────────────────────────────────────────────
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: basketball-ai:latest
+    container_name: basketball_ai_api
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      DATA_DIR: /app/data/sample
+      MODEL_DIR: /app/models_saved
+      DATA_SOURCE: file
+      LOG_LEVEL: INFO
+      LOG_FORMAT: json
+      API_ENV: production
+    volumes:
+      - ./data:/app/data:ro
+      - ./models_saved:/app/models_saved:ro
+      - ./users.json:/app/users.json:rw
+      - ./roles.json:/app/roles.json:rw
+      - ./audit.log:/app/audit.log:rw
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+
+  # ── Streamlit admin panel (internal use only) ───────────────────────────────
+  admin:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: basketball-ai:latest
+    container_name: basketball_ai_admin
+    restart: unless-stopped
+    ports:
+      - "8501:8501"
+    env_file:
+      - .env
+    environment:
+      DATA_DIR: /app/data/sample
+      MODEL_DIR: /app/models_saved
+      DATA_SOURCE: file
+    volumes:
+      - ./data:/app/data:ro
+      - ./models_saved:/app/models_saved:ro
+      - ./users.json:/app/users.json:rw
+      - ./roles.json:/app/roles.json:rw
+      - ./audit.log:/app/audit.log:rw
+    command: ["streamlit", "run", "gui/app.py",
+              "--server.port=8501",
+              "--server.address=0.0.0.0",
+              "--server.headless=true"]
+    # Bind to localhost only – expose via reverse-proxy with TLS in production.
+    # Remove the ports mapping and proxy via nginx/caddy to add TLS termination.
+
+  # ── Brandable embed widget (customer-facing) ────────────────────────────────
+  embed:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: basketball-ai:latest
+    container_name: basketball_ai_embed
+    restart: unless-stopped
+    ports:
+      - "8502:8502"
+    env_file:
+      - .env
+    environment:
+      # Override any of these per customer deployment.
+      BRAND_TITLE: "${BRAND_TITLE:-Basketball Performance AI}"
+      BRAND_PRIMARY_COLOR: "${BRAND_PRIMARY_COLOR:-#1565C0}"
+      BRAND_LOGO_URL: "${BRAND_LOGO_URL:-}"
+      BRAND_API_URL: "${BRAND_API_URL:-http://api:8000}"
+      BRAND_FOOTER_TEXT: "${BRAND_FOOTER_TEXT:-}"
+    depends_on:
+      api:
+        condition: service_healthy
+    command: ["streamlit", "run", "gui/embed.py",
+              "--server.port=8502",
+              "--server.address=0.0.0.0",
+              "--server.headless=true"]

@@ -272,8 +272,16 @@ def create_user(
     password: str,
     role: str = "viewer",
     created_by: str = "system",
+    tenant_id: str = "default",
 ) -> bool:
-    """Create a new user.  Returns ``False`` when the username already exists."""
+    """Create a new user.  Returns ``False`` when the username already exists.
+
+    ``tenant_id`` is an opaque string that identifies the customer / organisation
+    this user belongs to.  It is embedded in JWT tokens so that downstream
+    services can scope data access without additional lookups.  Use the
+    ``BASKETBALL_AI_DEFAULT_TENANT`` environment variable (default ``"default"``)
+    to set the implicit tenant for all new users.
+    """
     key   = username.strip().lower()
     users = load_users()
     if key in users:
@@ -283,10 +291,11 @@ def create_user(
         "hash":       hashed,
         "salt":       salt,
         "role":       role,
+        "tenant_id":  tenant_id,
         "created_by": created_by,
     }
     _save_users(users)
-    _audit("user_created", created_by, target=username)
+    _audit("user_created", created_by, target=username, details=f"tenant={tenant_id}")
     return True
 
 

@@ -229,12 +229,16 @@ def create_app() -> FastAPI:
             token = auth_header[7:]
             try:
                 import jwt as _jwt
-                _jwt.decode(
+                payload = _jwt.decode(
                     token,
                     _jwt_secret,
                     algorithms=["HS256"],
                     options={"verify_exp": True},
                 )
+                # Inject tenant context so downstream routes can scope queries.
+                request.state.tenant_id = payload.get("tenant_id", "default")
+                request.state.current_user = payload.get("sub", "")
+                request.state.current_role = payload.get("role", "")
             except Exception:
                 return JSONResponse(
                     status_code=status.HTTP_401_UNAUTHORIZED,
