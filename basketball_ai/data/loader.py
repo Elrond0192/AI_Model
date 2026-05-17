@@ -45,7 +45,7 @@ def validate_dataframes(data: dict) -> list:
 
 
 def _to_int(value) -> int:
-    """Convert value to int, handling decimal numbers, floats, and hex strings (e.g. '0000009B')."""
+    """Convert value to int. Returns a hash of the string for non-numeric codes like 'GRC1'."""
     if isinstance(value, str):
         v = value.strip()
         if v.startswith(("0x", "0X")):
@@ -53,7 +53,10 @@ def _to_int(value) -> int:
         try:
             return int(v, 10)
         except ValueError:
-            return int(v, 16)  # fallback: try hex (e.g. '0000009B')
+            if all(c in "0123456789abcdefABCDEF" for c in v):
+                return int(v, 16)
+            # Non-numeric code (e.g. 'GRC1'): use stable hash as int ID
+            return abs(hash(v)) % (10 ** 9)
     if isinstance(value, float):
         return int(value)
     return int(value)

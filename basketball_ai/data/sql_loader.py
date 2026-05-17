@@ -91,7 +91,7 @@ def _save_to_parquet_cache(data: dict, key: str) -> None:
 
 
 def _load_from_parquet_cache(key: str) -> Optional[dict]:
-    """Load DataFrames from parquet cache if fresh."""
+    """Load DataFrames from parquet cache if fresh, then rebuild lookup dicts."""
     cache_dir = PARQUET_CACHE_DIR / key
     ts_file = cache_dir / "timestamp"
     if not ts_file.exists():
@@ -105,6 +105,31 @@ def _load_from_parquet_cache(key: str) -> Optional[dict]:
         for f in cache_dir.glob("*.parquet"):
             data[f.stem] = pd.read_parquet(f)
         _logger.info("[D9] Loaded %d tables from parquet cache", len(data))
+
+        # ← AGGIUNTO: ricostruisci i dizionari di lookup dopo il caricamento
+        leagues_df = data.get("leagues", pd.DataFrame())
+        teams_df   = data.get("teams",   pd.DataFrame())
+        players_df = data.get("players", pd.DataFrame())
+
+        data["league_dict"] = {
+            _normalize_identifier(r["id"]): r.to_dict()
+            for _, r in leagues_df.iterrows()
+        } if not leagues_df.empty else {}
+        data["team_dict"] = {
+            _normalize_identifier(r["id"]): r.to_dict()
+            for _, r in teams_df.iterrows()
+        } if not teams_df.empty else {}
+        data["player_dict"] = {
+            _normalize_identifier(r["id"]): r.to_dict()
+            for _, r in players_df.iterrows()
+        } if not players_df.empty else {}
+        league_teams: dict = {}
+        for _, t in teams_df.iterrows():
+            league_teams.setdefault(
+                _normalize_identifier(t["league_id"]), []
+            ).append(_normalize_identifier(t["id"]))
+        data["league_teams"] = league_teams
+
         return data
     except Exception as exc:
         _logger.warning("[D9] Could not read parquet cache: %s", exc)
