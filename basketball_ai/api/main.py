@@ -3,6 +3,8 @@ from __future__ import annotations
 import json as _json
 import logging
 import os
+import time as _time
+import uuid as _uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -201,6 +203,42 @@ def create_app() -> FastAPI:
         return response
 
     @app.middleware("http")
+    async def request_id_audit_middleware(request: Request, call_next):
+        """Inject X-Request-ID and write to SQLite audit log (AP5/O4)."""
+        req_id = request.headers.get("X-Request-ID") or str(_uuid.uuid4())
+        request.state.request_id = req_id
+        t0 = _time.monotonic()
+        response = await call_next(request)
+        latency_ms = (_time.monotonic() - t0) * 1000
+        response.headers["X-Request-ID"] = req_id
+        # Record metrics
+        try:
+            from basketball_ai.api.metrics import record_request
+            record_request(
+                path=request.url.path,
+                method=request.method,
+                status=response.status_code,
+                latency_ms=latency_ms,
+            )
+        except Exception:
+            pass
+        # Write audit record (non-blocking best-effort)
+        try:
+            from basketball_ai.api.audit import AuditDB
+            AuditDB().log(
+                request_id=req_id,
+                user=getattr(request.state, "current_user", ""),
+                tenant=getattr(request.state, "current_tenant", ""),
+                method=request.method,
+                path=request.url.path,
+                status=response.status_code,
+                latency_ms=latency_ms,
+            )
+        except Exception:
+            pass
+        return response
+
+    @app.middleware("http")
     async def auth_middleware(request: Request, call_next):
         open_paths = {
             "/health", "/health/live", "/health/ready",
@@ -264,6 +302,40 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    # RFC 7807 problem+json error responses
+    from fastapi import HTTPException as _HTTPException
+    from fastapi.exceptions import RequestValidationError as _RVError
+    from fastapi.responses import JSONResponse as _JSONResponse
+
+    @app.exception_handler(_HTTPException)
+    async def http_exception_handler(request: Request, exc: _HTTPException):
+        return _JSONResponse(
+            status_code=exc.status_code,
+            media_type="application/problem+json",
+            content={
+                "type":     f"https://httpstatuses.com/{exc.status_code}",
+                "title":    exc.detail if isinstance(exc.detail, str) else "Error",
+                "status":   exc.status_code,
+                "detail":   exc.detail,
+                "instance": str(request.url),
+            },
+        )
+
+    @app.exception_handler(_RVError)
+    async def validation_exception_handler(request: Request, exc: _RVError):
+        return _JSONResponse(
+            status_code=422,
+            media_type="application/problem+json",
+            content={
+                "type":     "https://httpstatuses.com/422",
+                "title":    "Validation Error",
+                "status":   422,
+                "detail":   "Request body/parameters failed validation",
+                "errors":   exc.errors(),
+                "instance": str(request.url),
+            },
+        )
 
     # Rate limiting via slowapi (no-op when slowapi not installed)
     if SLOWAPI_AVAILABLE:
@@ -357,6 +429,31 @@ def create_app() -> FastAPI:
         except Exception as exc:
             logger.error("[explain_prediction] player_id=%s: %s", player_id, exc, exc_info=True)
             return JSONResponse(status_code=500, content={"detail": "Internal server error"})
+
+    @app.get("/api/v1/internal/metrics")
+    def internal_metrics(request: Request):
+        """In-process request metrics – admin only (AP5)."""
+        role = getattr(request.state, "current_role", "")
+        if role not in ("admin", "") and os.environ.get("JWT_SECRET"):
+            from fastapi.responses import JSONResponse as _J
+            return _J(status_code=403, content={"detail": "Admin only"})
+        from basketball_ai.api.metrics import get_snapshot
+        return get_snapshot()
+
+    @app.get("/api/v1/internal/audit")
+    def internal_audit(
+        request: Request,
+        user: Optional[str] = None,
+        tenant: Optional[str] = None,
+        limit: int = 200,
+    ):
+        """Audit log query – admin only."""
+        role = getattr(request.state, "current_role", "")
+        if role not in ("admin", "") and os.environ.get("JWT_SECRET"):
+            from fastapi.responses import JSONResponse as _J
+            return _J(status_code=403, content={"detail": "Admin only"})
+        from basketball_ai.api.audit import AuditDB
+        return {"records": AuditDB().query(user=user, tenant=tenant, limit=limit)}
 
     return app
 
