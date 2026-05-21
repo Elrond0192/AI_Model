@@ -3,6 +3,7 @@ from __future__ import annotations
 import json as _json
 import logging
 import os
+import threading as _threading
 import time as _time
 import uuid as _uuid
 from contextlib import asynccontextmanager
@@ -19,6 +20,12 @@ from basketball_ai.api.limiter import limiter, SLOWAPI_AVAILABLE
 logger = logging.getLogger(__name__)
 
 app_state: Dict[str, Any] = {}
+
+# ---------------------------------------------------------------------------
+# AP8 – In-flight idempotency deduplication
+# ---------------------------------------------------------------------------
+_in_flight: set = set()
+_in_flight_lock = _threading.Lock()
 
 
 # ---------------------------------------------------------------------------
@@ -213,6 +220,24 @@ def create_app() -> FastAPI:
     # -----------------------------------------------------------------------
 
     @app.middleware("http")
+    async def body_size_middleware(request: Request, call_next):
+        """AP9 – Reject requests exceeding MAX_REQUEST_BODY_MB (default 10MB)."""
+        max_bytes = int(os.environ.get("MAX_REQUEST_BODY_MB", "10")) * 1_000_000
+        content_length = request.headers.get("content-length")
+        if content_length and int(content_length) > max_bytes:
+            return JSONResponse(
+                status_code=413,
+                media_type="application/problem+json",
+                content={
+                    "type":   "https://httpstatuses.com/413",
+                    "title":  "Request Entity Too Large",
+                    "status": 413,
+                    "detail": f"Request body exceeds {max_bytes // 1_000_000}MB limit",
+                },
+            )
+        return await call_next(request)
+
+    @app.middleware("http")
     async def security_headers_middleware(request: Request, call_next):
         """Add OWASP-recommended security headers to every response (S8)."""
         response = await call_next(request)
@@ -228,11 +253,32 @@ def create_app() -> FastAPI:
 
     @app.middleware("http")
     async def request_id_audit_middleware(request: Request, call_next):
-        """Inject X-Request-ID and write to SQLite audit log (AP5/O4)."""
+        """Inject X-Request-ID, idempotency dedup, and write to SQLite audit log."""
         req_id = request.headers.get("X-Request-ID") or str(_uuid.uuid4())
         request.state.request_id = req_id
+
+        # AP8 – Idempotency-Key: reject concurrent duplicate POSTs
+        idempotency_key = request.headers.get("Idempotency-Key", "").strip()
+        if request.method == "POST" and idempotency_key:
+            with _in_flight_lock:
+                if idempotency_key in _in_flight:
+                    return JSONResponse(
+                        status_code=409,
+                        content={
+                            "type":   "https://httpstatuses.com/409",
+                            "title":  "Duplicate Request",
+                            "status": 409,
+                            "detail": "A request with this Idempotency-Key is already in flight",
+                        },
+                    )
+                _in_flight.add(idempotency_key)
         t0 = _time.monotonic()
-        response = await call_next(request)
+        try:
+            response = await call_next(request)
+        finally:
+            if request.method == "POST" and idempotency_key:
+                with _in_flight_lock:
+                    _in_flight.discard(idempotency_key)
         latency_ms = (_time.monotonic() - t0) * 1000
         # Record tenant usage (non-blocking best-effort)
         try:

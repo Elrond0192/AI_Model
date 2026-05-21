@@ -1,5 +1,6 @@
 """Basketball player API routes."""
 from __future__ import annotations
+import base64 as _b64
 import hashlib
 import json
 from typing import List, Optional
@@ -12,6 +13,20 @@ from basketball_ai.utils.helpers import position_group
 router = APIRouter(prefix="/players", tags=["players"])
 
 
+def _encode_cursor(offset: int) -> str:
+    """Encode an offset as a base64 URL-safe cursor string."""
+    return _b64.urlsafe_b64encode(json.dumps({"offset": offset}).encode()).decode()
+
+
+def _decode_cursor(cursor: str) -> int:
+    """Decode a base64 cursor back to an integer offset. Returns 0 on error."""
+    try:
+        data = json.loads(_b64.urlsafe_b64decode(cursor.encode()))
+        return int(data["offset"])
+    except Exception:
+        return 0
+
+
 @router.get("", response_model=List[PlayerOut])
 def list_players(
     request: Request,
@@ -22,8 +37,9 @@ def list_players(
     max_age: Optional[int] = Query(None),
     limit: int = Query(50, le=200),
     offset: int = Query(0, ge=0),
+    cursor: Optional[str] = Query(None, description="Pagination cursor from X-Next-Cursor header"),
 ):
-    """List basketball players with optional filters."""
+    """List basketball players with optional filters. Supports cursor-based pagination."""
     data = get_data(request)
     df   = data["players"].copy()
 
@@ -36,8 +52,13 @@ def list_players(
     if max_age is not None:
         df = df[df["age"] <= max_age]
 
+    if cursor:
+        offset = _decode_cursor(cursor)
+
     total = len(df)
     response.headers["X-Total-Count"] = str(total)
+    if offset + limit < total:
+        response.headers["X-Next-Cursor"] = _encode_cursor(offset + limit)
     subset = df.iloc[offset: offset + limit]
     results = []
     for _, row in subset.iterrows():

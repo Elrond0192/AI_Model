@@ -37,7 +37,7 @@ jobs:
           pip install pytest pytest-asyncio httpx slowapi PyJWT cachetools pytest-cov
 
       - name: Run tests
-        run: pytest tests/ -q --tb=short --cov=basketball_ai --cov-report=term-missing
+        run: pytest tests/ -q --tb=short --cov=basketball_ai --cov-report=term-missing --cov-report=xml --cov-fail-under=60
 
   # ─── lint ────────────────────────────────────────────────────────────────
   lint:

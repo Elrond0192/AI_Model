@@ -20,7 +20,7 @@ def parse_args(argv=None):
     )
     parser.add_argument(
         "--mode",
-        choices=["generate-data", "train", "demo", "api", "export-wordpress", "validate-data", "backup"],
+        choices=["generate-data", "train", "demo", "api", "export-wordpress", "validate-data", "backup", "backtest"],
         required=True,
     )
     parser.add_argument("--data-dir",  default="data/sample",   help="Data directory (file source)")
