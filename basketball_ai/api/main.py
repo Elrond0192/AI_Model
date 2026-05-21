@@ -455,6 +455,35 @@ def create_app() -> FastAPI:
         from basketball_ai.api.audit import AuditDB
         return {"records": AuditDB().query(user=user, tenant=tenant, limit=limit)}
 
+    @app.post("/api/v1/internal/models/promote")
+    def models_promote(request: Request, min_improvement_pct: float = 2.0):
+        """Promote candidate model to production (admin only)."""
+        role = getattr(request.state, "current_role", "")
+        if role not in ("admin", "") and os.environ.get("JWT_SECRET"):
+            from fastapi.responses import JSONResponse as _J
+            return _J(status_code=403, content={"detail": "Admin only"})
+        from basketball_ai.models.promote import promote_if_better
+        model_dir = os.environ.get("MODEL_DIR", "models_saved")
+        return promote_if_better(model_dir, min_improvement_pct=min_improvement_pct)
+
+    @app.post("/api/v1/internal/models/rollback")
+    def models_rollback(request: Request):
+        """Roll back production model to previous (admin only)."""
+        role = getattr(request.state, "current_role", "")
+        if role not in ("admin", "") and os.environ.get("JWT_SECRET"):
+            from fastapi.responses import JSONResponse as _J
+            return _J(status_code=403, content={"detail": "Admin only"})
+        from basketball_ai.models.promote import rollback_to_previous
+        model_dir = os.environ.get("MODEL_DIR", "models_saved")
+        return rollback_to_previous(model_dir)
+
+    @app.get("/api/v1/internal/models/status")
+    def models_status(request: Request):
+        """Return model promotion status."""
+        from basketball_ai.models.promote import get_promotion_status
+        model_dir = os.environ.get("MODEL_DIR", "models_saved")
+        return get_promotion_status(model_dir)
+
     return app
 
 

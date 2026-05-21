@@ -35,6 +35,19 @@ from basketball_ai.constants import (
 logger = logging.getLogger(__name__)
 
 
+def _get_git_sha() -> str:
+    """Return the current git commit SHA (short), or empty string if unavailable."""
+    try:
+        import subprocess
+        result = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            capture_output=True, text=True, timeout=5,
+        )
+        return result.stdout.strip() if result.returncode == 0 else ""
+    except Exception:
+        return ""
+
+
 def _safe_league_id(lid: Any) -> int:
     """Convert a raw league_id value to ``int``, returning 0 on failure."""
     if lid is None:
@@ -916,9 +929,13 @@ class PerformanceModel:
             else:
                 registry = []
             entry = {
-                "path": str(Path(model_path).name),
-                "saved_at": _dt.now(timezone.utc).isoformat(),
-                "metrics": metrics or {},
+                "path":             str(Path(model_path).name),
+                "saved_at":         _dt.now(timezone.utc).isoformat(),
+                "metrics":          metrics or {},
+                "git_sha":          _get_git_sha(),
+                "feature_list":     list(self.feature_names) if self.feature_names else [],
+                "metrics_by_league": self._last_metrics.get("by_league", {}) if self._last_metrics else {},
+                "metrics_by_role":   self._last_metrics.get("by_role", {}) if self._last_metrics else {},
             }
             registry.append(entry)
             registry_path.write_text(_json.dumps(registry, indent=2))
