@@ -65,6 +65,27 @@ _logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
+# Slow query log
+# ---------------------------------------------------------------------------
+
+_SLOW_QUERY_THRESHOLD_S = float(os.environ.get("SLOW_QUERY_THRESHOLD_S", "2.0"))
+
+
+def _timed_read_sql(sql, conn, **kwargs):
+    """Run ``pd.read_sql`` with slow-query logging."""
+    t0 = time.monotonic()
+    result = pd.read_sql(sql, conn, **kwargs)
+    elapsed = time.monotonic() - t0
+    if elapsed >= _SLOW_QUERY_THRESHOLD_S:
+        _logger.warning(
+            "[SlowQuery] %.2fs for query: %s",
+            elapsed,
+            str(sql)[:200],
+        )
+    return result
+
+
+# ---------------------------------------------------------------------------
 # D9 – SQL parquet caching with TTL
 # ---------------------------------------------------------------------------
 
@@ -204,7 +225,7 @@ def load_player_history(player_id: int, engine) -> "pd.DataFrame":
                     continue
                 table_name = f"Boxscore.{part_identifier}"
                 try:
-                    df = pd.read_sql(
+                    df = _timed_read_sql(
                         sa.text(
                             f"SELECT *, :league AS league, :season AS season "
                             f"FROM [{table_name}] WHERE IdPlayer = :pid"
@@ -551,7 +572,7 @@ def _read_table(engine, table: str) -> pd.DataFrame:
 def _execute_query(engine, sql: str) -> pd.DataFrame:
     """Execute a SQL query and return a DataFrame."""
     with engine.connect() as conn:
-        return pd.read_sql(sql, conn)
+        return _timed_read_sql(sql, conn)
 
 
 def _discover_league_seasons(engine) -> List[tuple]:

@@ -166,7 +166,31 @@ async def lifespan(app: FastAPI):
     app.state.data = app_state.get("data", {})
     app.state.engine = app_state.get("engine")
     app.state.chat_engine = app_state.get("chat_engine")
+
+    # --- Graceful shutdown ---------------------------------------------------
+    import asyncio
+    import signal as _signal
+    _shutdown_event = asyncio.Event()
+
+    def _handle_sigterm(*_):
+        logger.info("[API] SIGTERM received – initiating graceful shutdown")
+        _shutdown_event.set()
+
+    try:
+        _signal.signal(_signal.SIGTERM, _handle_sigterm)
+    except (OSError, ValueError):
+        pass  # Not available on all platforms (e.g. Windows, non-main thread)
+
     yield
+
+    # Flush audit log on shutdown
+    logger.info("[API] Shutting down – flushing resources")
+    try:
+        from basketball_ai.api.audit import AuditDB
+        AuditDB()  # init (no-op if already initialized)
+        logger.info("[API] Audit DB flushed")
+    except Exception:
+        pass
 
 
 def create_app() -> FastAPI:
