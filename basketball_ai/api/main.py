@@ -234,6 +234,13 @@ def create_app() -> FastAPI:
         t0 = _time.monotonic()
         response = await call_next(request)
         latency_ms = (_time.monotonic() - t0) * 1000
+        # Record tenant usage (non-blocking best-effort)
+        try:
+            from basketball_ai.tenancy import TenantManager
+            tenant_id = getattr(request.state, "tenant_id", "default") or "default"
+            TenantManager().record_usage(tenant_id, request.url.path)
+        except Exception:
+            pass
         response.headers["X-Request-ID"] = req_id
         # Record metrics
         try:
