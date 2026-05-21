@@ -136,6 +136,94 @@ def _load_from_parquet_cache(key: str) -> Optional[dict]:
         return None
 
 
+def list_available_partitions(engine) -> list[dict]:
+    """Return list of {league, season} dicts for tables that actually exist in DB.
+
+    Checks INFORMATION_SCHEMA.TABLES against the SUPPORTED_LEAGUES × SUPPORTED_SEASONS
+    cross-product without using any Lookup/Configuration tables.
+
+    Args:
+        engine: SQLAlchemy engine or connection.
+
+    Returns:
+        List of dicts with keys 'league' and 'season'.
+    """
+    from basketball_ai.constants import SUPPORTED_LEAGUES, SUPPORTED_SEASONS, is_safe_identifier
+    available = []
+    try:
+        import sqlalchemy as sa
+        with engine.connect() as conn:
+            for league in SUPPORTED_LEAGUES:
+                for season in SUPPORTED_SEASONS:
+                    safe_season = season.replace("-", "_")
+                    table_name = f"{league}_{safe_season}"
+                    if not is_safe_identifier(table_name):
+                        _logger.warning("[list_available_partitions] Skipping unsafe identifier: %s", table_name)
+                        continue
+                    result = conn.execute(
+                        sa.text(
+                            "SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES "
+                            "WHERE TABLE_NAME = :tname"
+                        ),
+                        {"tname": table_name},
+                    )
+                    if result.scalar():
+                        available.append({"league": league, "season": season})
+    except Exception as exc:
+        _logger.warning("[list_available_partitions] DB check failed: %s", exc)
+    return available
+
+
+def load_player_history(player_id: int, engine) -> "pd.DataFrame":
+    """Load full cross-season stats for one player via UNION ALL across Boxscore tables.
+
+    Iterates over existing partitions (via INFORMATION_SCHEMA) and builds a
+    UNION ALL query. Falls back to an empty DataFrame on any error.
+
+    Args:
+        player_id: The player's IdGlobal.
+        engine: SQLAlchemy engine.
+
+    Returns:
+        DataFrame with columns from Boxscore tables plus 'league' and 'season'.
+    """
+    from basketball_ai.constants import is_safe_identifier
+    partitions = list_available_partitions(engine)
+    if not partitions:
+        return pd.DataFrame()
+
+    fragments = []
+    try:
+        import sqlalchemy as sa
+        with engine.connect() as conn:
+            for p in partitions:
+                safe_season = p["season"].replace("-", "_")
+                part_identifier = f"{p['league']}_{safe_season}"
+                if not is_safe_identifier(part_identifier):
+                    _logger.warning("[load_player_history] Skipping unsafe identifier: %s", part_identifier)
+                    continue
+                table_name = f"Boxscore.{part_identifier}"
+                try:
+                    df = pd.read_sql(
+                        sa.text(
+                            f"SELECT *, :league AS league, :season AS season "
+                            f"FROM [{table_name}] WHERE IdPlayer = :pid"
+                        ),
+                        conn,
+                        params={"pid": player_id, "league": p["league"], "season": p["season"]},
+                    )
+                    if not df.empty:
+                        fragments.append(df)
+                except Exception as exc:
+                    _logger.debug("[load_player_history] Partition %s query failed: %s", table_name, exc)
+    except Exception as exc:
+        _logger.warning("[load_player_history] query failed: %s", exc)
+
+    if not fragments:
+        return pd.DataFrame()
+    return pd.concat(fragments, ignore_index=True)
+
+
 # ---------------------------------------------------------------------------
 # Signature columns used for auto-discovery
 # ---------------------------------------------------------------------------
