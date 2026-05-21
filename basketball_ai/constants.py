@@ -7,6 +7,7 @@ can be imported by any other module without risk of circular dependencies.
 """
 from __future__ import annotations
 
+import re
 from typing import Dict
 
 # ---------------------------------------------------------------------------
@@ -75,3 +76,28 @@ def _peak_age(pos: str) -> int:
     then to 26 as a global default.
     """
     return POSITIONAL_PEAK_AGES.get(pos, POSITIONAL_PEAK_AGES.get(_primary_pos(pos), 26))
+
+
+# ---------------------------------------------------------------------------
+# Supported leagues and seasons – canonical registry (no DB lookup required)
+# ---------------------------------------------------------------------------
+
+#: All supported league codes. Used to validate dynamic table names.
+SUPPORTED_LEAGUES: tuple[str, ...] = (
+    "ITA1", "ITA2", "GRC1", "GRC2", "ESP1", "ESP2",
+    "DEU1", "FRA1", "TUR1", "SRB1", "AUS1",
+)
+
+#: All supported season labels in chronological order.
+SUPPORTED_SEASONS: tuple[str, ...] = (
+    "2018-19", "2019-20", "2020-21", "2021-22",
+    "2022-23", "2023-24", "2024-25",
+)
+
+#: Regex for safe SQL table-name identifiers (alphanumeric + underscore only).
+_SAFE_IDENTIFIER_RE = re.compile(r'^[A-Za-z][A-Za-z0-9_]{0,127}$')
+
+
+def is_safe_identifier(name: str) -> bool:
+    """Return True if *name* is safe to embed as a SQL identifier."""
+    return bool(_SAFE_IDENTIFIER_RE.match(name))

@@ -3,6 +3,9 @@ from __future__ import annotations
 import json as _json
 import logging
 import os
+import threading as _threading
+import time as _time
+import uuid as _uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -17,6 +20,12 @@ from basketball_ai.api.limiter import limiter, SLOWAPI_AVAILABLE
 logger = logging.getLogger(__name__)
 
 app_state: Dict[str, Any] = {}
+
+# ---------------------------------------------------------------------------
+# AP8 – In-flight idempotency deduplication
+# ---------------------------------------------------------------------------
+_in_flight: set = set()
+_in_flight_lock = _threading.Lock()
 
 
 # ---------------------------------------------------------------------------
@@ -164,7 +173,31 @@ async def lifespan(app: FastAPI):
     app.state.data = app_state.get("data", {})
     app.state.engine = app_state.get("engine")
     app.state.chat_engine = app_state.get("chat_engine")
+
+    # --- Graceful shutdown ---------------------------------------------------
+    import asyncio
+    import signal as _signal
+    _shutdown_event = asyncio.Event()
+
+    def _handle_sigterm(*_):
+        logger.info("[API] SIGTERM received – initiating graceful shutdown")
+        _shutdown_event.set()
+
+    try:
+        _signal.signal(_signal.SIGTERM, _handle_sigterm)
+    except (OSError, ValueError):
+        pass  # Not available on all platforms (e.g. Windows, non-main thread)
+
     yield
+
+    # Flush audit log on shutdown
+    logger.info("[API] Shutting down – flushing resources")
+    try:
+        from basketball_ai.api.audit import AuditDB
+        AuditDB()  # init (no-op if already initialized)
+        logger.info("[API] Audit DB flushed")
+    except Exception:
+        pass
 
 
 def create_app() -> FastAPI:
@@ -187,6 +220,24 @@ def create_app() -> FastAPI:
     # -----------------------------------------------------------------------
 
     @app.middleware("http")
+    async def body_size_middleware(request: Request, call_next):
+        """AP9 – Reject requests exceeding MAX_REQUEST_BODY_MB (default 10MB)."""
+        max_bytes = int(os.environ.get("MAX_REQUEST_BODY_MB", "10")) * 1_000_000
+        content_length = request.headers.get("content-length")
+        if content_length and int(content_length) > max_bytes:
+            return JSONResponse(
+                status_code=413,
+                media_type="application/problem+json",
+                content={
+                    "type":   "https://httpstatuses.com/413",
+                    "title":  "Request Entity Too Large",
+                    "status": 413,
+                    "detail": f"Request body exceeds {max_bytes // 1_000_000}MB limit",
+                },
+            )
+        return await call_next(request)
+
+    @app.middleware("http")
     async def security_headers_middleware(request: Request, call_next):
         """Add OWASP-recommended security headers to every response (S8)."""
         response = await call_next(request)
@@ -198,6 +249,70 @@ def create_app() -> FastAPI:
             response.headers.setdefault(
                 "Strict-Transport-Security", "max-age=31536000; includeSubDomains"
             )
+        return response
+
+    @app.middleware("http")
+    async def request_id_audit_middleware(request: Request, call_next):
+        """Inject X-Request-ID, idempotency dedup, and write to SQLite audit log."""
+        req_id = request.headers.get("X-Request-ID") or str(_uuid.uuid4())
+        request.state.request_id = req_id
+
+        # AP8 – Idempotency-Key: reject concurrent duplicate POSTs
+        idempotency_key = request.headers.get("Idempotency-Key", "").strip()
+        if request.method == "POST" and idempotency_key:
+            with _in_flight_lock:
+                if idempotency_key in _in_flight:
+                    return JSONResponse(
+                        status_code=409,
+                        content={
+                            "type":   "https://httpstatuses.com/409",
+                            "title":  "Duplicate Request",
+                            "status": 409,
+                            "detail": "A request with this Idempotency-Key is already in flight",
+                        },
+                    )
+                _in_flight.add(idempotency_key)
+        t0 = _time.monotonic()
+        try:
+            response = await call_next(request)
+        finally:
+            if request.method == "POST" and idempotency_key:
+                with _in_flight_lock:
+                    _in_flight.discard(idempotency_key)
+        latency_ms = (_time.monotonic() - t0) * 1000
+        # Record tenant usage (non-blocking best-effort)
+        try:
+            from basketball_ai.tenancy import TenantManager
+            tenant_id = getattr(request.state, "tenant_id", "default") or "default"
+            TenantManager().record_usage(tenant_id, request.url.path)
+        except Exception:
+            pass
+        response.headers["X-Request-ID"] = req_id
+        # Record metrics
+        try:
+            from basketball_ai.api.metrics import record_request
+            record_request(
+                path=request.url.path,
+                method=request.method,
+                status=response.status_code,
+                latency_ms=latency_ms,
+            )
+        except Exception:
+            pass
+        # Write audit record (non-blocking best-effort)
+        try:
+            from basketball_ai.api.audit import AuditDB
+            AuditDB().log(
+                request_id=req_id,
+                user=getattr(request.state, "current_user", ""),
+                tenant=getattr(request.state, "current_tenant", ""),
+                method=request.method,
+                path=request.url.path,
+                status=response.status_code,
+                latency_ms=latency_ms,
+            )
+        except Exception:
+            pass
         return response
 
     @app.middleware("http")
@@ -229,12 +344,39 @@ def create_app() -> FastAPI:
             token = auth_header[7:]
             try:
                 import jwt as _jwt
-                payload = _jwt.decode(
-                    token,
-                    _jwt_secret,
-                    algorithms=["HS256"],
-                    options={"verify_exp": True},
-                )
+                import json as _json
+                # Support multi-secret rotation via JWT_SECRETS env var.
+                _jwt_secrets_raw = os.environ.get("JWT_SECRETS", "").strip()
+                if _jwt_secrets_raw:
+                    try:
+                        _entries = _json.loads(_jwt_secrets_raw)
+                        _secret_list = [(e["kid"], e["secret"]) for e in _entries if e.get("secret")]
+                    except Exception:
+                        _secret_list = [("default", _jwt_secret)]
+                else:
+                    _secret_list = [("default", _jwt_secret)]
+                payload = None
+                for _kid, _sec in _secret_list:
+                    try:
+                        payload = _jwt.decode(
+                            token,
+                            _sec,
+                            algorithms=["HS256"],
+                            options={"verify_exp": True},
+                        )
+                        break
+                    except _jwt.ExpiredSignatureError:
+                        return JSONResponse(
+                            status_code=status.HTTP_401_UNAUTHORIZED,
+                            content={"detail": "Invalid or expired token"},
+                        )
+                    except _jwt.InvalidTokenError:
+                        pass
+                if payload is None:
+                    return JSONResponse(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        content={"detail": "Invalid or expired token"},
+                    )
                 # Inject tenant context so downstream routes can scope queries.
                 request.state.tenant_id = payload.get("tenant_id", "default")
                 request.state.current_user = payload.get("sub", "")
@@ -264,6 +406,40 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    # RFC 7807 problem+json error responses
+    from fastapi import HTTPException as _HTTPException
+    from fastapi.exceptions import RequestValidationError as _RVError
+    from fastapi.responses import JSONResponse as _JSONResponse
+
+    @app.exception_handler(_HTTPException)
+    async def http_exception_handler(request: Request, exc: _HTTPException):
+        return _JSONResponse(
+            status_code=exc.status_code,
+            media_type="application/problem+json",
+            content={
+                "type":     f"https://httpstatuses.com/{exc.status_code}",
+                "title":    exc.detail if isinstance(exc.detail, str) else "Error",
+                "status":   exc.status_code,
+                "detail":   exc.detail,
+                "instance": str(request.url),
+            },
+        )
+
+    @app.exception_handler(_RVError)
+    async def validation_exception_handler(request: Request, exc: _RVError):
+        return _JSONResponse(
+            status_code=422,
+            media_type="application/problem+json",
+            content={
+                "type":     "https://httpstatuses.com/422",
+                "title":    "Validation Error",
+                "status":   422,
+                "detail":   "Request body/parameters failed validation",
+                "errors":   exc.errors(),
+                "instance": str(request.url),
+            },
+        )
 
     # Rate limiting via slowapi (no-op when slowapi not installed)
     if SLOWAPI_AVAILABLE:
@@ -357,6 +533,60 @@ def create_app() -> FastAPI:
         except Exception as exc:
             logger.error("[explain_prediction] player_id=%s: %s", player_id, exc, exc_info=True)
             return JSONResponse(status_code=500, content={"detail": "Internal server error"})
+
+    @app.get("/api/v1/internal/metrics")
+    def internal_metrics(request: Request):
+        """In-process request metrics – admin only (AP5)."""
+        role = getattr(request.state, "current_role", "")
+        if role not in ("admin", "") and os.environ.get("JWT_SECRET"):
+            from fastapi.responses import JSONResponse as _J
+            return _J(status_code=403, content={"detail": "Admin only"})
+        from basketball_ai.api.metrics import get_snapshot
+        return get_snapshot()
+
+    @app.get("/api/v1/internal/audit")
+    def internal_audit(
+        request: Request,
+        user: Optional[str] = None,
+        tenant: Optional[str] = None,
+        limit: int = 200,
+    ):
+        """Audit log query – admin only."""
+        role = getattr(request.state, "current_role", "")
+        if role not in ("admin", "") and os.environ.get("JWT_SECRET"):
+            from fastapi.responses import JSONResponse as _J
+            return _J(status_code=403, content={"detail": "Admin only"})
+        from basketball_ai.api.audit import AuditDB
+        return {"records": AuditDB().query(user=user, tenant=tenant, limit=limit)}
+
+    @app.post("/api/v1/internal/models/promote")
+    def models_promote(request: Request, min_improvement_pct: float = 2.0):
+        """Promote candidate model to production (admin only)."""
+        role = getattr(request.state, "current_role", "")
+        if role not in ("admin", "") and os.environ.get("JWT_SECRET"):
+            from fastapi.responses import JSONResponse as _J
+            return _J(status_code=403, content={"detail": "Admin only"})
+        from basketball_ai.models.promote import promote_if_better
+        model_dir = os.environ.get("MODEL_DIR", "models_saved")
+        return promote_if_better(model_dir, min_improvement_pct=min_improvement_pct)
+
+    @app.post("/api/v1/internal/models/rollback")
+    def models_rollback(request: Request):
+        """Roll back production model to previous (admin only)."""
+        role = getattr(request.state, "current_role", "")
+        if role not in ("admin", "") and os.environ.get("JWT_SECRET"):
+            from fastapi.responses import JSONResponse as _J
+            return _J(status_code=403, content={"detail": "Admin only"})
+        from basketball_ai.models.promote import rollback_to_previous
+        model_dir = os.environ.get("MODEL_DIR", "models_saved")
+        return rollback_to_previous(model_dir)
+
+    @app.get("/api/v1/internal/models/status")
+    def models_status(request: Request):
+        """Return model promotion status."""
+        from basketball_ai.models.promote import get_promotion_status
+        model_dir = os.environ.get("MODEL_DIR", "models_saved")
+        return get_promotion_status(model_dir)
 
     return app
 

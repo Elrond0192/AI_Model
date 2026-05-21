@@ -499,7 +499,7 @@ st.title("🏀 Basketball Performance AI")
 # Tabs
 # ---------------------------------------------------------------------------
 
-tab_data, tab_train, tab_pred, tab_scen, tab_chat, tab_scout, tab_mapping, tab_admin = st.tabs([
+tab_data, tab_train, tab_pred, tab_scen, tab_chat, tab_scout, tab_mapping, tab_admin, tab_audit, tab_health, tab_drift = st.tabs([
     "📂 Dati",
     "🏋️ Training",
     "🎯 Predizioni",
@@ -508,6 +508,9 @@ tab_data, tab_train, tab_pred, tab_scen, tab_chat, tab_scout, tab_mapping, tab_a
     "🔬 Scouting AI",
     "🗺️ Mapping",
     "👥 Utenti",
+    "📋 Audit",
+    "🏥 Health",
+    "📊 Drift",
 ])
 
 # ===========================================================================
@@ -3077,3 +3080,163 @@ with _safe_tab(tab_admin, "Utenti"):
                     "I ruoli predefiniti (admin, analyst, viewer) non possono essere eliminati."
                 )
 
+
+# ===========================================================================
+# TAB – AUDIT LOG
+# ===========================================================================
+
+with _safe_tab(tab_audit, "Audit"):
+    if not _can_access("admin"):
+        st.warning("⛔ Non hai i permessi per accedere a questa sezione.")
+    else:
+        st.header("📋 Audit Log")
+
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            audit_user   = st.text_input("Filter by user", key="audit_user")
+        with col2:
+            audit_tenant = st.text_input("Filter by tenant", key="audit_tenant")
+        with col3:
+            audit_limit  = st.number_input("Limit", min_value=10, max_value=500, value=100, step=10, key="audit_limit")
+
+        if st.button("Load audit log", key="btn_audit"):
+            try:
+                from basketball_ai.api.audit import AuditDB
+                db = AuditDB()
+                rows = db.query(
+                    user=audit_user or None,
+                    tenant=audit_tenant or None,
+                    limit=int(audit_limit),
+                )
+                if rows:
+                    df = pd.DataFrame(rows)
+                    if "ts" in df.columns:
+                        df["datetime"] = df["ts"].apply(
+                            lambda t: datetime.datetime.fromtimestamp(t).strftime("%Y-%m-%d %H:%M:%S") if t else ""
+                        )
+                        df = df.drop(columns=["ts", "id"], errors="ignore")
+                        df = df[["datetime"] + [c for c in df.columns if c != "datetime"]]
+                    st.dataframe(df, use_container_width=True)
+                    st.caption(f"Showing {len(rows)} records")
+                else:
+                    st.info("No audit records found.")
+            except Exception as exc:
+                st.error(f"Could not load audit log: {exc}")
+
+# ===========================================================================
+# TAB – HEALTH DASHBOARD
+# ===========================================================================
+
+with _safe_tab(tab_health, "Health"):
+    if not _can_access("admin"):
+        st.warning("⛔ Non hai i permessi per accedere a questa sezione.")
+    else:
+        st.header("🏥 System Health")
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+            st.subheader("Service Status")
+            try:
+                import requests
+                api_port = os.environ.get("API_PORT", "8000")
+                resp = requests.get(f"http://localhost:{api_port}/health/ready", timeout=3)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    st.success("✅ API Ready")
+                    st.json(data)
+                else:
+                    st.error(f"❌ API Not Ready (HTTP {resp.status_code})")
+            except Exception as exc:
+                st.warning(f"⚠️ Could not reach API: {exc}")
+
+        with col2:
+            st.subheader("Ingestion State")
+            try:
+                from basketball_ai.data.ingestion import IngestionTracker
+                tracker = IngestionTracker()
+                stats = tracker.stats()
+                failed_list = tracker.list_failed()
+                st.metric("DONE", stats.get("DONE", 0))
+                st.metric("FAILED", stats.get("FAILED", 0))
+                st.metric("DEAD", stats.get("DEAD", 0))
+                if failed_list:
+                    st.warning(f"{len(failed_list)} failed/dead items")
+                    if st.checkbox("Show failed items", key="show_failed"):
+                        st.dataframe(pd.DataFrame(failed_list), use_container_width=True)
+            except Exception as exc:
+                st.info(f"Ingestion tracker: {exc}")
+
+        st.subheader("In-process Metrics")
+        if st.button("Load metrics", key="btn_metrics"):
+            try:
+                from basketball_ai.api.metrics import get_snapshot
+                snap = get_snapshot()
+                st.caption(f"Uptime: {snap.get('uptime_seconds', 0):.0f}s")
+                routes = snap.get("routes", [])
+                if routes:
+                    df = pd.DataFrame(routes)
+                    st.dataframe(df, use_container_width=True)
+                else:
+                    st.info("No route metrics yet.")
+            except Exception as exc:
+                st.info(f"Metrics: {exc}")
+
+# ===========================================================================
+# TAB – DRIFT MONITOR
+# ===========================================================================
+
+with _safe_tab(tab_drift, "Drift"):
+    if not _can_access("data"):
+        st.warning("⛔ Non hai i permessi per accedere a questa sezione.")
+    else:
+        st.header("📊 Feature Drift Monitor")
+
+        st.info(
+            "Compares the current data distribution to the reference distribution "
+            "captured during the last training run. PSI > 0.25 indicates significant drift."
+        )
+
+        if "data" not in st.session_state or st.session_state.data is None:
+            st.warning("Load data first (use the 📂 Dati tab).")
+        else:
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("Compute PSI drift", key="btn_psi"):
+                    try:
+                        from basketball_ai.monitoring.drift import capture_reference, compute_psi_report
+                        data = st.session_state.data
+                        ref  = capture_reference(data)
+                        report = compute_psi_report(data, ref)
+                        if report:
+                            df = pd.DataFrame(
+                                [{"feature": k, "psi": v, "status": "🔴 DRIFT" if v > 0.25 else ("🟡 MODERATE" if v > 0.10 else "🟢 OK")}
+                                 for k, v in sorted(report.items(), key=lambda x: -x[1])]
+                            )
+                            st.dataframe(df, use_container_width=True)
+                        else:
+                            st.info("No drift metrics available.")
+                    except Exception as exc:
+                        st.error(f"PSI drift failed: {exc}")
+
+            with col2:
+                if st.button("Compute KS drift", key="btn_ks"):
+                    try:
+                        from basketball_ai.monitoring.drift import compute_ks_drift
+                        data = st.session_state.data
+                        ps   = data.get("player_stats")
+                        if ps is not None and not ps.empty:
+                            mid = len(ps) // 2
+                            ref_df = ps.iloc[:mid]
+                            cur_df = ps.iloc[mid:]
+                            result = compute_ks_drift(ref_df, cur_df)
+                            df = pd.DataFrame(
+                                [{"feature": k, "ks_pvalue": v,
+                                  "status": "🟢 OK" if v > 0.05 else "🔴 DRIFT"}
+                                 for k, v in sorted(result.items(), key=lambda x: x[1])]
+                            )
+                            st.dataframe(df, use_container_width=True)
+                        else:
+                            st.info("No player_stats data loaded.")
+                    except Exception as exc:
+                        st.error(f"KS drift failed: {exc}")

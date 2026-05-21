@@ -20,7 +20,7 @@ def parse_args(argv=None):
     )
     parser.add_argument(
         "--mode",
-        choices=["generate-data", "train", "demo", "api", "export-wordpress"],
+        choices=["generate-data", "train", "demo", "api", "export-wordpress", "validate-data", "backup", "backtest"],
         required=True,
     )
     parser.add_argument("--data-dir",  default="data/sample",   help="Data directory (file source)")
@@ -333,6 +333,127 @@ def mode_export_wordpress(args) -> None:
 
 # ---------------------------------------------------------------------------
 
+
+def mode_validate_data(args) -> None:
+    """Run data quality gates against loaded data."""
+    import json as _json
+    from datetime import datetime as _dt, timezone as _tz
+    from pathlib import Path as _Path
+    import pandas as pd
+
+    data = _load_data(args)
+    player_stats: pd.DataFrame = data.get("player_stats", pd.DataFrame())
+    players: pd.DataFrame = data.get("players", pd.DataFrame())
+    teams: pd.DataFrame = data.get("teams", pd.DataFrame())
+
+    issues: list[dict] = []
+
+    def _issue(table: str, col: str, check: str, pct: float, detail: str = "") -> None:
+        issues.append({
+            "table": table, "column": col,
+            "check": check, "pct_affected": round(pct, 4),
+            "detail": detail,
+        })
+
+    # --- NULL checks on critical columns ---------------------------------
+    critical = {
+        "player_stats": ["player_id", "season", "team_id", "points", "games_played", "rating"],
+        "players":      ["id", "name", "position"],
+        "teams":        ["id", "name", "league_id"],
+    }
+    for tname, cols in critical.items():
+        df = data.get(tname, pd.DataFrame())
+        for col in cols:
+            if col not in df.columns:
+                continue
+            null_pct = df[col].isna().mean()
+            if null_pct > 0.05:
+                _issue(tname, col, "null_rate", null_pct, f"{null_pct:.1%} NULLs in critical column")
+
+    # --- Consistency: Fg2m <= Fg2a -----------------------------------------
+    for col_made, col_att in [("fg2m", "fg2a"), ("fg3m", "fg3a"), ("ftm", "fta")]:
+        if col_made in player_stats.columns and col_att in player_stats.columns:
+            mask = player_stats[col_made] > player_stats[col_att]
+            bad_pct = mask.mean()
+            if bad_pct > 0:
+                _issue("player_stats", col_made, "made_gt_attempted", bad_pct)
+
+    # --- Pts approximation check ----------------------------------------
+    pt_cols = {"pts", "fg2m", "fg3m", "ftm"}
+    if pt_cols.issubset(player_stats.columns):
+        expected = 2 * player_stats["fg2m"] + 3 * player_stats["fg3m"] + player_stats["ftm"]
+        diff = (player_stats["pts"] - expected).abs()
+        bad_pct = (diff > 5).mean()
+        if bad_pct > 0.1:
+            _issue("player_stats", "pts", "pts_approx_mismatch", bad_pct)
+
+    # --- Rating range check -----------------------------------------------
+    if "rating" in player_stats.columns:
+        out_range = ((player_stats["rating"] < 0) | (player_stats["rating"] > 10)).mean()
+        if out_range > 0:
+            _issue("player_stats", "rating", "rating_out_of_range", out_range)
+
+    # --- Report -----------------------------------------------------------
+    report_dir = _Path("data/quality_reports")
+    report_dir.mkdir(parents=True, exist_ok=True)
+    ts = _dt.now(_tz.utc).strftime("%Y%m%dT%H%M%S")
+    report_path = report_dir / f"quality_{ts}.json"
+    report = {
+        "generated_at": _dt.now(_tz.utc).isoformat(),
+        "rows_player_stats": len(player_stats),
+        "rows_players": len(players),
+        "rows_teams": len(teams),
+        "issues": issues,
+        "status": "PASS" if not issues else "WARN",
+    }
+    report_path.write_text(_json.dumps(report, indent=2))
+    print(f"\n[validate-data] {report['status']}: {len(issues)} issue(s) found.")
+    for iss in issues:
+        print(f"  ⚠ {iss['table']}.{iss['column']} [{iss['check']}] {iss['detail']}")
+    print(f"  Report saved to: {report_path}")
+
+
+def mode_backup(args) -> None:
+    """Create a timestamped ZIP backup of all critical local state."""
+    import hashlib as _hashlib
+    import zipfile as _zipfile
+    from datetime import datetime as _dt, timezone as _tz
+    from pathlib import Path as _Path
+
+    ts = _dt.now(_tz.utc).strftime("%Y%m%dT%H%M%S")
+    out_dir = _Path("backups")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    zip_path = out_dir / f"backup_{ts}.zip"
+
+    targets = [
+        _Path("models_saved"),
+        _Path("roles.json"),
+        _Path("sessions.json"),
+        _Path("data/ingestion.db"),
+        _Path("data/name_resolution_cache.json"),
+    ]
+
+    with _zipfile.ZipFile(zip_path, "w", compression=_zipfile.ZIP_DEFLATED) as zf:
+        for target in targets:
+            if not target.exists():
+                continue
+            if target.is_dir():
+                for f in target.rglob("*"):
+                    if f.is_file():
+                        zf.write(f, f.relative_to(_Path(".")))
+            else:
+                zf.write(target, target)
+
+    sha256 = _hashlib.sha256(zip_path.read_bytes()).hexdigest()
+    sums_path = zip_path.with_suffix(".sha256")
+    sums_path.write_text(f"{sha256}  {zip_path.name}\n")
+
+    print(f"[backup] Created: {zip_path}  ({zip_path.stat().st_size:,} bytes)")
+    print(f"[backup] SHA256:  {sha256}")
+
+
+# ---------------------------------------------------------------------------
+
 def main(argv=None):
     args = parse_args(argv)
     dispatch = {
@@ -341,6 +462,8 @@ def main(argv=None):
         "demo":             mode_demo,
         "api":              mode_api,
         "export-wordpress": mode_export_wordpress,
+        "validate-data":    mode_validate_data,
+        "backup":           mode_backup,
     }
     dispatch[args.mode](args)
 

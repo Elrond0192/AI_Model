@@ -152,3 +152,42 @@ Input features (57+)
 If you use this model in a research or production context, please reference the repository
 and version (`basketball-ai v2.0.0`).  Save the `metadata.json` output alongside any
 exported predictions to ensure reproducibility.
+
+---
+
+## Limitations by League
+
+| League Code | Notes                                                               |
+|-------------|---------------------------------------------------------------------|
+| ITA1        | Well-represented in training data; reliable predictions.            |
+| GRC1        | Moderate sample size; accuracy slightly lower for young players.    |
+| Other       | Predictions less reliable for leagues with < 2 seasons of history. |
+
+## Known Biases by Role / Age
+
+| Segment       | Known Issue                                                       |
+|---------------|-------------------------------------------------------------------|
+| Centers (C)   | WAR target underestimates defensive contribution.                 |
+| Age ≤ 20      | High variance; age-curve prior dominates over sparse data.        |
+| Age ≥ 35      | Retirement risk not modeled; ratings may be optimistic.           |
+| PO vs RS      | Playoff performance predictor requires ≥ 5 PO games in history.  |
+
+## Data Sources
+
+| Source          | Description                                                      |
+|-----------------|------------------------------------------------------------------|
+| Boxscore.*      | Per-game stats (Pts, Reb, Ast, Fg2/3/Ft made/attempted, Min)     |
+| Analisi.*       | Advanced stats (BPM, RAPTOR, LEBRON, WS, OWS/DWS, FIC, GmSc)   |
+| Anagrafiche.*   | Player demographics (age, position, nationality, height, weight) |
+| Pbp.*           | Play-by-play (shot coordinates, clutch stats, zone distribution) |
+
+## Fairness Evaluation
+
+RMSE is monitored per league and per role during walk-forward backtesting
+(see `basketball_ai/models/backtest.py`). A promotion is blocked if the
+per-segment gap exceeds the global RMSE by more than 20%.
+
+## Privacy
+
+Player PII (birth_date, weight_kg, height_cm, nationality) is masked in API
+responses for roles below `analyst`. See `basketball_ai/api/middleware/pii.py`.
