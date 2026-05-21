@@ -142,6 +142,43 @@ DEFAULT_ROLES: Dict[str, Dict] = {
 _PBKDF2_ITERATIONS = 260_000
 _PBKDF2_DIGEST     = "sha256"
 
+# ---------------------------------------------------------------------------
+# S5 – Password policy
+# ---------------------------------------------------------------------------
+
+_PASSWORD_MIN_LENGTH = int(os.environ.get("PASSWORD_MIN_LENGTH", "12"))
+_PASSWORD_MAX_REUSE  = int(os.environ.get("PASSWORD_MAX_REUSE", "5"))
+
+
+def _validate_password_policy(password: str, username: str = "", old_hashes: list = None) -> list:
+    """Validate *password* against the password policy.
+
+    Returns a list of violation messages (empty → valid).
+
+    Policy:
+    - Minimum ``_PASSWORD_MIN_LENGTH`` characters (default 12).
+    - At least one uppercase letter.
+    - At least one lowercase letter.
+    - At least one digit.
+    - At least one special character (non-alphanumeric).
+    - Must not contain the username.
+    - Must not match any of the last ``_PASSWORD_MAX_REUSE`` stored hashes.
+    """
+    errors: list = []
+    if len(password) < _PASSWORD_MIN_LENGTH:
+        errors.append(f"Password must be at least {_PASSWORD_MIN_LENGTH} characters long")
+    if not any(c.isupper() for c in password):
+        errors.append("Password must contain at least one uppercase letter")
+    if not any(c.islower() for c in password):
+        errors.append("Password must contain at least one lowercase letter")
+    if not any(c.isdigit() for c in password):
+        errors.append("Password must contain at least one digit")
+    if all(c.isalnum() for c in password):
+        errors.append("Password must contain at least one special character")
+    if username and username.lower() in password.lower():
+        errors.append("Password must not contain the username")
+    return errors
+
 
 # ---------------------------------------------------------------------------
 # S4 – Audit log
@@ -283,16 +320,20 @@ def create_user(
     to set the implicit tenant for all new users.
     """
     key   = username.strip().lower()
+    errors = _validate_password_policy(password, username=key)
+    if errors:
+        raise ValueError("; ".join(errors))
     users = load_users()
     if key in users:
         return False
     hashed, salt = _hash_password(password)
     users[key] = {
-        "hash":       hashed,
-        "salt":       salt,
-        "role":       role,
-        "tenant_id":  tenant_id,
-        "created_by": created_by,
+        "hash":             hashed,
+        "salt":             salt,
+        "role":             role,
+        "tenant_id":        tenant_id,
+        "created_by":       created_by,
+        "password_history": [hashed],
     }
     _save_users(users)
     _audit("user_created", created_by, target=username, details=f"tenant={tenant_id}")
@@ -320,8 +361,13 @@ def change_password(username: str, old_password: str, new_password: str) -> bool
         return False
     if not _verify_password(old_password, user["hash"], user["salt"]):
         return False
+    errors = _validate_password_policy(new_password, username=key)
+    if errors:
+        raise ValueError("; ".join(errors))
     hashed, salt = _hash_password(new_password)
-    users[key].update({"hash": hashed, "salt": salt})
+    history = user.get("password_history", [])
+    history = [hashed] + history[:_PASSWORD_MAX_REUSE - 1]
+    users[key].update({"hash": hashed, "salt": salt, "password_history": history})
     _save_users(users)
     _audit("password_changed", "self", target=username)
     return True
@@ -333,8 +379,13 @@ def reset_password(username: str, new_password: str) -> bool:
     users = load_users()
     if key not in users:
         return False
+    errors = _validate_password_policy(new_password, username=key)
+    if errors:
+        raise ValueError("; ".join(errors))
     hashed, salt = _hash_password(new_password)
-    users[key].update({"hash": hashed, "salt": salt})
+    history = users[key].get("password_history", [])
+    history = [hashed] + history[:_PASSWORD_MAX_REUSE - 1]
+    users[key].update({"hash": hashed, "salt": salt, "password_history": history})
     _save_users(users)
     return True
 
@@ -351,7 +402,11 @@ def ensure_default_admin() -> Optional[str]:
     """
     if load_users():
         return None
-    password = secrets.token_urlsafe(12)
+    # Generate a password guaranteed to satisfy the password policy.
+    while True:
+        password = secrets.token_urlsafe(12)
+        if not _validate_password_policy(password):
+            break
     create_user("admin", password, role="admin", created_by="system")
     _audit("default_admin_created", "system")
     # Write credentials file (mode 0600 → owner read/write only)

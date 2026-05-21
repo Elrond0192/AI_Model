@@ -5,6 +5,7 @@ Provides access-token + refresh-token flow via PyJWT.
 Configuration (env vars)
 ------------------------
 JWT_SECRET          – HMAC-SHA256 signing secret (required to enable JWT mode).
+JWT_SECRETS         – JSON list of {"kid": "...", "secret": "..."} for key rotation.
 JWT_ALGORITHM       – Algorithm, default HS256.
 JWT_ACCESS_EXPIRE   – Access token lifetime in minutes (default 30).
 JWT_REFRESH_EXPIRE  – Refresh token lifetime in hours (default 24).
@@ -20,7 +21,11 @@ from __future__ import annotations
 import json
 import logging
 import os
+import sqlite3 as _sqlite3
+import time as _time
+import uuid as _auth_uuid
 from datetime import datetime, timedelta, timezone
+from pathlib import Path as _Path
 from typing import Dict
 
 from fastapi import APIRouter, HTTPException, Request, status
@@ -41,6 +46,50 @@ _REFRESH_EXPIRE_HOURS: int = int(os.environ.get("JWT_REFRESH_EXPIRE", "24"))
 #: Default tenant identifier for all tokens issued by this deployment.
 _JWT_TENANT_ID: str = os.environ.get("JWT_TENANT_ID", "default").strip()
 
+# ---------------------------------------------------------------------------
+# Token revocation store (SQLite-backed, jti-based)
+# ---------------------------------------------------------------------------
+
+_REVOCATION_DB_PATH = _Path(os.environ.get("REVOCATION_DB", "data/revoked_tokens.db"))
+
+
+def _revocation_conn() -> "_sqlite3.Connection":
+    _REVOCATION_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    conn = _sqlite3.connect(str(_REVOCATION_DB_PATH), timeout=5, check_same_thread=False)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS revoked_tokens (
+            jti       TEXT PRIMARY KEY,
+            revoked_at REAL NOT NULL
+        )
+    """)
+    return conn
+
+
+def _revoke_token(jti: str) -> None:
+    """Mark *jti* as revoked."""
+    try:
+        with _revocation_conn() as conn:
+            conn.execute(
+                "INSERT OR IGNORE INTO revoked_tokens (jti, revoked_at) VALUES (?, ?)",
+                (jti, _time.time()),
+            )
+    except Exception:
+        pass
+
+
+def _is_revoked(jti: str) -> bool:
+    """Return True if *jti* has been revoked."""
+    if not jti:
+        return False
+    try:
+        with _revocation_conn() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM revoked_tokens WHERE jti = ?", (jti,)
+            ).fetchone()
+        return row is not None
+    except Exception:
+        return False
+
 
 def _get_users() -> Dict[str, str]:
     raw = os.environ.get("JWT_USERS", "").strip()
@@ -53,6 +102,26 @@ def _get_users() -> Dict[str, str]:
         return {}
 
 
+def _get_jwt_secrets() -> list:
+    """Return list of (kid, secret) pairs from JWT_SECRETS or JWT_SECRET env var.
+
+    JWT_SECRETS env var format: JSON list of {"kid": "...", "secret": "..."} objects.
+    Falls back to JWT_SECRET (single secret, kid="default") for backward compat.
+    """
+    import json as _json
+    multi = os.environ.get("JWT_SECRETS", "").strip()
+    if multi:
+        try:
+            entries = _json.loads(multi)
+            return [(e["kid"], e["secret"]) for e in entries if e.get("secret")]
+        except Exception:
+            pass
+    single = os.environ.get("JWT_SECRET", "").strip()
+    if single:
+        return [("default", single)]
+    return []
+
+
 def _create_token(
     subject: str,
     expires_delta: timedelta,
@@ -62,6 +131,10 @@ def _create_token(
 ) -> str:
     import jwt  # PyJWT
 
+    secrets = _get_jwt_secrets()
+    if not secrets:
+        raise HTTPException(status_code=501, detail="JWT not configured")
+    kid, secret = secrets[0]
     now = datetime.now(timezone.utc)
     payload: Dict = {
         "sub":       subject,
@@ -69,21 +142,34 @@ def _create_token(
         "tenant_id": tenant_id or _JWT_TENANT_ID,
         "iat":       now,
         "exp":       now + expires_delta,
+        "jti":       str(_auth_uuid.uuid4()),
     }
     if role:
         payload["role"] = role
-    return jwt.encode(payload, _JWT_SECRET, algorithm=_JWT_ALGORITHM)
+    return jwt.encode(payload, secret, algorithm=_JWT_ALGORITHM, headers={"kid": kid})
 
 
 def _decode_token(token: str) -> Dict:
     import jwt  # PyJWT
 
-    try:
-        return jwt.decode(token, _JWT_SECRET, algorithms=[_JWT_ALGORITHM])
-    except jwt.ExpiredSignatureError:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token expired")
-    except jwt.InvalidTokenError as exc:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=f"Invalid token: {exc}")
+    secrets = _get_jwt_secrets()
+    if not secrets:
+        raise HTTPException(status_code=501, detail="JWT not configured")
+    last_exc = None
+    for _kid, secret in secrets:
+        try:
+            payload = jwt.decode(token, secret, algorithms=[_JWT_ALGORITHM])
+            jti = payload.get("jti", "")
+            if jti and _is_revoked(jti):
+                raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token has been revoked")
+            return payload
+        except HTTPException:
+            raise
+        except jwt.ExpiredSignatureError:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token expired")
+        except jwt.InvalidTokenError as exc:
+            last_exc = exc
+    raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=f"Invalid token: {last_exc}")
 
 
 # ---------------------------------------------------------------------------
@@ -106,6 +192,10 @@ class RefreshRequest(BaseModel):
     refresh_token: str
 
 
+class RevokeRequest(BaseModel):
+    token: str
+
+
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
@@ -119,7 +209,7 @@ def get_token(req: TokenRequest):
     Streamlit admin panel.  In both cases the resulting token carries a
     ``tenant_id`` claim so that API consumers can scope their requests.
     """
-    if not _JWT_SECRET:
+    if not _JWT_SECRET and not os.environ.get("JWT_SECRETS", "").strip():
         raise HTTPException(
             status_code=status.HTTP_501_NOT_IMPLEMENTED,
             detail="JWT authentication is not configured (JWT_SECRET not set)",
@@ -168,7 +258,7 @@ def get_token(req: TokenRequest):
 @router.post("/refresh", response_model=TokenResponse, summary="Refresh an access token")
 def refresh_token(req: RefreshRequest):
     """Use a refresh token to obtain a new access token."""
-    if not _JWT_SECRET:
+    if not _JWT_SECRET and not os.environ.get("JWT_SECRETS", "").strip():
         raise HTTPException(
             status_code=status.HTTP_501_NOT_IMPLEMENTED,
             detail="JWT authentication is not configured (JWT_SECRET not set)",
@@ -193,6 +283,19 @@ def refresh_token(req: RefreshRequest):
     )
 
 
+@router.post("/revoke")
+def revoke_token(body: RevokeRequest):
+    """Revoke a JWT token by its jti claim."""
+    if not _JWT_SECRET and not os.environ.get("JWT_SECRETS", "").strip():
+        raise HTTPException(status_code=501, detail="JWT not configured")
+    payload = _decode_token(body.token)
+    jti = payload.get("jti", "")
+    if not jti:
+        raise HTTPException(status_code=400, detail="Token has no jti claim")
+    _revoke_token(jti)
+    return {"revoked": True, "jti": jti}
+
+
 class UserInfoOut(BaseModel):
     """Identity information extracted from the current bearer token."""
     username: str
@@ -211,7 +314,7 @@ def me(request: Request):
     """
     auth_header = request.headers.get("Authorization", "")
     token = auth_header[7:] if auth_header.startswith("Bearer ") else ""
-    if not token or not _JWT_SECRET:
+    if not token or (not _JWT_SECRET and not os.environ.get("JWT_SECRETS", "").strip()):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
     payload = _decode_token(token)
     return UserInfoOut(

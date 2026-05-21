@@ -267,12 +267,39 @@ def create_app() -> FastAPI:
             token = auth_header[7:]
             try:
                 import jwt as _jwt
-                payload = _jwt.decode(
-                    token,
-                    _jwt_secret,
-                    algorithms=["HS256"],
-                    options={"verify_exp": True},
-                )
+                import json as _json
+                # Support multi-secret rotation via JWT_SECRETS env var.
+                _jwt_secrets_raw = os.environ.get("JWT_SECRETS", "").strip()
+                if _jwt_secrets_raw:
+                    try:
+                        _entries = _json.loads(_jwt_secrets_raw)
+                        _secret_list = [(e["kid"], e["secret"]) for e in _entries if e.get("secret")]
+                    except Exception:
+                        _secret_list = [("default", _jwt_secret)]
+                else:
+                    _secret_list = [("default", _jwt_secret)]
+                payload = None
+                for _kid, _sec in _secret_list:
+                    try:
+                        payload = _jwt.decode(
+                            token,
+                            _sec,
+                            algorithms=["HS256"],
+                            options={"verify_exp": True},
+                        )
+                        break
+                    except _jwt.ExpiredSignatureError:
+                        return JSONResponse(
+                            status_code=status.HTTP_401_UNAUTHORIZED,
+                            content={"detail": "Invalid or expired token"},
+                        )
+                    except _jwt.InvalidTokenError:
+                        pass
+                if payload is None:
+                    return JSONResponse(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        content={"detail": "Invalid or expired token"},
+                    )
                 # Inject tenant context so downstream routes can scope queries.
                 request.state.tenant_id = payload.get("tenant_id", "default")
                 request.state.current_user = payload.get("sub", "")
