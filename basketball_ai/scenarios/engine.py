@@ -14,7 +14,7 @@ from basketball_ai.utils.helpers import (
     normalize_id as _normalize_id,
 )
 
-from basketball_ai.models.age_curve import PEAK_AGES, peak_age_window
+from basketball_ai.models.age_curve import PEAK_AGES, maybe_fit_from_db, peak_age_window
 from basketball_ai.features.context_features import compute_context_features
 from basketball_ai.features.player_features import compute_player_features
 from basketball_ai.features.team_features import compute_team_features, get_style_position_compat
@@ -215,6 +215,7 @@ class WhatIfEngine:
     def __init__(self, ensemble: EnsembleModel, data: Dict[str, Any]) -> None:
         self.ensemble = ensemble
         self.data     = data
+        maybe_fit_from_db(self.data)
 
     # ------------------------------------------------------------------
     def _get_player_db_role(
@@ -1049,4 +1050,3 @@ class WhatIfEngine:
             optimal_lineup=optimal,
             estimated_avg_rating=round(avg_r, 3),
         )
-

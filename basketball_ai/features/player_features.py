@@ -19,6 +19,7 @@ from basketball_ai.constants import (
     POSITIONAL_PEAK_AGES,
     LEAGUE_MAX_GAMES_BY_NAME,
     LEAGUE_MAX_GAMES_DEFAULT,
+    get_peak_age,
     _primary_pos,
     _peak_age,
 )
@@ -28,6 +29,7 @@ __all__ = [
     "POSITIONAL_PEAK_AGES",
     "LEAGUE_MAX_GAMES_BY_NAME",
     "LEAGUE_MAX_GAMES_DEFAULT",
+    "get_peak_age",
     "_primary_pos",
     "_peak_age",
 ]
@@ -97,7 +99,7 @@ def compute_player_features_from_objects(
         if len(ratings) >= 2 else 0.0
     )
 
-    peak_age = _peak_age(player.position)
+    peak_age = get_peak_age(player.position)
     age_vs_peak_age = (player.age - peak_age) if player.age is not None else 0
 
     # --- New DB-schema advanced metrics ------------------------------------
@@ -266,7 +268,7 @@ def compute_player_features_from_objects(
 
 
 def _empty_features(player: Player) -> Dict[str, Any]:
-    peak_age = _peak_age(player.position)
+    peak_age = get_peak_age(player.position)
     return {
         "form_score": 5.0, "consistency_score": 0.5,
         "pts_per_36": 10.0, "ast_per_36": 2.0, "reb_per_36": 4.0,

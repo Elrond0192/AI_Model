@@ -13,7 +13,7 @@ fallback when no data is supplied or when the fit fails.
 from __future__ import annotations
 
 import logging
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -43,6 +43,8 @@ _SIGMA_AFTER: Dict[str, float] = {
 _fitted_peak_ages:    Dict[str, float] = {}
 _fitted_sigma_before: Dict[str, float] = {}
 _fitted_sigma_after:  Dict[str, float] = {}
+_MIN_VALID_AGE = 15
+_MAX_VALID_AGE = 50
 
 
 def age_performance_factor(age: int, position: str) -> float:
@@ -155,6 +157,123 @@ def fit_from_data(
 
     if fitted:
         logger.info("[AgeCurve] Empirical fit applied for %d position(s).", fitted)
+
+
+def maybe_fit_from_db(data: Dict[str, Any], min_samples: int = 20) -> bool:
+    """Try fitting age-curve params from loaded app data.
+
+    Expected input is the same ``data`` dict used by the scenario engine,
+    containing at least ``player_stats`` and player position metadata.
+
+    Returns:
+        True if at least one position fit was produced/updated, False otherwise.
+
+    Args:
+        data: App data dict containing player stats and player metadata.
+        min_samples: Minimum points required per position to attempt fitting.
+    """
+    def _to_valid_age(value: Any) -> Optional[int]:
+        if value is None:
+            return None
+        try:
+            age = int(round(float(value)))
+        except (TypeError, ValueError):
+            return None
+        if age < _MIN_VALID_AGE or age > _MAX_VALID_AGE:
+            return None
+        return age
+
+    # ScenarioEngine passes pandas DataFrames in the loaded `data` dict.
+    stats = data.get("player_stats")
+    if stats is None or getattr(stats, "empty", True):
+        logger.info("[AgeCurve] maybe_fit_from_db skipped: player_stats unavailable/empty.")
+        return False
+
+    required_cols = {"player_id", "rating"}
+    if not required_cols.issubset(getattr(stats, "columns", [])):
+        logger.warning("[AgeCurve] maybe_fit_from_db skipped: player_stats missing required columns %s.", required_cols)
+        return False
+
+    position_by_pid: Dict[int, str] = {}
+    player_age_by_pid: Dict[int, int] = {}
+
+    player_dict = data.get("player_dict")
+    if isinstance(player_dict, dict):
+        for pid, row in player_dict.items():
+            try:
+                pid_int = int(pid)
+            except (TypeError, ValueError):
+                continue
+            if isinstance(row, dict):
+                pos = str(row.get("position", "") or "").strip()
+                if pos:
+                    position_by_pid[pid_int] = pos
+                age = _to_valid_age(row.get("age"))
+                if age is not None:
+                    player_age_by_pid[pid_int] = age
+
+    if not position_by_pid:
+        players = data.get("players")
+        if players is not None and not getattr(players, "empty", True):
+            if {"id", "position"}.issubset(getattr(players, "columns", [])):
+                for _, row in players.iterrows():
+                    try:
+                        pid_int = int(row["id"])
+                    except (TypeError, ValueError):
+                        continue
+                    pos = str(row.get("position", "") or "").strip()
+                    if pos:
+                        position_by_pid[pid_int] = pos
+
+    if not position_by_pid:
+        logger.warning("[AgeCurve] maybe_fit_from_db skipped: unable to map player_id -> position.")
+        return False
+
+    fit_input: Dict[str, List[Tuple[int, float]]] = {}
+    rows_used = 0
+    for _, row in stats.iterrows():
+        try:
+            pid = int(row["player_id"])
+            rating = float(row["rating"])
+        except (TypeError, ValueError, KeyError):
+            continue
+        if not np.isfinite(rating):
+            continue
+
+        pos = position_by_pid.get(pid)
+        if not pos:
+            continue
+
+        age_raw = row.get("age")
+        if age_raw is None:
+            age_raw = player_age_by_pid.get(pid)
+        age = _to_valid_age(age_raw)
+        if age is None:
+            continue
+
+        fit_input.setdefault(pos, []).append((age, rating))
+        rows_used += 1
+
+    if not fit_input:
+        logger.info("[AgeCurve] maybe_fit_from_db skipped: no valid (age, rating) points built from player_stats.")
+        return False
+
+    before = dict(_fitted_peak_ages)
+    fit_from_data(fit_input, min_samples=min_samples)
+    changed_positions = [pos for pos, value in _fitted_peak_ages.items() if before.get(pos) != value]
+
+    if changed_positions:
+        logger.info(
+            "[AgeCurve] maybe_fit_from_db applied empirical fit for %d position(s) from %d rows.",
+            len(changed_positions), rows_used,
+        )
+        return True
+
+    logger.info(
+        "[AgeCurve] maybe_fit_from_db completed with no fitted positions (min_samples=%d, rows_used=%d).",
+        min_samples, rows_used,
+    )
+    return False
 
 
 def reset_fitted_params() -> None:

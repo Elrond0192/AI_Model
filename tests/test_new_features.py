@@ -75,6 +75,30 @@ class TestAgeCurveEmpiricalFit:
         reset_fitted_params()
         assert len(_fitted_peak_ages) == 0
 
+    def test_get_peak_age_prefers_fitted(self):
+        from basketball_ai.constants import get_peak_age
+        from basketball_ai.models.age_curve import _fitted_peak_ages, reset_fitted_params
+
+        reset_fitted_params()
+        try:
+            _fitted_peak_ages["PG"] = 24.6
+            assert get_peak_age("PG") == 25
+            assert get_peak_age("PG/SG") == 25
+        finally:
+            reset_fitted_params()
+
+    def test_get_peak_age_falls_back_to_static_prior(self):
+        from basketball_ai.constants import POSITIONAL_PEAK_AGES, get_peak_age
+
+        assert get_peak_age("PF/C") == POSITIONAL_PEAK_AGES["PF/C"]
+
+    def test_maybe_fit_from_db_tiny_data(self, tiny_data):
+        from basketball_ai.models.age_curve import maybe_fit_from_db, _fitted_peak_ages
+
+        applied = maybe_fit_from_db(tiny_data, min_samples=5)
+        assert applied is True
+        assert len(_fitted_peak_ages) > 0
+
 
 # ---------------------------------------------------------------------------
 # JWT auth route
