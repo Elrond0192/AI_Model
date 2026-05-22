@@ -269,7 +269,7 @@ def maybe_fit_from_db(data: Dict[str, Any], min_samples: int = 20) -> bool:
     work = work.dropna(subset=["position"])
 
     for pos, grp in work.groupby("position"):
-        pairs = [(int(round(a)), float(r)) for a, r in zip(grp["age"], grp["rating"])]
+        pairs = [(int(round(a)), float(r)) for a, r in grp[["age", "rating"]].itertuples(index=False, name=None)]
         fit_input[str(pos)] = pairs
         rows_used += len(pairs)
 
