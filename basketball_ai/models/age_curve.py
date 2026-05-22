@@ -167,7 +167,22 @@ def maybe_fit_from_db(data: Dict[str, Any], min_samples: int = 20) -> bool:
 
     Returns:
         True if at least one position fit was produced/updated, False otherwise.
+
+    Args:
+        data: App data dict containing player stats and player metadata.
+        min_samples: Minimum points required per position to attempt fitting.
     """
+    def _to_valid_age(value: Any) -> Optional[int]:
+        if value is None:
+            return None
+        try:
+            age = int(round(float(value)))
+        except (TypeError, ValueError):
+            return None
+        if age < _MIN_VALID_AGE or age > _MAX_VALID_AGE:
+            return None
+        return age
+
     # ScenarioEngine passes pandas DataFrames in the loaded `data` dict.
     stats = data.get("player_stats")
     if stats is None or getattr(stats, "empty", True):
@@ -193,12 +208,9 @@ def maybe_fit_from_db(data: Dict[str, Any], min_samples: int = 20) -> bool:
                 pos = str(row.get("position", "") or "").strip()
                 if pos:
                     position_by_pid[pid_int] = pos
-                age_raw = row.get("age")
-                if age_raw is not None:
-                    try:
-                        player_age_by_pid[pid_int] = int(round(float(age_raw)))
-                    except (TypeError, ValueError):
-                        pass
+                age = _to_valid_age(row.get("age"))
+                if age is not None:
+                    player_age_by_pid[pid_int] = age
 
     if not position_by_pid:
         players = data.get("players")
@@ -235,14 +247,8 @@ def maybe_fit_from_db(data: Dict[str, Any], min_samples: int = 20) -> bool:
         age_raw = row.get("age")
         if age_raw is None:
             age_raw = player_age_by_pid.get(pid)
-        if age_raw is None:
-            continue
-
-        try:
-            age = int(round(float(age_raw)))
-        except (TypeError, ValueError):
-            continue
-        if age < _MIN_VALID_AGE or age > _MAX_VALID_AGE:
+        age = _to_valid_age(age_raw)
+        if age is None:
             continue
 
         fit_input.setdefault(pos, []).append((age, rating))

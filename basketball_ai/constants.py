@@ -89,7 +89,9 @@ def get_peak_age(pos: str) -> int:
         from basketball_ai.models.age_curve import _fitted_peak_ages  # lazy import
 
         primary = _primary_pos(pos)
-        fitted = _fitted_peak_ages.get(pos) or _fitted_peak_ages.get(primary)
+        fitted = _fitted_peak_ages.get(pos)
+        if fitted is None:
+            fitted = _fitted_peak_ages.get(primary)
         if fitted is not None:
             return int(round(fitted))
     except ImportError:
