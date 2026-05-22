@@ -2,8 +2,11 @@
 
 Centralising these definitions avoids duplication between
 ``features/player_features.py``, ``models/performance_model.py``, and
-``models/age_curve.py``.  This module has **no internal imports** so it
-can be imported by any other module without risk of circular dependencies.
+``models/age_curve.py``.  This module has **no module-level internal imports**
+so it can be imported by any other module without risk of circular
+dependencies.  Functions in this module may use *lazy* internal imports
+(inside the function body) where needed to avoid circular dependency issues at
+import time.
 """
 from __future__ import annotations
 

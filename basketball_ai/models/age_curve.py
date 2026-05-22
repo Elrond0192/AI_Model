@@ -16,6 +16,7 @@ import logging
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
+import pandas as pd
 
 from basketball_ai.constants import _primary_pos
 
@@ -215,7 +216,9 @@ def maybe_fit_from_db(data: Dict[str, Any], min_samples: int = 20) -> bool:
     if not position_by_pid:
         players = data.get("players")
         if players is not None and not getattr(players, "empty", True):
-            if {"id", "position"}.issubset(getattr(players, "columns", [])):
+            players_cols = getattr(players, "columns", [])
+            if {"id", "position"}.issubset(players_cols):
+                has_age_col = "age" in players_cols
                 for _, row in players.iterrows():
                     try:
                         pid_int = int(row["id"])
@@ -224,6 +227,10 @@ def maybe_fit_from_db(data: Dict[str, Any], min_samples: int = 20) -> bool:
                     pos = str(row.get("position", "") or "").strip()
                     if pos:
                         position_by_pid[pid_int] = pos
+                    if has_age_col and pid_int not in player_age_by_pid:
+                        age = _to_valid_age(row.get("age"))
+                        if age is not None:
+                            player_age_by_pid[pid_int] = age
 
     if not position_by_pid:
         logger.warning("[AgeCurve] maybe_fit_from_db skipped: unable to map player_id -> position.")
@@ -231,28 +238,40 @@ def maybe_fit_from_db(data: Dict[str, Any], min_samples: int = 20) -> bool:
 
     fit_input: Dict[str, List[Tuple[int, float]]] = {}
     rows_used = 0
-    for _, row in stats.iterrows():
-        try:
-            pid = int(row["player_id"])
-            rating = float(row["rating"])
-        except (TypeError, ValueError, KeyError):
-            continue
-        if not np.isfinite(rating):
-            continue
 
-        pos = position_by_pid.get(pid)
-        if not pos:
-            continue
+    # Build a Series of ages: prefer per-row age column, fall back to player_age_by_pid.
+    age_series = stats["age"].copy() if "age" in stats.columns else None
 
-        age_raw = row.get("age")
-        if age_raw is None:
-            age_raw = player_age_by_pid.get(pid)
-        age = _to_valid_age(age_raw)
-        if age is None:
-            continue
+    # Vectorised approach: work on a minimal subset of columns, then groupby position.
+    work = stats[["player_id", "rating"]].copy()
+    work["player_id"] = pd.to_numeric(work["player_id"], errors="coerce")
+    work["rating"] = pd.to_numeric(work["rating"], errors="coerce")
+    work = work.dropna(subset=["player_id", "rating"])
+    work["player_id"] = work["player_id"].astype(int)
+    work = work[np.isfinite(work["rating"])]
 
-        fit_input.setdefault(pos, []).append((age, rating))
-        rows_used += 1
+    # Attach age: row-level age column first, then fallback dict.
+    if age_series is not None:
+        work["age"] = pd.to_numeric(age_series.loc[work.index], errors="coerce")
+    else:
+        work["age"] = np.nan
+    missing_age_mask = work["age"].isna()
+    if missing_age_mask.any():
+        work.loc[missing_age_mask, "age"] = work.loc[missing_age_mask, "player_id"].map(player_age_by_pid)
+
+    work = work.dropna(subset=["age"])
+    work["age"] = work["age"].astype(float)
+    # Apply valid age bounds.
+    work = work[(work["age"] >= _MIN_VALID_AGE) & (work["age"] <= _MAX_VALID_AGE)]
+
+    # Attach position.
+    work["position"] = work["player_id"].map(position_by_pid)
+    work = work.dropna(subset=["position"])
+
+    for pos, grp in work.groupby("position"):
+        pairs = [(int(round(a)), float(r)) for a, r in zip(grp["age"], grp["rating"])]
+        fit_input[str(pos)] = pairs
+        rows_used += len(pairs)
 
     if not fit_input:
         logger.info("[AgeCurve] maybe_fit_from_db skipped: no valid (age, rating) points built from player_stats.")
