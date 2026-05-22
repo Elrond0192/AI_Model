@@ -124,7 +124,7 @@ class TestPlayerFeatures:
             player = _make_player("PF/C", 27)
             stats  = [_make_stat("2023-24", 7.0)]
             feats  = compute_player_features_from_objects(player, stats)
-            assert feats["positional_peak_age"] == 29
+            assert feats["positional_peak_age"] == int(round(29.2))
             assert feats["age_vs_peak_age"] == -2
         finally:
             reset_fitted_params()

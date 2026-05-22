@@ -43,6 +43,8 @@ _SIGMA_AFTER: Dict[str, float] = {
 _fitted_peak_ages:    Dict[str, float] = {}
 _fitted_sigma_before: Dict[str, float] = {}
 _fitted_sigma_after:  Dict[str, float] = {}
+_MIN_VALID_AGE = 15
+_MAX_VALID_AGE = 50
 
 
 def age_performance_factor(age: int, position: str) -> float:
@@ -166,6 +168,7 @@ def maybe_fit_from_db(data: Dict[str, Any], min_samples: int = 20) -> bool:
     Returns:
         True if at least one position fit was produced/updated, False otherwise.
     """
+    # ScenarioEngine passes pandas DataFrames in the loaded `data` dict.
     stats = data.get("player_stats")
     if stats is None or getattr(stats, "empty", True):
         logger.info("[AgeCurve] maybe_fit_from_db skipped: player_stats unavailable/empty.")
@@ -239,7 +242,7 @@ def maybe_fit_from_db(data: Dict[str, Any], min_samples: int = 20) -> bool:
             age = int(round(float(age_raw)))
         except (TypeError, ValueError):
             continue
-        if age < 15 or age > 50:
+        if age < _MIN_VALID_AGE or age > _MAX_VALID_AGE:
             continue
 
         fit_input.setdefault(pos, []).append((age, rating))
