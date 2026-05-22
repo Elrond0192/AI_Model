@@ -103,11 +103,31 @@ class TestPlayerFeatures:
         assert feats["consistency_score"] == 0.5
 
     def test_hybrid_position_peak_age(self):
-        player = _make_player("PF/C", 27)
-        stats  = [_make_stat("2023-24", 7.0)]
-        feats  = compute_player_features_from_objects(player, stats)
-        assert feats["positional_peak_age"] == POSITIONAL_PEAK_AGES["PF/C"]
-        assert feats["age_vs_peak_age"] == 27 - POSITIONAL_PEAK_AGES["PF/C"]
+        from basketball_ai.models.age_curve import reset_fitted_params
+
+        reset_fitted_params()
+        try:
+            player = _make_player("PF/C", 27)
+            stats  = [_make_stat("2023-24", 7.0)]
+            feats  = compute_player_features_from_objects(player, stats)
+            assert feats["positional_peak_age"] == POSITIONAL_PEAK_AGES["PF/C"]
+            assert feats["age_vs_peak_age"] == 27 - POSITIONAL_PEAK_AGES["PF/C"]
+        finally:
+            reset_fitted_params()
+
+    def test_peak_age_uses_fitted_when_available(self):
+        from basketball_ai.models.age_curve import _fitted_peak_ages, reset_fitted_params
+
+        reset_fitted_params()
+        try:
+            _fitted_peak_ages["PF/C"] = 29.2
+            player = _make_player("PF/C", 27)
+            stats  = [_make_stat("2023-24", 7.0)]
+            feats  = compute_player_features_from_objects(player, stats)
+            assert feats["positional_peak_age"] == 29
+            assert feats["age_vs_peak_age"] == -2
+        finally:
+            reset_fitted_params()
 
     def test_all_positions_have_peak_age(self):
         for pos in ["PG", "SG", "SF", "PF", "C", "PG/SG", "SG/SF", "SF/PF", "PF/C", "SG/PF"]:

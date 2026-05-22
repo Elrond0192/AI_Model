@@ -78,6 +78,25 @@ def _peak_age(pos: str) -> int:
     return POSITIONAL_PEAK_AGES.get(pos, POSITIONAL_PEAK_AGES.get(_primary_pos(pos), 26))
 
 
+def get_peak_age(pos: str) -> int:
+    """Return best available peak age for *pos*: fitted > static prior.
+
+    Uses a lazy import of ``age_curve._fitted_peak_ages`` to avoid circular
+    dependencies (constants.py must remain import-free of internal modules).
+    Falls back to the hardcoded prior when no empirical fit is available.
+    """
+    try:
+        from basketball_ai.models.age_curve import _fitted_peak_ages  # lazy import
+
+        primary = _primary_pos(pos)
+        fitted = _fitted_peak_ages.get(pos) or _fitted_peak_ages.get(primary)
+        if fitted is not None:
+            return int(round(fitted))
+    except ImportError:
+        pass
+    return _peak_age(pos)
+
+
 # ---------------------------------------------------------------------------
 # Supported leagues and seasons – canonical registry (no DB lookup required)
 # ---------------------------------------------------------------------------
