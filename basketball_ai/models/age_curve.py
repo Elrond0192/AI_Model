@@ -13,7 +13,7 @@ fallback when no data is supplied or when the fit fails.
 from __future__ import annotations
 
 import logging
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -157,7 +157,7 @@ def fit_from_data(
         logger.info("[AgeCurve] Empirical fit applied for %d position(s).", fitted)
 
 
-def maybe_fit_from_db(data: Dict[str, object], min_samples: int = 20) -> bool:
+def maybe_fit_from_db(data: Dict[str, Any], min_samples: int = 20) -> bool:
     """Try fitting age-curve params from loaded app data.
 
     Expected input is the same ``data`` dict used by the scenario engine,
@@ -177,6 +177,7 @@ def maybe_fit_from_db(data: Dict[str, object], min_samples: int = 20) -> bool:
         return False
 
     position_by_pid: Dict[int, str] = {}
+    player_age_by_pid: Dict[int, int] = {}
 
     player_dict = data.get("player_dict")
     if isinstance(player_dict, dict):
@@ -189,6 +190,12 @@ def maybe_fit_from_db(data: Dict[str, object], min_samples: int = 20) -> bool:
                 pos = str(row.get("position", "") or "").strip()
                 if pos:
                     position_by_pid[pid_int] = pos
+                age_raw = row.get("age")
+                if age_raw is not None:
+                    try:
+                        player_age_by_pid[pid_int] = int(round(float(age_raw)))
+                    except (TypeError, ValueError):
+                        pass
 
     if not position_by_pid:
         players = data.get("players")
@@ -224,7 +231,7 @@ def maybe_fit_from_db(data: Dict[str, object], min_samples: int = 20) -> bool:
 
         age_raw = row.get("age")
         if age_raw is None:
-            age_raw = (player_dict or {}).get(pid, {}).get("age") if isinstance(player_dict, dict) else None
+            age_raw = player_age_by_pid.get(pid)
         if age_raw is None:
             continue
 
