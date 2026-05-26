@@ -443,3 +443,54 @@ class TestChatAPI:
             json={"message": ""},
         )
         assert resp.status_code == 422  # Pydantic min_length=1
+
+    def test_chat_with_valid_user_hash(self, chat_client):
+        """Valid SHA-256 X-User-Hash header is accepted and session stores the hash."""
+        valid_hash = "a" * 64  # 64 hex chars — valid SHA-256 placeholder
+        resp = chat_client.post(
+            "/api/v1/chat",
+            json={"message": "help"},
+            headers={"X-User-Hash": valid_hash},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert "session_id" in body
+        assert "reply" in body
+
+    def test_chat_user_hash_stored_in_session(self, chat_client):
+        """Session bound by session_id retains the user_hash across turns."""
+        valid_hash = "b" * 64
+        r1 = chat_client.post(
+            "/api/v1/chat",
+            json={"message": "help"},
+            headers={"X-User-Hash": valid_hash},
+        )
+        assert r1.status_code == 200
+        sid = r1.json()["session_id"]
+
+        # Second turn in the same session — must still succeed
+        r2 = chat_client.post(
+            "/api/v1/chat",
+            json={"message": "help", "session_id": sid},
+            headers={"X-User-Hash": valid_hash},
+        )
+        assert r2.status_code == 200
+        assert r2.json()["session_id"] == sid
+
+    def test_chat_invalid_user_hash_rejected(self, chat_client):
+        """Non-hex or wrong-length X-User-Hash header returns 400."""
+        resp = chat_client.post(
+            "/api/v1/chat",
+            json={"message": "help"},
+            headers={"X-User-Hash": "not-a-sha256-hash"},
+        )
+        assert resp.status_code == 400
+
+    def test_chat_user_hash_wrong_length_rejected(self, chat_client):
+        """X-User-Hash with wrong length (e.g. 32 chars) returns 400."""
+        resp = chat_client.post(
+            "/api/v1/chat",
+            json={"message": "help"},
+            headers={"X-User-Hash": "a" * 32},  # MD5 length, not SHA-256
+        )
+        assert resp.status_code == 400
