@@ -225,7 +225,9 @@ class _SQLiteStore:
                 (session_id, user_hash, time.time()),
             )
             conn.commit()
-            sess = Session(session_id=session_id, user_hash=user_hash)
+            sess = self._load_session(conn, session_id)
+            if sess is None:
+                sess = Session(session_id=session_id, user_hash=user_hash)
         elif user_hash and not sess.user_hash:
             conn.execute(
                 "UPDATE hm_chat_sessions SET user_hash=?, updated_at=? WHERE session_id=?",
