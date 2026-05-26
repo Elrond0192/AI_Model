@@ -334,7 +334,7 @@ def export_chat_model(
             predictions.append(entry)
 
     # ---- Assemble payload -----------------------------------------------
-    generated_at = datetime.now(timezone.utc).isoformat()
+    generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     raw_bytes    = json.dumps(
         {"schema_version": SCHEMA_VERSION, "predictions": predictions},
         ensure_ascii=False,
