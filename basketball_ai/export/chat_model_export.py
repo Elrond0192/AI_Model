@@ -23,14 +23,14 @@ Output schema (``schema_version: 1``)::
       "predictions": [
         {
           "intent":     "predict",
-          "player_hm":  "hm_abc123",
-          "team_hm":    "hm_xyz789",
+          "player_hm":  "hm_p000123",
+          "team_hm":    "hm_t000789",
           "season":     "2024-25",
           "payload":    { "predicted_rating": 7.42, "confidence": 0.81 }
         },
         {
           "intent":     "trajectory",
-          "player_hm":  "hm_abc123",
+          "player_hm":  "hm_p000123",
           "season":     "2024-25",
           "payload":    { "ages": [20, 21, ...], "ratings": [6.1, 6.5, ...] }
         },
