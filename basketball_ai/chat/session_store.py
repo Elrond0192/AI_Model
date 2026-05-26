@@ -248,8 +248,9 @@ class _SQLiteStore:
         conn = self._conn()
         now = time.time()
         # Ensure the session row exists before inserting a turn so that the
-        # foreign-key constraint is satisfied even if get_or_create() was not
-        # called first (mirrors the memory backend's silent create-on-demand).
+        # foreign-key constraint is satisfied and no IntegrityError is raised
+        # when add_turn() is called before get_or_create() — mirrors the
+        # memory backend's silent create-on-demand behavior.
         conn.execute(
             "INSERT OR IGNORE INTO hm_chat_sessions (session_id, updated_at) VALUES (?,?)",
             (session_id, now),

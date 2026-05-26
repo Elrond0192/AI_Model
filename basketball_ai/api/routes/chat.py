@@ -45,6 +45,7 @@ from basketball_ai.api._deps import get_chat_engine
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
+_SHA256_HEX_RE = re.compile(r"^[0-9a-f]{64}$")
 
 @router.post("", response_model=ChatMessageResponse)
 @chat_limiter.limit(RATE_LIMIT_CHAT)
@@ -62,7 +63,7 @@ async def chat(
     Pass ``X-User-Hash`` (SHA-256 of the WordPress user ID) to bind sessions
     to an authenticated user and enable per-user compound rate limiting.
     """
-    if x_user_hash is not None and not re.fullmatch(r"[0-9a-f]{64}", x_user_hash):
+    if x_user_hash is not None and not _SHA256_HEX_RE.match(x_user_hash):
         raise HTTPException(
             status_code=400,
             detail="X-User-Hash must be a lowercase SHA-256 hex digest (64 hex characters).",
