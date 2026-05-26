@@ -1,5 +1,20 @@
 # Basketball AI Chat Widget — WordPress Plugin
 
+> ⚠️ **DEPRECATED** — This plugin has been superseded by the
+> [`hoopmetrics-chat`](https://github.com/Elrond0192/Wordpress/tree/main/wp-content/plugins/hoopmetrics-chat)
+> WordPress plugin (see `TODO-paywall_Version2.md §3`).
+>
+> `hoopmetrics-chat` provides a pluggable multi-backend architecture
+> (Local / FastAPI / DeepSeek), per-user quota management, and removes the
+> security issue of exposing `api_key` in HTML `data-*` attributes.
+>
+> **Do not use this plugin for new installations.**  
+> Existing deployments will continue to work; migrate at your earliest
+> convenience.  This folder will not be deleted until all known deployments
+> have migrated.
+
+---
+
 A lightweight WordPress plugin that embeds the **Basketball Performance AI**
 chat interface as a shortcode anywhere on your site.
 

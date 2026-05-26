@@ -7,6 +7,10 @@
  * Author:      AI_Model
  * License:     MIT
  *
+ * @deprecated This plugin has been superseded by the hoopmetrics-chat plugin.
+ *             See wp_chat_widget/README.md and TODO-paywall_Version2.md §3 for
+ *             migration instructions.  Do not activate for new installations.
+ *
  * Shortcode usage
  * ---------------
  *   [basketball_chat

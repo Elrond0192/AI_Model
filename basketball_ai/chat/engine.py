@@ -135,12 +135,26 @@ class ChatEngine:
         self,
         message: str,
         session_id: Optional[str] = None,
+        user_hash: Optional[str] = None,
     ) -> ChatResponse:
-        """Process a user message and return a ChatResponse."""
+        """Process a user message and return a ChatResponse.
+
+        Parameters
+        ----------
+        message:
+            Natural-language question from the user.
+        session_id:
+            Optional UUID for conversation continuity.  A new one is generated
+            when omitted.
+        user_hash:
+            Optional SHA-256 hex digest of the WordPress user ID, forwarded
+            from the ``X-User-Hash`` request header.  Stored in the session
+            for cross-process session lookup (§6.2).
+        """
         if not session_id:
             session_id = str(uuid.uuid4())
 
-        sess = _session.get_or_create(session_id)
+        sess = _session.get_or_create(session_id, user_hash=user_hash)
         _session.add_turn(session_id, "user", message)
 
         intent, _intent_conf = detect_intent_with_confidence(message)
