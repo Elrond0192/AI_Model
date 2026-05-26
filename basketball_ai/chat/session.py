@@ -8,7 +8,7 @@ This module re-exports the public API so existing callers are unaffected.
 """
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Optional
 
 # Re-export shared types so callers that import from here still work.
 from basketball_ai.chat.session_store import (  # noqa: F401
