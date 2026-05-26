@@ -508,8 +508,8 @@ def mode_export_chat_model(args) -> None:
         engine=engine,
         data=data,
         out_path=args.out,
-        top_players=getattr(args, "top_players", 500),
-        top_teams=getattr(args, "top_teams", 100),
+        top_players=args.top_players,
+        top_teams=args.top_teams,
     )
 
 

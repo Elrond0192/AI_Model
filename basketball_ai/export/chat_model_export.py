@@ -37,6 +37,18 @@ logger = logging.getLogger(__name__)
 # JSON null is used instead of None when a prediction fails.
 _SKIP = None
 
+# Cross-product dimensions for the 'predict' intent.
+# Top CROSS_PLAYERS × CROSS_TEAMS pairs are exported in addition to each
+# player's current-team prediction.  Tuned to stay well within the 50 MB
+# gzip target while covering the most relevant player-team combinations.
+_CROSS_PLAYERS: int = 50
+_CROSS_TEAMS:   int = 20
+
+# Number of records sampled for the model_version fingerprint.  The first
+# N records are sufficient to detect major re-trains; this is a lightweight
+# change-detection signal, not a full integrity hash.
+_VERSION_HASH_SAMPLE: int = 200
+
 # Season label helper: integer 2024 → "2024-25"
 def _season_label(year: int) -> str:
     return f"{year}-{str(year + 1)[-2:]}"
@@ -326,10 +338,10 @@ def export_chat_model(
             predictions.append(rec)
             total += 1
 
-    # -- predict cross-product for top-50 players × top-20 teams
+    # -- predict cross-product for top-CROSS_PLAYERS × top-CROSS_TEAMS teams
     print("[export-chat-model] 2/5 Generating cross-product 'predict' records …")
-    cross_players = player_ids[:50]
-    cross_teams   = team_ids[:20]
+    cross_players = player_ids[:_CROSS_PLAYERS]
+    cross_teams   = team_ids[:_CROSS_TEAMS]
     for pid in cross_players:
         for tid in cross_teams:
             # skip if already exported (current team)
@@ -377,7 +389,7 @@ def export_chat_model(
     # ------------------------------------------------------------------ #
     if model_version is None:
         digest_src = json.dumps(
-            predictions[:100], sort_keys=True, ensure_ascii=False
+            predictions[:_VERSION_HASH_SAMPLE], sort_keys=True, ensure_ascii=False
         ).encode("utf-8")
         model_version = "sha256-" + hashlib.sha256(digest_src).hexdigest()[:16]
 

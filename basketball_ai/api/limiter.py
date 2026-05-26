@@ -30,6 +30,9 @@ logger = logging.getLogger(__name__)
 RATE_LIMIT_PREDICTIONS: str = os.environ.get("RATE_LIMIT_PREDICTIONS", "60/minute")
 RATE_LIMIT_CHAT: str        = os.environ.get("RATE_LIMIT_CHAT",        "30/minute")
 
+# Pre-compiled set for O(1) character validation in get_chat_key().
+_VALID_HEX_CHARS: frozenset = frozenset("0123456789abcdefABCDEF")
+
 
 def get_chat_key(request: "Request") -> str:  # noqa: F821  (Request imported lazily)
     """Rate-limit key for the chat endpoint: ``<ip>:<user_hash|anon>``.
@@ -39,10 +42,10 @@ def get_chat_key(request: "Request") -> str:  # noqa: F821  (Request imported la
     WordPress user so malicious users cannot hide behind shared IPs.
     Falls back to IP-only for unauthenticated callers.
     """
-    ip       = request.client.host if request.client else "unknown"
-    uhash    = request.headers.get("X-User-Hash", "anon")
+    ip    = request.client.host if request.client else "unknown"
+    uhash = request.headers.get("X-User-Hash", "anon")
     # Sanitise: allow only hex chars and 'anon' to prevent header injection
-    if uhash != "anon" and not all(c in "0123456789abcdefABCDEF" for c in uhash):
+    if uhash != "anon" and not _VALID_HEX_CHARS.issuperset(uhash):
         uhash = "anon"
     return f"{ip}:{uhash}"
 

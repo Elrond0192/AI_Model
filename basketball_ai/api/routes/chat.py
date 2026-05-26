@@ -46,7 +46,7 @@ router = APIRouter(prefix="/chat", tags=["chat"])
 async def chat(
     request: Request,
     req: ChatRequest,
-    x_user_hash: Optional[str] = Header(default=None, alias="X-User-Hash"),
+    user_hash: Optional[str] = Header(default=None, alias="X-User-Hash"),
 ):
     """Send a natural-language basketball question and get an AI-powered reply.
 
@@ -77,7 +77,7 @@ async def chat(
 
     # Attach the user hash to the session so the persistent store can link it
     # to the WordPress user for future reference (§6.2).
-    result = ce.process(req.message, session_id, user_hash=x_user_hash)
+    result = ce.process(req.message, session_id, user_hash=user_hash)
 
     return ChatMessageResponse(
         reply=result.reply,

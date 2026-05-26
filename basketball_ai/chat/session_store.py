@@ -194,7 +194,7 @@ class _SQLiteStore(_BaseStore):
     def _conn(self) -> sqlite3.Connection:
         """Return (or create) a per-thread SQLite connection."""
         if not hasattr(self._local, "conn") or self._local.conn is None:
-            conn = sqlite3.connect(self._db_path, check_same_thread=False)
+            conn = sqlite3.connect(self._db_path)
             conn.row_factory = sqlite3.Row
             conn.execute("PRAGMA journal_mode=WAL")
             conn.execute("PRAGMA synchronous=NORMAL")
@@ -298,19 +298,27 @@ class _SQLiteStore(_BaseStore):
     ) -> None:
         conn = self._conn()
         now  = datetime.now(timezone.utc).isoformat()
-        parts = ["updated_at=?"]
-        vals: list = [now]
-        if player_id is not None:
-            parts.append("last_player=?")
-            vals.append(player_id)
-        if team_id is not None:
-            parts.append("last_team=?")
-            vals.append(team_id)
-        vals.append(session_id)
-        conn.execute(
-            f"UPDATE sessions SET {', '.join(parts)} WHERE session_id=?",
-            vals,
-        )
+        # Use explicit branches instead of dynamic SQL to avoid any injection risk.
+        if player_id is not None and team_id is not None:
+            conn.execute(
+                "UPDATE sessions SET last_player=?, last_team=?, updated_at=? WHERE session_id=?",
+                (player_id, team_id, now, session_id),
+            )
+        elif player_id is not None:
+            conn.execute(
+                "UPDATE sessions SET last_player=?, updated_at=? WHERE session_id=?",
+                (player_id, now, session_id),
+            )
+        elif team_id is not None:
+            conn.execute(
+                "UPDATE sessions SET last_team=?, updated_at=? WHERE session_id=?",
+                (team_id, now, session_id),
+            )
+        else:
+            conn.execute(
+                "UPDATE sessions SET updated_at=? WHERE session_id=?",
+                (now, session_id),
+            )
         conn.commit()
 
 
