@@ -40,6 +40,10 @@ def _get_chat_key(request: object) -> str:
         ip        = request.client.host if request.client else "unknown"  # type: ignore[attr-defined]
         user_hash = request.headers.get("X-User-Hash", "")                # type: ignore[attr-defined]
         if user_hash:
+            # Use only the first 16 hex chars (64 bits of entropy) for the
+            # rate-limit key.  The full SHA-256 is stored in the session; here
+            # we just need a short, stable prefix to differentiate users while
+            # keeping the key compact.
             return f"{ip}:{user_hash[:16]}"
         return ip
     except Exception:

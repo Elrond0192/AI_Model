@@ -163,7 +163,16 @@ class _SQLiteStore:
     # ---- internal --------------------------------------------------------
 
     def _conn(self) -> sqlite3.Connection:
-        """Return a per-thread SQLite connection (avoids share-across-thread issues)."""
+        """Return a per-thread SQLite connection.
+
+        Each OS thread gets its own ``sqlite3.Connection`` stored in
+        ``threading.local``.  We pass ``check_same_thread=False`` here because
+        the *connection object itself* is never shared across threads — it is
+        retrieved exclusively from thread-local storage — so SQLite's built-in
+        single-thread check would be a false positive.  The flag only disables
+        that guard; actual thread-safety is guaranteed by the one-conn-per-thread
+        pattern.
+        """
         conn = getattr(self._local, "conn", None)
         if conn is None:
             conn = sqlite3.connect(self._path, check_same_thread=False)
