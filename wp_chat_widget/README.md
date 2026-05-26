@@ -1,5 +1,22 @@
 # Basketball AI Chat Widget — WordPress Plugin
 
+> ⚠️ **DEPRECATED** — This plugin is superseded by the new
+> [`hoopmetrics-chat`](https://github.com/Elrond0192/Wordpress/tree/main/hoopmetrics-chat)
+> plugin which provides a pluggable multi-backend architecture (Local /
+> FastAPI / DeepSeek), per-user quota management, and full integration with
+> the HoopMetrics paywall system (Starter / All-Star plans).
+>
+> **Do not use this plugin for new deployments.**  It remains here to
+> support existing installations during migration to `hoopmetrics-chat`.
+> It will be removed in a future release once the migration is complete.
+>
+> **Security note:** the `api_key` attribute of the `[basketball_chat]`
+> shortcode is rendered as a plain HTML `data-*` attribute and is visible in
+> the page source.  The new `hoopmetrics-chat` plugin routes all backend calls
+> through WordPress REST endpoints, keeping credentials server-side.
+
+---
+
 A lightweight WordPress plugin that embeds the **Basketball Performance AI**
 chat interface as a shortcode anywhere on your site.
 
@@ -113,10 +130,11 @@ correctly resolve the player mentioned in the previous turn.
   request.
 - Pass the same key to the shortcode via `api_key="…"`.
 - Enable HTTPS on the API server before exposing it to the public internet.
-- The `api_key` attribute is rendered as a plain HTML `data-*` attribute and
+- ⚠️ The `api_key` attribute is rendered as a plain HTML `data-*` attribute and
   will be visible in the page source — for high-security deployments, proxy
   the `/api/v1/chat` endpoint through a WordPress REST route that adds the
-  header server-side.
+  header server-side.  The `hoopmetrics-chat` replacement plugin does this
+  correctly by design.
 
 ---
 

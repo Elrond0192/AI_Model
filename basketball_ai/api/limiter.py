@@ -11,6 +11,13 @@ The rate limit is read from the ``RATE_LIMIT_PREDICTIONS`` and
 
 When slowapi is not installed, a no-op shim is provided so the rest
 of the application continues to work (no rate limiting applied).
+
+Per-user rate limiting
+----------------------
+``get_chat_key`` combines the remote IP with the ``X-User-Hash`` header
+(a SHA-256 hash of the WordPress user ID supplied by the WP plugin).
+This allows tighter per-user throttling on the chat endpoint while
+keeping the IP-level limit as a global backstop.
 """
 from __future__ import annotations
 
@@ -22,6 +29,23 @@ logger = logging.getLogger(__name__)
 
 RATE_LIMIT_PREDICTIONS: str = os.environ.get("RATE_LIMIT_PREDICTIONS", "60/minute")
 RATE_LIMIT_CHAT: str        = os.environ.get("RATE_LIMIT_CHAT",        "30/minute")
+
+
+def get_chat_key(request: "Request") -> str:  # noqa: F821  (Request imported lazily)
+    """Rate-limit key for the chat endpoint: ``<ip>:<user_hash|anon>``.
+
+    When the ``X-User-Hash`` header is present (sent by the WordPress
+    ``hoopmetrics-chat`` plugin), the key is scoped to the individual
+    WordPress user so malicious users cannot hide behind shared IPs.
+    Falls back to IP-only for unauthenticated callers.
+    """
+    ip       = request.client.host if request.client else "unknown"
+    uhash    = request.headers.get("X-User-Hash", "anon")
+    # Sanitise: allow only hex chars and 'anon' to prevent header injection
+    if uhash != "anon" and not all(c in "0123456789abcdefABCDEF" for c in uhash):
+        uhash = "anon"
+    return f"{ip}:{uhash}"
+
 
 try:
     from slowapi import Limiter

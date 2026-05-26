@@ -135,10 +135,34 @@ class ChatEngine:
         self,
         message: str,
         session_id: Optional[str] = None,
+        user_hash: Optional[str] = None,
     ) -> ChatResponse:
-        """Process a user message and return a ChatResponse."""
+        """Process a user message and return a ChatResponse.
+
+        Parameters
+        ----------
+        message:
+            The raw user text.
+        session_id:
+            Optional existing session UUID. A new UUID is generated when
+            omitted.
+        user_hash:
+            Optional ``X-User-Hash`` header value from the WordPress
+            ``hoopmetrics-chat`` plugin (SHA-256 hex of WP user ID).  Used to
+            bind the session to a specific WordPress user in the persistent
+            store for analytics and per-user context isolation.
+        """
         if not session_id:
             session_id = str(uuid.uuid4())
+
+        # Record user_hash in the persistent store when available (§6.2).
+        # This is fire-and-forget; failures must not affect the chat response.
+        if user_hash:
+            try:
+                from basketball_ai.chat.session_store import get_default_store  # noqa: PLC0415
+                get_default_store().get_or_create(session_id, user_hash=user_hash)
+            except Exception as _exc:  # pragma: no cover
+                logger.debug("[ChatEngine] session_store update failed: %s", _exc)
 
         sess = _session.get_or_create(session_id)
         _session.add_turn(session_id, "user", message)

@@ -20,7 +20,8 @@ def parse_args(argv=None):
     )
     parser.add_argument(
         "--mode",
-        choices=["generate-data", "train", "demo", "api", "export-wordpress", "validate-data", "backup", "backtest"],
+        choices=["generate-data", "train", "demo", "api", "export-wordpress",
+                 "validate-data", "backup", "backtest", "export-chat-model"],
         required=True,
     )
     parser.add_argument("--data-dir",  default="data/sample",   help="Data directory (file source)")
@@ -38,6 +39,23 @@ def parse_args(argv=None):
         "--out-dir",
         default="wp_export",
         help="Output directory for export-wordpress JSON files",
+    )
+    parser.add_argument(
+        "--out",
+        default="chat_model.json.gz",
+        help="Output file path for export-chat-model (default: chat_model.json.gz)",
+    )
+    parser.add_argument(
+        "--top-players",
+        type=int,
+        default=500,
+        help="Number of top players to include in export-chat-model (default: 500)",
+    )
+    parser.add_argument(
+        "--top-teams",
+        type=int,
+        default=100,
+        help="Number of top teams to include in export-chat-model (default: 100)",
     )
     parser.add_argument(
         "--anonymize",
@@ -452,18 +470,62 @@ def mode_backup(args) -> None:
     print(f"[backup] SHA256:  {sha256}")
 
 
+def mode_export_chat_model(args) -> None:
+    """Export pre-computed chat model predictions for the hoopmetrics-chat Local backend.
+
+    Generates a gzip-compressed JSON file (``chat_model.json.gz`` by default)
+    containing pre-computed predictions for all supported chat intents.  The
+    file is consumed by the WordPress ``hoopmetrics-chat`` plugin's **Local
+    backend** (Scenario C) and can be imported via WP-CLI or the admin panel.
+
+    Usage::
+
+        python main.py --mode export-chat-model [--out chat_model.json.gz]
+                        [--top-players 500] [--top-teams 100]
+                        [--source file|sql] [--data-dir DIR] [--model-dir DIR]
+    """
+    from basketball_ai.models.ensemble import EnsembleModel
+    from basketball_ai.scenarios.engine import WhatIfEngine
+    from basketball_ai.export.chat_model_export import export_chat_model
+
+    print("=" * 60)
+    print("  Exporting chat model for Local backend (§6.1) …")
+    print("=" * 60)
+
+    data     = _load_data(args)
+    ensemble = EnsembleModel()
+
+    if (Path(args.model_dir) / "performance_model.joblib").exists():
+        ensemble.load(args.model_dir)
+    else:
+        print("[WARN] No trained models – training now (may take a minute) …")
+        ensemble.train(data)
+        ensemble.save(args.model_dir)
+
+    engine = WhatIfEngine(ensemble, data)
+
+    export_chat_model(
+        engine=engine,
+        data=data,
+        out_path=args.out,
+        top_players=getattr(args, "top_players", 500),
+        top_teams=getattr(args, "top_teams", 100),
+    )
+
+
 # ---------------------------------------------------------------------------
 
 def main(argv=None):
     args = parse_args(argv)
     dispatch = {
-        "generate-data":    mode_generate_data,
-        "train":            mode_train,
-        "demo":             mode_demo,
-        "api":              mode_api,
-        "export-wordpress": mode_export_wordpress,
-        "validate-data":    mode_validate_data,
-        "backup":           mode_backup,
+        "generate-data":      mode_generate_data,
+        "train":              mode_train,
+        "demo":               mode_demo,
+        "api":                mode_api,
+        "export-wordpress":   mode_export_wordpress,
+        "validate-data":      mode_validate_data,
+        "backup":             mode_backup,
+        "export-chat-model":  mode_export_chat_model,
     }
     dispatch[args.mode](args)
 

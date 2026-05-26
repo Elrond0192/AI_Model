@@ -11,6 +11,12 @@ Request body
   "session_id": "optional-uuid-for-conversation-continuity"
 }
 
+Request headers (optional)
+---------------------------
+X-User-Hash: <sha256-hex>   WordPress user identifier sent by hoopmetrics-chat
+                             plugin.  Used to scope sessions per WP user and
+                             apply per-user rate limiting.
+
 Response
 --------
 {
@@ -25,23 +31,32 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Header, Request
+from typing import Optional
 
 from basketball_ai.api.schemas import ChatRequest, ChatMessageResponse
-from basketball_ai.api.limiter import limiter, RATE_LIMIT_CHAT
+from basketball_ai.api.limiter import limiter, RATE_LIMIT_CHAT, get_chat_key
 from basketball_ai.api._deps import get_chat_engine
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
 
 @router.post("", response_model=ChatMessageResponse)
-@limiter.limit(RATE_LIMIT_CHAT)
-async def chat(request: Request, req: ChatRequest):
+@limiter.limit(RATE_LIMIT_CHAT, key_func=get_chat_key)
+async def chat(
+    request: Request,
+    req: ChatRequest,
+    x_user_hash: Optional[str] = Header(default=None, alias="X-User-Hash"),
+):
     """Send a natural-language basketball question and get an AI-powered reply.
 
     Maintains conversation context across calls using ``session_id``.
     Omit ``session_id`` to start a new session; the server will generate one
     and return it – include it in subsequent requests to continue the thread.
+
+    The optional ``X-User-Hash`` header (sent by the WordPress
+    ``hoopmetrics-chat`` plugin) links the session to a specific WordPress
+    user and enables per-user rate limiting.
     """
     ce = get_chat_engine(request)
 
@@ -59,7 +74,10 @@ async def chat(request: Request, req: ChatRequest):
         )
 
     session_id = req.session_id or str(uuid.uuid4())
-    result = ce.process(req.message, session_id)
+
+    # Attach the user hash to the session so the persistent store can link it
+    # to the WordPress user for future reference (§6.2).
+    result = ce.process(req.message, session_id, user_hash=x_user_hash)
 
     return ChatMessageResponse(
         reply=result.reply,
