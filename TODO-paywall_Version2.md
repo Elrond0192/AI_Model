@@ -606,11 +606,10 @@ Struttura JSON output:
 - [ ] Endpoint `/api/v1/chat` accetta header `X-User-Hash` (lega sessioni a utente WP).
 - [ ] Aggiungere rate limit per IP+user_hash.
 
-### 6.3 Deprecazione `wp_chat_widget`
+### 6.3 ~~Deprecazione~~ Rimozione `wp_chat_widget` ✅
 
-- [ ] Marcare `AI_Model/wp_chat_widget/` come **deprecated** nel suo README.
-- [ ] Sostituito da `hoopmetrics-chat` (vedi §3).
-- [ ] **NON eliminare** il vecchio plugin per ora (sicurezza migrazione utenti).
+- [x] `AI_Model/wp_chat_widget/` **eliminato** dal repository.
+- [x] Sostituito da `hoopmetrics-chat` (vedi §3).
 
 ---
 
@@ -650,7 +649,7 @@ Struttura JSON output:
 ### Fase 3 — Scaling (opzionale, post-validation)
 - [ ] Migrazione backend chat: Local → FastAPI → DeepSeek (cambio da admin, no codice).
 - [ ] §6.2 Persistenza sessioni FastAPI.
-- [ ] §6.3 Deprecazione `wp_chat_widget`.
+- [x] §6.3 Rimozione `wp_chat_widget` ✅ (già completato).
 - [ ] Analytics conversion funnel.
 
 ---
