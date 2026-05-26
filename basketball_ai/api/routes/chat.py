@@ -4,6 +4,16 @@ Endpoint
 --------
 POST /api/v1/chat
 
+Headers
+-------
+X-User-Hash (optional):
+    SHA-256 hex digest (64 lowercase hex characters) of the WordPress user ID.
+    When present, the user hash is stored in the session and the compound
+    IP+user_hash rate-limit key is used (§6.2).  Note: conversation context
+    (history, last player/team) is tied to ``session_id``, not to this header;
+    passing the same user hash in different browser sessions does NOT
+    automatically merge or restore context.
+
 Request body
 ------------
 {
@@ -23,26 +33,42 @@ Response
 """
 from __future__ import annotations
 
+import re
 import uuid
+from typing import Optional
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Header, HTTPException, Request
 
 from basketball_ai.api.schemas import ChatRequest, ChatMessageResponse
-from basketball_ai.api.limiter import limiter, RATE_LIMIT_CHAT
+from basketball_ai.api.limiter import chat_limiter, RATE_LIMIT_CHAT
 from basketball_ai.api._deps import get_chat_engine
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
+_SHA256_HEX_RE = re.compile(r"^[0-9a-f]{64}$")
 
 @router.post("", response_model=ChatMessageResponse)
-@limiter.limit(RATE_LIMIT_CHAT)
-async def chat(request: Request, req: ChatRequest):
+@chat_limiter.limit(RATE_LIMIT_CHAT)
+async def chat(
+    request: Request,
+    req: ChatRequest,
+    x_user_hash: Optional[str] = Header(default=None, alias="X-User-Hash"),
+):
     """Send a natural-language basketball question and get an AI-powered reply.
 
     Maintains conversation context across calls using ``session_id``.
     Omit ``session_id`` to start a new session; the server will generate one
     and return it – include it in subsequent requests to continue the thread.
+
+    Pass ``X-User-Hash`` (SHA-256 of the WordPress user ID) to bind sessions
+    to an authenticated user and enable per-user compound rate limiting.
     """
+    if x_user_hash is not None and not _SHA256_HEX_RE.match(x_user_hash):
+        raise HTTPException(
+            status_code=400,
+            detail="X-User-Hash must be a lowercase SHA-256 hex digest (64 hex characters).",
+        )
+
     ce = get_chat_engine(request)
 
     if ce is None:
@@ -59,7 +85,7 @@ async def chat(request: Request, req: ChatRequest):
         )
 
     session_id = req.session_id or str(uuid.uuid4())
-    result = ce.process(req.message, session_id)
+    result = ce.process(req.message, session_id, user_hash=x_user_hash)
 
     return ChatMessageResponse(
         reply=result.reply,
@@ -68,3 +94,4 @@ async def chat(request: Request, req: ChatRequest):
         data=result.data,
         suggestions=result.suggestions,
     )
+

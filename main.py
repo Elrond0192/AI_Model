@@ -6,6 +6,7 @@ Usage:
     python main.py --mode demo  [--source {file|sql}]
     python main.py --mode api   [--host HOST] [--port PORT]
     python main.py --mode export-wordpress [--source {file|sql}] [--out-dir DIR]
+    python main.py --mode export-chat-model [--source {file|sql}] [--out FILE] [--top-players N] [--top-teams N]
 """
 from __future__ import annotations
 import argparse
@@ -20,7 +21,7 @@ def parse_args(argv=None):
     )
     parser.add_argument(
         "--mode",
-        choices=["generate-data", "train", "demo", "api", "export-wordpress", "validate-data", "backup", "backtest"],
+        choices=["generate-data", "train", "demo", "api", "export-wordpress", "export-chat-model", "validate-data", "backup", "backtest"],
         required=True,
     )
     parser.add_argument("--data-dir",  default="data/sample",   help="Data directory (file source)")
@@ -44,6 +45,23 @@ def parse_args(argv=None):
         action="store_true",
         default=False,
         help="D8: Replace player names with anonymous IDs in export output",
+    )
+    parser.add_argument(
+        "--out",
+        default="chat_model.json.gz",
+        help="Output file for export-chat-model (default: chat_model.json.gz)",
+    )
+    parser.add_argument(
+        "--top-players",
+        type=int,
+        default=500,
+        help="Number of top players to include in chat model export",
+    )
+    parser.add_argument(
+        "--top-teams",
+        type=int,
+        default=100,
+        help="Number of top teams to include in chat model export",
     )
     return parser.parse_args(argv)
 
@@ -334,6 +352,40 @@ def mode_export_wordpress(args) -> None:
 # ---------------------------------------------------------------------------
 
 
+def mode_export_chat_model(args) -> None:
+    """Export pre-computed predictions for the HoopMetrics local chat backend."""
+    from basketball_ai.models.ensemble import EnsembleModel
+    from basketball_ai.scenarios.engine import WhatIfEngine
+    from basketball_ai.export.chat_model_export import export_chat_model
+
+    print("=" * 60)
+    print("  Exporting chat model (hoopmetrics-chat local backend) …")
+    print("=" * 60)
+
+    data     = _load_data(args)
+    ensemble = EnsembleModel()
+
+    if (Path(args.model_dir) / "performance_model.joblib").exists():
+        ensemble.load(args.model_dir)
+    else:
+        print("[WARN] No trained models – training now …")
+        ensemble.train(data)
+        ensemble.save(args.model_dir)
+
+    engine = WhatIfEngine(ensemble, data)
+
+    export_chat_model(
+        engine=engine,
+        data=data,
+        out_path=Path(args.out),
+        top_players=args.top_players,
+        top_teams=args.top_teams,
+    )
+
+
+# ---------------------------------------------------------------------------
+
+
 def mode_validate_data(args) -> None:
     """Run data quality gates against loaded data."""
     import json as _json
@@ -462,6 +514,7 @@ def main(argv=None):
         "demo":             mode_demo,
         "api":              mode_api,
         "export-wordpress": mode_export_wordpress,
+        "export-chat-model": mode_export_chat_model,
         "validate-data":    mode_validate_data,
         "backup":           mode_backup,
     }
