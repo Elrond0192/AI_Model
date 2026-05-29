@@ -877,6 +877,56 @@ with _safe_tab(tab_train, "Training"):
                 except Exception as _qp_exc:
                     st.error(f"Errore nella predizione: {_qp_exc}")
 
+            st.divider()
+
+            # -----------------------------------------------------------------------
+            # A.6 – Export modello Wordpress
+            # -----------------------------------------------------------------------
+            st.subheader("📦 A.6 · Export modello Wordpress")
+            st.caption(
+                "Genera il file `chat_model.json.gz` da importare nel plugin hoopmetrics-chat. "
+                "Richiede che i dati siano caricati nel tab 📂 Dati."
+            )
+            _exp_data = st.session_state.get("data")
+            if _exp_data is None:
+                st.warning("⚠️ Carica prima i dati nel tab **📂 Dati** per abilitare l'export.")
+            else:
+                with st.form("export_wordpress_form"):
+                    _exp_out = st.text_input("File di output", value="chat_model.json.gz", key="exp_out")
+                    st.caption(
+                        "Vengono esportati **tutti** i giocatori, le squadre e **tutte le stagioni** "
+                        "presenti nel dataset, senza nessun filtro, per garantire la massima copertura alla chat AI."
+                    )
+                    _exp_submitted = st.form_submit_button("📦 Export modello Wordpress")
+
+                if _exp_submitted:
+                    try:
+                        from basketball_ai.export.chat_model_export import export_chat_model
+                        from basketball_ai.scenarios.engine import WhatIfEngine
+                        if "engine" not in st.session_state:
+                            st.session_state["engine"] = WhatIfEngine(_ens_loaded, _exp_data)
+                        _exp_engine = st.session_state["engine"]
+                        _exp_path   = Path(_exp_out)
+                        with st.spinner("Generazione predizioni in corso…"):
+                            _exp_result = export_chat_model(
+                                engine      = _exp_engine,
+                                data        = _exp_data,
+                                out_path    = _exp_path,
+                                top_players = None,
+                                top_teams   = None,
+                                seasons     = None,
+                            )
+                        st.success(f"✅ Export completato: `{_exp_result}`")
+                        with open(_exp_result, "rb") as _exp_fh:
+                            st.download_button(
+                                label     = "⬇️ Scarica chat_model.json.gz",
+                                data      = _exp_fh.read(),
+                                file_name = _exp_result.name,
+                                mime      = "application/gzip",
+                            )
+                    except Exception as _exp_exc:
+                        st.error(f"Errore durante l'export: {_exp_exc}")
+
         st.divider()
 
         # -----------------------------------------------------------------------

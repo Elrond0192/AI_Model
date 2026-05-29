@@ -54,14 +54,14 @@ def parse_args(argv=None):
     parser.add_argument(
         "--top-players",
         type=int,
-        default=500,
-        help="Number of top players to include in chat model export",
+        default=None,
+        help="Limit players in chat model export (omit = all players)",
     )
     parser.add_argument(
         "--top-teams",
         type=int,
-        default=100,
-        help="Number of top teams to include in chat model export",
+        default=None,
+        help="Limit teams in chat model export (omit = all teams)",
     )
     return parser.parse_args(argv)
 
