@@ -337,27 +337,37 @@ def _apply_column_mapping(df: "pd.DataFrame", logical: str) -> "pd.DataFrame":
     safe no-ops when the module is unavailable.
 
     Steps:
-    1. Rename DB columns to logical names (case-insensitive).
-    2. Apply compute functions (age from BirthDate, per-game stats, etc.).
+    1. Apply compute functions FIRST using the raw (pre-rename) DB column
+       names so that lambdas like ``_per_game(df, "Pts")`` can still find
+       the original column before it is renamed.
+    2. Rename remaining DB columns to logical names, skipping any destination
+       already produced by step 1 to avoid overwriting per-game values with
+       raw totals.
     3. Inject default values for any expected column still missing.
     """
-    # 1. Rename
-    renames = _get_column_renames(logical)
-    col_lower = {c.lower(): c for c in df.columns}
-    rename_map = {
-        col_lower[src.lower()]: dst
-        for src, dst in renames.items()
-        if src.lower() in col_lower and col_lower[src.lower()] != dst
-    }
-    if rename_map:
-        df = df.rename(columns=rename_map)
-
-    # 2. Computed columns (via schema_mapping)
+    # 1. Computed columns (via schema_mapping) — must run BEFORE rename so
+    #    that compute lambdas reference raw DB column names (e.g. "Pts",
+    #    "Tr") rather than the logical names they will be renamed to.
     try:
         from basketball_ai.data.schema_mapping import apply_computes as _sm_computes
         df = _sm_computes(df, logical)
     except ImportError:
         pass
+
+    # 2. Rename DB → logical names.  Skip any destination already set by a
+    #    compute in step 1 (e.g. "points" is already a per-game Series, so
+    #    we must NOT overwrite it by renaming the raw "Pts" total on top).
+    renames = _get_column_renames(logical)
+    col_lower = {c.lower(): c for c in df.columns}
+    rename_map = {
+        col_lower[src.lower()]: dst
+        for src, dst in renames.items()
+        if src.lower() in col_lower
+        and col_lower[src.lower()] != dst
+        and dst not in df.columns  # don't overwrite columns already set by compute
+    }
+    if rename_map:
+        df = df.rename(columns=rename_map)
 
     # 3. Defaults (via schema_mapping)
     try:

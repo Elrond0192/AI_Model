@@ -768,10 +768,14 @@ def _compute_age(birthdate_val: Any) -> Optional[int]:
 
 
 def _compute_player_age(df: pd.DataFrame) -> pd.Series:
-    if "age" in df.columns:
-        age = pd.to_numeric(df["age"], errors="coerce")
-        if age.notna().any():
-            return age.fillna(0)
+    # Accept both the logical name (post-rename "age") and the raw DB name
+    # (pre-rename "Age") so this function works regardless of whether
+    # _apply_column_mapping has already renamed the column.
+    for _age_col in ("age", "Age"):
+        if _age_col in df.columns:
+            age = pd.to_numeric(df[_age_col], errors="coerce")
+            if age.notna().any():
+                return age.fillna(0)
     if "BirthDate" in df.columns:
         return df["BirthDate"].apply(_compute_age).fillna(0)
     return pd.Series([0] * len(df), index=df.index)

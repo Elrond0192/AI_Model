@@ -23,6 +23,17 @@ from datetime import timezone
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+# Load .env into os.environ before any widget rendering.
+# sql_loader.py also calls load_dotenv(), but it is imported lazily (inside
+# button handlers), so os.environ would be empty when the text_input default
+# values are evaluated.  Loading here, with an explicit path, makes it
+# work regardless of the current working directory.
+try:
+    from dotenv import load_dotenv as _load_dotenv_app
+    _load_dotenv_app(Path(__file__).parent.parent / ".env", override=False)
+except ImportError:
+    pass
+
 import numpy as np
 import pandas as pd
 import streamlit as st
@@ -746,6 +757,126 @@ with _safe_tab(tab_train, "Training"):
                 except Exception as exc:
                     st.error(f"Caricamento fallito: {exc}")
 
+        # -----------------------------------------------------------------------
+        # A.5 – Quick standalone prediction (no data connection needed)
+        # -----------------------------------------------------------------------
+        _ens_loaded = st.session_state.get("ensemble")
+        if _ens_loaded is not None and _ens_loaded.is_trained:
+            st.divider()
+            st.subheader("🔮 A.5 · Predizione rapida (senza dati)")
+            st.caption(
+                "Inserisci le statistiche del giocatore per ottenere una predizione "
+                "senza bisogno di collegarti al database o caricare file CSV."
+            )
+            with st.form("quick_pred_form"):
+                _qp_c1, _qp_c2, _qp_c3 = st.columns(3)
+
+                with _qp_c1:
+                    st.markdown("**Anagrafica**")
+                    _qp_age  = st.number_input("Età", min_value=16, max_value=45, value=25, key="qp_age")
+                    _qp_pos  = st.selectbox("Posizione", ["PG", "SG", "SF", "PF", "C"], key="qp_pos")
+                    _qp_comp = st.selectbox("Contesto", ["RS", "PO", "CUP"], key="qp_comp")
+
+                    st.markdown("**Statistiche per 36 min**")
+                    _qp_pts  = st.number_input("Punti/36",   0.0, 60.0, value=15.0, step=0.5, key="qp_pts")
+                    _qp_ast  = st.number_input("Assist/36",  0.0, 25.0, value=4.0,  step=0.5, key="qp_ast")
+                    _qp_reb  = st.number_input("Rimbalzi/36",0.0, 25.0, value=5.0,  step=0.5, key="qp_reb")
+                    _qp_stl  = st.number_input("Rubate/36",  0.0,  8.0, value=1.0,  step=0.1, key="qp_stl")
+                    _qp_blk  = st.number_input("Stoppate/36",0.0,  8.0, value=0.5,  step=0.1, key="qp_blk")
+
+                with _qp_c2:
+                    st.markdown("**Efficienza avanzata**")
+                    _qp_ts   = st.number_input("TS%",    0.0, 1.0, value=0.55, step=0.01, key="qp_ts",
+                                               help="True Shooting % — tipico: 0.50–0.65")
+                    _qp_usg  = st.number_input("USG%",   0.0, 50.0, value=20.0, step=0.5, key="qp_usg",
+                                               help="Usage Rate — tipico: 15–35")
+                    _qp_obpm = st.number_input("OBPM",  -10.0, 15.0, value=0.0, step=0.1, key="qp_obpm",
+                                               help="Offensive Box Plus/Minus")
+                    _qp_dbpm = st.number_input("DBPM",  -10.0, 10.0, value=0.0, step=0.1, key="qp_dbpm",
+                                               help="Defensive Box Plus/Minus")
+                    _qp_per  = st.number_input("PIE",    0.0,  0.4, value=0.12, step=0.01, key="qp_per",
+                                               help="Player Impact Estimate (0–0.40, media ≈ 0.10)")
+
+                with _qp_c3:
+                    st.markdown("**Segnali di carriera**")
+                    _qp_form = st.slider("Form recente (0–10)", 0.0, 10.0, value=6.0, step=0.1, key="qp_form",
+                                         help="Prestazioni recenti vs media storica")
+                    _qp_dur  = st.slider("Durabilità (0–1)", 0.0, 1.0, value=0.75, step=0.05, key="qp_dur",
+                                         help="Partite giocate / partite disponibili")
+                    _qp_traj = st.slider("Traiettoria carriera", -2.0, 2.0, value=0.0, step=0.1, key="qp_traj",
+                                         help="Tendenza recente: >0 in crescita, <0 in calo")
+                    st.markdown("**On/Off impact**")
+                    _qp_netdiff = st.number_input("Net Rtg Diff", -15.0, 15.0, value=0.0, step=0.5, key="qp_netdiff",
+                                                   help="Differenziale on-court vs off-court")
+                    _qp_starter = st.slider("Starter %", 0.0, 1.0, value=0.5, step=0.05, key="qp_starter",
+                                             help="Frazione partite giocate da titolare")
+
+                _qp_submit = st.form_submit_button("🎯 Calcola predizione", type="primary")
+
+            if _qp_submit:
+                try:
+                    from basketball_ai.models.performance_model import COMPETITION_ENCODING as _COMP_ENC
+                    _pos_one_hot = {
+                        "pos_PG": 0.0, "pos_SG": 0.0, "pos_SF": 0.0,
+                        "pos_PF": 0.0, "pos_C": 0.0, "pos_hybrid": 0.0,
+                    }
+                    _pos_key = f"pos_{_qp_pos}"
+                    if _pos_key in _pos_one_hot:
+                        _pos_one_hot[_pos_key] = 1.0
+                    else:
+                        _pos_one_hot["pos_hybrid"] = 1.0
+
+                    _qp_features = {
+                        "age":                  float(_qp_age),
+                        **_pos_one_hot,
+                        "competition_enc":      float(_COMP_ENC.get(_qp_comp, 0)),
+                        "role_enc":             0.0,
+                        "role_off_enc":         0.0,
+                        "role_def_enc":         0.0,
+                        "pts_per_36":           float(_qp_pts),
+                        "ast_per_36":           float(_qp_ast),
+                        "reb_per_36":           float(_qp_reb),
+                        "stl_per_36":           float(_qp_stl),
+                        "blk_per_36":           float(_qp_blk),
+                        "avg_per":              float(_qp_per),
+                        "avg_ts_pct":           float(_qp_ts),
+                        "avg_usg_pct":          float(_qp_usg),
+                        "avg_obpm":             float(_qp_obpm),
+                        "avg_dbpm":             float(_qp_dbpm),
+                        "form_score":           float(_qp_form),
+                        "consistency_score":    float(_qp_form) * 0.8,
+                        "career_trajectory":    float(_qp_traj),
+                        "age_vs_peak_age":      float(_qp_age) - 27.0,
+                        "ts_efficiency_trend":  0.0,
+                        "durability_score":     float(_qp_dur),
+                        "po_vs_rs_delta":       0.0,
+                        "po_games_played":      0.0,
+                        "has_po_history":       0.0,
+                        "avg_net_rtg_diff":     float(_qp_netdiff),
+                        "avg_ortg_diff":        float(_qp_netdiff) * 0.6,
+                        "avg_starter_pct":      float(_qp_starter),
+                        # Interaction features computed from entered values
+                        "obpm_x_usg":           float(_qp_obpm) * float(_qp_usg),
+                        "dbpm_x_reb":           float(_qp_dbpm) * float(_qp_reb) / 10.0,
+                        "two_way_score":        0.0,
+                        # Remaining features not entered: default 0
+                    }
+
+                    _qp_rating = _ens_loaded.perf_model.predict_from_features(_qp_features)
+                    _qp_ci_lo  = round(max(3.5, _qp_rating - 0.5), 2)
+                    _qp_ci_hi  = round(min(10.0, _qp_rating + 0.5), 2)
+
+                    _qpc1, _qpc2, _qpc3 = st.columns(3)
+                    _qpc1.metric("⭐ Rating previsto", f"{_qp_rating:.2f} / 10")
+                    _qpc2.metric("CI basso",  f"{_qp_ci_lo}")
+                    _qpc3.metric("CI alto",   f"{_qp_ci_hi}")
+                    st.caption(
+                        "⚠️ Predizione semplificata: feature avanzate (RAPTOR, LEBRON, SPM, clutch, "
+                        "on/off) impostate a 0. Per una predizione completa carica i dati nel tab 📂 Dati."
+                    )
+                except Exception as _qp_exc:
+                    st.error(f"Errore nella predizione: {_qp_exc}")
+
         st.divider()
 
         # -----------------------------------------------------------------------
@@ -823,59 +954,72 @@ Il modello usa **{n_features} feature** tra cui:
                     st.session_state["t_cv_folds"]   = _pvals["cv_folds"]
                     st.rerun()
 
+        # Initialise slider keys only on the very first render; presets and
+        # manual moves update session_state directly, so setdefault is a no-op
+        # on subsequent reruns — avoiding the "default value + session_state"
+        # conflict warning.
+        _slider_defaults = {
+            "t_nest": 300, "t_depth": 5, "t_lr": 0.05,
+            "t_sub": 0.8, "t_colsample": 0.8, "t_mcw": 3,
+            "t_alpha": 0.1, "t_lambda": 1.0, "t_early_stop": 30,
+            "t_cv_folds": 0, "t_seed": 42, "t_split": 0.15,
+        }
+        for _sk, _sv in _slider_defaults.items():
+            st.session_state.setdefault(_sk, _sv)
+
         col1, col2 = st.columns(2)
         with col1:
             st.markdown("**XGBoost**")
             xgb_n_estimators = st.slider(
-                "n_estimators", 50, 1000, 300, step=50, key="t_nest",
+                "n_estimators", 50, 1000, step=50, key="t_nest",
                 help="Numero di alberi. Più è alto, più il modello è preciso ma lento. Range consigliato: 200–500.",
             )
             xgb_max_depth = st.slider(
-                "max_depth", 2, 12, 5, key="t_depth",
+                "max_depth", 2, 12, key="t_depth",
                 help="Profondità massima di ogni albero. Valori alti aumentano il rischio di overfitting. Range consigliato: 4–7.",
             )
             xgb_lr = st.slider(
-                "learning_rate", 0.005, 0.3, 0.05, step=0.005, format="%.3f", key="t_lr",
+                "learning_rate", 0.005, 0.3, step=0.005, format="%.3f", key="t_lr",
                 help="Velocità di apprendimento (eta). Valori bassi richiedono più alberi. Range consigliato: 0.01–0.1.",
             )
             xgb_subsample = st.slider(
-                "subsample", 0.4, 1.0, 0.8, step=0.05, key="t_sub",
+                "subsample", 0.4, 1.0, step=0.05, key="t_sub",
                 help="Frazione dei campioni usata per addestrare ogni albero. Riduce overfitting. Range consigliato: 0.7–0.9.",
             )
             xgb_colsample = st.slider(
-                "colsample_bytree", 0.3, 1.0, 0.8, step=0.05, key="t_colsample",
+                "colsample_bytree", 0.3, 1.0, step=0.05, key="t_colsample",
                 help="Frazione delle feature usata per ogni albero. Riduce la correlazione tra alberi. Range consigliato: 0.6–0.9.",
             )
             xgb_min_child_weight = st.slider(
-                "min_child_weight", 1, 10, 3, key="t_mcw",
+                "min_child_weight", 1, 10, key="t_mcw",
                 help="Peso minimo dei campioni in una foglia. Aumentare se il dataset è piccolo. Range consigliato: 2–6.",
             )
         with col2:
             st.markdown("**Regolarizzazione**")
             xgb_reg_alpha = st.slider(
-                "reg_alpha (L1)", 0.0, 1.0, 0.1, step=0.05, key="t_alpha",
+                "reg_alpha (L1)", 0.0, 1.0, step=0.05, key="t_alpha",
                 help="Regolarizzazione L1: annulla feature poco rilevanti. Range consigliato: 0.0–0.5.",
             )
             xgb_reg_lambda = st.slider(
-                "reg_lambda (L2)", 0.0, 3.0, 1.0, step=0.1, key="t_lambda",
+                "reg_lambda (L2)", 0.0, 3.0, step=0.1, key="t_lambda",
                 help="Regolarizzazione L2: riduce smoothly i pesi. Range consigliato: 0.5–2.0.",
             )
             st.markdown("**Early Stopping & Cross-Validation**")
             early_stopping_rounds = st.slider(
-                "early_stopping_rounds", 0, 200, 30, step=10, key="t_early_stop",
+                "early_stopping_rounds", 0, 200, step=10, key="t_early_stop",
                 help="Ferma il training se la val-loss non migliora per N rounds. 0 = disabilitato.",
             )
             cv_folds_gui = st.select_slider(
-                "CV folds (k-fold)", options=[0, 3, 5, 10], value=0, key="t_cv_folds",
+                "CV folds (k-fold)", options=[0, 3, 5, 10], key="t_cv_folds",
                 help="K-fold cross-validation per stimare la stabilità del modello. 0 = disabilitata.",
             )
             st.markdown("**Generale**")
             seed = st.number_input(
-                "Random seed", min_value=0, max_value=99999, value=42, key="t_seed",
+                "Random seed", min_value=0, max_value=99999, key="t_seed",
                 help="Seme per la riproducibilità dei risultati. Qualsiasi intero va bene.",
             )
             test_size = st.slider(
-                "Validation split", 0.05, 0.40, 0.15, step=0.05, key="t_split",
+                "Validation split", 0.05, 0.40, step=0.05, key="t_split",
                 help="Frazione dei dati usata per la validazione. NON viene usata nel training. Range consigliato: 0.10–0.20.",
             )
             model_dir_gui = st.text_input("Directory salvataggio", value="models_saved", key="t_dir")
@@ -2105,7 +2249,16 @@ with _safe_tab(tab_scout, "Scouting AI"):
                             _sc_weight     = _to_int(_sc_player_row.get("weight_kg", 0))
 
                             _sc_stats_df   = data_sc["player_stats"]
-                            _sc_mask       = _sc_stats_df["player_id"] == scout_player_id
+                            # Normalize both sides to a clean integer string before
+                            # comparing: player_id may be str "123", int 123, or
+                            # float 123.0 depending on the load path and DB column type.
+                            _sc_pid_str    = str(int(scout_player_id))
+                            _sc_mask       = (
+                                _sc_stats_df["player_id"]
+                                .astype(str)
+                                .str.replace(r"\.0$", "", regex=True)
+                                == _sc_pid_str
+                            )
                             _sc_p_stats    = _sc_stats_df[_sc_mask].sort_values("season")
                             _sc_latest     = _sc_p_stats.iloc[-1].to_dict() if not _sc_p_stats.empty else {}
                             # Prefer the latest Regular Season row for DNA and strengths
@@ -2379,11 +2532,16 @@ with _safe_tab(tab_scout, "Scouting AI"):
                     # Use RS stats for DNA chart; BPM can be negative → floor at 0
                     _dna_data = {}
                     for _label, _col, _max_val in _dna_cols:
-                        _raw = float(_ls.get(_col, 0) or 0)
-                        if _col == "bpm":
-                            _pct = min(100.0, max(0.0, (_raw - _BPM_MIN) / (_BPM_MAX - _BPM_MIN) * 100))
+                        _raw_val = _ls.get(_col)
+                        if _raw_val is None:
+                            # Column absent from stats dict → show 0% (not 50% for BPM)
+                            _pct = 0.0
                         else:
-                            _pct = min(100.0, max(0.0, _raw / _max_val * 100))
+                            _raw = float(_raw_val or 0)
+                            if _col == "bpm":
+                                _pct = min(100.0, max(0.0, (_raw - _BPM_MIN) / (_BPM_MAX - _BPM_MIN) * 100))
+                            else:
+                                _pct = min(100.0, max(0.0, _raw / _max_val * 100))
                         _dna_data[_label] = round(_pct, 1)
 
                     if all(v == 0.0 for v in _dna_data.values()):

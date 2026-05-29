@@ -24,7 +24,7 @@ REQUIRED_COLUMNS = {
     "leagues": ["id", "name"],
     "teams": ["id", "name", "league_id"],
     "players": ["id", "name", "position"],
-    "player_stats": ["id", "player_id", "season", "games_played", "rating"],
+    "player_stats": ["player_id", "season", "games_played", "rating"],
     "team_player_relations": ["player_id", "team_id"],
 }
 
@@ -53,6 +53,12 @@ def _to_int(value) -> int:
         try:
             return int(v, 10)
         except ValueError:
+            # Handle float-formatted strings like "123.0" that pandas emits
+            # when a nullable-int DB column is loaded as float64.
+            try:
+                return int(float(v))
+            except ValueError:
+                pass
             if all(c in "0123456789abcdefABCDEF" for c in v):
                 return int(v, 16)
             # Non-numeric code (e.g. 'GRC1'): use stable hash as int ID
