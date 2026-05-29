@@ -27,7 +27,6 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as _st_components
-import extra_streamlit_components as stx
 from basketball_ai.data.loader import _to_int
 from basketball_ai.utils.helpers import (
     team_display_name as _team_display_name,
@@ -131,10 +130,6 @@ st.set_page_config(
 # ---------------------------------------------------------------------------
 # Cookie manager – single instance for the entire script
 # ---------------------------------------------------------------------------
-
-_cookie_mgr = stx.CookieManager(key="bai_session_cookies")
-
-# ---------------------------------------------------------------------------
 # Authentication gate – must run before any other Streamlit rendering
 # ---------------------------------------------------------------------------
 
@@ -145,7 +140,8 @@ ensure_default_roles()
 
 if not st.session_state.get("authenticated"):
     # ── Try to restore session from a persistent browser cookie ─────────────
-    _saved_token = _cookie_mgr.get(_SESSION_COOKIE_NAME)
+    # st.context.cookies is a read-only dict of all browser cookies (Streamlit ≥ 1.37)
+    _saved_token = st.context.cookies.get(_SESSION_COOKIE_NAME, "")
     if _saved_token:
         _session = validate_session_token(_saved_token)
         if _session:
@@ -181,10 +177,8 @@ if not st.session_state.get("authenticated"):
             _role   = _user.get("role", "viewer")
             _token  = create_session_token(_uname, _role, _SESSION_TTL_DAYS)
             _expiry = datetime.datetime.now(timezone.utc) + datetime.timedelta(days=_SESSION_TTL_DAYS)
-            # S6: set cookie via CookieManager (for readability) and immediately
-            # re-write it with SameSite=Lax (+ Secure when configured) via JS.
+            # S6: set cookie with SameSite=Lax (+ Secure when configured) via JS.
             # HttpOnly cannot be set from JS; enforce it at the reverse proxy.
-            _cookie_mgr.set(_SESSION_COOKIE_NAME, _token, expires_at=_expiry)
             _js_set_cookie(_SESSION_COOKIE_NAME, _token, _expiry)
             st.session_state["authenticated"]   = True
             st.session_state["current_user"]    = _uname
@@ -488,7 +482,6 @@ with st.sidebar:
         _tok = st.session_state.get("_session_token")
         if _tok:
             revoke_session_token(_tok)
-        _cookie_mgr.delete(_SESSION_COOKIE_NAME)
         _js_delete_cookie(_SESSION_COOKIE_NAME)  # S6: clear with SameSite=Lax flag
         st.session_state.clear()
         st.rerun()

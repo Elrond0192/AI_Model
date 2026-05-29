@@ -21,7 +21,6 @@ from sklearn.dummy import DummyRegressor
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.linear_model import LinearRegression
 from sklearn.model_selection import TimeSeriesSplit
-from sklearn.preprocessing import StandardScaler
 from xgboost import XGBRegressor
 
 from basketball_ai.data.loader import _to_int
@@ -141,12 +140,17 @@ def compute_po_features(player_stats_df: "pd.DataFrame") -> Dict[str, float]:
 
 # ---------------------------------------------------------------------------
 # Feature columns – the full feature set used by the XGBoost model.
-# NOTE: order matters for StandardScaler.
 # ---------------------------------------------------------------------------
 FEATURE_COLS: List[str] = [
     # --- Identity / context ---------------------------------------------------
     "age",
-    "position_enc",
+    # One-hot position encoding (replaces ordinal to eliminate positional bias)
+    "pos_PG",
+    "pos_SG",
+    "pos_SF",
+    "pos_PF",
+    "pos_C",
+    "pos_hybrid",
     "competition_enc",
     # --- DB role labels (all three dimensions) --------------------------------
     "role_enc",             # ruolo_combinato (combined role)
@@ -162,7 +166,7 @@ FEATURE_COLS: List[str] = [
     "avg_per",
     "avg_ts_pct",
     "avg_usg_pct",
-    "avg_bpm",
+    # avg_bpm removed: BPM = OBPM + DBPM (perfect multicollinearity)
     "avg_obpm",
     "avg_dbpm",
     # --- Career signals -------------------------------------------------------
@@ -180,10 +184,10 @@ FEATURE_COLS: List[str] = [
     "avg_spm",
     "avg_raptor_off",       # RAPTOR offensive component
     "avg_raptor_def",       # RAPTOR defensive component
-    "avg_raptor_total",
+    # avg_raptor_total removed: equals raptor_off + raptor_def (perfect multicollinearity)
     "avg_lebron_off",       # LEBRON offensive component
     "avg_lebron_def",       # LEBRON defensive component
-    "avg_lebron_total",
+    # avg_lebron_total removed: equals lebron_off + lebron_def (perfect multicollinearity)
     "avg_gm_sc",
     "avg_fic",              # Floor Impact Counter
     "avg_ows",              # Offensive Win Shares
@@ -343,10 +347,14 @@ def get_available_metrics(player_stats_df: pd.DataFrame) -> List[str]:
     return available
 
 # Encoding for all position strings (pure + hybrid)
+# Kept for backward compatibility with saved models; new code uses one-hot columns.
 POSITION_ENCODING: Dict[str, int] = {
     "PG": 0, "SG": 1, "SF": 2, "PF": 3, "C": 4,
     "PG/SG": 5, "SG/SF": 6, "SF/PF": 7, "PF/C": 8, "SG/PF": 9,
 }
+
+# Primary positions for one-hot encoding
+_PRIMARY_POSITIONS = ("PG", "SG", "SF", "PF", "C")
 
 
 
@@ -367,7 +375,6 @@ class PerformanceModel:
             verbosity=0,
             early_stopping_rounds=50,
         )
-        self.scaler = StandardScaler()
         self.feature_names: List[str] = FEATURE_COLS.copy()
         self.is_trained: bool = False
         self._shap_explainer: Optional[Any] = None
@@ -480,7 +487,7 @@ class PerformanceModel:
         avg_per  = hist_avg("per",     12.0)
         avg_ts   = hist_avg("ts_pct",   0.52)
         avg_usg  = hist_avg("usg_pct", 18.0)
-        avg_bpm  = hist_avg("bpm",     -1.0)
+# avg_bpm omitted from features (= obpm + dbpm)
         avg_obpm = hist_avg("obpm",     0.0)
         avg_dbpm = hist_avg("dbpm",     0.0)
 
@@ -494,13 +501,21 @@ class PerformanceModel:
         # Two-way score: offensive value + magnitude of defensive contribution
         two_way_score = avg_raptor_off + abs(avg_raptor_def)
 
-        pos_enc  = float(POSITION_ENCODING.get(position, POSITION_ENCODING.get(_primary_pos(position), 0)))
         peak_age = _peak_age(position)
+        # One-hot position encoding
+        _prim = _primary_pos(position)
+        _is_hybrid = int(_prim != position)
 
         row: Dict[str, float] = {
             # --- Identity / context ------------------------------------------
             "age":                  float(age),
-            "position_enc":         pos_enc,
+            # One-hot position columns
+            "pos_PG":               1.0 if _prim == "PG" else 0.0,
+            "pos_SG":               1.0 if _prim == "SG" else 0.0,
+            "pos_SF":               1.0 if _prim == "SF" else 0.0,
+            "pos_PF":               1.0 if _prim == "PF" else 0.0,
+            "pos_C":                1.0 if _prim == "C"  else 0.0,
+            "pos_hybrid":           float(_is_hybrid),
             "competition_enc":      float(COMPETITION_ENCODING.get(
                 str(stat_row.get("competition", "RS")), 0
             )),
@@ -524,7 +539,7 @@ class PerformanceModel:
             "avg_per":              avg_per,
             "avg_ts_pct":           avg_ts,
             "avg_usg_pct":          avg_usg,
-            "avg_bpm":              avg_bpm,
+            # avg_bpm omitted (= avg_obpm + avg_dbpm)
             "avg_obpm":             avg_obpm,
             "avg_dbpm":             avg_dbpm,
             # --- Career signals ----------------------------------------------
@@ -538,10 +553,10 @@ class PerformanceModel:
             "avg_spm":              hist_avg("spm", 0.0),
             "avg_raptor_off":       avg_raptor_off,
             "avg_raptor_def":       avg_raptor_def,
-            "avg_raptor_total":     hist_avg("raptor_total", 0.0),
+            # avg_raptor_total omitted (= raptor_off + raptor_def)
             "avg_lebron_off":       hist_avg("lebron_off", 0.0),
             "avg_lebron_def":       hist_avg("lebron_def", 0.0),
-            "avg_lebron_total":     hist_avg("lebron_total", 0.0),
+            # avg_lebron_total omitted (= lebron_off + lebron_def)
             "avg_gm_sc":            hist_avg("gm_sc", 0.0),
             "avg_fic":              hist_avg("fic", 0.0),
             "avg_ows":              hist_avg("ows", 0.0),
@@ -714,7 +729,7 @@ class PerformanceModel:
                 age = year - by
                 if age < 14 or age > 45:
                     continue
-                history_so_far = grp[grp["season"] <= stat["season"]]
+                history_so_far = grp[grp["season"] < stat["season"]]
                 rows.append(self._build_row(stat, age, pos, history_so_far, extra_metrics=extra_metrics, league_max_games=league_max_games))
                 targets.append(float(stat["rating"]))
                 season_years.append(year)
@@ -788,17 +803,14 @@ class PerformanceModel:
             X_train, y_train = X.iloc[:split],  y[:split]
             X_val,   y_val   = X.iloc[split:],  y[split:]
 
-        X_tr_sc = self.scaler.fit_transform(X_train)
-        X_va_sc = self.scaler.transform(X_val)
-
         self.model.fit(
-            X_tr_sc, y_train,
-            eval_set=[(X_va_sc, y_val)],
+            X_train, y_train,
+            eval_set=[(X_val, y_val)],
             verbose=False,
         )
 
-        y_tr_pred = self.model.predict(X_tr_sc)
-        y_va_pred = self.model.predict(X_va_sc)
+        y_tr_pred = self.model.predict(X_train)
+        y_va_pred = self.model.predict(X_val)
 
         train_rmse = float(np.sqrt(np.mean((y_tr_pred - y_train) ** 2)))
         val_rmse   = float(np.sqrt(np.mean((y_va_pred - y_val)   ** 2)))
@@ -833,8 +845,7 @@ class PerformanceModel:
 
         # Compute conformal residuals on the true holdout (never seen by model).
         if X_conformal is not None and len(X_conformal) >= 10:
-            X_conf_sc = self.scaler.transform(X_conformal)
-            y_conf_pred = self.model.predict(X_conf_sc)
+            y_conf_pred = self.model.predict(X_conformal)
             metrics["conformal_residuals"] = np.abs(y_conf_pred - y_conformal).tolist()
             logger.info(
                 "[PerformanceModel] Conformal holdout: %d samples  "
@@ -853,16 +864,13 @@ class PerformanceModel:
             for fold, (tr_idx, va_idx) in enumerate(tss.split(X_np), 1):
                 Xtr, Xva = X_np[tr_idx], X_np[va_idx]
                 ytr, yva = y[tr_idx], y[va_idx]
-                _sc = StandardScaler()
-                Xtr_sc = _sc.fit_transform(Xtr)
-                Xva_sc = _sc.transform(Xva)
                 _m = XGBRegressor(
                     n_estimators=best_n_estimators, max_depth=5, learning_rate=0.05,
                     subsample=0.8, colsample_bytree=0.8, min_child_weight=3,
                     reg_alpha=0.1, reg_lambda=1.0, random_state=42, verbosity=0,
                 )
-                _m.fit(Xtr_sc, ytr, verbose=False)
-                fold_rmse = float(np.sqrt(np.mean((_m.predict(Xva_sc) - yva) ** 2)))
+                _m.fit(Xtr, ytr, verbose=False)
+                fold_rmse = float(np.sqrt(np.mean((_m.predict(Xva) - yva) ** 2)))
                 cv_rmses.append(fold_rmse)
                 logger.info("  Fold %d/%d  RMSE=%.4f  (n_estimators=%d)", fold, cv_folds, fold_rmse, best_n_estimators)
             metrics["cv_mean_rmse"] = float(np.mean(cv_rmses))
@@ -890,13 +898,8 @@ class PerformanceModel:
         if not self.is_trained:
             return float(np.clip(feature_dict.get("form_score", 6.5), 4.0, 10.0))
         logger.debug("[PerformanceModel] predict_from_features called; stored data_signature=%s", self.data_signature)
-        # Use numpy array to bypass sklearn feature-name validation; values are
-        # ordered to match self.feature_names (= scaler fit order), so scaling
-        # is correct even when extra-metric keys are absent from feature_dict
-        # (they default to 0.0 via .get).
         arr = np.array([[feature_dict.get(c, 0.0) for c in self.feature_names]], dtype=float)
-        scaled = self.scaler.transform(arr)
-        return float(np.clip(self.model.predict(scaled)[0], 3.5, 10.0))
+        return float(np.clip(self.model.predict(arr)[0], 3.5, 10.0))
 
     def get_shap_values(self, feature_dict: Dict[str, float]) -> Dict[str, float]:
         if not self.is_trained or not _SHAP_AVAILABLE:
@@ -905,8 +908,7 @@ class PerformanceModel:
             if self._shap_explainer is None:
                 self._shap_explainer = _shap.TreeExplainer(self.model)
             arr = np.array([[feature_dict.get(c, 0.0) for c in self.feature_names]], dtype=float)
-            scaled = self.scaler.transform(arr)
-            sv = self._shap_explainer.shap_values(scaled)
+            sv = self._shap_explainer.shap_values(arr)
             return {name: float(sv[0][i]) for i, name in enumerate(self.feature_names)}
         except Exception:
             return {}
@@ -946,7 +948,6 @@ class PerformanceModel:
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         joblib.dump({
             "model":              self.model,
-            "scaler":             self.scaler,
             "feature_names":      self.feature_names,
             "role_encoding":      self.role_encoding,
             "role_off_encoding":  self.role_off_encoding,
@@ -959,7 +960,6 @@ class PerformanceModel:
     def load(self, path: str) -> None:
         payload = joblib.load(path)
         self.model              = payload["model"]
-        self.scaler             = payload["scaler"]
         self.feature_names      = payload["feature_names"]
         self.role_encoding      = payload.get("role_encoding", {})
         self.role_off_encoding  = payload.get("role_off_encoding", {})

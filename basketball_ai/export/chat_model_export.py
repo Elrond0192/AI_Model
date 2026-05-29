@@ -58,6 +58,31 @@ logger = logging.getLogger(__name__)
 SCHEMA_VERSION = 1
 
 # ---------------------------------------------------------------------------
+# Name helpers
+# ---------------------------------------------------------------------------
+
+def _player_name(data: Dict[str, Any], player_id: int) -> str:
+    """Return the display name of a player, or a fallback string."""
+    try:
+        pdf = data["players"]
+        row = pdf[pdf["id"] == player_id]
+        if not row.empty:
+            return str(row.iloc[0]["name"])
+    except Exception:
+        pass
+    return f"Player {player_id}"
+
+
+def _team_name_from_data(data: Dict[str, Any], team_id: int) -> str:
+    """Return the display name of a team, or a fallback string."""
+    try:
+        team = data["team_dict"].get(team_id, {})
+        return _team_display_name(team, f"Team {team_id}",
+                                  league_id=str(team.get("league_id", "") or ""))
+    except Exception:
+        return f"Team {team_id}"
+
+# ---------------------------------------------------------------------------
 # HM-ID helpers
 # ---------------------------------------------------------------------------
 
@@ -223,6 +248,87 @@ def _gen_best_players(
         return None
 
 
+def _gen_what_if_transfer(
+    engine: Any,
+    data: Dict[str, Any],
+    player_id: int,
+    to_team_id: int,
+    season: int,
+) -> Optional[Dict[str, Any]]:
+    """Generate a 'what_if' entry via simulate_transfer() for one player → team.
+
+    Uses the player's current team as *from_team*.  Skips when the target team
+    is the same as the current team.
+    """
+    try:
+        player_info  = data["player_dict"].get(_normalize_id(player_id), {})
+        from_team_id = _normalize_id(player_info.get("current_team_id")) if player_info.get("current_team_id") else None
+        if not from_team_id or from_team_id == _normalize_id(to_team_id):
+            return None
+
+        impact = engine.simulate_transfer(player_id, from_team_id, to_team_id, season)
+
+        pname       = _player_name(data, player_id)
+        from_t_name = _team_name_from_data(data, from_team_id)
+        to_t_name   = _team_name_from_data(data, to_team_id)
+
+        return {
+            "intent":      "what_if",
+            "player_hm":   _hm_player_id(player_id),
+            "team_hm":     _hm_team_id(to_team_id),
+            "player_name": pname,
+            "team_name":   to_t_name,
+            "season":      _season_label(season),
+            "payload": {
+                "player_name":       pname,
+                "from_team":         from_t_name,
+                "to_team":           to_t_name,
+                "rating_before":     round(impact.rating_before, 3),
+                "rating_after":      round(impact.rating_after, 3),
+                "rating_delta":      round(impact.rating_delta, 3),
+                "adaptation_factor": round(impact.adaptation_factor, 3),
+                "recommendation":    impact.recommendation,
+            },
+        }
+    except Exception as exc:
+        logger.debug("[export] what_if skip pid=%s tid=%s: %s", player_id, to_team_id, exc)
+        return None
+
+
+def _gen_player_index(
+    data: Dict[str, Any],
+    player_id: int,
+    season: int,
+) -> Optional[Dict[str, Any]]:
+    """Generate a 'player_index' entry for name→ID resolution in the PHP backend."""
+    try:
+        pdf      = data["players"]
+        row      = pdf[pdf["id"] == player_id]
+        if row.empty:
+            return None
+        row      = row.iloc[0]
+        pname    = str(row.get("name", ""))
+        position = str(row.get("position", ""))
+        cur_tid  = _normalize_id(row.get("current_team_id"))
+        t_name   = _team_name_from_data(data, cur_tid) if cur_tid else ""
+
+        return {
+            "intent":      "player_index",
+            "player_hm":   _hm_player_id(player_id),
+            "player_name": pname,
+            "season":      _season_label(season),
+            "payload": {
+                "player_name":            pname,
+                "player_name_lower":      pname.lower(),
+                "team_name":              t_name,
+                "position":               position,
+            },
+        }
+    except Exception as exc:
+        logger.debug("[export] player_index skip pid=%s: %s", player_id, exc)
+        return None
+
+
 # ---------------------------------------------------------------------------
 # Main export function
 # ---------------------------------------------------------------------------
@@ -292,8 +398,9 @@ def export_chat_model(
 
     total_predict = len(top_pids) * len(top_tids)
     logger.info(
-        "[export] Generating %d predict + %d trajectory + %d peak + %d best_team + %d best_player entries …",
+        "[export] Generating %d predict + %d trajectory + %d peak + %d best_team + %d best_player + %d what_if + %d player_index entries …",
         total_predict, len(top_pids), len(top_pids), len(top_pids), len(top_tids),
+        total_predict, len(top_pids),
     )
 
     predictions: List[Dict[str, Any]] = []
@@ -304,6 +411,8 @@ def export_chat_model(
         for tid in top_tids:
             entry = _gen_predict(engine, pid, tid, season)
             if entry:
+                # Annotate with player name for importer
+                entry["player_name"] = _player_name(data, pid)
                 predictions.append(entry)
         done += 1
         if done % 50 == 0:
@@ -313,23 +422,43 @@ def export_chat_model(
     for pid in top_pids:
         entry = _gen_trajectory(engine, pid, season)
         if entry:
+            entry["player_name"] = _player_name(data, pid)
             predictions.append(entry)
 
     # --- peak (per player) -----------------------------------------------
     for pid in top_pids:
         entry = _gen_peak(engine, pid)
         if entry:
+            entry["player_name"] = _player_name(data, pid)
             predictions.append(entry)
 
     # --- best_team (per player) ------------------------------------------
     for pid in top_pids:
         entry = _gen_best_teams(engine, pid, season)
         if entry:
+            entry["player_name"] = _player_name(data, pid)
             predictions.append(entry)
 
     # --- best_player (per team) ------------------------------------------
     for tid in top_tids:
         entry = _gen_best_players(engine, tid, season)
+        if entry:
+            predictions.append(entry)
+
+    # --- what_if / transfer impact (player × team) -----------------------
+    done = 0
+    for pid in top_pids:
+        for tid in top_tids:
+            entry = _gen_what_if_transfer(engine, data, pid, tid, season)
+            if entry:
+                predictions.append(entry)
+        done += 1
+        if done % 50 == 0:
+            logger.info("[export] what_if progress: %d / %d players", done, len(top_pids))
+
+    # --- player_index (name → ID) ----------------------------------------
+    for pid in top_pids:
+        entry = _gen_player_index(data, pid, season)
         if entry:
             predictions.append(entry)
 

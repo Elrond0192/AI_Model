@@ -15,7 +15,7 @@ import json
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -45,6 +45,29 @@ def run_backtest(
 
     if player_stats.empty or "season" not in player_stats.columns:
         return {"error": "player_stats empty or missing season column"}
+
+    # Build birth_year_map: player_id -> birth_year, derived from current age
+    # (age is stored for the current/latest year; we use it to back-compute
+    # historical ages per-season rather than using a fixed current age).
+    _CURRENT_YEAR = 2024  # reference year for age column in players_df
+    birth_year_map: Dict[int, int] = {}
+    if not players_df.empty and "id" in players_df.columns and "age" in players_df.columns:
+        for _, _pr in players_df.iterrows():
+            try:
+                _pid = int(_pr["id"])
+                _age = _pr.get("age")
+                if _age is not None and not (isinstance(_age, float) and np.isnan(_age)):
+                    birth_year_map[_pid] = _CURRENT_YEAR - int(_age)
+            except (TypeError, ValueError):
+                pass
+
+    position_map: Dict[int, str] = {}
+    if not players_df.empty and "id" in players_df.columns and "position" in players_df.columns:
+        for _, _pr in players_df.iterrows():
+            try:
+                position_map[int(_pr["id"])] = str(_pr["position"])
+            except (TypeError, ValueError):
+                pass
 
     seasons = sorted(player_stats["season"].unique())
     if len(seasons) < n_folds + 1:
@@ -81,17 +104,23 @@ def run_backtest(
         for _, row in val_stats.iterrows():
             try:
                 hist = train_stats[train_stats["player_id"] == row["player_id"]]
-                if not players_df.empty:
-                    age_series = players_df.loc[players_df["id"] == row["player_id"], "age"]
-                    age = int(age_series.iloc[0]) if not age_series.empty else 25
-                    pos_series = players_df.loc[players_df["id"] == row["player_id"], "position"]
-                    pos = str(pos_series.iloc[0]) if not pos_series.empty else "PG"
+                _pid = int(row["player_id"])
+                # Compute age for the historical season rather than using
+                # the player's current age (which would introduce temporal leakage)
+                _season_str = str(row.get("season", "2024"))
+                try:
+                    _season_year = int(_season_str.split("-")[0])
+                except (ValueError, IndexError):
+                    _season_year = _CURRENT_YEAR
+                _by = birth_year_map.get(_pid)
+                if _by is not None:
+                    age = _season_year - _by
                 else:
-                    age, pos = 25, "PG"
+                    age = 25  # fallback when birth_year unknown
+                pos = position_map.get(_pid, "PG")
                 feat = model._build_row(row, age, pos, hist)
                 feat_df = pd.DataFrame([feat]).reindex(columns=model.feature_names, fill_value=0.0)
-                scaled = model.scaler.transform(feat_df)
-                pred = float(model.model.predict(scaled)[0])
+                pred = float(model.model.predict(feat_df)[0])
             except Exception:
                 pred = float(np.mean(y_true)) if len(y_true) > 0 else 5.0
             fold_preds.append(pred)

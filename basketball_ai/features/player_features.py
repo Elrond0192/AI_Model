@@ -201,6 +201,10 @@ def compute_player_features_from_objects(
     dbpm_x_reb  = avg_dbpm * avg_reb_pct_val / 100.0
     two_way_score = avg_raptor_off + abs(avg_raptor_def)
 
+    # One-hot position encoding (must match performance_model.py FEATURE_COLS)
+    _prim_pos = _primary_pos(player.position)
+    _is_hybrid = int(_prim_pos != player.position)
+
     return {
         # Legacy features
         "form_score":              round(form_score, 4),
@@ -264,6 +268,13 @@ def compute_player_features_from_objects(
         "obpm_x_usg":              round(obpm_x_usg, 4),
         "dbpm_x_reb":              round(dbpm_x_reb, 4),
         "two_way_score":           round(two_way_score, 4),
+        # One-hot position encoding (replaces ordinal position_enc)
+        "pos_PG":    1.0 if _prim_pos == "PG" else 0.0,
+        "pos_SG":    1.0 if _prim_pos == "SG" else 0.0,
+        "pos_SF":    1.0 if _prim_pos == "SF" else 0.0,
+        "pos_PF":    1.0 if _prim_pos == "PF" else 0.0,
+        "pos_C":     1.0 if _prim_pos == "C"  else 0.0,
+        "pos_hybrid": float(_is_hybrid),
     }
 
 
@@ -298,6 +309,13 @@ def _empty_features(player: Player) -> Dict[str, Any]:
         "avg_orb_pct": 3.0, "avg_drb_pct": 12.0,
         "ts_efficiency_trend": 0.0, "durability_score": 0.5,
         "obpm_x_usg": 0.0, "dbpm_x_reb": 0.0, "two_way_score": 0.0,
+        # One-hot position encoding
+        "pos_PG":  1.0 if _primary_pos(player.position) == "PG" else 0.0,
+        "pos_SG":  1.0 if _primary_pos(player.position) == "SG" else 0.0,
+        "pos_SF":  1.0 if _primary_pos(player.position) == "SF" else 0.0,
+        "pos_PF":  1.0 if _primary_pos(player.position) == "PF" else 0.0,
+        "pos_C":   1.0 if _primary_pos(player.position) == "C"  else 0.0,
+        "pos_hybrid": float(_primary_pos(player.position) != player.position),
     }
 
 

@@ -103,10 +103,12 @@ services:
       BRAND_LOGO_URL: "${BRAND_LOGO_URL:-}"
       BRAND_API_URL: "${BRAND_API_URL:-http://api:8000}"
       BRAND_FOOTER_TEXT: "${BRAND_FOOTER_TEXT:-}"
+      EMBED_PORT: "8502"
+      # Set EMBED_DEBUG=true only during local development.
+      EMBED_DEBUG: "${EMBED_DEBUG:-false}"
     depends_on:
       api:
         condition: service_healthy
-    command: ["streamlit", "run", "gui/embed.py",
-              "--server.port=8502",
-              "--server.address=0.0.0.0",
-              "--server.headless=true"]
+    # Run via Gunicorn in production for proper multi-worker WSGI serving.
+    # Switch to "python gui/embed.py" for simple single-process local use.
+    command: ["gunicorn", "gui.embed:server", "--bind=0.0.0.0:8502", "--workers=2", "--timeout=60"]

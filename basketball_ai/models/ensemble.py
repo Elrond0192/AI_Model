@@ -20,7 +20,7 @@ from typing import Any, Dict, List, Optional
 
 import numpy as np
 
-from basketball_ai.models.age_curve import age_performance_factor
+from basketball_ai.models.age_curve import age_performance_factor, maybe_fit_from_db
 
 
 from basketball_ai.utils.helpers import normalize_id as _normalize_id
@@ -122,6 +122,12 @@ class EnsembleModel:
         # inside PerformanceModel.train().  Removing them from metrics keeps the
         # returned dict clean (just numeric scores).
         conformal_residuals = metrics.pop("conformal_residuals", None)
+        # Fit age-curve parameters from real data (Fix 7: replaces hardcoded sigmas)
+        try:
+            if maybe_fit_from_db(data):
+                logger.info("[Ensemble] Age curve parameters fitted from data.")
+        except Exception as exc:
+            logger.warning("[Ensemble] Age curve fit from data failed: %s", exc)
         logger.info("[Ensemble] Training compatibility model …")
         self.compat_model.train(data)
         self._calibrate_conformal(conformal_residuals)
