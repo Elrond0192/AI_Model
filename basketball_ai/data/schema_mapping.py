@@ -782,25 +782,29 @@ def _compute_player_age(df: pd.DataFrame) -> pd.Series:
 
 
 def _per_game(df: pd.DataFrame, raw_col: str) -> pd.Series:
+    import numpy as np
     games_col = "games_played" if "games_played" in df.columns else "Games"
     if raw_col not in df.columns or games_col not in df.columns:
         return pd.Series([0.0] * len(df), index=df.index)
     games = pd.to_numeric(df[games_col], errors="coerce").replace(0, pd.NA)
     values = pd.to_numeric(df[raw_col], errors="coerce")
-    return (values / games).fillna(0.0)
+    result = (values / games).replace([np.inf, -np.inf], np.nan).fillna(0.0)
+    return result
 
 
 def _compute_three_point_attempt_rate(df: pd.DataFrame) -> pd.Series:
+    import numpy as np
     if "3Fga" not in df.columns or "2Fga" not in df.columns:
         return pd.Series([0.0] * len(df), index=df.index)
     three_fga = pd.to_numeric(df["3Fga"], errors="coerce")
     total_fga = pd.to_numeric(df["2Fga"], errors="coerce") + three_fga
-    return (three_fga / total_fga.replace(0, pd.NA)).fillna(0.0)
+    return (three_fga / total_fga.replace(0, pd.NA)).replace([np.inf, -np.inf], np.nan).fillna(0.0)
 
 
 def _compute_team_assists_per_game(df: pd.DataFrame) -> pd.Series:
+    import numpy as np
     if "Ast" not in df.columns or "Min" not in df.columns:
         return pd.Series([0.0] * len(df), index=df.index)
     assists = pd.to_numeric(df["Ast"], errors="coerce")
     minutes = pd.to_numeric(df["Min"], errors="coerce")
-    return (assists / ((minutes / 40.0).replace(0, pd.NA))).fillna(0.0)
+    return (assists / ((minutes / 40.0).replace(0, pd.NA))).replace([np.inf, -np.inf], np.nan).fillna(0.0)

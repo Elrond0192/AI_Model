@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import math
 from collections import Counter
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
@@ -13,6 +14,14 @@ from basketball_ai.utils.helpers import (
     team_display_name as _team_display_name,
     normalize_id as _normalize_id,
 )
+
+def _safe_int(val: Any, default: int = 0) -> int:
+    """Convert val to int, treating NaN/inf as default."""
+    try:
+        f = float(val)
+        return int(f) if math.isfinite(f) else default
+    except (TypeError, ValueError):
+        return default
 
 from basketball_ai.models.age_curve import PEAK_AGES, maybe_fit_from_db, peak_age_window
 from basketball_ai.features.context_features import compute_context_features
@@ -295,7 +304,7 @@ class WhatIfEngine:
     ) -> List[TrajectoryPoint]:
         """Return rating predictions across an age range."""
         player      = self.data["player_dict"].get(_normalize_id(player_id), {})
-        current_age = int(player.get("age", 25))
+        current_age = _safe_int(player.get("age", 25), 25)
 
         if team_id is None:
             ct = player.get("current_team_id")
@@ -554,7 +563,7 @@ class WhatIfEngine:
     def predict_peak(self, player_id: int, team_id: Optional[int] = None) -> PeakPrediction:
         """Predict a player's career peak rating."""
         player      = self.data["player_dict"].get(_normalize_id(player_id), {})
-        current_age = int(player.get("age", 25))
+        current_age = _safe_int(player.get("age", 25), 25)
         position    = str(player.get("position", "PG"))
         name        = str(player.get("name", f"Player {player_id}"))
 

@@ -15,6 +15,15 @@ import pandas as pd
 from basketball_ai.data.models import Player, PlayerStats
 from basketball_ai.utils.helpers import normalize_id as _normalize_id
 from basketball_ai.data.loader import _to_int as _lid_to_int
+import math as _math
+
+def _safe_int(val: Any, default: int = 0) -> int:
+    """Convert val to int, treating NaN/inf as default."""
+    try:
+        f = float(val)
+        return int(f) if _math.isfinite(f) else default
+    except (TypeError, ValueError):
+        return default
 from basketball_ai.constants import (
     POSITIONAL_PEAK_AGES,
     LEAGUE_MAX_GAMES_BY_NAME,
@@ -339,7 +348,7 @@ def compute_player_features(
 
     # Build a minimal Player object
     pos = str(player_row.get("position", "PG"))
-    age = int(player_row.get("age", 26)) if target_age is None else int(target_age)
+    age = _safe_int(player_row.get("age", 26)) if target_age is None else _safe_int(target_age)
 
     player = Player(
         id=_normalize_id(player_id),
@@ -347,8 +356,8 @@ def compute_player_features(
         age=age,
         position=pos,
         nationality=str(player_row.get("nationality", "")),
-        height_cm=int(player_row.get("height_cm", 195) or 195),
-        weight_kg=int(player_row.get("weight_kg", 95) or 95),
+        height_cm=_safe_int(player_row.get("height_cm", 195) or 195, 195),
+        weight_kg=_safe_int(player_row.get("weight_kg", 95) or 95, 95),
         dominant_hand=str(player_row.get("dominant_hand", "right")),
         current_team_id=player_row.get("current_team_id"),
         current_league_id=player_row.get("current_league_id"),

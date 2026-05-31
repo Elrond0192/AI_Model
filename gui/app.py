@@ -610,6 +610,47 @@ with _safe_tab(tab_data, "Dati"):
 
         with src_sql_tab:
             st.subheader("Connessione Azure SQL")
+
+            # ---- Cache status banner (always shown) -------------------------
+            from basketball_ai.data.sql_loader import get_cache_info, load_from_any_cache
+            _cache_meta = get_cache_info()
+            if _cache_meta:
+                _exp_in = _cache_meta["expires_in"]
+                _cache_label = (
+                    f"📦 Cache locale: {_cache_meta['n_players']:,} giocatori, "
+                    f"{_cache_meta['n_teams']:,} squadre — "
+                    f"aggiornata {_cache_meta['age_human']} fa"
+                )
+                if _exp_in > 0:
+                    st.info(_cache_label + f" (valida ancora per {int(_exp_in // 3600)}h {int((_exp_in % 3600) // 60)}m)")
+                else:
+                    st.warning(_cache_label + " *(scaduta — considera un aggiornamento)*")
+
+                # Auto-load cache at startup if no data is in session yet
+                if "data" not in st.session_state and "sql_cache_autoloaded" not in st.session_state:
+                    with st.spinner("Caricamento dati dalla cache locale…"):
+                        _auto = load_from_any_cache()
+                        if _auto is not None:
+                            st.session_state["data"] = _auto
+                            st.session_state["sql_cache_autoloaded"] = True
+                            st.toast(
+                                f"📦 Dati caricati dalla cache ({_cache_meta['n_players']:,} giocatori)",
+                                icon="📦",
+                            )
+
+                if st.button("📂 Usa dati in cache", key="load_from_cache_btn"):
+                    with st.spinner("Caricamento dati dalla cache locale…"):
+                        _cached_data = load_from_any_cache()
+                        if _cached_data is not None:
+                            st.session_state["data"] = _cached_data
+                            st.session_state.pop("engine", None)
+                            st.session_state.pop("chat_engine", None)
+                            st.success(f"✅ Cache caricata: {len(_cached_data['players']):,} giocatori.")
+                        else:
+                            st.error("Nessuna cache disponibile.")
+
+                st.divider()
+
             conn_str = st.text_input(
                 "Connection string",
                 value=os.environ.get("AZURE_SQL_CONNECTION_STRING", ""),
@@ -629,7 +670,8 @@ with _safe_tab(tab_data, "Dati"):
                 help="Sovrascrive `AZURE_SQL_CONNECTION_STRING` nel file `.env` del progetto.",
             )
 
-            if st.button("🔌 Connetti e carica dati SQL", type="primary"):
+            _connect_label = "🔄 Aggiorna da SQL" if _cache_meta else "🔌 Connetti e carica dati SQL"
+            if st.button(_connect_label, type="primary"):
                 if not conn_str.strip():
                     st.error("Inserisci la connection string.")
                 else:
@@ -652,7 +694,9 @@ with _safe_tab(tab_data, "Dati"):
                             )
                             _engine = get_engine()
                             mapping = get_table_mapping(_engine)
-                            loaded = load_all_data_from_sql(_engine, table_mapping=mapping)
+                            loaded = load_all_data_from_sql(
+                                _engine, table_mapping=mapping, force_refresh=True
+                            )
                             st.session_state["data"] = loaded
                             st.session_state["sql_table_mapping"] = mapping
                             st.session_state.pop("engine", None)
@@ -885,47 +929,86 @@ with _safe_tab(tab_train, "Training"):
             st.subheader("📦 A.6 · Export modello Wordpress")
             st.caption(
                 "Genera il file `chat_model.json.gz` da importare nel plugin hoopmetrics-chat. "
-                "Richiede che i dati siano caricati nel tab 📂 Dati."
+                "Funziona anche senza connessione ai dati: usa la cache locale se disponibile."
             )
-            _exp_data = st.session_state.get("data")
-            if _exp_data is None:
-                st.warning("⚠️ Carica prima i dati nel tab **📂 Dati** per abilitare l'export.")
-            else:
-                with st.form("export_wordpress_form"):
-                    _exp_out = st.text_input("File di output", value="chat_model.json.gz", key="exp_out")
-                    st.caption(
-                        "Vengono esportati **tutti** i giocatori, le squadre e **tutte le stagioni** "
-                        "presenti nel dataset, senza nessun filtro, per garantire la massima copertura alla chat AI."
-                    )
-                    _exp_submitted = st.form_submit_button("📦 Export modello Wordpress")
 
-                if _exp_submitted:
-                    try:
-                        from basketball_ai.export.chat_model_export import export_chat_model
-                        from basketball_ai.scenarios.engine import WhatIfEngine
-                        if "engine" not in st.session_state:
+            _exp_data = st.session_state.get("data")
+
+            # Determine data source for export
+            _exp_data_source = "loaded"   # "loaded" | "cache" | "empty"
+            if _exp_data is None:
+                try:
+                    from basketball_ai.data.sql_loader import load_from_any_cache, _empty_data
+                    _cached = load_from_any_cache()
+                    if _cached is not None:
+                        _exp_data = _cached
+                        _exp_data_source = "cache"
+                    else:
+                        _exp_data = _empty_data()
+                        _exp_data_source = "empty"
+                except Exception:
+                    import pandas as _pd_exp
+                    _exp_data = {
+                        "leagues": _pd_exp.DataFrame(), "teams": _pd_exp.DataFrame(),
+                        "players": _pd_exp.DataFrame(), "player_stats": _pd_exp.DataFrame(),
+                        "team_player_relations": _pd_exp.DataFrame(),
+                        "league_dict": {}, "team_dict": {}, "player_dict": {}, "league_teams": {},
+                    }
+                    _exp_data_source = "empty"
+
+            if _exp_data_source == "cache":
+                _n_players = len(_exp_data.get("players", [])) if hasattr(_exp_data.get("players"), "__len__") else 0
+                _n_teams   = len(_exp_data.get("teams",   [])) if hasattr(_exp_data.get("teams"),   "__len__") else 0
+                st.info(
+                    f"ℹ️ Dati non caricati — uso cache locale ({_n_players} giocatori, {_n_teams} squadre). "
+                    "Per aggiornare i dati carica prima il tab **📂 Dati**."
+                )
+            elif _exp_data_source == "empty":
+                st.warning(
+                    "⚠️ Nessun dato disponibile (né caricati né in cache). "
+                    "L'export produrrà un file vuoto valido, utile per reset. "
+                    "Per generare predizioni reali carica i dati nel tab **📂 Dati**."
+                )
+
+            with st.form("export_wordpress_form"):
+                _exp_out = st.text_input("File di output", value="chat_model.json.gz", key="exp_out")
+                st.caption(
+                    "Vengono esportati **tutti** i giocatori, le squadre e **tutte le stagioni** "
+                    "presenti nel dataset, senza nessun filtro, per garantire la massima copertura alla chat AI."
+                )
+                _exp_submitted = st.form_submit_button("📦 Export modello Wordpress")
+
+            if _exp_submitted:
+                try:
+                    from basketball_ai.export.chat_model_export import export_chat_model
+                    from basketball_ai.scenarios.engine import WhatIfEngine
+                    if "engine" not in st.session_state:
+                        st.session_state["engine"] = WhatIfEngine(_ens_loaded, _exp_data)
+                    else:
+                        # Refresh engine data if we picked up cache data
+                        if _exp_data_source in ("cache", "empty"):
                             st.session_state["engine"] = WhatIfEngine(_ens_loaded, _exp_data)
-                        _exp_engine = st.session_state["engine"]
-                        _exp_path   = Path(_exp_out)
-                        with st.spinner("Generazione predizioni in corso…"):
-                            _exp_result = export_chat_model(
-                                engine      = _exp_engine,
-                                data        = _exp_data,
-                                out_path    = _exp_path,
-                                top_players = None,
-                                top_teams   = None,
-                                seasons     = None,
-                            )
-                        st.success(f"✅ Export completato: `{_exp_result}`")
-                        with open(_exp_result, "rb") as _exp_fh:
-                            st.download_button(
-                                label     = "⬇️ Scarica chat_model.json.gz",
-                                data      = _exp_fh.read(),
-                                file_name = _exp_result.name,
-                                mime      = "application/gzip",
-                            )
-                    except Exception as _exp_exc:
-                        st.error(f"Errore durante l'export: {_exp_exc}")
+                    _exp_engine = st.session_state["engine"]
+                    _exp_path   = Path(_exp_out)
+                    with st.spinner("Generazione predizioni in corso…"):
+                        _exp_result = export_chat_model(
+                            engine      = _exp_engine,
+                            data        = _exp_data,
+                            out_path    = _exp_path,
+                            top_players = None,
+                            top_teams   = None,
+                            seasons     = None,
+                        )
+                    st.success(f"✅ Export completato: `{_exp_result}`")
+                    with open(_exp_result, "rb") as _exp_fh:
+                        st.download_button(
+                            label     = "⬇️ Scarica chat_model.json.gz",
+                            data      = _exp_fh.read(),
+                            file_name = _exp_result.name,
+                            mime      = "application/gzip",
+                        )
+                except Exception as _exp_exc:
+                    st.error(f"Errore durante l'export: {_exp_exc}")
 
         st.divider()
 

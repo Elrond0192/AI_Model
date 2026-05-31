@@ -72,7 +72,8 @@ _SLOW_QUERY_THRESHOLD_S = float(os.environ.get("SLOW_QUERY_THRESHOLD_S", "2.0"))
 
 
 def _timed_read_sql(sql, conn, **kwargs):
-    """Run ``pd.read_sql`` with slow-query logging."""
+    """Run ``pd.read_sql`` with slow-query logging, replacing inf values."""
+    import numpy as np
     t0 = time.monotonic()
     result = pd.read_sql(sql, conn, **kwargs)
     elapsed = time.monotonic() - t0
@@ -82,6 +83,10 @@ def _timed_read_sql(sql, conn, **kwargs):
             elapsed,
             str(sql)[:200],
         )
+    # Replace inf/-inf with NaN so downstream int() conversions never crash.
+    num_cols = result.select_dtypes(include="number").columns
+    if len(num_cols):
+        result[num_cols] = result[num_cols].replace([np.inf, -np.inf], np.nan)
     return result
 
 
@@ -90,7 +95,7 @@ def _timed_read_sql(sql, conn, **kwargs):
 # ---------------------------------------------------------------------------
 
 PARQUET_CACHE_DIR = Path(os.environ.get("SQL_CACHE_DIR", ".sql_cache"))
-PARQUET_CACHE_TTL = int(os.environ.get("SQL_CACHE_TTL_SECONDS", str(4 * 3600)))  # 4h default
+PARQUET_CACHE_TTL = int(os.environ.get("SQL_CACHE_TTL_SECONDS", str(7 * 24 * 3600)))  # 7 days default
 
 
 def _cache_key(conn_str: str) -> str:
@@ -155,6 +160,125 @@ def _load_from_parquet_cache(key: str) -> Optional[dict]:
     except Exception as exc:
         _logger.warning("[D9] Could not read parquet cache: %s", exc)
         return None
+
+
+def load_from_any_cache() -> Optional[dict]:
+    """Load the most recently written valid parquet cache, without needing a
+    live SQL connection.
+
+    Scans *all* sub-directories of ``PARQUET_CACHE_DIR``, picks the one with
+    the newest ``timestamp`` file that has not expired, and returns its data
+    dict (same format as ``_load_from_parquet_cache``).
+
+    Returns ``None`` when no usable cache is found.
+    """
+    cache_root = PARQUET_CACHE_DIR
+    if not cache_root.exists():
+        return None
+    best_ts: float = 0.0
+    best_key: Optional[str] = None
+    for sub in cache_root.iterdir():
+        if not sub.is_dir():
+            continue
+        ts_file = sub / "timestamp"
+        if not ts_file.exists():
+            continue
+        try:
+            ts = float(ts_file.read_text())
+        except Exception:
+            continue
+        if time.time() - ts > PARQUET_CACHE_TTL:
+            continue
+        if ts > best_ts:
+            best_ts = ts
+            best_key = sub.name
+    if best_key is None:
+        return None
+    _logger.info("[D9] load_from_any_cache: using key=%s (age=%.0fs)", best_key, time.time() - best_ts)
+    return _load_from_parquet_cache(best_key)
+
+
+def _empty_data() -> dict:
+    """Return a minimal empty data dict compatible with export_chat_model."""
+    import pandas as pd
+    empty = pd.DataFrame()
+    return {
+        "leagues":      empty,
+        "teams":        empty,
+        "players":      empty,
+        "player_stats": empty,
+        "team_player_relations": empty,
+        "league_dict":  {},
+        "team_dict":    {},
+        "player_dict":  {},
+        "league_teams": {},
+    }
+
+
+def get_cache_info() -> Optional[Dict[str, Any]]:
+    """Return metadata about the most recent valid parquet cache, or ``None``.
+
+    Returns a dict with keys:
+    - ``age_seconds``: how old the cache is
+    - ``age_human``: human-readable age string (e.g. "2h 15m")
+    - ``n_players``: number of cached players
+    - ``n_teams``: number of cached teams
+    - ``n_stats``: number of cached player-stat rows
+    - ``expires_in``: seconds until expiry (negative = already expired)
+    - ``key``: cache key (directory name)
+    """
+    cache_root = PARQUET_CACHE_DIR
+    if not cache_root.exists():
+        return None
+    best_ts: float = 0.0
+    best_key: Optional[str] = None
+    for sub in cache_root.iterdir():
+        if not sub.is_dir():
+            continue
+        ts_file = sub / "timestamp"
+        if not ts_file.exists():
+            continue
+        try:
+            ts = float(ts_file.read_text())
+        except Exception:
+            continue
+        if ts > best_ts:
+            best_ts = ts
+            best_key = sub.name
+    if best_key is None:
+        return None
+    age = time.time() - best_ts
+
+    def _row_count(name: str) -> int:
+        try:
+            import pyarrow.parquet as _pq  # type: ignore
+            f = PARQUET_CACHE_DIR / best_key / f"{name}.parquet"
+            if not f.exists():
+                return 0
+            meta = _pq.read_metadata(str(f))
+            return meta.num_rows
+        except Exception:
+            try:
+                return len(pd.read_parquet(PARQUET_CACHE_DIR / best_key / f"{name}.parquet"))
+            except Exception:
+                return 0
+
+    hours, remainder = divmod(int(age), 3600)
+    minutes = remainder // 60
+    if hours:
+        age_human = f"{hours}h {minutes}m"
+    else:
+        age_human = f"{minutes}m"
+
+    return {
+        "age_seconds": age,
+        "age_human":   age_human,
+        "n_players":   _row_count("players"),
+        "n_teams":     _row_count("teams"),
+        "n_stats":     _row_count("player_stats"),
+        "expires_in":  PARQUET_CACHE_TTL - age,
+        "key":         best_key,
+    }
 
 
 def list_available_partitions(engine) -> list[dict]:
@@ -571,12 +695,19 @@ def _read_table(engine, table: str) -> pd.DataFrame:
     """Read a full table and return a DataFrame.
 
     *table* may be a plain name or a ``schema.table`` qualified name.
+    Replaces inf/-inf values so downstream int() conversions never crash.
     """
+    import numpy as np
     with engine.connect() as conn:
         if "." in table:
             schema, tname = table.split(".", 1)
-            return pd.read_sql_table(tname, conn, schema=schema)
-        return pd.read_sql_table(table, conn)
+            df = pd.read_sql_table(tname, conn, schema=schema)
+        else:
+            df = pd.read_sql_table(table, conn)
+    num_cols = df.select_dtypes(include="number").columns
+    if len(num_cols):
+        df[num_cols] = df[num_cols].replace([np.inf, -np.inf], np.nan)
+    return df
 
 
 def _execute_query(engine, sql: str) -> pd.DataFrame:
@@ -903,15 +1034,28 @@ def get_table_mapping(engine=None) -> Dict[str, str]:
     return _discover_table_mapping(engine)
 
 
-def load_all_data_from_sql(engine=None, table_mapping: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
-    """Load all basketball data from Azure SQL Server."""
+def load_all_data_from_sql(engine=None, table_mapping: Optional[Dict[str, str]] = None, force_refresh: bool = False) -> Dict[str, Any]:
+    """Load all basketball data from Azure SQL Server.
+
+    Parameters
+    ----------
+    engine:
+        SQLAlchemy engine.  Built from env vars when *None*.
+    table_mapping:
+        Optional explicit {logical → actual_table} overrides.
+    force_refresh:
+        When ``True``, skip the parquet cache and always reload from SQL,
+        then overwrite the cache.  Set this when the user explicitly asks
+        for a data refresh.
+    """
     conn_str = os.environ.get("AZURE_SQL_CONNECTION_STRING", "default")
     cache_key = _cache_key(conn_str)
-    cached = _load_from_parquet_cache(cache_key)
-    if cached is not None:
-        for w in validate_dataframes(cached):
-            _logger.warning(w)
-        return cached
+    if not force_refresh:
+        cached = _load_from_parquet_cache(cache_key)
+        if cached is not None:
+            for w in validate_dataframes(cached):
+                _logger.warning(w)
+            return cached
 
     if engine is None:
         engine = _get_engine()

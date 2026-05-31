@@ -10,10 +10,20 @@ from __future__ import annotations
 
 import dataclasses
 import logging
+import math
 import os
 import uuid
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
+
+
+def _safe_int(val: Any, default: int = 0) -> int:
+    """Convert val to int, treating NaN/inf as default."""
+    try:
+        f = float(val)
+        return int(f) if math.isfinite(f) else default
+    except (TypeError, ValueError):
+        return default
 
 from basketball_ai.chat.intent import Intent, detect_intent_with_confidence
 from basketball_ai.chat.entities import (
@@ -538,7 +548,7 @@ class ChatEngine:
                         return float(pdf[col].mean())
                     return default
 
-                clutch_games    = int(pdf["clutch_games"].sum()) if "clutch_games" in pdf.columns else 0
+                clutch_games    = _safe_int(pdf["clutch_games"].sum()) if "clutch_games" in pdf.columns else 0
                 clutch_ts       = _col_mean("clutch_ts_pct")
                 clutch_net      = _col_mean("clutch_net_rtg")
                 clutch_ast_tov  = _col_mean("clutch_ast_to_tov")
@@ -591,7 +601,7 @@ class ChatEngine:
                 return self._need_player(), {}, []
             try:
                 player_row = pd_.get(_normalize_id(player_id), {})
-                age        = int(player_row.get("age", 26))
+                age        = _safe_int(player_row.get("age", 26), 26)
                 position   = str(player_row.get("position", "PG"))
                 cur_tid    = player_row.get("current_team_id")
                 cur_tid    = _normalize_id(cur_tid) if cur_tid else 1
@@ -685,7 +695,7 @@ class ChatEngine:
             try:
                 player_row = pd_.get(_normalize_id(player_id), {})
                 position   = str(player_row.get("position", "?"))
-                age        = int(player_row.get("age", 0))
+                age        = _safe_int(player_row.get("age", 0))
                 cur_tid    = player_row.get("current_team_id")
                 team_name_cur = _team_display_name(
                     td_.get(_normalize_id(cur_tid), {}), "—",
@@ -838,7 +848,7 @@ class ChatEngine:
                 return self._need_player(), {}, []
             try:
                 player_row = pd_.get(_normalize_id(player_id), {})
-                age        = int(player_row.get("age", 26))
+                age        = _safe_int(player_row.get("age", 26), 26)
 
                 p_stats = self.data["player_stats"]
                 mask    = p_stats["player_id"] == _normalize_id(player_id)
@@ -914,7 +924,7 @@ class ChatEngine:
             try:
                 player_row = pd_.get(_normalize_id(player_id), {})
                 position   = str(player_row.get("position", "?"))
-                age        = int(player_row.get("age", 26))
+                age        = _safe_int(player_row.get("age", 0))
                 cur_tid    = player_row.get("current_team_id")
                 team_name_cur = _team_display_name(
                     td_.get(_normalize_id(cur_tid), {}), "—",
@@ -1068,12 +1078,14 @@ class ChatEngine:
             try:
                 player_row = pd_.get(_normalize_id(player_id), {})
                 position   = str(player_row.get("position", "?"))
-                age        = int(player_row.get("age", 0))
+                age        = _safe_int(player_row.get("age", 0))
                 cur_tid    = player_row.get("current_team_id")
                 team_name_cur = _team_display_name(
                     td_.get(_normalize_id(cur_tid), {}), "—",
                     league_id=str(td_.get(_normalize_id(cur_tid), {}).get("league_id", "") or ""),
                 ) if cur_tid else "—"
+
+                from basketball_ai.features.player_features import compute_player_features
                 p_stats = self.data["player_stats"]
                 mask    = p_stats["player_id"] == _normalize_id(player_id)
                 pdf     = p_stats[mask].sort_values("season")

@@ -54,6 +54,7 @@ from basketball_ai.utils.helpers import (
     team_display_name as _team_display_name,
     normalize_id      as _normalize_id,
 )
+from basketball_ai.data.loader import _to_int as _id_to_int
 
 logger = logging.getLogger(__name__)
 
@@ -410,12 +411,12 @@ def _build_role_archetypes(
             .groupby("player_id").last().reset_index()
         )
         for _, r in latest_st.iterrows():
-            rating_map[int(r["player_id"])] = float(r.get("rating") or 6.5)
+            rating_map[_id_to_int(r["player_id"])] = float(r.get("rating") or 6.5)
 
     # Classify each player into a role bucket
     role_buckets: Dict[str, List[tuple]] = {}
     for _, row in players_df.iterrows():
-        pid = int(row["id"])
+        pid = _id_to_int(row["id"])
         try:
             feats = compute_player_features(pid, data)
             role  = engine._assign_role(feats)
@@ -549,19 +550,19 @@ def export_chat_model(
             .reset_index()
         )
         top_pids_series = latest.nlargest(top_players, "rating")["player_id"]
-        top_pids: List[int] = [int(p) for p in top_pids_series.tolist()]
+        top_pids: List[int] = [_id_to_int(p) for p in top_pids_series.tolist()]
     elif top_players is not None:
-        top_pids = [int(row["id"]) for _, row in players_df.head(top_players).iterrows()]
+        top_pids = [_id_to_int(row["id"]) for _, row in players_df.head(top_players).iterrows()]
     else:
         # No filter: all players in the dataset
-        top_pids = [int(row["id"]) for _, row in players_df.iterrows()]
+        top_pids = [_id_to_int(row["id"]) for _, row in players_df.iterrows()]
 
     # ---- Select teams (all by default, or top-N by tier then name) ------
     sort_cols = [c for c in ("league_tier", "name") if c in teams_df.columns]
     teams_sorted = teams_df.sort_values(sort_cols) if sort_cols else teams_df
     if top_teams is not None:
         teams_sorted = teams_sorted.head(top_teams)
-    top_tids: List[int] = [int(row["id"]) for _, row in teams_sorted.iterrows()]
+    top_tids: List[int] = [_id_to_int(row["id"]) for _, row in teams_sorted.iterrows()]
 
     # ---- Detect seasons from data if not provided -----------------------
     _ps: pd.DataFrame = data.get("player_stats", pd.DataFrame())

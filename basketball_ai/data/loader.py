@@ -46,6 +46,7 @@ def validate_dataframes(data: dict) -> list:
 
 def _to_int(value) -> int:
     """Convert value to int. Returns a hash of the string for non-numeric codes like 'GRC1'."""
+    import math
     if isinstance(value, str):
         v = value.strip()
         if v.startswith(("0x", "0X")):
@@ -56,7 +57,9 @@ def _to_int(value) -> int:
             # Handle float-formatted strings like "123.0" that pandas emits
             # when a nullable-int DB column is loaded as float64.
             try:
-                return int(float(v))
+                f = float(v)
+                if math.isfinite(f):
+                    return int(f)
             except ValueError:
                 pass
             if all(c in "0123456789abcdefABCDEF" for c in v):
@@ -64,6 +67,8 @@ def _to_int(value) -> int:
             # Non-numeric code (e.g. 'GRC1'): use stable hash as int ID
             return abs(hash(v)) % (10 ** 9)
     if isinstance(value, float):
+        if not math.isfinite(value):
+            return 0
         return int(value)
     return int(value)
 
