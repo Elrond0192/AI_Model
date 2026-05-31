@@ -261,6 +261,7 @@ def mode_export_wordpress(args) -> None:
     from datetime import datetime, timezone
     from basketball_ai.models.ensemble import EnsembleModel
     from basketball_ai.scenarios.engine import WhatIfEngine
+    from tqdm import tqdm
 
     print("=" * 60)
     print("  Exporting WordPress player cards …")
@@ -284,7 +285,8 @@ def mode_export_wordpress(args) -> None:
     generated_at = datetime.now(timezone.utc).isoformat()
 
     exported = 0
-    for _, row in players_df.iterrows():
+    for _, row in tqdm(players_df.iterrows(), total=len(players_df),
+                       desc="Player cards", unit="player", dynamic_ncols=True):
         pid = int(row["id"])
         cur_tid = row.get("current_team_id")
 

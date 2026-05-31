@@ -24,14 +24,36 @@ from sklearn.model_selection import TimeSeriesSplit
 from xgboost import XGBRegressor
 
 from basketball_ai.data.loader import _to_int
+
+logger = logging.getLogger(__name__)
+
+
+def _xgb_device() -> str:
+    """Return 'cuda' when an NVIDIA GPU with CUDA is available, else 'cpu'."""
+    try:
+        import subprocess
+        result = subprocess.run(
+            ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
+            capture_output=True, timeout=5,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return "cuda"
+    except Exception:
+        pass
+    return "cpu"
+
+
+_XGB_DEVICE = _xgb_device()
+if _XGB_DEVICE == "cuda":
+    logger.info("XGBoost: GPU (CUDA) accelerazione attiva.")
+else:
+    logger.info("XGBoost: nessuna GPU rilevata, uso CPU.")
 from basketball_ai.constants import (
     LEAGUE_MAX_GAMES_BY_NAME,
     LEAGUE_MAX_GAMES_DEFAULT,
     _primary_pos,
     _peak_age,
 )
-
-logger = logging.getLogger(__name__)
 
 
 def _get_git_sha() -> str:
@@ -374,6 +396,7 @@ class PerformanceModel:
             random_state=42,
             verbosity=0,
             early_stopping_rounds=50,
+            device=_XGB_DEVICE,
         )
         self.feature_names: List[str] = FEATURE_COLS.copy()
         self.is_trained: bool = False
@@ -868,6 +891,7 @@ class PerformanceModel:
                     n_estimators=best_n_estimators, max_depth=5, learning_rate=0.05,
                     subsample=0.8, colsample_bytree=0.8, min_child_weight=3,
                     reg_alpha=0.1, reg_lambda=1.0, random_state=42, verbosity=0,
+                    device=_XGB_DEVICE,
                 )
                 _m.fit(Xtr, ytr, verbose=False)
                 fold_rmse = float(np.sqrt(np.mean((_m.predict(Xva) - yva) ** 2)))
