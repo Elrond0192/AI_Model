@@ -21,7 +21,7 @@ def parse_args(argv=None):
     )
     parser.add_argument(
         "--mode",
-        choices=["generate-data", "train", "demo", "api", "export-wordpress", "export-chat-model", "validate-data", "backup", "backtest"],
+        choices=["generate-data", "train", "demo", "api", "export-wordpress", "export-chat-model", "export-sql", "validate-data", "backup", "backtest"],
         required=True,
     )
     parser.add_argument("--data-dir",  default="data/sample",   help="Data directory (file source)")
@@ -62,6 +62,21 @@ def parse_args(argv=None):
         type=int,
         default=None,
         help="Limit teams in chat model export (omit = all teams)",
+    )
+    parser.add_argument(
+        "--sql-schema",
+        default="Predizioni",
+        help="Target SQL schema for export-sql (default: Predizioni)",
+    )
+    parser.add_argument(
+        "--sql-table",
+        default="hm_predictions",
+        help="Target SQL table for export-sql (default: hm_predictions)",
+    )
+    parser.add_argument(
+        "--sql-conn-str",
+        default=None,
+        help="pyodbc connection string for export-sql; falls back to AZURE_SQL_CONNECTION_STRING env var",
     )
     return parser.parse_args(argv)
 
@@ -388,6 +403,42 @@ def mode_export_chat_model(args) -> None:
 # ---------------------------------------------------------------------------
 
 
+def mode_export_sql(args) -> None:
+    """Export pre-computed predictions directly to Azure SQL Server."""
+    from basketball_ai.models.ensemble import EnsembleModel
+    from basketball_ai.scenarios.engine import WhatIfEngine
+    from basketball_ai.export.sql_export import export_chat_model_to_sql
+
+    print("=" * 60)
+    print("  Exporting chat model → Azure SQL Server …")
+    print("=" * 60)
+
+    data     = _load_data(args)
+    ensemble = EnsembleModel()
+
+    if (Path(args.model_dir) / "performance_model.joblib").exists():
+        ensemble.load(args.model_dir)
+    else:
+        print("[WARN] No trained models – training now …")
+        ensemble.train(data)
+        ensemble.save(args.model_dir)
+
+    engine = WhatIfEngine(ensemble, data)
+
+    export_chat_model_to_sql(
+        engine=engine,
+        data=data,
+        conn_str=args.sql_conn_str or None,
+        schema=args.sql_schema,
+        table=args.sql_table,
+        top_players=args.top_players,
+        top_teams=args.top_teams,
+    )
+
+
+# ---------------------------------------------------------------------------
+
+
 def mode_validate_data(args) -> None:
     """Run data quality gates against loaded data."""
     import json as _json
@@ -517,6 +568,7 @@ def main(argv=None):
         "api":              mode_api,
         "export-wordpress": mode_export_wordpress,
         "export-chat-model": mode_export_chat_model,
+        "export-sql":       mode_export_sql,
         "validate-data":    mode_validate_data,
         "backup":           mode_backup,
     }
