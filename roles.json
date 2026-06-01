@@ -9,6 +9,7 @@
       "chat",
       "scouting",
       "mapping",
+      "export",
       "admin"
     ]
   },

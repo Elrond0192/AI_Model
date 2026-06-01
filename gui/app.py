@@ -9,6 +9,7 @@ Tabs:
   3. 🎯 Predizioni  – predict player rating at any team + career trajectory
   4. 🔀 Scenari     – transfer impact, best-team fit, best players, lineup, teammates
   5. 💬 Chat        – natural-language assistant backed by the trained model
+  6. 📤 Export SQL  – export pre-computed predictions to Azure SQL Server
 """
 from __future__ import annotations
 
@@ -503,7 +504,7 @@ st.title("🏀 Basketball Performance AI")
 # Tabs
 # ---------------------------------------------------------------------------
 
-tab_data, tab_train, tab_pred, tab_scen, tab_chat, tab_scout, tab_mapping, tab_admin, tab_audit, tab_health, tab_drift = st.tabs([
+tab_data, tab_train, tab_pred, tab_scen, tab_chat, tab_scout, tab_mapping, tab_export, tab_admin, tab_audit, tab_health, tab_drift = st.tabs([
     "📂 Dati",
     "🏋️ Training",
     "🎯 Predizioni",
@@ -511,6 +512,7 @@ tab_data, tab_train, tab_pred, tab_scen, tab_chat, tab_scout, tab_mapping, tab_a
     "💬 Chat",
     "🔬 Scouting AI",
     "🗺️ Mapping",
+    "📤 Export SQL",
     "👥 Utenti",
     "📋 Audit",
     "🏥 Health",
@@ -3465,6 +3467,150 @@ with _safe_tab(tab_health, "Health"):
                     st.info("No route metrics yet.")
             except Exception as exc:
                 st.info(f"Metrics: {exc}")
+
+# ===========================================================================
+# TAB – EXPORT SQL
+# ===========================================================================
+
+with _safe_tab(tab_export, "Export SQL"):
+    if not _can_access("export"):
+        st.warning("⛔ Non hai i permessi per accedere a questa sezione.")
+    else:
+        st.header("📤 Export Predizioni → Azure SQL Server")
+        st.caption(
+            "Genera tutte le predizioni del modello e le carica (UPSERT) nella tabella "
+            "Azure SQL configurata. Richiede un modello addestrato e i dati caricati."
+        )
+
+        _export_model_ok = st.session_state.get("engine") is not None
+        _export_data_ok  = st.session_state.get("data") is not None
+
+        if not _export_model_ok or not _export_data_ok:
+            st.warning(
+                "⚠️ Per eseguire l'export è necessario caricare prima i **dati** "
+                "(tab 📂 Dati) e il **modello** (tab 🏋️ Training)."
+            )
+        else:
+            st.success("✅ Modello e dati pronti per l'export.")
+
+        st.divider()
+
+        # ── Connection parameters ────────────────────────────────────────────
+        st.subheader("🔌 Connessione Azure SQL")
+        st.caption(
+            "Lascia i campi vuoti per usare le variabili d'ambiente "
+            "`AZURE_SQL_CONNECTION_STRING` / `AZURE_SQL_*`."
+        )
+
+        _exp_conn_col1, _exp_conn_col2 = st.columns(2)
+        with _exp_conn_col1:
+            _exp_server   = st.text_input(
+                "Server",
+                value=os.environ.get("AZURE_SQL_SERVER", ""),
+                placeholder="myserver.database.windows.net",
+                key="exp_server",
+            )
+            _exp_database = st.text_input(
+                "Database",
+                value=os.environ.get("AZURE_SQL_DATABASE", ""),
+                key="exp_database",
+            )
+        with _exp_conn_col2:
+            _exp_user     = st.text_input(
+                "Username",
+                value=os.environ.get("AZURE_SQL_USER", os.environ.get("AZURE_SQL_USERNAME", "")),
+                key="exp_user",
+            )
+            _exp_password = st.text_input(
+                "Password",
+                value="",
+                type="password",
+                placeholder="Lascia vuoto per usare la variabile d'ambiente",
+                key="exp_password",
+            )
+
+        # ── Export parameters ────────────────────────────────────────────────
+        st.divider()
+        st.subheader("⚙️ Parametri Export")
+
+        _exp_param_col1, _exp_param_col2, _exp_param_col3 = st.columns(3)
+        with _exp_param_col1:
+            _exp_schema = st.text_input(
+                "Schema SQL",
+                value=os.environ.get("AZURE_SQL_EXPORT_SCHEMA", "Predizioni"),
+                key="exp_schema",
+            )
+            _exp_table  = st.text_input(
+                "Tabella SQL",
+                value=os.environ.get("AZURE_SQL_EXPORT_TABLE", "hm_predictions"),
+                key="exp_table",
+            )
+        with _exp_param_col2:
+            _exp_top_players = st.number_input(
+                "Top players (0 = tutti)",
+                min_value=0, max_value=5000, value=500, step=50,
+                key="exp_top_players",
+            )
+            _exp_top_teams   = st.number_input(
+                "Top teams (0 = tutti)",
+                min_value=0, max_value=200, value=100, step=10,
+                key="exp_top_teams",
+            )
+        with _exp_param_col3:
+            _exp_batch_size = st.number_input(
+                "Batch size (righe per transazione)",
+                min_value=50, max_value=2000, value=500, step=50,
+                key="exp_batch_size",
+            )
+
+        # ── Run button ───────────────────────────────────────────────────────
+        st.divider()
+        _exp_btn = st.button(
+            "🚀 Avvia Export SQL",
+            type="primary",
+            disabled=not (_export_model_ok and _export_data_ok),
+            key="btn_export_sql",
+        )
+
+        if _exp_btn:
+            # Build optional override connection string from form fields
+            _exp_conn_override: str | None = None
+            if _exp_server and _exp_database:
+                _driver = os.environ.get("AZURE_SQL_DRIVER", "ODBC Driver 18 for SQL Server")
+                _exp_conn_override = (
+                    f"DRIVER={{{_driver}}};SERVER={_exp_server};DATABASE={_exp_database};"
+                    f"UID={_exp_user};PWD={_exp_password};"
+                    "Encrypt=yes;TrustServerCertificate=no"
+                )
+
+            _exp_top_p = int(_exp_top_players) if _exp_top_players > 0 else None
+            _exp_top_t = int(_exp_top_teams)   if _exp_top_teams   > 0 else None
+
+            with st.spinner("⏳ Export in corso… potrebbe richiedere alcuni minuti."):
+                try:
+                    from basketball_ai.export.sql_export import export_chat_model_to_sql
+                    _exp_rows = export_chat_model_to_sql(
+                        engine      = st.session_state["engine"],
+                        data        = st.session_state["data"],
+                        conn_str    = _exp_conn_override,
+                        schema      = _exp_schema.strip() or "Predizioni",
+                        table       = _exp_table.strip()  or "hm_predictions",
+                        top_players = _exp_top_p,
+                        top_teams   = _exp_top_t,
+                        batch_size  = int(_exp_batch_size),
+                    )
+                    st.success(
+                        f"✅ Export completato: **{_exp_rows}** righe scritte su "
+                        f"`[{_exp_schema}].[{_exp_table}]`."
+                    )
+                except ImportError as _exc:
+                    st.error(
+                        f"❌ Dipendenza mancante: {_exc}\n\n"
+                        "Installa `pyodbc` con: `pip install pyodbc`"
+                    )
+                except Exception as _exc:
+                    st.error(f"❌ Export fallito: {_exc}")
+
 
 # ===========================================================================
 # TAB – DRIFT MONITOR

@@ -107,7 +107,7 @@ _lockout_registry: Dict[str, Tuple[int, str]] = {}
 #: Ordered list of all section identifiers that map to GUI tabs.
 ALL_SECTIONS: List[str] = [
     "data", "training", "predictions", "scenarios",
-    "chat", "scouting", "mapping", "admin",
+    "chat", "scouting", "mapping", "export", "admin",
 ]
 
 #: Human-readable labels for each section (used in the admin UI).
@@ -119,6 +119,7 @@ SECTION_LABELS: Dict[str, str] = {
     "chat":        "💬 Chat",
     "scouting":    "🔬 Scouting AI",
     "mapping":     "🗺️ Mapping",
+    "export":      "📤 Export SQL",
     "admin":       "👥 Gestione Utenti",
 }
 
@@ -131,7 +132,7 @@ DEFAULT_ROLES: Dict[str, Dict] = {
     },
     "analyst": {
         "description": "Accesso alle funzionalità analitiche (no gestione utenti/mapping)",
-        "sections": ["data", "training", "predictions", "scenarios", "chat", "scouting"],
+        "sections": ["data", "training", "predictions", "scenarios", "chat", "scouting", "export"],
     },
     "viewer": {
         "description": "Accesso in sola lettura a predizioni e chat",

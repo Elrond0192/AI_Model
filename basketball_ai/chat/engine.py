@@ -1124,7 +1124,55 @@ class ChatEngine:
             except Exception:
                 pass
         # Fully unknown – provide contextual suggestions
-        # C1: Optional LLM fallback when LLM_ENDPOINT env var is configured.
+        # C1: Optional LLM fallback.
+        #   Priority 1 – DeepSeek (OpenAI-compatible) when DEEPSEEK_API_KEY is set.
+        #   Priority 2 – Generic LLM_ENDPOINT (custom HTTP POST) when configured.
+        _deepseek_api_key = os.environ.get("DEEPSEEK_API_KEY", "").strip()
+        _deepseek_model   = os.environ.get("DEEPSEEK_MODEL", "deepseek-chat").strip()
+        _deepseek_base    = os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com").rstrip("/")
+        if _deepseek_api_key:
+            try:
+                import urllib.request as _urllib_req
+                import json as _json_lib
+                _ds_payload = _json_lib.dumps({
+                    "model": _deepseek_model,
+                    "messages": [
+                        {"role": "system", "content": _LLM_SYSTEM_CONTEXT},
+                        {"role": "user",   "content": message},
+                    ],
+                    "stream": False,
+                }).encode()
+                _ds_req = _urllib_req.Request(
+                    f"{_deepseek_base}/chat/completions",
+                    data=_ds_payload,
+                    headers={
+                        "Content-Type":  "application/json",
+                        "Authorization": f"Bearer {_deepseek_api_key}",
+                    },
+                    method="POST",
+                )
+                _ds_timeout_env = os.environ.get("LLM_TIMEOUT", "15")
+                try:
+                    _ds_timeout = int(_ds_timeout_env)
+                except ValueError:
+                    _ds_timeout = 15
+                with _urllib_req.urlopen(_ds_req, timeout=_ds_timeout) as _ds_resp:
+                    _ds_body  = _json_lib.loads(_ds_resp.read())
+                    _ds_reply = (
+                        _ds_body.get("choices", [{}])[0]
+                        .get("message", {})
+                        .get("content", "")
+                        .strip()
+                    )
+                if _ds_reply:
+                    return (
+                        f"🤖 _{_ds_reply}_",
+                        {"source": "deepseek"},
+                        ["How good is [player] at [team]?", "Best teams for [player]?"],
+                    )
+            except Exception as _exc:
+                logger.debug("[C1] DeepSeek fallback failed: %s", _exc)
+
         _llm_endpoint = os.environ.get("LLM_ENDPOINT", "").strip()
         if _llm_endpoint:
             try:
