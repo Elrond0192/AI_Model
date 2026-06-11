@@ -112,10 +112,9 @@ SUPPORTED_LEAGUES: tuple[str, ...] = (
     "DEU1", "FRA1", "TUR1", "SRB1", "AUS1",
 )
 
-#: All supported season labels in chronological order.
-SUPPORTED_SEASONS: tuple[str, ...] = (
-    "2018-19", "2019-20", "2020-21", "2021-22",
-    "2022-23", "2023-24", "2024-25",
+#: All supported season years (integer) in chronological order.
+SUPPORTED_SEASONS: tuple[int, ...] = (
+    2019, 2020, 2021, 2022, 2023, 2024, 2025,
 )
 
 #: Regex for safe SQL table-name identifiers (alphanumeric + underscore only).

@@ -282,85 +282,90 @@ def get_cache_info() -> Optional[Dict[str, Any]]:
 
 
 def list_available_partitions(engine) -> list[dict]:
-    """Return list of {league, season} dicts for tables that actually exist in DB.
+    """Return list of {league, season} dicts available in unified Season-column tables.
 
-    Checks INFORMATION_SCHEMA.TABLES against the SUPPORTED_LEAGUES × SUPPORTED_SEASONS
-    cross-product without using any Lookup/Configuration tables.
+    With the new schema each league has a single table (e.g. [Boxscore].[EL])
+    that contains all seasons as rows with a Season INT column.
+    We check which league tables exist and then query distinct Season values.
 
     Args:
         engine: SQLAlchemy engine or connection.
 
     Returns:
-        List of dicts with keys 'league' and 'season'.
+        List of dicts with keys 'league' and 'season' (int).
     """
-    from basketball_ai.constants import SUPPORTED_LEAGUES, SUPPORTED_SEASONS, is_safe_identifier
+    from basketball_ai.constants import SUPPORTED_LEAGUES, is_safe_identifier
     available = []
     try:
         import sqlalchemy as sa
         with engine.connect() as conn:
             for league in SUPPORTED_LEAGUES:
-                for season in SUPPORTED_SEASONS:
-                    safe_season = season.replace("-", "_")
-                    table_name = f"{league}_{safe_season}"
-                    if not is_safe_identifier(table_name):
-                        _logger.warning("[list_available_partitions] Skipping unsafe identifier: %s", table_name)
-                        continue
-                    result = conn.execute(
-                        sa.text(
-                            "SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES "
-                            "WHERE TABLE_NAME = :tname"
-                        ),
-                        {"tname": table_name},
-                    )
-                    if result.scalar():
-                        available.append({"league": league, "season": season})
+                if not is_safe_identifier(league):
+                    _logger.warning("[list_available_partitions] Skipping unsafe identifier: %s", league)
+                    continue
+                # Check table existence
+                exists = conn.execute(
+                    sa.text(
+                        "SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES "
+                        "WHERE TABLE_SCHEMA = 'Boxscore' AND TABLE_NAME = :tname"
+                    ),
+                    {"tname": league},
+                ).scalar()
+                if not exists:
+                    continue
+                # Query distinct seasons present in the table
+                rows = conn.execute(
+                    sa.text(f"SELECT DISTINCT [Season] FROM [Boxscore].[{league}] ORDER BY [Season]")
+                ).fetchall()
+                for row in rows:
+                    available.append({"league": league, "season": int(row[0])})
     except Exception as exc:
         _logger.warning("[list_available_partitions] DB check failed: %s", exc)
     return available
 
 
 def load_player_history(player_id: int, engine) -> "pd.DataFrame":
-    """Load full cross-season stats for one player via UNION ALL across Boxscore tables.
+    """Load full cross-season stats for one player from unified Boxscore tables.
 
-    Iterates over existing partitions (via INFORMATION_SCHEMA) and builds a
-    UNION ALL query. Falls back to an empty DataFrame on any error.
+    With the new schema each league has a single table (e.g. [Boxscore].[EL])
+    with a Season INT column.  We query each league table directly filtering
+    by IdGlobal = player_id.
 
     Args:
         player_id: The player's IdGlobal.
         engine: SQLAlchemy engine.
 
     Returns:
-        DataFrame with columns from Boxscore tables plus 'league' and 'season'.
+        DataFrame with columns from Boxscore tables plus 'league' column.
     """
-    from basketball_ai.constants import is_safe_identifier
+    from basketball_ai.constants import SUPPORTED_LEAGUES, is_safe_identifier
     partitions = list_available_partitions(engine)
     if not partitions:
         return pd.DataFrame()
+
+    # Unique leagues present
+    leagues_present = list({p["league"] for p in partitions})
 
     fragments = []
     try:
         import sqlalchemy as sa
         with engine.connect() as conn:
-            for p in partitions:
-                safe_season = p["season"].replace("-", "_")
-                part_identifier = f"{p['league']}_{safe_season}"
-                if not is_safe_identifier(part_identifier):
-                    _logger.warning("[load_player_history] Skipping unsafe identifier: %s", part_identifier)
+            for league in leagues_present:
+                if not is_safe_identifier(league):
                     continue
-                table_name = f"Boxscore.{part_identifier}"
                 try:
                     df = _timed_read_sql(
                         sa.text(
-                            f"SELECT *, :league AS league, :season AS season "
-                            f"FROM [{table_name}] WHERE IdPlayer = :pid"
+                            f"SELECT *, :league AS league "
+                            f"FROM [Boxscore].[{league}] WHERE [Id] = :pid"
                         ),
                         conn,
-                        params={"pid": player_id, "league": p["league"], "season": p["season"]},
+                        params={"pid": player_id, "league": league},
                     )
                     if not df.empty:
                         fragments.append(df)
                 except Exception as exc:
-                    _logger.debug("[load_player_history] Partition %s query failed: %s", table_name, exc)
+                    _logger.debug("[load_player_history] League %s query failed: %s", league, exc)
     except Exception as exc:
         _logger.warning("[load_player_history] query failed: %s", exc)
 
