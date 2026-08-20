@@ -160,6 +160,15 @@ class StrictProductionEnsembleModel(ProductionEnsembleModel):
         kwargs.setdefault("compatibility_model", TemporalCompatibilityModel())
         super().__init__(*args, **kwargs)
         self._conformal_nominal_coverage: Optional[float] = None
+        self._style_bounds_state: Optional[Dict[str, float]] = None
+
+    def _restore_style_bounds(self) -> None:
+        if not self._style_bounds_state:
+            return
+        from basketball_ai.features.team_features import _style_bounds
+
+        _style_bounds.clear()
+        _style_bounds.update(self._style_bounds_state)
 
     def _data_with_asof_position(
         self,
@@ -223,7 +232,8 @@ class StrictProductionEnsembleModel(ProductionEnsembleModel):
         )
         fit_data = build_historical_snapshot(data, calibration_season - 1)
 
-        calibrate_style_bounds(fit_data)
+        self._style_bounds_state = dict(calibrate_style_bounds(fit_data))
+        self._restore_style_bounds()
         self.compat_model.train(fit_data)
         self._calibrate_mpg_baseline(fit_data)
         self._calibrate_league_factors(fit_data)
@@ -285,12 +295,10 @@ class StrictProductionEnsembleModel(ProductionEnsembleModel):
                 season_year(value)
                 for value in stats["season"].dropna()
             )
-        # The legacy scenario constructor can empirically mutate global age
-        # parameters. Production currently uses deterministic defaults until a
-        # row-level historical age contract is explicitly trained/versioned.
         from basketball_ai.models.age_curve import reset_fitted_params
 
         reset_fitted_params()
+        self._restore_style_bounds()
         return super().predict(
             player_id,
             team_id,
@@ -339,19 +347,18 @@ class StrictProductionEnsembleModel(ProductionEnsembleModel):
         directory: str = "models_saved",
         metrics: Optional[Dict[str, Any]] = None,
     ) -> None:
+        if not self._style_bounds_state:
+            raise RuntimeError("Production style calibration state is missing")
         super().save(directory, metrics)
-        from basketball_ai.features.team_features import _style_bounds
-
         joblib.dump(
             {
-                "style_bounds": dict(_style_bounds),
+                "style_bounds": dict(self._style_bounds_state),
                 "conformal_nominal_coverage": self._conformal_nominal_coverage,
             },
             str(Path(directory) / _STATE_FILE),
         )
 
     def load(self, directory: str = "models_saved") -> None:
-        from basketball_ai.features.team_features import _style_bounds
         from basketball_ai.models.age_curve import reset_fitted_params
 
         reset_fitted_params()
@@ -363,8 +370,11 @@ class StrictProductionEnsembleModel(ProductionEnsembleModel):
         style_bounds = state.get("style_bounds")
         if not isinstance(style_bounds, dict) or not style_bounds:
             raise RuntimeError("Strict production style bounds are missing")
-        _style_bounds.clear()
-        _style_bounds.update(style_bounds)
+        self._style_bounds_state = {
+            str(key): float(value)
+            for key, value in style_bounds.items()
+        }
+        self._restore_style_bounds()
         nominal = state.get("conformal_nominal_coverage")
         self._conformal_nominal_coverage = (
             float(nominal) if nominal is not None else None
@@ -448,9 +458,6 @@ class StrictWhatIfEngine:
     def __init__(self, ensemble: StrictProductionEnsembleModel, data: Dict[str, Any]) -> None:
         from basketball_ai.scenarios.engine import WhatIfEngine
 
-        # Avoid WhatIfEngine.__init__ because it empirically refits a module-global
-        # age curve. Methods are delegated to a lightweight wrapped instance whose
-        # state is set directly.
         self._engine = object.__new__(WhatIfEngine)
         self._engine.ensemble = ensemble
         self._engine.data = data
@@ -488,7 +495,9 @@ class StrictWhatIfEngine:
             stats = self.data.get("player_stats", pd.DataFrame())
             if stats.empty:
                 raise ValueError("season_base is required")
-            season_base = max(season_year(value) for value in stats["season"].dropna())
+            season_base = max(
+                season_year(value) for value in stats["season"].dropna()
+            )
         player = self.data["player_dict"].get(_to_int(player_id), {})
         current_age = _safe_int(player.get("age", 25), 25)
         if team_id is None:
