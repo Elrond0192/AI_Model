@@ -48,14 +48,14 @@ def _latest_season(data: dict[str, Any]) -> int:
 
 def mode_train(args: argparse.Namespace) -> None:
     from basketball_ai.models.backtest import run_backtest
-    from basketball_ai.models.production_training import ProductionEnsembleModel
+    from basketball_ai.models.strict_production import StrictProductionEnsembleModel
     from basketball_ai.models.promote import register_candidate
 
     data = _load_data(args)
     model_root = Path(args.model_dir)
     model_root.mkdir(parents=True, exist_ok=True)
 
-    ensemble = ProductionEnsembleModel()
+    ensemble = StrictProductionEnsembleModel()
     metrics = ensemble.train(data)
     report = run_backtest(
         data,
