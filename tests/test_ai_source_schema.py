@@ -1,4 +1,4 @@
-"""Static/unit tests for the production PostgreSQL contract."""
+"""Static/unit tests for the production PostgreSQL contracts."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -9,9 +9,10 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE_SQL = ROOT / "basketball_ai" / "data" / "ai_source_schema.sql"
+TEAM_SEASON_SQL = ROOT / "basketball_ai" / "data" / "ai_source_team_season.sql"
 
 
-def test_ai_source_schema_defines_exact_public_contract():
+def test_ai_source_schema_defines_core_public_contract():
     sql = SOURCE_SQL.read_text(encoding="utf-8").lower()
     for view in (
         "ai_source.leagues",
@@ -21,6 +22,15 @@ def test_ai_source_schema_defines_exact_public_contract():
         "ai_source.team_player_relations",
     ):
         assert f"create view {view}" in sql
+
+
+def test_team_season_schema_defines_temporal_context():
+    sql = TEAM_SEASON_SQL.read_text(encoding="utf-8").lower()
+    assert "create view ai_source.team_season_stats" in sql
+    assert "partition by tr.global_id, tr.season" in sql
+    assert "ai_source._team_stats_raw" in sql
+    assert "ai_source._team_registry" in sql
+    assert "tr.season" in sql
 
 
 def test_ai_source_schema_is_postgres_unified_table_adapter():
@@ -34,8 +44,8 @@ def test_ai_source_schema_is_postgres_unified_table_adapter():
     assert "vallegapergame" in lower
 
 
-def test_ai_source_schema_has_no_sql_server_ddl():
-    sql = SOURCE_SQL.read_text(encoding="utf-8").lower()
+def test_ai_source_schemas_have_no_sql_server_ddl():
+    sql = (SOURCE_SQL.read_text(encoding="utf-8") + TEAM_SEASON_SQL.read_text(encoding="utf-8")).lower()
     forbidden = (
         "set ansi_nulls",
         "set quoted_identifier",
@@ -78,24 +88,42 @@ def _valid_frames():
             [{"id": 20, "global_id": "P20", "name": "Player", "position": "PG"}]
         ),
         "player_stats": pd.DataFrame(
-            [{
-                "player_id": 20,
-                "season": 2025,
-                "league_id": 1,
-                "games_played": 20,
-                "minutes_per_game": 25.0,
-                "points": 10.0,
-                "rating": 6.5,
-                "competition": "RS",
-            }]
+            [
+                {
+                    "player_id": 20,
+                    "season": 2025,
+                    "league_id": 1,
+                    "games_played": 20,
+                    "minutes_per_game": 25.0,
+                    "points": 10.0,
+                    "rating": 6.5,
+                    "competition": "RS",
+                }
+            ]
         ),
         "team_player_relations": pd.DataFrame(
             [{"player_id": 20, "team_id": 10, "season": 2025}]
         ),
+        "team_season_stats": pd.DataFrame(
+            [
+                {
+                    "team_id": 10,
+                    "global_id": "T10",
+                    "name": "Team",
+                    "league_id": 1,
+                    "season": 2025,
+                    "pace": 75.0,
+                    "offensive_rating": 112.0,
+                    "defensive_rating": 108.0,
+                    "three_point_attempt_rate": 0.35,
+                    "assists_per_game": 20.0,
+                }
+            ]
+        ),
     }
 
 
-def test_postgres_loader_contract_accepts_v2_frames():
+def test_postgres_loader_contract_accepts_temporal_frames():
     from basketball_ai.data.postgres_loader import _validate_contract
 
     _validate_contract(_valid_frames(), "ai_source")
@@ -110,7 +138,38 @@ def test_postgres_loader_contract_requires_global_ids():
         _validate_contract(data, "ai_source")
 
 
-def test_postgres_loader_builds_league_teams():
+def test_postgres_loader_requires_team_season_history():
+    from basketball_ai.data.postgres_loader import _validate_contract
+
+    data = _valid_frames()
+    data.pop("team_season_stats")
+    with pytest.raises(RuntimeError, match="team_season_stats"):
+        _validate_contract(data, "ai_source")
+
+
+def test_postgres_loader_rejects_duplicate_player_seasons():
+    from basketball_ai.data.postgres_loader import _validate_contract
+
+    data = _valid_frames()
+    data["player_stats"] = pd.concat(
+        [data["player_stats"], data["player_stats"]], ignore_index=True
+    )
+    with pytest.raises(RuntimeError, match="one row per player_id\+season"):
+        _validate_contract(data, "ai_source")
+
+
+def test_postgres_loader_rejects_duplicate_team_seasons():
+    from basketball_ai.data.postgres_loader import _validate_contract
+
+    data = _valid_frames()
+    data["team_season_stats"] = pd.concat(
+        [data["team_season_stats"], data["team_season_stats"]], ignore_index=True
+    )
+    with pytest.raises(RuntimeError, match="one row per team_id\+season"):
+        _validate_contract(data, "ai_source")
+
+
+def test_postgres_loader_builds_temporal_lookups():
     from basketball_ai.data.postgres_loader import _build_lookups
 
     data = _valid_frames()
@@ -118,3 +177,4 @@ def test_postgres_loader_builds_league_teams():
     assert data["team_dict"][10]["name"] == "Team"
     assert data["player_dict"][20]["name"] == "Player"
     assert data["league_teams"] == {1: [10]}
+    assert data["team_season_dict"][(10, 2025)]["pace"] == 75.0
