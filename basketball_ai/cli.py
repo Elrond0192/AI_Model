@@ -110,7 +110,8 @@ def mode_validate_data(args: argparse.Namespace) -> None:
             issues.append("player_stats.rating contains values outside [0, 10]")
 
     seasons = sorted(
-        pd.to_numeric(stats["season"], errors="coerce").dropna().astype(int).unique()
+        int(value)
+        for value in pd.to_numeric(stats["season"], errors="coerce").dropna().unique()
     )
     if len(seasons) < 5:
         issues.append(
