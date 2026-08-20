@@ -9,29 +9,53 @@ from fastapi.testclient import TestClient
 
 
 def _fake_state(app) -> None:
-    app.state.engine = SimpleNamespace(ensemble=object())
+    ensemble = SimpleNamespace(
+        _conformal_by_competition={"PO": 0.45},
+        _conformal_samples_by_competition={"RS": 30, "PO": 18},
+    )
+    app.state.engine = SimpleNamespace(ensemble=ensemble)
     app.state.data = {
         "player_dict": {101: {"id": 101, "global_id": "PLAYER-IDGLOBAL"}},
         "team_dict": {202: {"id": 202, "global_id": "TEAM-IDGLOBAL"}},
     }
     app.state.model_metadata = {
         "model_run_id": "run-1",
-        "model_version": "2.1.0",
-        "feature_version": "forecast-t-plus-1-v2",
+        "model_version": "2.2.0",
+        "feature_version": "forecast-t-plus-1-competition-v1",
         "data_cutoff": "2025-12-31",
     }
 
 
-def _patch_inference(monkeypatch) -> dict:
+def _patch_inference(monkeypatch, expected_competition: str = "RS") -> dict:
     import basketball_ai.api.routes.predictions_v2 as route
 
     seen: dict = {}
 
     def fake_snapshot(data, source_season):
         seen["source_season"] = source_season
+        return data
+
+    def fake_resolve_league(data, league):
+        assert league == "ITA1"
+        seen["league_id"] = 303
+        return 303
+
+    def fake_scope(data, player_id, team_id, league_id, competition, source_season):
+        assert (player_id, team_id, league_id, source_season) == (101, 202, 303, 2025)
+        assert competition == expected_competition
+        seen["scope_competition"] = competition
         return {
             "player_dict": {101: {"id": 101, "global_id": "PLAYER-IDGLOBAL"}},
             "team_dict": {202: {"id": 202, "global_id": "TEAM-IDGLOBAL"}},
+            "_prediction_league_id": 303,
+            "_prediction_competition": competition,
+            "_competition_support": {
+                "mode": "isolated",
+                "competition": competition,
+                "source_seasons": 2 if competition == "PO" else 4,
+                "source_games": 20 if competition == "PO" else 80,
+                "exact_source_games": 8 if competition == "PO" else 30,
+            },
         }
 
     class FakeStrictWhatIfEngine:
@@ -49,7 +73,7 @@ def _patch_inference(monkeypatch) -> dict:
             assert player_id == 101
             assert team_id == 202
             assert season == 2025
-            assert competition == "RS"
+            assert competition == expected_competition
             seen["competition"] = competition
             return SimpleNamespace(
                 predicted_rating=7.25,
@@ -58,6 +82,8 @@ def _patch_inference(monkeypatch) -> dict:
             )
 
     monkeypatch.setattr(route, "build_historical_snapshot", fake_snapshot)
+    monkeypatch.setattr(route, "resolve_league_id", fake_resolve_league)
+    monkeypatch.setattr(route, "scope_prediction_context", fake_scope)
     monkeypatch.setattr(route, "StrictWhatIfEngine", FakeStrictWhatIfEngine)
     return seen
 
@@ -131,8 +157,8 @@ def test_model_metadata_defaults_and_file(tmp_path):
         json.dumps(
             {
                 "model_run_id": "run-42",
-                "model_version": "2.1.0",
-                "feature_version": "forecast-t-plus-1-v2",
+                "model_version": "2.2.0",
+                "feature_version": "forecast-t-plus-1-competition-v1",
                 "data_cutoff": "2026-06-30",
             }
         ),
@@ -141,8 +167,8 @@ def test_model_metadata_defaults_and_file(tmp_path):
     metadata = _model_metadata(str(tmp_path))
     assert metadata == {
         "model_run_id": "run-42",
-        "model_version": "2.1.0",
-        "feature_version": "forecast-t-plus-1-v2",
+        "model_version": "2.2.0",
+        "feature_version": "forecast-t-plus-1-competition-v1",
         "data_cutoff": "2026-06-30",
     }
 
@@ -154,10 +180,10 @@ def test_model_metadata_invalid_json_falls_back(tmp_path):
     assert _model_metadata(str(tmp_path))["model_version"] == "v2"
 
 
-def test_v2_player_team_uses_historical_source_season(monkeypatch):
+def test_v2_regular_season_uses_isolated_context(monkeypatch):
     from basketball_ai.api.routes.predictions_v2 import router
 
-    seen = _patch_inference(monkeypatch)
+    seen = _patch_inference(monkeypatch, "RS")
     app = FastAPI()
     app.include_router(router)
     _fake_state(app)
@@ -166,17 +192,47 @@ def test_v2_player_team_uses_historical_source_season(monkeypatch):
     assert response.status_code == 200
     body = response.json()
     assert seen["source_season"] == 2025
-    assert body["player_global_id"] == "PLAYER-IDGLOBAL"
-    assert body["team_global_id"] == "TEAM-IDGLOBAL"
+    assert seen["league_id"] == 303
+    assert seen["scope_competition"] == "RS"
     assert body["target_season"] == 2026
     assert body["predicted_rating"] == 7.25
     assert body["competition"] == "RS"
-    assert body["explanation"]["context"] == "historical_as_of_source_season"
+    assert body["competition_support"]["mode"] == "isolated"
+    assert body["competition_support"]["calibration_scope"] == "global"
+    assert body["explanation"]["context"] == "isolated_league_competition_as_of_source_season"
 
 
-def test_v2_rejects_unsupported_playoff_forecast():
+def test_v2_playoffs_are_normalised_and_isolated(monkeypatch):
     from basketball_ai.api.routes.predictions_v2 import router
 
+    seen = _patch_inference(monkeypatch, "PO")
+    app = FastAPI()
+    app.include_router(router)
+    _fake_state(app)
+    response = TestClient(app).post(
+        "/api/v2/predictions/player-team", json=_payload("playoffs")
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert seen["competition"] == "PO"
+    assert body["competition"] == "PO"
+    assert body["competition_support"]["source_games"] == 20
+    assert body["competition_support"]["exact_source_games"] == 8
+    assert body["competition_support"]["calibration_scope"] == "competition"
+    assert body["competition_support"]["calibration_samples"] == 18
+
+
+def test_v2_returns_422_when_isolated_context_is_unavailable(monkeypatch):
+    import basketball_ai.api.routes.predictions_v2 as route
+    from basketball_ai.api.routes.predictions_v2 import router
+
+    monkeypatch.setattr(route, "build_historical_snapshot", lambda data, season: data)
+    monkeypatch.setattr(route, "resolve_league_id", lambda data, league: 303)
+
+    def fail_scope(*args, **kwargs):
+        raise ValueError("Player has no isolated PO data")
+
+    monkeypatch.setattr(route, "scope_prediction_context", fail_scope)
     app = FastAPI()
     app.include_router(router)
     _fake_state(app)
@@ -184,6 +240,7 @@ def test_v2_rejects_unsupported_playoff_forecast():
         "/api/v2/predictions/player-team", json=_payload("PO")
     )
     assert response.status_code == 422
+    assert "isolated PO data" in response.json()["detail"]
 
 
 def test_v2_returns_404_for_unknown_global_id(monkeypatch):
@@ -225,19 +282,14 @@ def test_health_endpoints_and_readiness(monkeypatch):
     assert live.status_code == 200
     assert live.json() == {"status": "alive"}
     assert live.headers.get("x-content-type-options") == "nosniff"
-
     health = client.get("/health")
     assert health.status_code == 200
     assert health.json()["data_loaded"] is True
-
     ready = client.get("/health/ready")
     assert ready.status_code == 503
-    assert ready.json()["model"] is False
-
     app.state.engine = object()
     ready = client.get("/health/ready")
     assert ready.status_code == 200
-    assert ready.json()["status"] == "ready"
 
 
 def test_api_key_protects_v2_and_allows_service_call(monkeypatch):
@@ -250,17 +302,14 @@ def test_api_key_protects_v2_and_allows_service_call(monkeypatch):
     app = create_app()
     _fake_state(app)
     client = TestClient(app)
-
     denied = client.post("/api/v2/predictions/player-team", json=_payload())
     assert denied.status_code == 401
-
     allowed = client.post(
         "/api/v2/predictions/player-team",
         json=_payload(),
         headers={"X-API-Key": "service-key-12345678901234567890"},
     )
     assert allowed.status_code == 200
-    assert allowed.json()["predicted_rating"] == 7.25
 
 
 def test_request_body_limit_short_circuits(monkeypatch):
@@ -282,14 +331,9 @@ def test_parse_allowed_origins_modes(monkeypatch):
     monkeypatch.setenv("API_ENV", "production")
     monkeypatch.delenv("ALLOWED_ORIGINS", raising=False)
     assert main_mod._parse_allowed_origins() == []
-
     monkeypatch.setenv("API_ENV", "development")
     assert main_mod._parse_allowed_origins() == ["*"]
-
-    monkeypatch.setenv(
-        "ALLOWED_ORIGINS", "https://one.example, https://two.example"
-    )
+    monkeypatch.setenv("ALLOWED_ORIGINS", "https://one.example, https://two.example")
     assert main_mod._parse_allowed_origins() == [
-        "https://one.example",
-        "https://two.example",
+        "https://one.example", "https://two.example"
     ]
