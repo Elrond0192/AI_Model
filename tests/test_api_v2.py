@@ -22,7 +22,7 @@ def _fake_state(app) -> None:
     }
 
 
-def _patch_inference(monkeypatch, *, expected_competition: str = "RS") -> dict:
+def _patch_inference(monkeypatch) -> dict:
     import basketball_ai.api.routes.predictions_v2 as route
 
     seen: dict = {}
@@ -49,7 +49,7 @@ def _patch_inference(monkeypatch, *, expected_competition: str = "RS") -> dict:
             assert player_id == 101
             assert team_id == 202
             assert season == 2025
-            assert competition == expected_competition
+            assert competition == "RS"
             seen["competition"] = competition
             return SimpleNamespace(
                 predicted_rating=7.25,
@@ -170,22 +170,20 @@ def test_v2_player_team_uses_historical_source_season(monkeypatch):
     assert body["team_global_id"] == "TEAM-IDGLOBAL"
     assert body["target_season"] == 2026
     assert body["predicted_rating"] == 7.25
+    assert body["competition"] == "RS"
     assert body["explanation"]["context"] == "historical_as_of_source_season"
 
 
-def test_v2_propagates_playoff_competition(monkeypatch):
+def test_v2_rejects_unsupported_playoff_forecast():
     from basketball_ai.api.routes.predictions_v2 import router
 
-    seen = _patch_inference(monkeypatch, expected_competition="PO")
     app = FastAPI()
     app.include_router(router)
     _fake_state(app)
     response = TestClient(app).post(
         "/api/v2/predictions/player-team", json=_payload("PO")
     )
-    assert response.status_code == 200
-    assert response.json()["competition"] == "PO"
-    assert seen["competition"] == "PO"
+    assert response.status_code == 422
 
 
 def test_v2_returns_404_for_unknown_global_id(monkeypatch):
