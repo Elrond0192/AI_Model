@@ -47,7 +47,7 @@ def test_main_mounts_v2_only(monkeypatch):
     from basketball_ai.api.main import create_app
 
     app = create_app()
-    paths = {path for route in app.routes if (path := getattr(route, "path", None))}
+    paths = set(app.openapi()["paths"])
     assert "/api/v2/predictions/player-team" in paths
     assert not any(path.startswith("/api/v1") for path in paths)
     assert "/predictions/batch" not in paths
