@@ -58,6 +58,12 @@ def seasons_for(data) -> list[int]:
     return sorted({int(str(value).split("-")[0]) for value in data["player_stats"]["season"].dropna()})
 
 
+def competitions_for(data) -> list[str]:
+    if data is None or "competition" not in data["player_stats"].columns:
+        return []
+    return sorted({str(value).strip().upper() for value in data["player_stats"]["competition"].dropna() if str(value).strip()})
+
+
 def registry_status() -> dict:
     try:
         return get_promotion_status(str(MODEL_ROOT))
@@ -110,7 +116,7 @@ if page == "Overview":
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Database", st.session_state.get("active_profile", "Not selected"))
     c2.metric("Rows loaded", f"{len(data['player_stats']):,}" if data is not None else "—")
-    c3.metric("Players", f"{len(data['players']):,}" if data is not None else "—")
+    c3.metric("Competitions", len(competitions_for(data)) if data is not None else "—")
     c4.metric("Production", production.get("run_id", "Not promoted"))
     st.subheader("Operational readiness")
     ready = data is not None and len(seasons_for(data)) >= 5
@@ -123,9 +129,9 @@ if page == "Overview":
                     "Detail": st.session_state.get("active_profile", "Select and load a profile"),
                 },
                 {
-                    "Component": "Historical team context",
+                    "Component": "Competition context",
                     "Status": "Ready" if data is not None and not data.get("team_season_stats", pd.DataFrame()).empty else "Action required",
-                    "Detail": "ai_source.team_season_stats required",
+                    "Detail": "ai_source.player_competition_stats + team_competition_stats",
                 },
                 {
                     "Component": "Training dataset",
@@ -190,8 +196,9 @@ elif page == "Data Sources":
                     st.session_state.update(data=loaded, active_profile=selected)
                     st.success(
                         f"Loaded {len(loaded['players']):,} players, "
-                        f"{len(loaded['player_stats']):,} player seasons and "
-                        f"{len(loaded['team_season_stats']):,} team seasons."
+                        f"{len(loaded['player_stats']):,} player/competition rows, "
+                        f"{len(loaded['team_season_stats']):,} team/competition rows and "
+                        f"{len(competitions_for(loaded))} competitions."
                     )
                 except Exception as exc:
                     st.error(f"Load failed: {exc}")
@@ -235,18 +242,20 @@ elif page == "Training Runs":
         st.warning("Select and load a database profile before starting a run.")
     else:
         seasons = seasons_for(data)
-        a, b, c = st.columns(3)
+        competitions = competitions_for(data)
+        a, b, c, d = st.columns(4)
         a.metric("Data profile", st.session_state.get("active_profile"))
         b.metric("Season range", f"{min(seasons)}–{max(seasons)}")
-        c.metric("Observations", f"{len(data['player_stats']):,}")
+        c.metric("Competitions", len(competitions))
+        d.metric("Observations", f"{len(data['player_stats']):,}")
         st.subheader("Leakage-safe training contract")
         st.dataframe(
             pd.DataFrame(
                 [
-                    {"Stage": "Fit", "Seasons": f"through {seasons[-2]}", "Purpose": "Consecutive t → t+1 only; validation selects tree count"},
-                    {"Stage": "Calibration", "Seasons": str(seasons[-1]), "Purpose": "Final ensemble intervals; untouched by fitting"},
-                    {"Stage": "Backtest", "Seasons": "expanding OOT folds", "Purpose": "Exact production ensemble vs base and persistence"},
-                    {"Stage": "Promotion", "Seasons": "all OOT folds", "Purpose": "RMSE, segments and interval coverage gates"},
+                    {"Stage": "Fit", "Seasons": f"through {seasons[-2]}", "Purpose": "Same player + league + competition, exact t → t+1"},
+                    {"Stage": "Calibration", "Seasons": str(seasons[-1]), "Purpose": "Final ensemble + per-competition intervals when supported"},
+                    {"Stage": "Backtest", "Seasons": "expanding OOT folds", "Purpose": "Exact production ensemble, including by_competition"},
+                    {"Stage": "Promotion", "Seasons": "all OOT folds", "Purpose": "Global + league + competition regression gates"},
                 ]
             ),
             hide_index=True,
@@ -256,11 +265,13 @@ elif page == "Training Runs":
             st.json(
                 {
                     "forecast_horizon": "exactly t+1 season",
-                    "feature_version": "forecast-t-plus-1-v2",
+                    "feature_version": "forecast-t-plus-1-competition-v1",
+                    "pairing": "same player + league + competition",
                     "split": "whole target seasons",
-                    "team_context": "historical team-season",
-                    "calibration": "final ensemble split-conformal",
+                    "team_context": "historical league/competition context",
+                    "calibration": "global + competition split-conformal",
                     "backtest": "expanding walk-forward full ensemble",
+                    "observed_competitions": competitions,
                     "random_seed": 42,
                 }
             )
@@ -275,7 +286,7 @@ elif page == "Training Runs":
                 with st.status("Training run in progress", expanded=True) as run_status:
                     model = StrictProductionEnsembleModel()
                     metrics = model.train(data)
-                    run_status.write("Running full-ensemble walk-forward backtest…")
+                    run_status.write("Running competition-aware full-ensemble walk-forward backtest…")
                     report = run_backtest(
                         data,
                         n_folds=min(3, max(1, len(seasons) - 4)),
@@ -288,11 +299,12 @@ elif page == "Training Runs":
                     metadata = {
                         **(metrics or {}),
                         "model_run_id": run_id,
-                        "model_version": "2.1.0",
-                        "feature_version": "forecast-t-plus-1-v2",
+                        "model_version": "2.2.0",
+                        "feature_version": "forecast-t-plus-1-competition-v1",
                         "data_cutoff": datetime.now(timezone.utc).date().isoformat(),
                         "latest_observed_season": max(seasons),
                         "database_profile": st.session_state.get("active_profile"),
+                        "source_contract": data.get("source_contract", "competition-v1"),
                         "backtest": report,
                     }
                     model.save(str(run_dir), metadata)
@@ -315,7 +327,15 @@ elif page == "Backtests":
         c2.metric("Base RMSE", f"{report.get('base_rmse', 0):.4f}" if report.get("base_rmse") is not None else "—")
         c3.metric("Persistence RMSE", f"{report.get('persistence_rmse', 0):.4f}" if report.get("persistence_rmse") is not None else "—")
         c4.metric("Interval coverage", f"{overall.get('interval_coverage', 0):.1%}" if overall else "—")
-        st.json(report)
+        if report.get("by_competition"):
+            st.subheader("By competition")
+            comp_rows = [
+                {"Competition": name, **metrics}
+                for name, metrics in report["by_competition"].items()
+            ]
+            st.dataframe(pd.DataFrame(comp_rows), hide_index=True, use_container_width=True)
+        with st.expander("Full backtest report"):
+            st.json(report)
     else:
         st.info("Complete a training run to inspect its report.")
 
@@ -324,7 +344,7 @@ elif page == "Model Registry":
     from basketball_ai.models.promote import promote_if_better, rollback_to_previous
 
     st.json(registry_status())
-    st.caption("Promotion activates immutable artifacts in models_saved/production only after all OOT gates pass.")
+    st.caption("Promotion activates immutable artifacts only after global, league and competition OOT gates pass.")
     confirm = st.checkbox("I reviewed the walk-forward report and promotion gates")
     c1, c2 = st.columns(2)
     if c1.button("Promote candidate", type="primary", disabled=not confirm, use_container_width=True):
@@ -343,10 +363,13 @@ else:
     production = registry_status().get("production")
     if production:
         st.success(f"Promoted production run: {production.get('run_id')}")
+        vocabulary = ((production.get("metadata") or {}).get("competition_vocabulary") or {})
+        if vocabulary:
+            st.caption("Trained competitions: " + ", ".join(sorted(vocabulary)))
     else:
         st.warning("No production run is promoted; /health/ready must remain unavailable for inference.")
     st.code(
         "GET /health\nGET /health/live\nGET /health/ready\nPOST /api/v2/predictions/player-team",
         language="text",
     )
-    st.caption("The API container loads /app/models_saved/production and never a candidate run.")
+    st.caption("The API loads /app/models_saved/production and serves only competitions present in the promoted vocabulary.")
