@@ -857,7 +857,8 @@ class PerformanceModel:
         }
 
         # --- Baseline models (A4) --------------------------------------------
-        baselines = compute_baselines(X_tr_sc, y_train, X_va_sc, y_val)
+        # Baselines must use the same chronological, unscaled feature frames as XGBoost.
+        baselines = compute_baselines(X_train, y_train, X_val, y_val)
         metrics.update(baselines)
         metrics["xgboost_vs_baseline_delta"] = baselines["baseline_mean_val_rmse"] - val_rmse
 
@@ -953,7 +954,11 @@ class PerformanceModel:
             if registry_path.exists():
                 registry = _json.loads(registry_path.read_text())
             else:
-                registry = []
+                registry = {}
+            # Registry is a lifecycle document, not an append-only list.  This
+            # keeps training and promote.py on one compatible contract.
+            if isinstance(registry, list):
+                registry = {"history": registry}
             entry = {
                 "path":             str(Path(model_path).name),
                 "saved_at":         _dt.now(timezone.utc).isoformat(),
@@ -963,7 +968,8 @@ class PerformanceModel:
                 "metrics_by_league": self._last_metrics.get("by_league", {}) if self._last_metrics else {},
                 "metrics_by_role":   self._last_metrics.get("by_role", {}) if self._last_metrics else {},
             }
-            registry.append(entry)
+            registry["candidate"] = {**entry, "status": "candidate", "val_rmse": (metrics or {}).get("val_rmse")}
+            registry.setdefault("history", []).append(entry)
             registry_path.write_text(_json.dumps(registry, indent=2))
         except Exception as exc:
             logger.warning("[O5] Could not update model registry: %s", exc)

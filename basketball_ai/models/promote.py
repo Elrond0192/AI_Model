@@ -29,7 +29,8 @@ def _load_registry(model_dir: Path) -> dict:
     reg_path = model_dir / "registry.json"
     if not reg_path.exists():
         return {}
-    return json.loads(reg_path.read_text(encoding="utf-8"))
+    registry = json.loads(reg_path.read_text(encoding="utf-8"))
+    return registry if isinstance(registry, dict) else {"history": registry}
 
 
 def _save_registry(model_dir: Path, reg: dict) -> None:

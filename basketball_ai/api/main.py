@@ -86,13 +86,13 @@ def _load_app_state() -> None:
 
     data_dir   = os.environ.get("DATA_DIR",   "data/sample")
     model_dir  = os.environ.get("MODEL_DIR",  "models_saved")
-    data_source = os.environ.get("DATA_SOURCE", "file")
+    data_source = os.environ.get("DATA_SOURCE", "postgres")
 
-    # Load data from Azure SQL or local CSV files
-    if data_source == "sql":
-        logger.info("[API] Loading data from Azure SQL Server …")
+    # Production data is PostgreSQL; CSV remains a development fixture.
+    if data_source == "postgres":
+        logger.info("[API] Loading data from PostgreSQL …")
         try:
-            from basketball_ai.data.sql_loader import load_all_data
+            from basketball_ai.data.postgres_loader import load_all_data
             data = load_all_data()
         except Exception as exc:
             logger.error("[API] ERROR loading SQL data: %s", exc)
@@ -125,7 +125,7 @@ def _load_app_state() -> None:
 
     engine = WhatIfEngine(ensemble, data)
     app_state["engine"]      = engine
-    app_state["chat_engine"] = None   # instantiated lazily on first /chat request
+    app_state["chat_engine"] = None   # deprecated: chat belongs to WordPress
     logger.info("[API] Ready.")
 
 
@@ -173,6 +173,9 @@ async def lifespan(app: FastAPI):
     app.state.data = app_state.get("data", {})
     app.state.engine = app_state.get("engine")
     app.state.chat_engine = app_state.get("chat_engine")
+    metadata_path = Path(os.environ.get("MODEL_DIR", "models_saved")) / "metadata.json"
+    metadata = _json.loads(metadata_path.read_text()) if metadata_path.exists() else {}
+    app.state.model_metadata = {"model_run_id": str(metadata.get("model_run_id", "unversioned")), "model_version": str(metadata.get("model_version", "v2")), "feature_version": str(metadata.get("feature_version", "unknown")), "data_cutoff": str(metadata.get("data_cutoff", "1970-01-01"))}
 
     # --- Graceful shutdown ---------------------------------------------------
     import asyncio
@@ -466,6 +469,8 @@ def create_app() -> FastAPI:
     app.include_router(players_router,     prefix=prefix)
     app.include_router(teams_router,       prefix=prefix)
     app.include_router(predictions_router, prefix=prefix)
+    from basketball_ai.api.routes.predictions_v2 import router as predictions_v2_router
+    app.include_router(predictions_v2_router)
     app.include_router(scenarios_router,   prefix=prefix)
     app.include_router(chat_router,        prefix=prefix)
     app.include_router(wordpress_router,   prefix=prefix)

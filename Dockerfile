@@ -1,7 +1,7 @@
 # ─── Stage 1: build ──────────────────────────────────────────────────────────
 FROM python:3.12-slim AS builder
 
-# Install build tools and ODBC driver dependencies
+# Install build tools required by scientific Python packages.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     gcc \
@@ -10,23 +10,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 # Copy only dependency manifests first for layer caching
-COPY pyproject.toml README.md ./
+COPY pyproject.toml requirements.txt README.md ./
 COPY basketball_ai/__init__.py ./basketball_ai/__init__.py
 
 # Install dependencies into a prefix directory
 RUN pip install --no-cache-dir --upgrade pip \
-    && pip install --no-cache-dir --prefix=/install \
-        "uvicorn[standard]>=0.29" \
-        "fastapi>=0.111" \
-        "xgboost>=2.0" \
-        "scikit-learn>=1.4" \
-        "pandas>=2.0" \
-        "numpy>=1.26" \
-        "joblib>=1.3" \
-        "python-dotenv>=1.0" \
-        "slowapi>=0.1.9" \
-        "PyJWT>=2.8" \
-        "cachetools>=5.3"
+    && pip install --no-cache-dir --prefix=/install -r requirements.txt
 
 # Install the project package itself
 COPY . .
@@ -47,7 +36,7 @@ COPY --from=builder /app /app
 # Default data/model directories (can be overridden at runtime via env vars)
 ENV DATA_DIR=/app/data/sample \
     MODEL_DIR=/app/models_saved \
-    DATA_SOURCE=file \
+    DATA_SOURCE=postgres \
     LOG_LEVEL=INFO \
     API_ENV=production \
     ALLOWED_ORIGINS="" \

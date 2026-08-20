@@ -16,7 +16,7 @@ try:
         # Data
         data_dir: str = "data/sample"
         model_dir: str = "models_saved"
-        data_source: str = "file"
+        data_source: str = "postgres"
         sql_cache_dir: str = ".sql_cache"
         sql_cache_ttl_seconds: int = 4 * 3600
 
@@ -30,13 +30,10 @@ try:
         jwt_algorithm: str = "HS256"
         jwt_expiry_minutes: int = 60
 
-        # Azure SQL
-        azure_sql_server: str = ""
-        azure_sql_database: str = ""
-        azure_sql_user: str = ""
-        azure_sql_password: str = ""
-        azure_sql_driver: str = "ODBC Driver 18 for SQL Server"
-        azure_sql_connection_string: str = ""
+        # PostgreSQL on the Docker host.  Do not put SSH credentials here.
+        database_url: str = ""
+        postgres_connect_timeout: int = 10
+        ai_schema: str = "ai"
 
         # Auth
         login_max_attempts: int = 5
@@ -48,7 +45,7 @@ except ImportError:
     class Settings:  # type: ignore
         data_dir = "data/sample"
         model_dir = "models_saved"
-        data_source = "file"
+        data_source = "postgres"
         api_key = ""
         api_env = "development"
         allowed_origins = ""

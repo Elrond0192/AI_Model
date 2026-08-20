@@ -35,9 +35,8 @@ services:
     env_file:
       - .env
     environment:
-      DATA_DIR: /app/data/sample
       MODEL_DIR: /app/models_saved
-      DATA_SOURCE: file
+      DATA_SOURCE: postgres
       LOG_LEVEL: INFO
       LOG_FORMAT: json
       API_ENV: production
@@ -47,6 +46,8 @@ services:
       - ./users.json:/app/users.json:rw
       - ./roles.json:/app/roles.json:rw
       - ./audit.log:/app/audit.log:rw
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     healthcheck:
       test: ["CMD", "python", "-c",
              "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
