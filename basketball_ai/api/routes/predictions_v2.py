@@ -6,8 +6,14 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, Request
 
 from basketball_ai.api.contracts_v2 import (
+    CompetitionSupportV2,
     PlayerTeamPredictionRequestV2,
     PlayerTeamPredictionV2,
+)
+from basketball_ai.models.competition_training import (
+    normalize_competition,
+    resolve_league_id,
+    scope_prediction_context,
 )
 from basketball_ai.models.strict_production import (
     StrictWhatIfEngine,
@@ -45,29 +51,57 @@ async def player_team(body: PlayerTeamPredictionRequestV2, request: Request):
             "Resolved player or team is unavailable for the requested context",
         )
 
-    try:
-        snapshot = build_historical_snapshot(data, int(body.season))
-    except Exception as exc:
-        raise HTTPException(422, f"Historical context is unavailable: {exc}") from exc
-
     player_id = int(player["id"])
     team_id = int(team["id"])
-    if player_id not in snapshot.get("player_dict", {}) or team_id not in snapshot.get("team_dict", {}):
+    competition = normalize_competition(body.competition)
+
+    try:
+        league_id = resolve_league_id(data, body.league)
+        snapshot = build_historical_snapshot(data, int(body.season))
+        scoped = scope_prediction_context(
+            snapshot,
+            player_id,
+            team_id,
+            league_id,
+            competition,
+            int(body.season),
+        )
+    except (ValueError, RuntimeError) as exc:
+        raise HTTPException(422, f"Historical competition context is unavailable: {exc}") from exc
+
+    if player_id not in scoped.get("player_dict", {}) or team_id not in scoped.get("team_dict", {}):
         raise HTTPException(
             404,
-            "Resolved player or team has no state at the requested source season",
+            "Resolved player or team has no state in the requested league/competition",
         )
 
-    historical_engine = StrictWhatIfEngine(engine.ensemble, snapshot)
+    historical_engine = StrictWhatIfEngine(engine.ensemble, scoped)
     try:
         result = historical_engine.predict_in_team(
             player_id,
             team_id,
             int(body.season),
-            competition=body.competition,
+            competition=competition,
         )
     except (ValueError, RuntimeError) as exc:
         raise HTTPException(422, str(exc)) from exc
+
+    ensemble = engine.ensemble
+    support = dict(scoped.get("_competition_support", {}))
+    competition_intervals = getattr(
+        ensemble, "_conformal_by_competition", {}
+    ) or {}
+    calibration_samples = getattr(
+        ensemble, "_conformal_samples_by_competition", {}
+    ) or {}
+    support.update(
+        {
+            "calibration_scope": (
+                "competition" if competition in competition_intervals else "global"
+            ),
+            "calibration_samples": int(calibration_samples.get(competition, 0)),
+        }
+    )
 
     return PlayerTeamPredictionV2(
         **request.app.state.model_metadata,
@@ -75,14 +109,15 @@ async def player_team(body: PlayerTeamPredictionRequestV2, request: Request):
         team_global_id=body.team_global_id,
         league=body.league,
         season=body.season,
-        competition=body.competition,
+        competition=competition,
         target_season=body.season + 1,
         predicted_rating=result.predicted_rating,
         confidence_low=result.confidence_low,
         confidence_high=result.confidence_high,
+        competition_support=CompetitionSupportV2(**support),
         generated_at=datetime.now(timezone.utc),
         explanation={
             "method": "forecast_t_plus_1",
-            "context": "historical_as_of_source_season",
+            "context": "isolated_league_competition_as_of_source_season",
         },
     )
