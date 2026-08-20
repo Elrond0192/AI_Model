@@ -117,8 +117,10 @@ The production path uses:
 - exact consecutive player seasons only (`t -> t+1`; gaps are excluded);
 - whole target-season train/validation/calibration partitions;
 - validation only for XGBoost tree-count selection, followed by refit on train + validation;
-- historical player and team state only;
-- final-ensemble calibration on an untouched season;
+- source-season roster position and temporally bounded role vocabularies;
+- historical player, roster and team state only;
+- run-owned team-style normalization persisted with the model;
+- finite-sample split-conformal calibration on the final ensemble output;
 - expanding walk-forward evaluation of the same ensemble served by the API;
 - comparisons against base XGBoost and previous-season persistence;
 - RMSE, MAE, R², bias, interval coverage and segment metrics;
@@ -145,7 +147,7 @@ Training writes an immutable run under:
 models_saved/runs/<model_run_id>/
 ```
 
-and registers it as **candidate**. It does **not** change the model used by the API.
+and registers it as **candidate**. It does **not** change the model used by the API. Each complete run includes `production_state.joblib`; this is required so data-derived runtime calibration cannot drift between training, backtest and serving.
 
 Review the walk-forward report, then promote:
 
@@ -154,7 +156,7 @@ docker compose run --rm admin \
   python main.py --mode promote --model-dir /app/models_saved
 ```
 
-Promotion gates require a valid out-of-time full-ensemble backtest, finite metrics, sufficient samples, acceptable interval coverage, no excessive league regression, and improvement over both the base forecast and persistence. When a production model already exists, the candidate must also beat its OOT RMSE by the configured threshold.
+Promotion gates require a valid out-of-time full-ensemble backtest, finite RMSE/MAE/bias, sufficient samples, mandatory acceptable interval coverage, no excessive league regression, and improvement over both the base forecast and persistence. When a production model already exists, the candidate must also beat its OOT RMSE by the configured threshold.
 
 Promotion atomically materializes the active artifacts in:
 
@@ -199,7 +201,7 @@ Content-Type: application/json
 }
 ```
 
-`season` is the source season. The response predicts `season + 1`. Supported competition values are `RS`, `PO`, `CUP` and `SUPERCUP`. Historical requests are evaluated using data available at the requested source season, not the latest player/team state.
+`season` is the source season and the response predicts `season + 1`. The current supervised target is season-level, therefore **only `competition="RS"` is supported**. `PO`, `CUP` and `SUPERCUP` requests are rejected with `422` until a competition-specific target/model is trained. Historical requests are evaluated strictly using state available at the requested source season, not the latest player/team state.
 
 The response includes `model_run_id`, `model_version`, `feature_version`, `data_cutoff`, confidence bounds and `target_season`.
 
