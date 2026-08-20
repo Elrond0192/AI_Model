@@ -3,66 +3,59 @@ from __future__ import annotations
 
 import json
 import time
-import tempfile
-from pathlib import Path
 
-
-# ---------------------------------------------------------------------------
-# Password policy tests
-# ---------------------------------------------------------------------------
 
 def test_password_policy_too_short():
     from basketball_ai.auth.auth import _validate_password_policy
+
     errors = _validate_password_policy("Short1!")
-    assert any("12" in e or "characters" in e for e in errors)
+    assert any("12" in error or "characters" in error for error in errors)
 
 
 def test_password_policy_valid():
     from basketball_ai.auth.auth import _validate_password_policy
-    errors = _validate_password_policy("SecureP@ssword99")
-    assert errors == []
+
+    assert _validate_password_policy("SecureP@ssword99") == []
 
 
 def test_password_policy_no_uppercase():
     from basketball_ai.auth.auth import _validate_password_policy
-    errors = _validate_password_policy("lowercase1special!")
-    assert any("uppercase" in e for e in errors)
+
+    assert any("uppercase" in error for error in _validate_password_policy("lowercase1special!"))
 
 
 def test_password_policy_no_digit():
     from basketball_ai.auth.auth import _validate_password_policy
-    errors = _validate_password_policy("NoDigitAtAll!!")
-    assert any("digit" in e for e in errors)
+
+    assert any("digit" in error for error in _validate_password_policy("NoDigitAtAll!!"))
 
 
 def test_password_policy_no_special():
     from basketball_ai.auth.auth import _validate_password_policy
-    errors = _validate_password_policy("NoSpecialChar123")
-    assert any("special" in e for e in errors)
+
+    assert any("special" in error for error in _validate_password_policy("NoSpecialChar123"))
 
 
 def test_password_policy_contains_username():
     from basketball_ai.auth.auth import _validate_password_policy
-    errors = _validate_password_policy("adminPassw0rd!", username="admin")
-    assert any("username" in e for e in errors)
 
+    assert any("username" in error for error in _validate_password_policy("adminPassw0rd!", username="admin"))
 
-# ---------------------------------------------------------------------------
-# PII masking tests
-# ---------------------------------------------------------------------------
 
 def test_pii_masking_viewer():
     from basketball_ai.api.middleware.pii import mask_player_pii
+
     player = {"id": 1, "name": "John", "birth_date": "1990-01-01", "weight_kg": 85, "height_cm": 195}
     masked = mask_player_pii(player, role="viewer")
     assert masked["birth_date"] is None
     assert masked["weight_kg"] is None
     assert masked["height_cm"] is None
-    assert masked["name"] == "John"  # name not masked
+    assert masked["name"] == "John"
 
 
 def test_pii_masking_admin():
     from basketball_ai.api.middleware.pii import mask_player_pii
+
     player = {"id": 1, "name": "John", "birth_date": "1990-01-01", "weight_kg": 85}
     masked = mask_player_pii(player, role="admin")
     assert masked["birth_date"] == "1990-01-01"
@@ -71,74 +64,66 @@ def test_pii_masking_admin():
 
 def test_pii_masking_analyst():
     from basketball_ai.api.middleware.pii import mask_player_pii
+
     player = {"id": 1, "name": "John", "height_cm": 195}
-    masked = mask_player_pii(player, role="analyst")
-    assert masked["height_cm"] == 195
+    assert mask_player_pii(player, role="analyst")["height_cm"] == 195
 
 
 def test_pii_masking_list():
     from basketball_ai.api.middleware.pii import mask_players_pii
+
     players = [
         {"id": 1, "birth_date": "1990-01-01"},
         {"id": 2, "birth_date": "1988-06-15"},
     ]
-    masked = mask_players_pii(players, role="viewer")
-    assert all(p["birth_date"] is None for p in masked)
+    assert all(player["birth_date"] is None for player in mask_players_pii(players, role="viewer"))
 
-
-# ---------------------------------------------------------------------------
-# Tenant isolation tests
-# ---------------------------------------------------------------------------
 
 def test_filter_by_tenant_no_column():
     import pandas as pd
     from basketball_ai.api.middleware.tenant import filter_by_tenant
-    df = pd.DataFrame({"id": [1, 2, 3]})
-    result = filter_by_tenant(df, "t1")
-    assert len(result) == 3  # no tenant_id column → unchanged
+
+    frame = pd.DataFrame({"id": [1, 2, 3]})
+    assert len(filter_by_tenant(frame, "t1")) == 3
 
 
 def test_filter_by_tenant_with_column():
     import pandas as pd
     from basketball_ai.api.middleware.tenant import filter_by_tenant
-    df = pd.DataFrame({"id": [1, 2], "tenant_id": ["t1", "t2"]})
-    result = filter_by_tenant(df, "t1")
-    assert list(result["id"]) == [1]
+
+    frame = pd.DataFrame({"id": [1, 2], "tenant_id": ["t1", "t2"]})
+    assert list(filter_by_tenant(frame, "t1")["id"]) == [1]
 
 
 def test_filter_by_tenant_default_passthrough():
     import pandas as pd
     from basketball_ai.api.middleware.tenant import filter_by_tenant
-    df = pd.DataFrame({"id": [1, 2], "tenant_id": ["t1", "t2"]})
-    result = filter_by_tenant(df, "default")
-    assert len(result) == 2
+
+    frame = pd.DataFrame({"id": [1, 2], "tenant_id": ["t1", "t2"]})
+    assert len(filter_by_tenant(frame, "default")) == 2
 
 
-# ---------------------------------------------------------------------------
-# JWT multi-secret tests
-# ---------------------------------------------------------------------------
+def test_decode_jwt_single_secret(monkeypatch):
+    import jwt
+    from basketball_ai.api.main import _decode_jwt
 
-def test_get_jwt_secrets_single(monkeypatch):
-    monkeypatch.setenv("JWT_SECRET", "mysecret")
+    monkeypatch.setenv("JWT_ALGORITHM", "HS256")
     monkeypatch.delenv("JWT_SECRETS", raising=False)
-    from basketball_ai.api.routes import auth as auth_mod
-    import importlib
-    importlib.reload(auth_mod)
-    secrets = auth_mod._get_jwt_secrets()
-    assert len(secrets) == 1
-    assert secrets[0] == ("default", "mysecret")
+    token = jwt.encode({"sub": "service", "exp": int(time.time()) + 60}, "primary", algorithm="HS256")
+    assert _decode_jwt(token, "primary")["sub"] == "service"
 
 
-def test_get_jwt_secrets_multi(monkeypatch):
-    import json
-    monkeypatch.setenv("JWT_SECRETS", json.dumps([
-        {"kid": "k1", "secret": "s1"},
-        {"kid": "k2", "secret": "s2"},
-    ]))
-    monkeypatch.delenv("JWT_SECRET", raising=False)
-    from basketball_ai.api.routes import auth as auth_mod
-    import importlib
-    importlib.reload(auth_mod)
-    secrets = auth_mod._get_jwt_secrets()
-    assert len(secrets) == 2
-    assert secrets[0] == ("k1", "s1")
+def test_decode_jwt_rotated_secret(monkeypatch):
+    import jwt
+    from basketball_ai.api.main import _decode_jwt
+
+    monkeypatch.setenv("JWT_ALGORITHM", "HS256")
+    monkeypatch.setenv(
+        "JWT_SECRETS",
+        json.dumps([
+            {"kid": "old", "secret": "old-secret"},
+            {"kid": "new", "secret": "new-secret"},
+        ]),
+    )
+    token = jwt.encode({"sub": "service", "exp": int(time.time()) + 60}, "new-secret", algorithm="HS256")
+    assert _decode_jwt(token, "primary")["sub"] == "service"
