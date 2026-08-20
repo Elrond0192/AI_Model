@@ -34,7 +34,7 @@ def _patch_inference(monkeypatch, *, expected_competition: str = "RS") -> dict:
             "team_dict": {202: {"id": 202, "global_id": "TEAM-IDGLOBAL"}},
         }
 
-    class FakeWhatIfEngine:
+    class FakeStrictWhatIfEngine:
         def __init__(self, ensemble, data):
             seen["ensemble"] = ensemble
             seen["snapshot"] = data
@@ -58,7 +58,7 @@ def _patch_inference(monkeypatch, *, expected_competition: str = "RS") -> dict:
             )
 
     monkeypatch.setattr(route, "build_historical_snapshot", fake_snapshot)
-    monkeypatch.setattr(route, "WhatIfEngine", FakeWhatIfEngine)
+    monkeypatch.setattr(route, "StrictWhatIfEngine", FakeStrictWhatIfEngine)
     return seen
 
 
@@ -120,6 +120,7 @@ def test_empty_data_contract():
     assert data["team_dict"] == {}
     assert data["players"].empty
     assert data["player_stats"].empty
+    assert data["team_season_stats"].empty
 
 
 def test_model_metadata_defaults_and_file(tmp_path):
