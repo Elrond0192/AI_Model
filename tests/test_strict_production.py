@@ -5,6 +5,7 @@ import math
 from types import SimpleNamespace
 
 import pandas as pd
+import pytest
 
 
 def test_position_as_of_uses_roster_position_and_ignores_future_state():
@@ -75,6 +76,53 @@ def test_historical_snapshot_removes_future_team_history(monkeypatch):
     assert snapshot["_as_of_season"] == 2022
 
 
+def test_future_only_role_is_not_in_training_vocabulary():
+    from basketball_ai.models.strict_production import AsOfPositionPerformanceModel
+
+    stats = pd.DataFrame(
+        [
+            {
+                "player_id": 1,
+                "team_id": 10,
+                "league_id": 1,
+                "season": year,
+                "games_played": 20,
+                "minutes_per_game": 25.0,
+                "points": 10.0,
+                "rating": 6.0 + index * 0.1,
+                "competition": "RS",
+                "ruolo_combinato": role,
+                "ruolo_offensivo": role,
+                "ruolo_difensivo": role,
+            }
+            for index, (year, role) in enumerate(
+                [(2022, "ROLE_A"), (2023, "ROLE_B"), (2024, "FUTURE_ONLY")]
+            )
+        ]
+    )
+    data = {
+        "players": pd.DataFrame(
+            [
+                {
+                    "id": 1,
+                    "position": "PG",
+                    "birth_date": "2000-01-01",
+                    "age": 24,
+                }
+            ]
+        ),
+        "player_stats": stats,
+        "team_player_relations": pd.DataFrame(),
+        "leagues": pd.DataFrame([{"id": 1, "name": "ITA1", "max_games": 30}]),
+    }
+    model = AsOfPositionPerformanceModel()
+    model.prepare_features(data)
+    assert "ROLE_A" in model.role_encoding
+    assert "ROLE_B" in model.role_encoding
+    assert "FUTURE_ONLY" not in model.role_encoding
+    assert model._role_vocabulary_cutoff == 2023
+
+
 def test_finite_sample_conformal_uses_single_direct_quantile(monkeypatch):
     from basketball_ai.models.strict_production import StrictProductionEnsembleModel
 
@@ -113,6 +161,20 @@ def test_none_season_means_latest_observed_source_season(monkeypatch):
     data = {"player_stats": pd.DataFrame([{"season": 2024}, {"season": 2025}])}
     model.predict(1, 2, data, season=None)
     assert seen["season"] == 2025
+
+
+def test_strict_model_rejects_unsupported_competition():
+    from basketball_ai.models.strict_production import StrictProductionEnsembleModel
+
+    model = StrictProductionEnsembleModel()
+    with pytest.raises(ValueError, match="RS season context only"):
+        model.predict(
+            1,
+            2,
+            {"player_stats": pd.DataFrame([{"season": 2025}])},
+            season=2025,
+            competition="PO",
+        )
 
 
 def test_team_features_use_as_of_roster_not_future_roster():
