@@ -19,7 +19,10 @@ class PlayerTeamPredictionRequestV2(BaseModel):
     team_global_id: str = Field(min_length=1, max_length=128)
     league: str = Field(min_length=2, max_length=32)
     season: int = Field(ge=2000, le=2100)
-    competition: Literal["RS", "PO", "CUP", "SUPERCUP"] = "RS"
+    # The canonical training target is one season-level observation per player.
+    # A PO/CUP-specific target is not trained yet, so production fails closed
+    # instead of exposing an unsupported competition-specific forecast.
+    competition: Literal["RS"] = "RS"
 
 
 class PlayerTeamPredictionV2(PredictionContextV2):
@@ -28,7 +31,7 @@ class PlayerTeamPredictionV2(PredictionContextV2):
     team_global_id: str
     league: str
     season: int
-    competition: Literal["RS", "PO", "CUP", "SUPERCUP"]
+    competition: Literal["RS"]
     target_season: int
     predicted_rating: float
     confidence_low: float
