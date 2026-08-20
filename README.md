@@ -2,7 +2,7 @@
 
 Production basketball forecasting service for BBallstat.
 
-`AI_Model` is **not a chatbot**. It reads a stable PostgreSQL contract, trains a strict season-ahead model (`t -> t+1`), evaluates the exact production ensemble out of time, promotes immutable model runs, stores bounded forecasts in PostgreSQL schema `ai`, and exposes typed dynamic inference to WordPress Chat V3.
+`AI_Model` is **not a chatbot**. It reads a stable PostgreSQL contract, trains strict season-ahead forecasts (`t -> t+1`) inside the same league and competition, evaluates the exact production ensemble out of time, promotes immutable model runs, stores bounded forecasts in PostgreSQL schema `ai`, and exposes typed inference to WordPress Chat V3.
 
 ## Production architecture
 
@@ -47,26 +47,26 @@ Generate secrets with `openssl rand -hex 32`.
 
 ## 2. Install the PostgreSQL contracts
 
-Run the source adapter, historical team context and model-owned output schema in this order:
+Apply the entity adapter, competition-preserving statistical adapter and model-owned output schema in this order:
 
 ```bash
 psql -d YOUR_DATABASE -f basketball_ai/data/ai_source_schema.sql
-psql -d YOUR_DATABASE -f basketball_ai/data/ai_source_team_season.sql
+psql -d YOUR_DATABASE -f basketball_ai/data/ai_source_competition.sql
 psql -d YOUR_DATABASE -f basketball_ai/data/ai_schema.sql
 ```
 
-Production training reads six canonical read-only views:
+Production reads these canonical read-only views:
 
 - `ai_source.leagues`
 - `ai_source.teams`
 - `ai_source.players`
-- `ai_source.player_stats`
 - `ai_source.team_player_relations`
-- `ai_source.team_season_stats`
+- `ai_source.player_competition_stats`
+- `ai_source.team_competition_stats`
 
-`team_season_stats` is mandatory for leakage-safe team compatibility and historical backtests. The adapter never writes to `Anagrafiche`, `Analisi` or `Boxscore`.
+The statistical identity is **entity + league + season + competition**. `TOT`, `RS`, `PO`, cups and any newly observed competition are not collapsed together. Known aliases are normalized (`PLAYOFFS -> PO`, `REGULAR SEASON -> RS`); new competition labels are preserved in normalized form and become serveable after they have real consecutive training history and the model is retrained.
 
-`ai_schema.sql` creates model-owned output tables such as `ai.model_runs` and `ai.player_forecasts`.
+The adapters never write to `Anagrafiche`, `Analisi` or `Boxscore`. `ai_schema.sql` creates model-owned outputs such as `ai.model_runs` and `ai.player_forecasts`.
 
 ### Database permissions
 
@@ -77,61 +77,50 @@ GRANT SELECT ON ALL TABLES IN SCHEMA ai_source TO ai_model;
 GRANT SELECT, INSERT, UPDATE ON ALL TABLES IN SCHEMA ai TO ai_model;
 ```
 
-Do not grant write access to the statistical source schemas and do not expose PostgreSQL port 5432 publicly.
+Do not grant write access to source schemas and do not expose PostgreSQL 5432 publicly.
 
 ## 3. Docker -> PostgreSQL host
 
-`docker-compose.yml` maps:
+`docker-compose.yml` maps `host.docker.internal` through `host-gateway`. Create the runtime profile with PostgreSQL host `host.docker.internal`, port `5432`, source schema `ai_source` and output schema `ai`. Restrict `pg_hba.conf` to the intended Docker bridge/user/database.
 
-```yaml
-extra_hosts:
-  - "host.docker.internal:host-gateway"
-```
-
-Create the runtime database profile with:
-
-```text
-Host:          host.docker.internal
-Port:          5432
-Source schema: ai_source
-Output schema: ai
-```
-
-PostgreSQL must allow only the relevant Docker bridge subnet in `pg_hba.conf`.
-
-## 4. Start the admin console
+## 4. Admin console
 
 ```bash
 docker compose up -d --build admin
 docker compose logs -f admin
 ```
 
-Keep port `8501` private. On first boot the one-time admin credentials are written to `runtime/auth/.admin_credentials`; delete that file after changing the password.
-
-In **Data Sources**, create/select the PostgreSQL profile and load it. Loading fails closed if any canonical view is missing, duplicated or empty where required.
+Keep `8501` private. First boot writes one-time admin credentials to `runtime/auth/.admin_credentials`. In **Data Sources**, create/select the PostgreSQL profile and load it. Loading fails closed on missing views, missing columns, empty mandatory data or duplicate competition keys.
 
 ## 5. Professional training lifecycle
 
 The production path uses:
 
-- exact consecutive player seasons only (`t -> t+1`; gaps are excluded);
+- exact consecutive pairs only: `t -> t+1`;
+- pairing only inside the same `player + league + competition`;
+- no `RS -> PO`, `ITA1 -> EL` or gap-year target substitution;
 - whole target-season train/validation/calibration partitions;
-- validation only for XGBoost tree-count selection, followed by refit on train + validation;
 - source-season roster position and temporally bounded role vocabularies;
-- historical player, roster and team state only;
-- run-owned team-style normalization persisted with the model;
-- finite-sample split-conformal calibration on the final ensemble output;
-- expanding walk-forward evaluation of the same ensemble served by the API;
-- comparisons against base XGBoost and previous-season persistence;
-- RMSE, MAE, R², bias, interval coverage and segment metrics;
+- player history and team style isolated to the requested league/competition;
+- competition as an explicit learned feature in one pooled model;
+- finite-sample split-conformal calibration on the final ensemble, with competition-specific intervals when calibration volume is sufficient and an explicit global fallback otherwise;
+- expanding walk-forward evaluation of the exact production ensemble;
+- RMSE, MAE, R², bias and coverage globally, by league, by competition, by position and by age band;
+- comparison against base XGBoost and previous-season persistence;
 - immutable candidate runs and explicit promotion/rollback.
 
-CLI:
+Validate before training:
 
 ```bash
 docker compose run --rm admin \
   python main.py --mode validate-data --database-profile production
+```
 
+The report includes observations and consecutive pairs for each competition. A competition with no real `t -> t+1` pairs remains visible in the data report but is not considered trained/serveable.
+
+Train and backtest:
+
+```bash
 docker compose run --rm admin \
   python main.py --mode train --database-profile production \
   --model-dir /app/models_saved
@@ -141,41 +130,27 @@ docker compose run --rm admin \
   --model-dir /app/models_saved
 ```
 
-Training writes an immutable run under:
+Training writes immutable artifacts under `models_saved/runs/<model_run_id>/` and registers the run as **candidate**. It does not replace production. `production_state.joblib` stores data-derived runtime state, including the exact competition vocabulary and competition-specific conformal calibration.
 
-```text
-models_saved/runs/<model_run_id>/
-```
-
-and registers it as **candidate**. It does **not** change the model used by the API. Each complete run includes `production_state.joblib`; this is required so data-derived runtime calibration cannot drift between training, backtest and serving.
-
-Review the walk-forward report, then promote:
+Promote only after reviewing the report:
 
 ```bash
 docker compose run --rm admin \
   python main.py --mode promote --model-dir /app/models_saved
 ```
 
-Promotion gates require a valid out-of-time full-ensemble backtest, finite RMSE/MAE/bias, sufficient samples, mandatory acceptable interval coverage, no excessive league regression, and improvement over both the base forecast and persistence. When a production model already exists, the candidate must also beat its OOT RMSE by the configured threshold.
+Promotion requires valid OOT metrics, enough samples, acceptable interval coverage, improvement over base/persistence, no excessive league regression and no excessive competition regression when a segment has enough evidence. A promoted run is atomically materialized in `models_saved/production/`.
 
-Promotion atomically materializes the active artifacts in:
-
-```text
-models_saved/production/
-```
-
-Rollback is explicit:
+Rollback:
 
 ```bash
 docker compose run --rm admin \
   python main.py --mode rollback --model-dir /app/models_saved
 ```
 
-Restart/reload the API after a promotion or rollback so the process loads the newly activated immutable artifacts.
+Restart/reload the API after promotion or rollback.
 
-## 6. Start the prediction API
-
-The Docker API service reads only `/app/models_saved/production`. If no model has been promoted, readiness remains unavailable.
+## 6. Prediction API
 
 ```bash
 docker compose up -d api
@@ -191,23 +166,23 @@ X-API-Key: <service key>
 Content-Type: application/json
 ```
 
+Example playoff forecast:
+
 ```json
 {
   "player_global_id": "313267",
   "team_global_id": "313271",
-  "league": "EL",
+  "league": "ITA1",
   "season": 2025,
-  "competition": "RS"
+  "competition": "PO"
 }
 ```
 
-`season` is the source season and the response predicts `season + 1`. The current supervised target is season-level, therefore **only `competition="RS"` is supported**. `PO`, `CUP` and `SUPERCUP` requests are rejected with `422` until a competition-specific target/model is trained. Historical requests are evaluated strictly using state available at the requested source season, not the latest player/team state.
+`season` is the **source season**; the target is `season + 1`. For the example above, player history, target-team context and persistence baseline are isolated to `ITA1 + PO`. Regular-season rows are not silently substituted.
 
-The response includes `model_run_id`, `model_version`, `feature_version`, `data_cutoff`, confidence bounds and `target_season`.
+A competition is accepted only if the promoted model has actually seen supervised consecutive pairs for it. Otherwise the API returns `422` and requires source refresh + retraining. The response includes `competition_support` with source seasons/games and whether its interval is competition-specific or uses the explicitly reported global calibration fallback.
 
 ## 7. Publish bounded batch forecasts
-
-Only a promoted production model can publish batch forecasts:
 
 ```bash
 docker compose run --rm admin \
@@ -216,7 +191,7 @@ docker compose run --rm admin \
   --model-dir /app/models_saved
 ```
 
-This upserts current-team forecasts into `ai.player_forecasts`. High-cardinality team-fit/transfer scenarios remain API calls and are not precomputed as a player × team Cartesian product.
+The batch publisher emits each real latest-season player/team/league/competition context supported by the promoted model. It does not precompute a player × team Cartesian product.
 
 ## WordPress Chat V3
 
@@ -230,4 +205,4 @@ See `docs/API_INTEGRATION.md` and `docs/API_V2.md`.
 
 ## Runtime state
 
-Secrets, immutable model runs, active production artifacts, sessions and audit state are runtime data and are ignored by Git. Production state belongs under `runtime/`, not in the repository.
+Secrets, immutable model runs, production artifacts, sessions and audit state are runtime data and ignored by Git. Production state belongs under `runtime/`, not in the repository.
