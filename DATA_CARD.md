@@ -1,41 +1,53 @@
 # Data Card — AI_Model PostgreSQL Contract
 
-**Contract:** `ai_source` v2  
-**Model target:** season-ahead player rating (`t -> t+1`)
+**Contract:** `ai_source competition-v1`  
+**Model target:** same-league, same-competition next-season player rating (`t -> t+1`)
 
-AI_Model never queries BBallstat physical tables directly. The PostgreSQL adapter exposes stable read-only model views, while source schemas remain untouched.
+AI_Model never queries BBallstat physical tables directly. PostgreSQL adapters expose stable read-only views; source schemas remain untouched.
 
-## Canonical views
+## Canonical production views
 
 ### `ai_source.leagues`
-One row per discovered league. Includes stable internal ID, league key, country and observed metadata used by feature engineering.
+One row per discovered league with stable internal ID and league key.
 
 ### `ai_source.teams`
-One row per team `IdGlobal`, using the latest registry/team state. This view is appropriate for current entity lookup only; it must not be used as historical team context during training or backtesting.
-
-### `ai_source.team_season_stats`
-One row per global team and season. Created by `basketball_ai/data/ai_source_team_season.sql` after the base adapter. It contains historical pace, ORtg, DRtg, NetRtg, three-point attempt rate, assists and roster-independent team context. This view is mandatory for leakage-safe compatibility training and historical prediction snapshots.
+One row per team `IdGlobal`, latest registry state. Used for entity lookup only.
 
 ### `ai_source.players`
-One row per player `IdGlobal`, using the latest identity state. `IdGlobal` is the cross-season server-side identity; league-local IDs are adapter-only join keys.
-
-### `ai_source.player_stats`
-Exactly one canonical target row per player and season. Physical data can contain domestic/European, `TOT`, `RS`, `PO`, team-specific and all-team rows for the same season. Those rows are not separate chronological seasons and are collapsed before model training.
-
-Rows without a non-null `ValLegaPerGame` / `rating` target are excluded. The production training pipeline then creates a sample only when the same player has an **exact next season**: a 2023 row may target 2024, but never 2025 if 2024 is missing.
+One row per player `IdGlobal`, latest identity state. `IdGlobal` remains server-side.
 
 ### `ai_source.team_player_relations`
-Canonical player/team membership by season, assembled from available Boxscore, player aggregate and anagraphic information and resolved through global identities.
+Roster membership by season, resolved through global identities. Used to reconstruct position/team state as of the source season.
+
+### `ai_source.player_competition_stats`
+One row per:
+
+```text
+player_id + league_id + season + competition
+```
+
+This is the supervised production source. It preserves `RS`, `PO`, `CUP`, `SUPERCUP`, `TOT` and normalized future competition labels instead of collapsing them into one season row. Known aliases are normalized (`PLAYOFFS -> PO`, `REGULAR SEASON -> RS`), while unknown labels are retained as normalized uppercase identifiers.
+
+Rows without a non-null `ValLegaPerGame` / `rating` target are excluded. Team-specific duplicates inside the same league/season/competition are resolved by preferring all-team aggregates and then the row with most games.
+
+### `ai_source.team_competition_stats`
+One row per:
+
+```text
+team_id + league_id + season + competition
+```
+
+Contains competition-specific pace, ORtg, DRtg, NetRtg, three-point rate, assists and star usage. A playoff forecast therefore receives playoff team context rather than regular-season style.
 
 ## Installation order
 
 ```bash
 psql -d YOUR_DATABASE -f basketball_ai/data/ai_source_schema.sql
-psql -d YOUR_DATABASE -f basketball_ai/data/ai_source_team_season.sql
+psql -d YOUR_DATABASE -f basketball_ai/data/ai_source_competition.sql
 psql -d YOUR_DATABASE -f basketball_ai/data/ai_schema.sql
 ```
 
-Re-run the source adapters after adding a new league or materially changing physical table schemas.
+Re-run the adapters after adding a league, changing source schemas or introducing a newly ingested competition, then validate and retrain.
 
 ## Physical source discovery
 
@@ -50,41 +62,62 @@ Analisi.AdvancedStats_Clutch_<LEAGUE>       optional
 Boxscore.<LEAGUE>                            optional
 ```
 
-The adapter expects numeric `Season`. Column-name case is normalized through JSONB so PostgreSQL imports that preserved historical casing remain usable.
+The adapters expect numeric `Season`. Historical casing is normalized through JSONB helpers.
+
+## Forecast pairing rules
+
+A supervised sample is created only when all of these are equal between source and target except the year:
+
+```text
+player
+league
+competition
+```
+
+and:
+
+```text
+target_season == source_season + 1
+```
+
+Examples:
+
+```text
+ITA1 / PO / 2024 -> ITA1 / PO / 2025      valid
+ITA1 / RS / 2024 -> ITA1 / PO / 2025      invalid
+ITA1 / PO / 2024 -> EL   / PO / 2025      invalid
+ITA1 / PO / 2023 -> ITA1 / PO / 2025      invalid gap
+```
+
+The pooled estimator may learn shared basketball patterns across competitions, but each row's history, target and online prediction context remain isolated to the requested league/competition.
 
 ## Temporal correctness
 
-Production training/backtesting observes these rules:
+Production training/backtesting enforces:
 
-- one target observation per `player_id + season`;
-- one historical team row per `team_id + season`;
-- only exact consecutive `t -> t+1` samples;
-- team and player state in a historical prediction is clipped to the source season;
-- the calibration target season is never used for estimator fitting;
-- walk-forward test target seasons are not present in the corresponding training snapshot.
+- one target row per player + league + season + competition;
+- one historical team row per team + league + season + competition;
+- exact consecutive pairs only;
+- player history and team context clipped to the source season;
+- same league and same competition for source/target pairs;
+- calibration target season never used for estimator fitting;
+- walk-forward target seasons excluded from each fold's training snapshot.
 
 ## Data quality gates
-
-`postgres_loader.py` fails closed when a required view/column is missing, when mandatory views are empty, or when player/team-season duplicates violate the contract.
 
 ```bash
 python main.py --mode validate-data --database-profile production
 ```
 
-The validator also reports:
+The validator reports available seasons, consecutive pairs globally and by competition, games/ratings by competition, context gaps and rating distributions by league. A competition with observations but zero consecutive pairs remains visible but is not serveable until enough historical data exists and the model is retrained.
 
-- available seasons;
-- number of exact consecutive forecast pairs;
-- players with gaps in season history;
-- rating distribution by league;
-- a warning when league-level target means differ enough that `ValLegaPerGame` cross-league comparability should be reviewed.
+PostgreSQL loading fails closed on missing views/columns, empty mandatory views, null competition labels and duplicate canonical keys.
 
-The application does **not** normalize the target across leagues automatically: such a transformation must be justified by real data and backtests rather than assumed.
+The application does **not** normalize ratings across leagues automatically; cross-league target comparability must be demonstrated using real out-of-time evidence.
 
 ## Identity and ownership
 
-`global_id` is a server-side model/database identity, not a browser identifier. AI_Model receives it only through authenticated server-to-server calls.
-
+- `global_id`: server-side model/database identity, never a browser identifier;
 - `ai_source`: read-only adapter views;
 - `ai`: model-owned outputs (`model_runs`, `player_forecasts`);
 - `Anagrafiche`, `Analisi`, `Boxscore`: source schemas, never written by AI_Model.
