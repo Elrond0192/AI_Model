@@ -1,8 +1,10 @@
 """Authenticated technical operations console for AI_Model."""
 from __future__ import annotations
 
+import os
+from pathlib import Path
 import uuid
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 
 import pandas as pd
 import streamlit as st
@@ -10,6 +12,9 @@ import streamlit as st
 from basketball_ai.auth.auth import check_credentials, ensure_default_admin
 from basketball_ai.data.connection_profiles import load_profiles, profile_url, save_profile
 from basketball_ai.data.postgres_loader import get_engine, load_all_data
+from basketball_ai.models.promote import get_promotion_status
+
+MODEL_ROOT = Path(os.getenv("MODEL_DIR", "models_saved"))
 
 st.set_page_config(page_title="AI Model Control Center", page_icon="◈", layout="wide")
 st.markdown("""<style>
@@ -39,20 +44,38 @@ def login() -> bool:
         if submitted:
             ok, user = check_credentials(username, password)
             if ok:
-                st.session_state.update(authenticated=True, username=username, role=user.get("role", "viewer"))
+                st.session_state.update(
+                    authenticated=True,
+                    username=username,
+                    role=user.get("role", "viewer"),
+                )
                 st.rerun()
             st.error("Credenziali non valide.")
     return False
 
 
 def seasons_for(data) -> list[int]:
-    return sorted({int(str(v).split("-")[0]) for v in data["player_stats"]["season"].dropna()})
+    return sorted({int(str(value).split("-")[0]) for value in data["player_stats"]["season"].dropna()})
+
+
+def registry_status() -> dict:
+    try:
+        return get_promotion_status(str(MODEL_ROOT))
+    except Exception:
+        return {"production": None, "candidate": None, "previous": None, "history": []}
 
 
 def header() -> None:
     profile = st.session_state.get("active_profile", "not selected")
-    model = st.session_state.get("model_version", "not loaded")
-    st.markdown(f'<div class="hm-top"><span>DATABASE<br><strong>{profile}</strong></span><span>API<br><span class="hm-ok">● Healthy</span></span><span>ACTIVE MODEL<br><strong>{model}</strong></span><span style="margin-left:auto">UTC<br><strong>{datetime.now(timezone.utc):%Y-%m-%d %H:%M:%S}</strong></span></div>', unsafe_allow_html=True)
+    production = registry_status().get("production") or {}
+    active = production.get("run_id", "not promoted")
+    st.markdown(
+        f'<div class="hm-top"><span>DATABASE<br><strong>{profile}</strong></span>'
+        f'<span>API<br><span class="hm-ok">● V2</span></span>'
+        f'<span>ACTIVE MODEL<br><strong>{active}</strong></span>'
+        f'<span style="margin-left:auto">UTC<br><strong>{datetime.now(timezone.utc):%Y-%m-%d %H:%M:%S}</strong></span></div>',
+        unsafe_allow_html=True,
+    )
 
 
 if not login():
@@ -60,10 +83,15 @@ if not login():
 if st.session_state.get("role") not in {"admin", "analyst"}:
     st.error("Il ruolo corrente non può gestire training e database.")
     st.stop()
+
 with st.sidebar:
     st.markdown("## ◈ AI Model")
     st.caption("CONTROL CENTER")
-    page = st.radio("Operations", ["Overview", "Data Sources", "Training Runs", "Backtests", "Model Registry", "API & Health"], label_visibility="collapsed")
+    page = st.radio(
+        "Operations",
+        ["Overview", "Data Sources", "Training Runs", "Backtests", "Model Registry", "API & Health"],
+        label_visibility="collapsed",
+    )
     st.divider()
     st.caption(f"{st.session_state.get('username')} · {st.session_state.get('role')}")
     if st.button("Esci", use_container_width=True):
@@ -73,49 +101,68 @@ with st.sidebar:
 header()
 profiles = load_profiles()
 data = st.session_state.get("data")
+status = registry_status()
 
 if page == "Overview":
     st.title("Overview")
+    production = status.get("production") or {}
+    candidate = status.get("candidate") or {}
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Database", st.session_state.get("active_profile", "Not selected"))
     c2.metric("Rows loaded", f"{len(data['player_stats']):,}" if data is not None else "—")
     c3.metric("Players", f"{len(data['players']):,}" if data is not None else "—")
-    c4.metric("Model status", "Active" if st.session_state.get("model_version") else "Not loaded")
+    c4.metric("Production", production.get("run_id", "Not promoted"))
     st.subheader("Operational readiness")
     ready = data is not None and len(seasons_for(data)) >= 5
-    st.dataframe(pd.DataFrame([
-        {"Component": "PostgreSQL source", "Status": "Ready" if data is not None else "Action required", "Detail": st.session_state.get("active_profile", "Select and load a profile")},
-        {"Component": "Training dataset", "Status": "Ready" if ready else "Action required", "Detail": "At least 5 seasons required"},
-        {"Component": "Prediction API", "Status": "Healthy", "Detail": "Typed contract v2"},
-        {"Component": "Model registry", "Status": "Ready", "Detail": "Promotion gates enabled"},
-    ]), hide_index=True, use_container_width=True)
-    runs, quality = st.columns([1.15, 1])
-    candidate = st.session_state.get("candidate_metadata") or {}
-    with runs:
-        st.subheader("Training runs")
+    st.dataframe(
+        pd.DataFrame(
+            [
+                {
+                    "Component": "PostgreSQL source",
+                    "Status": "Ready" if data is not None else "Action required",
+                    "Detail": st.session_state.get("active_profile", "Select and load a profile"),
+                },
+                {
+                    "Component": "Historical team context",
+                    "Status": "Ready" if data is not None and not data.get("team_season_stats", pd.DataFrame()).empty else "Action required",
+                    "Detail": "ai_source.team_season_stats required",
+                },
+                {
+                    "Component": "Training dataset",
+                    "Status": "Ready" if ready else "Action required",
+                    "Detail": "At least 5 seasons required",
+                },
+                {
+                    "Component": "Production model",
+                    "Status": "Ready" if production else "Action required",
+                    "Detail": "API loads only promoted artifacts",
+                },
+            ]
+        ),
+        hide_index=True,
+        use_container_width=True,
+    )
+    left, right = st.columns([1.15, 1])
+    with left:
+        st.subheader("Registry")
+        rows = []
+        if production:
+            rows.append({"Run ID": production.get("run_id"), "Status": "Production", "OOT RMSE": production.get("overall_rmse")})
         if candidate:
-            st.dataframe(pd.DataFrame([{
-                "Run ID": candidate.get("model_run_id"),
-                "Version": candidate.get("model_version"),
-                "Data cutoff": candidate.get("data_cutoff"),
-                "Feature version": candidate.get("feature_version"),
-                "Status": "Candidate",
-            }]), hide_index=True, use_container_width=True)
-        else:
-            st.info("No training runs loaded in this session.")
-    with quality:
-        st.subheader("Model quality trend")
+            rows.append({"Run ID": candidate.get("run_id"), "Status": "Candidate", "OOT RMSE": candidate.get("overall_rmse")})
+        st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True) if rows else st.info("No model runs registered.")
+    with right:
+        st.subheader("Candidate quality")
         folds = (candidate.get("backtest") or {}).get("folds", [])
-        points = [{"fold": index + 1, "mae": fold.get("mae")} for index, fold in enumerate(folds) if fold.get("mae") is not None]
+        points = [
+            {"target_season": fold.get("target_season"), "rmse": fold.get("rmse")}
+            for fold in folds
+            if fold.get("valid") and fold.get("rmse") is not None
+        ]
         if points:
-            st.line_chart(pd.DataFrame(points).set_index("fold"), color="#0f8f8f")
+            st.line_chart(pd.DataFrame(points).set_index("target_season"))
         else:
-            st.info("Quality metrics become available after a valid backtest.")
-    st.subheader("Recent operational events")
-    st.dataframe(pd.DataFrame([
-        {"Time (UTC)": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"), "Level": "INFO", "Source": "API", "Event": "Health check passed", "Detail": "Prediction service operational"},
-        {"Time (UTC)": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"), "Level": "INFO" if data is not None else "WARN", "Source": "Data source", "Event": "Profile state evaluated", "Detail": st.session_state.get("active_profile", "No active profile")},
-    ]), hide_index=True, use_container_width=True)
+            st.info("Walk-forward metrics appear after a candidate run.")
 
 elif page == "Data Sources":
     st.title("Data Sources")
@@ -126,20 +173,26 @@ elif page == "Data Sources":
         if profiles:
             selected = st.selectbox("Profile", sorted(profiles), key="database_profile")
             profile = profiles[selected]
-            st.json({k: ("••••••••" if k == "password" else v) for k, v in profile.items()})
+            st.json({key: ("••••••••" if key == "password" else value) for key, value in profile.items()})
             a, b = st.columns(2)
             if a.button("Test connection", use_container_width=True):
                 try:
-                    with get_engine(profile_url(selected)).connect() as conn:
-                        conn.exec_driver_sql("SELECT 1")
+                    with get_engine(profile_url(selected)).connect() as connection:
+                        connection.exec_driver_sql("SELECT 1")
                     st.success("Connection successful.")
                 except Exception as exc:
                     st.error(f"Connection failed: {exc}")
             if b.button("Select and load", type="primary", use_container_width=True):
                 try:
-                    loaded = load_all_data(profile_url(selected), profile.get("source_schema", "ai_source"))
+                    loaded = load_all_data(
+                        profile_url(selected), profile.get("source_schema", "ai_source")
+                    )
                     st.session_state.update(data=loaded, active_profile=selected)
-                    st.success(f"Loaded {len(loaded['players']):,} players and {len(loaded['player_stats']):,} observations.")
+                    st.success(
+                        f"Loaded {len(loaded['players']):,} players, "
+                        f"{len(loaded['player_stats']):,} player seasons and "
+                        f"{len(loaded['team_season_stats']):,} team seasons."
+                    )
                 except Exception as exc:
                     st.error(f"Load failed: {exc}")
         else:
@@ -159,7 +212,18 @@ elif page == "Data Sources":
             save = st.form_submit_button("Save profile", type="primary")
         if save:
             try:
-                save_profile(name, {"host": host, "port": int(port), "database": database, "user": user, "password": password, "source_schema": source_schema, "ai_schema": ai_schema})
+                save_profile(
+                    name,
+                    {
+                        "host": host,
+                        "port": int(port),
+                        "database": database,
+                        "user": user,
+                        "password": password,
+                        "source_schema": source_schema,
+                        "ai_schema": ai_schema,
+                    },
+                )
                 st.success(f"Profile {name} saved in the protected runtime volume.")
                 st.rerun()
             except Exception as exc:
@@ -175,55 +239,114 @@ elif page == "Training Runs":
         a.metric("Data profile", st.session_state.get("active_profile"))
         b.metric("Season range", f"{min(seasons)}–{max(seasons)}")
         c.metric("Observations", f"{len(data['player_stats']):,}")
-        st.subheader("Season-blocked split")
-        st.dataframe(pd.DataFrame([
-            {"Stage": "Train", "Seasons": f"{min(seasons)}–{seasons[-3]}", "Purpose": "Fit t → t+1 forecast"},
-            {"Stage": "Validation", "Seasons": str(seasons[-2]), "Purpose": "Model selection"},
-            {"Stage": "Calibration", "Seasons": str(seasons[-1]), "Purpose": "Prediction intervals"},
-            {"Stage": "Backtest", "Seasons": f"through {seasons[-1]}", "Purpose": "Expanding walk-forward"},
-        ]), hide_index=True, use_container_width=True)
+        st.subheader("Leakage-safe training contract")
+        st.dataframe(
+            pd.DataFrame(
+                [
+                    {"Stage": "Fit", "Seasons": f"through {seasons[-2]}", "Purpose": "Consecutive t → t+1 only; validation selects tree count"},
+                    {"Stage": "Calibration", "Seasons": str(seasons[-1]), "Purpose": "Final ensemble intervals; untouched by fitting"},
+                    {"Stage": "Backtest", "Seasons": "expanding OOT folds", "Purpose": "Exact production ensemble vs base and persistence"},
+                    {"Stage": "Promotion", "Seasons": "all OOT folds", "Purpose": "RMSE, segments and interval coverage gates"},
+                ]
+            ),
+            hide_index=True,
+            use_container_width=True,
+        )
         with st.expander("Immutable run configuration", expanded=True):
-            st.json({"forecast_horizon": "t+1 season", "feature_version": "forecast-t-plus-1-v1", "split": "season-blocked", "backtest": "expanding walk-forward", "random_seed": 42})
+            st.json(
+                {
+                    "forecast_horizon": "exactly t+1 season",
+                    "feature_version": "forecast-t-plus-1-v2",
+                    "split": "whole target seasons",
+                    "team_context": "historical team-season",
+                    "calibration": "final ensemble split-conformal",
+                    "backtest": "expanding walk-forward full ensemble",
+                    "random_seed": 42,
+                }
+            )
         if len(seasons) < 5:
             st.error("At least five seasons are required.")
         elif st.button("Start training run", type="primary"):
             try:
                 from basketball_ai.models.backtest import run_backtest
-                from basketball_ai.models.ensemble import EnsembleModel
-                with st.status("Training run in progress", expanded=True) as status:
-                    model = EnsembleModel()
+                from basketball_ai.models.production_training import ProductionEnsembleModel
+                from basketball_ai.models.promote import register_candidate
+
+                with st.status("Training run in progress", expanded=True) as run_status:
+                    model = ProductionEnsembleModel()
                     metrics = model.train(data)
-                    status.write("Running walk-forward backtest…")
-                    report = run_backtest(data, n_folds=min(3, len(seasons) - 3), output_path="models_saved/backtest_report.json")
+                    run_status.write("Running full-ensemble walk-forward backtest…")
+                    report = run_backtest(
+                        data,
+                        n_folds=min(3, max(1, len(seasons) - 4)),
+                        output_path=str(MODEL_ROOT / "backtest_report.json"),
+                    )
                     if not report.get("valid") or not report.get("folds"):
                         raise RuntimeError("Backtest invalid; candidate cannot enter the registry")
                     run_id = f"{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}-{uuid.uuid4().hex[:8]}"
-                    metadata = {**(metrics or {}), "model_run_id": run_id, "model_version": "2.0.0", "feature_version": "forecast-t-plus-1-v1", "data_cutoff": str(date.today()), "database_profile": st.session_state.get("active_profile"), "backtest": report}
-                    model.save("models_saved", metadata)
-                    st.session_state.update(ensemble=model, candidate_metadata=metadata)
-                    status.update(label=f"Run completed · {run_id}", state="complete")
+                    run_dir = MODEL_ROOT / "runs" / run_id
+                    metadata = {
+                        **(metrics or {}),
+                        "model_run_id": run_id,
+                        "model_version": "2.1.0",
+                        "feature_version": "forecast-t-plus-1-v2",
+                        "data_cutoff": datetime.now(timezone.utc).date().isoformat(),
+                        "latest_observed_season": max(seasons),
+                        "database_profile": st.session_state.get("active_profile"),
+                        "backtest": report,
+                    }
+                    model.save(str(run_dir), metadata)
+                    register_candidate(str(MODEL_ROOT), run_id, run_dir, metadata)
+                    st.session_state.update(candidate_metadata=metadata)
+                    run_status.update(label=f"Candidate completed · {run_id}", state="complete")
+                st.success("Run saved immutably. Production is unchanged until promotion.")
                 st.json(metadata)
             except Exception as exc:
                 st.error(f"Training failed: {exc}")
 
 elif page == "Backtests":
     st.title("Backtests")
-    report = (st.session_state.get("candidate_metadata") or {}).get("backtest")
-    st.json(report) if report else st.info("Complete a training run to inspect its report.")
+    candidate = registry_status().get("candidate") or {}
+    report = candidate.get("backtest") or (st.session_state.get("candidate_metadata") or {}).get("backtest")
+    if report:
+        overall = report.get("overall") or {}
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Ensemble RMSE", f"{overall.get('rmse', 0):.4f}" if overall else "—")
+        c2.metric("Base RMSE", f"{report.get('base_rmse', 0):.4f}" if report.get("base_rmse") is not None else "—")
+        c3.metric("Persistence RMSE", f"{report.get('persistence_rmse', 0):.4f}" if report.get("persistence_rmse") is not None else "—")
+        c4.metric("Interval coverage", f"{overall.get('interval_coverage', 0):.1%}" if overall else "—")
+        st.json(report)
+    else:
+        st.info("Complete a training run to inspect its report.")
 
 elif page == "Model Registry":
     st.title("Model Registry")
-    from basketball_ai.models.promote import get_promotion_status, promote_if_better, rollback_to_previous
-    st.json(get_promotion_status("models_saved"))
-    confirm = st.checkbox("I reviewed the backtest and promotion gates")
+    from basketball_ai.models.promote import promote_if_better, rollback_to_previous
+
+    st.json(registry_status())
+    st.caption("Promotion activates immutable artifacts in models_saved/production only after all OOT gates pass.")
+    confirm = st.checkbox("I reviewed the walk-forward report and promotion gates")
     c1, c2 = st.columns(2)
     if c1.button("Promote candidate", type="primary", disabled=not confirm, use_container_width=True):
-        st.json(promote_if_better("models_saved"))
+        result = promote_if_better(str(MODEL_ROOT))
+        st.json(result)
+        if result.get("promoted"):
+            st.success("Production artifacts activated. Restart/reload the API process to load the new run.")
     if c2.button("Rollback to previous", disabled=not confirm, use_container_width=True):
-        st.json(rollback_to_previous("models_saved"))
+        result = rollback_to_previous(str(MODEL_ROOT))
+        st.json(result)
+        if result.get("rolled_back"):
+            st.success("Previous artifacts restored. Restart/reload the API process.")
 
 else:
     st.title("API & Health")
-    st.success("Prediction API v2 is configured.")
-    st.code("GET /health\nGET /ready\nPOST /api/v2/predictions/player-team", language="text")
-    st.caption("Use the service-to-service API key or bearer token configured at runtime.")
+    production = registry_status().get("production")
+    if production:
+        st.success(f"Promoted production run: {production.get('run_id')}")
+    else:
+        st.warning("No production run is promoted; /health/ready must remain unavailable for inference.")
+    st.code(
+        "GET /health\nGET /health/live\nGET /health/ready\nPOST /api/v2/predictions/player-team",
+        language="text",
+    )
+    st.caption("The API container loads /app/models_saved/production and never a candidate run.")
