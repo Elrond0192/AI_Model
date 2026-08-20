@@ -9,7 +9,7 @@
   "auth.username": "Nome utente", "auth.password": "Password",
   "auth.login_error": "Credenziali non valide.",
   "auth.locked": "Account bloccato. Riprova tra {minutes} minuti.",
-  "data.source.csv": "📂 CSV (locale)", "data.source.sql": "🔌 Azure SQL Server",
+  "data.source.csv": "📂 CSV (fixture)", "data.source.sql": "🔌 PostgreSQL",
   "data.upload.players": "📤 Carica players.csv",
   "data.upload.teams": "📤 Carica teams.csv",
   "data.upload.stats": "📤 Carica player_stats.csv",

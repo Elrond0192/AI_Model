@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "basketball-ai"
 version = "2.0.0"
-description = "Basketball Player Performance AI – prediction, scenarios, and chat API"
+description = "PostgreSQL-backed basketball forecasting and scenario inference service"
 requires-python = ">=3.11,<3.13"
 dependencies = [
     "fastapi>=0.104.0",
@@ -34,8 +34,6 @@ dependencies = [
 dev = ["pytest>=7.4.0"]
 
 # P4 – Dependency lock file (auto-generated; do not edit by hand)
-# Regenerate with: pip-compile pyproject.toml --output-file requirements.lock --resolver=backtracking
-# or: uv pip compile pyproject.toml -o requirements.lock
 
 [project.scripts]
 basketball-ai = "basketball_ai.__main__:main"

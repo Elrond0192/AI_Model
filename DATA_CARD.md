@@ -10,7 +10,7 @@
 
 This Data Card describes the data sources, schemas, and known quality issues
 for the Basketball Performance AI system. Data is read exclusively from the
-following SQL Server schemas (no Lookup or Configuration tables are used):
+following canonical PostgreSQL views (no WordPress or application tables are used):
 
 | Schema        | Purpose                                      |
 |---------------|----------------------------------------------|
@@ -171,6 +171,6 @@ Run `python main.py --mode validate-data` to generate a fresh quality report.
 
 | Source              | Ingestion method                           |
 |---------------------|--------------------------------------------|
-| SQL Server (live)   | `python main.py --mode api --source sql`   |
+| PostgreSQL (live)   | `python main.py api --database-profile production` |
 | CSV (offline)       | `python main.py --mode generate-data`      |
 | Ingestion state     | `data/ingestion.db` (SQLite, idempotent)   |

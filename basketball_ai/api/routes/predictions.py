@@ -60,7 +60,7 @@ async def predict_player_in_team(
     request: Request,
     player_id: int,
     team_id: int,
-    season: int = Query(2024, ge=2015, le=2035),
+    season: Optional[int] = Query(None, ge=2015, le=2100),
 ):
     """Predict how a player would perform at a specific team."""
     engine = _get_engine()
@@ -202,7 +202,7 @@ async def predict_batch(
     for item in body.items:
         pid  = item.get("player_id")
         tid  = item.get("team_id")
-        seas = item.get("season", 2024)
+        seas = item.get("season")
         if pid is None or tid is None:
             errors.append({"item": item, "error": "player_id and team_id are required"})
             continue
@@ -218,7 +218,7 @@ async def predict_batch(
             results.append({
                 "player_id":        pid,
                 "team_id":          tid,
-                "season":           seas,
+                "season":           result.season,
                 "predicted_rating": result.predicted_rating,
                 "confidence_low":   result.confidence_low,
                 "confidence_high":  result.confidence_high,

@@ -141,34 +141,34 @@ class PeakPredictionOut(BaseModel):
 class WhatIfRequest(BaseModel):
     player_id: int
     team_id: int
-    season: int = 2024
+    season: int = Field(ge=2000, le=2100)
 
 
 class CompareRequest(BaseModel):
     player_id: int
     team_ids: List[int] = Field(..., min_length=2)
-    season: int = 2024
+    season: int = Field(ge=2000, le=2100)
 
 
 class TransferImpactRequest(BaseModel):
     player_id: int
     from_team_id: int
     to_team_id: int
-    season: int = 2024
+    season: int = Field(ge=2000, le=2100)
 
 
 class WhatIfTeammatesRequest(BaseModel):
     player_id: int
     team_id: int
     hypothetical_avg_rating: float = Field(..., ge=4.0, le=10.0)
-    season: int = 2024
+    season: int = Field(ge=2000, le=2100)
 
 
 class WhatIfLineupRequest(BaseModel):
     player_id: int
     team_id: int
     lineup_player_ids: List[int] = Field(..., min_length=1, max_length=4)
-    season: int = 2024
+    season: int = Field(ge=2000, le=2100)
 
 
 class ScenarioOut(BaseModel):

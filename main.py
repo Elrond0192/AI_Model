@@ -2,11 +2,9 @@
 
 Usage:
     python main.py --mode generate-data
-    python main.py --mode train [--source {file|sql}]
-    python main.py --mode demo  [--source {file|sql}]
+    python main.py --mode train [--database-profile NAME]
     python main.py --mode api   [--host HOST] [--port PORT]
-    python main.py --mode export-wordpress [--source {file|sql}] [--out-dir DIR]
-    python main.py --mode export-chat-model [--source {file|sql}] [--out FILE] [--top-players N] [--top-teams N]
+    python main.py --mode publish-batch [--database-profile NAME]
 """
 from __future__ import annotations
 import argparse
@@ -21,7 +19,7 @@ def parse_args(argv=None):
     )
     parser.add_argument(
         "--mode",
-        choices=["generate-data", "train", "demo", "api", "export-wordpress", "export-chat-model", "export-sql", "validate-data", "backup", "backtest"],
+        choices=["generate-data", "train", "demo", "api", "export-chat-model", "publish-batch", "validate-data", "backup", "backtest"],
         required=True,
     )
     parser.add_argument("--data-dir",  default="data/sample",   help="Data directory (file source)")
@@ -30,10 +28,9 @@ def parse_args(argv=None):
     parser.add_argument("--port",      type=int, default=8000,  help="API port")
     parser.add_argument("--seed",      type=int, default=42,    help="RNG seed")
     parser.add_argument(
-        "--source",
-        choices=["file", "sql"],
-        default="file",
-        help="Data source: 'file' (CSV, default) or 'sql' (Azure SQL Server)",
+        "--database-profile",
+        default=None,
+        help="Named PostgreSQL profile; defaults to DATABASE_PROFILE",
     )
     parser.add_argument(
         "--out-dir",
@@ -63,39 +60,16 @@ def parse_args(argv=None):
         default=None,
         help="Limit teams in chat model export (omit = all teams)",
     )
-    parser.add_argument(
-        "--sql-schema",
-        default="Predizioni",
-        help="Target SQL schema for export-sql (default: Predizioni)",
-    )
-    parser.add_argument(
-        "--sql-table",
-        default="hm_predictions",
-        help="Target SQL table for export-sql (default: hm_predictions)",
-    )
-    parser.add_argument(
-        "--sql-conn-str",
-        default=None,
-        help="pyodbc connection string for export-sql; falls back to AZURE_SQL_CONNECTION_STRING env var",
-    )
     return parser.parse_args(argv)
 
 
 def _load_data(args):
-    """Return data dict from SQL or CSV depending on --source flag."""
-    if args.source == "sql":
-        from basketball_ai.data.sql_loader import load_all_data
-        print("[Data] Loading from Azure SQL Server …")
-        return load_all_data()
-    else:
-        from basketball_ai.data.loader import load_all_data, data_exists
-        if not data_exists(args.data_dir):
-            print(
-                f"[ERROR] Data not found in '{args.data_dir}'. "
-                "Run --mode generate-data first."
-            )
-            sys.exit(1)
-        return load_all_data(args.data_dir)
+    """Load the selected PostgreSQL profile."""
+    import os
+    if args.database_profile: os.environ["DATABASE_PROFILE"] = args.database_profile
+    from basketball_ai.data.postgres_loader import load_all_data
+    print(f"[Data] Loading PostgreSQL profile {args.database_profile or os.getenv('DATABASE_PROFILE', '<active>')} …")
+    return load_all_data()
 
 
 # ---------------------------------------------------------------------------
@@ -110,14 +84,21 @@ def mode_generate_data(args) -> None:
 
 
 def mode_train(args) -> None:
+    import uuid
+    from datetime import date, datetime, timezone
     from basketball_ai.models.ensemble import EnsembleModel
+    from basketball_ai.models.backtest import run_backtest
     print("=" * 60)
     print("  Training models …")
     print("=" * 60)
     data = _load_data(args)
     ensemble = EnsembleModel()
-    ensemble.train(data)
-    ensemble.save(args.model_dir)
+    metrics = ensemble.train(data)
+    report = run_backtest(data, output_path=str(Path(args.model_dir) / "backtest_report.json"))
+    if not report.get("valid"):
+        raise RuntimeError("Backtest failed; candidate was not saved")
+    run_id = f"{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}-{uuid.uuid4().hex[:8]}"
+    ensemble.save(args.model_dir, {**metrics, "model_run_id":run_id, "model_version":"2.0.0", "feature_version":"forecast-t-plus-1-v1", "data_cutoff":str(date.today()), "backtest":report})
     print("\nAll models trained and saved.")
 
 
@@ -263,7 +244,9 @@ def mode_api(args) -> None:
         print("[ERROR] uvicorn not installed. Run: pip install uvicorn")
         sys.exit(1)
     # Pass source and paths to the API via environment variables
-    os.environ.setdefault("DATA_SOURCE", args.source)
+    os.environ.setdefault("DATA_SOURCE", "postgres")
+    if args.database_profile:
+        os.environ["DATABASE_PROFILE"] = args.database_profile
     os.environ.setdefault("DATA_DIR",    args.data_dir)
     os.environ.setdefault("MODEL_DIR",   args.model_dir)
     print(f"[API] Starting Basketball Performance AI on {args.host}:{args.port}")
@@ -403,37 +386,15 @@ def mode_export_chat_model(args) -> None:
 # ---------------------------------------------------------------------------
 
 
-def mode_export_sql(args) -> None:
-    """Export pre-computed predictions directly to Azure SQL Server."""
-    from basketball_ai.models.ensemble import EnsembleModel
-    from basketball_ai.scenarios.engine import WhatIfEngine
-    from basketball_ai.export.sql_export import export_chat_model_to_sql
+def mode_publish_batch(args) -> None:
+    from basketball_ai.export.postgres_export import publish_current_team_forecasts
+    print(f"[Batch] Published {publish_current_team_forecasts(args.model_dir)} forecasts")
 
-    print("=" * 60)
-    print("  Exporting chat model → Azure SQL Server …")
-    print("=" * 60)
-
-    data     = _load_data(args)
-    ensemble = EnsembleModel()
-
-    if (Path(args.model_dir) / "performance_model.joblib").exists():
-        ensemble.load(args.model_dir)
-    else:
-        print("[WARN] No trained models – training now …")
-        ensemble.train(data)
-        ensemble.save(args.model_dir)
-
-    engine = WhatIfEngine(ensemble, data)
-
-    export_chat_model_to_sql(
-        engine=engine,
-        data=data,
-        conn_str=args.sql_conn_str or None,
-        schema=args.sql_schema,
-        table=args.sql_table,
-        top_players=args.top_players,
-        top_teams=args.top_teams,
-    )
+def mode_backtest(args) -> None:
+    from basketball_ai.models.backtest import run_backtest
+    report = run_backtest(_load_data(args), output_path=str(Path(args.model_dir) / "backtest_report.json"))
+    print(report)
+    if not report.get("valid"): raise SystemExit(2)
 
 
 # ---------------------------------------------------------------------------
@@ -566,11 +527,11 @@ def main(argv=None):
         "train":            mode_train,
         "demo":             mode_demo,
         "api":              mode_api,
-        "export-wordpress": mode_export_wordpress,
         "export-chat-model": mode_export_chat_model,
-        "export-sql":       mode_export_sql,
+        "publish-batch":    mode_publish_batch,
         "validate-data":    mode_validate_data,
         "backup":           mode_backup,
+        "backtest":         mode_backtest,
     }
     dispatch[args.mode](args)
 

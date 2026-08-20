@@ -11,6 +11,5 @@ audit.log
 .env.*
 !.env.example
 .sql_cache/
+runtime/
 *.lock
-# P4: requirements.lock is intentionally committed for reproducible builds
-!requirements.lock

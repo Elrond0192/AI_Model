@@ -460,7 +460,6 @@ def create_app() -> FastAPI:
     from basketball_ai.api.routes.teams       import router as teams_router
     from basketball_ai.api.routes.predictions import router as predictions_router
     from basketball_ai.api.routes.scenarios   import router as scenarios_router
-    from basketball_ai.api.routes.chat        import router as chat_router
     from basketball_ai.api.routes.wordpress   import router as wordpress_router
     from basketball_ai.api.routes.auth        import router as auth_router
 
@@ -472,7 +471,6 @@ def create_app() -> FastAPI:
     from basketball_ai.api.routes.predictions_v2 import router as predictions_v2_router
     app.include_router(predictions_v2_router)
     app.include_router(scenarios_router,   prefix=prefix)
-    app.include_router(chat_router,        prefix=prefix)
     app.include_router(wordpress_router,   prefix=prefix)
 
     @app.get("/health")

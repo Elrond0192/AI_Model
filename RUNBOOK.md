@@ -57,9 +57,9 @@ Expected ready response:
 **Symptoms:** `/health/ready` returns `{"data": false}` with SQL source.
 
 **Steps:**
-1. Check `AZURE_SQL_CONNECTION_STRING` env var is set correctly.
+1. Check `DATABASE_PROFILE` selects an existing PostgreSQL profile and verify it from the operations console.
 2. Check network connectivity: `nc -zv <host> 1433`
-3. Check circuit breaker state in logs: look for `[CircuitBreaker:azure_sql]`.
+3. Check circuit breaker state in logs: look for `[CircuitBreaker:postgresql]`.
 4. Check ingestion error log: `python -c "from basketball_ai.data.ingestion import IngestionTracker; print(IngestionTracker().list_failed())"`
 5. Restart with file-based data as fallback: `DATA_SOURCE=file docker-compose up -d api`
 

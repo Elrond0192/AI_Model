@@ -86,7 +86,7 @@ class CompatibilityModel:
             ])
             return v.astype(float)
 
-    def _player_style_vector(self, player_id: int, data: Dict[str, Any]) -> np.ndarray:
+    def _player_style_vector(self, player_id: int, data: Dict[str, Any], before_season: Any = None) -> np.ndarray:
         """Build a 6-d style vector that characterises the *player's* attributes.
 
         Dimensions (all normalised to [0, 1]):
@@ -104,6 +104,8 @@ class CompatibilityModel:
 
         stats_df = data["player_stats"]
         p_stats  = stats_df[stats_df["player_id"] == pid]
+        if before_season is not None:
+            p_stats = p_stats[p_stats["season"] < before_season]
 
         def _mean(col: str, fallback: float) -> float:
             if p_stats.empty or col not in p_stats.columns:
@@ -119,9 +121,9 @@ class CompatibilityModel:
 
         return np.array([pos_bucket, usg, ts, pts36, three_par, dbpm], dtype=float)
 
-    def _combined_vector(self, player_id: int, team_row: Dict, data: Dict[str, Any]) -> np.ndarray:
+    def _combined_vector(self, player_id: int, team_row: Dict, data: Dict[str, Any], before_season: Any = None) -> np.ndarray:
         """12-d combined (player ∥ team) feature vector."""
-        pv = self._player_style_vector(player_id, data)
+        pv = self._player_style_vector(player_id, data, before_season=before_season)
         tv = self._team_style_vector(team_row)
         return np.concatenate([pv, tv])
 
@@ -135,8 +137,6 @@ class CompatibilityModel:
         player_stats = data["player_stats"]
         team_dict    = data["team_dict"]
 
-        player_mean = player_stats.groupby("player_id")["rating"].mean().to_dict()
-
         X_rows: List[np.ndarray] = []
         y_vals: List[float]      = []
 
@@ -148,8 +148,12 @@ class CompatibilityModel:
             if team is None:
                 continue
             pid    = _to_int(stat["player_id"])
-            cv     = self._combined_vector(pid, team, data)
-            p_mean = player_mean.get(pid, 6.5)
+            season = stat["season"]
+            prior = player_stats[(player_stats["player_id"] == stat["player_id"]) & (player_stats["season"] < season)]
+            if prior.empty:
+                continue
+            cv     = self._combined_vector(pid, team, data, before_season=season)
+            p_mean = float(prior["rating"].mean())
             compat = float(np.clip((float(stat["rating"]) - p_mean + 1.5) / 3.0, 0.0, 1.0))
             X_rows.append(cv)
             y_vals.append(compat)

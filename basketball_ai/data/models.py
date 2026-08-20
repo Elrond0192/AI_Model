@@ -4,7 +4,7 @@ Positions support single and hybrid roles:
   Pure:   PG, SG, SF, PF, C
   Hybrid: PG/SG, SG/SF, SF/PF, PF/C, SG/PF (stretch), PG/SF (wing-guard)
 
-Extended with all columns available in the SQL Server DB schema (schema_db.sql):
+Extended with the canonical columns exposed by the PostgreSQL source views:
   - Advanced metrics: SPM, RAPTOR, LEBRON, OBpm/DBpm, GmSc, FIC, etc.
   - Clutch performance stats from Analisi.AdvancedStats_Clutch_*
   - On/Off court differential stats from Analisi.AdvancedStatsOnOffCourt_*

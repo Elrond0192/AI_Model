@@ -1,0 +1,59 @@
+"""Runtime PostgreSQL connection profiles for the authenticated admin UI.
+
+Secrets are stored in a dedicated runtime file (0600 on POSIX), never in git.
+In production the same profiles may be injected read-only with
+``DATABASE_PROFILES_JSON``.
+"""
+from __future__ import annotations
+
+import json
+import os
+import re
+from pathlib import Path
+from typing import Any
+from urllib.parse import quote_plus
+
+_NAME = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
+PROFILE_FILE = Path(os.getenv("DATABASE_PROFILES_FILE", "/app/config/database_profiles.json"))
+
+def load_profiles() -> dict[str, dict[str, Any]]:
+    injected = os.getenv("DATABASE_PROFILES_JSON", "").strip()
+    raw = json.loads(injected) if injected else (json.loads(PROFILE_FILE.read_text(encoding="utf-8")) if PROFILE_FILE.exists() else {})
+    if not isinstance(raw, dict):
+        raise ValueError("Database profiles must be an object")
+    return {name: profile for name, profile in raw.items() if _NAME.fullmatch(name) and isinstance(profile, dict)}
+
+def save_profile(name: str, profile: dict[str, Any]) -> None:
+    if os.getenv("DATABASE_PROFILES_JSON"):
+        raise RuntimeError("Injected database profiles are read-only")
+    if not _NAME.fullmatch(name):
+        raise ValueError("Invalid profile name")
+    profiles = load_profiles()
+    profiles[name] = profile
+    PROFILE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    PROFILE_FILE.write_text(json.dumps(profiles, indent=2), encoding="utf-8")
+    if os.name != "nt":
+        PROFILE_FILE.chmod(0o600)
+
+def profile_url(name: str) -> str:
+    profile = load_profiles().get(name)
+    if not profile:
+        raise KeyError(f"Unknown database profile: {name}")
+    required = ("host", "database", "user", "password")
+    if any(not str(profile.get(k, "")).strip() for k in required):
+        raise ValueError(f"Incomplete database profile: {name}")
+    host = str(profile["host"]).strip()
+    database = str(profile["database"]).strip()
+    user = quote_plus(str(profile["user"]))
+    password = quote_plus(str(profile["password"]))
+    port = int(profile.get("port", 5432))
+    return f"postgresql+psycopg://{user}:{password}@{host}:{port}/{database}"
+
+def active_profile_name() -> str:
+    name = os.getenv("DATABASE_PROFILE", "").strip()
+    if name:
+        return name
+    profiles = load_profiles()
+    if len(profiles) == 1:
+        return next(iter(profiles))
+    raise RuntimeError("Set DATABASE_PROFILE to one configured profile")

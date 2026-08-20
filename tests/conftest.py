@@ -52,7 +52,7 @@ def tiny_data():
     _ROLES_OFF   = ["scorer", "facilitator", "spot_up", "post", "cutter"]
     _ROLES_DEF   = ["lockdown", "stopper", "help_side", "rim_protector", "versatile"]
     for _, p in players.iterrows():
-        for season in ["2021-22", "2022-23", "2023-24"]:
+        for season in ["2019-20", "2020-21", "2021-22", "2022-23", "2023-24"]:
             mpg = np.random.uniform(15, 35)
             stat_rows.append({
                 "player_id": int(p["id"]), "season": season,

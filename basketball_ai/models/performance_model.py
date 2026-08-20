@@ -23,6 +23,12 @@ from sklearn.linear_model import LinearRegression
 from sklearn.model_selection import TimeSeriesSplit
 from xgboost import XGBRegressor
 
+from basketball_ai.constants import (
+    LEAGUE_MAX_GAMES_BY_NAME,
+    LEAGUE_MAX_GAMES_DEFAULT,
+    _primary_pos,
+    _peak_age,
+)
 from basketball_ai.data.loader import _to_int
 
 logger = logging.getLogger(__name__)
@@ -48,14 +54,6 @@ if _XGB_DEVICE == "cuda":
     logger.info("XGBoost: GPU (CUDA) accelerazione attiva.")
 else:
     logger.info("XGBoost: nessuna GPU rilevata, uso CPU.")
-from basketball_ai.constants import (
-    LEAGUE_MAX_GAMES_BY_NAME,
-    LEAGUE_MAX_GAMES_DEFAULT,
-    _primary_pos,
-    _peak_age,
-)
-
-
 def _get_git_sha() -> str:
     """Return the current git commit SHA (short), or empty string if unavailable."""
     try:
@@ -702,11 +700,22 @@ class PerformanceModel:
         if extra_metrics:
             logger.info("[PerformanceModel] Metriche extra (%d): %s", len(extra_metrics), extra_metrics)
 
-        birth_year_map: Dict[int, int] = {
-            _to_int(row["id"]): 2024 - int(row["age"])
-            for _, row in players.iterrows()
-            if row.get("age") is not None and not (isinstance(row.get("age"), float) and np.isnan(row["age"]))
-        }
+        latest_data_year = max(
+            (int(str(s).split("-")[0]) for s in player_stats["season"].dropna()),
+            default=_dt.now(timezone.utc).year,
+        )
+        birth_year_map: Dict[int, int] = {}
+        for _, player in players.iterrows():
+            pid = _to_int(player["id"])
+            birth_date = player.get("birth_date", player.get("date_of_birth"))
+            try:
+                birth_year_map[pid] = int(str(birth_date)[:4])
+                continue
+            except (TypeError, ValueError):
+                pass
+            age = player.get("age")
+            if age is not None and not (isinstance(age, float) and np.isnan(age)):
+                birth_year_map[pid] = latest_data_year - int(age)
         position_map: Dict[int, str] = {
             _to_int(row["id"]): str(row["position"])
             for _, row in players.iterrows()
@@ -743,18 +752,23 @@ class PerformanceModel:
             by  = birth_year_map.get(pid)
             if by is None:
                 continue
-            for _, stat in grp.iterrows():
-                season_str = str(stat["season"])
+            # A sample uses information available at season t to forecast the
+            # observed rating at t+1.  The first season has no prior state.
+            season_rows = list(grp.iterrows())
+            for row_index in range(1, len(season_rows)):
+                _, source = season_rows[row_index - 1]
+                _, target = season_rows[row_index]
+                season_str = str(target["season"])
                 try:
                     year = int(season_str.split("-")[0])
                 except Exception:
-                    year = 2024
+                    continue
                 age = year - by
                 if age < 14 or age > 45:
                     continue
-                history_so_far = grp[grp["season"] < stat["season"]]
-                rows.append(self._build_row(stat, age, pos, history_so_far, extra_metrics=extra_metrics, league_max_games=league_max_games))
-                targets.append(float(stat["rating"]))
+                history_so_far = grp[grp["season"] <= source["season"]]
+                rows.append(self._build_row(source, age - 1, pos, history_so_far, extra_metrics=extra_metrics, league_max_games=league_max_games))
+                targets.append(float(target["rating"]))
                 season_years.append(year)
 
         X = pd.DataFrame(rows, columns=all_feature_names)
@@ -810,21 +824,19 @@ class PerformanceModel:
         X = X.iloc[sort_idx].reset_index(drop=True)
         y = y[sort_idx]
 
-        n = len(X)
-        if n >= 40:
-            # Conformal holdout: most-recent 15%; val: next 15%; train: oldest 70%
-            conf_start = int(n * 0.85)
-            val_start  = int(n * 0.70)
-            X_train, y_train     = X.iloc[:val_start],   y[:val_start]
-            X_val,   y_val       = X.iloc[val_start:conf_start], y[val_start:conf_start]
-            X_conformal          = X.iloc[conf_start:]
-            y_conformal          = y[conf_start:]
-        else:
-            # Very small datasets: skip the conformal split to avoid tiny sets
-            X_conformal = y_conformal = None
-            split = max(1, int(n * 0.85))
-            X_train, y_train = X.iloc[:split],  y[:split]
-            X_val,   y_val   = X.iloc[split:],  y[split:]
+        unique_seasons = sorted(set(season_years.tolist()))
+        if len(unique_seasons) < 3:
+            raise ValueError("At least three target seasons are required for season-blocked train/validation/calibration")
+        validation_season, conformal_season = unique_seasons[-2:]
+        train_mask = season_years < validation_season
+        val_mask = season_years == validation_season
+        conf_mask = season_years == conformal_season
+        X_train, y_train = X.loc[train_mask], y[train_mask]
+        X_val, y_val = X.loc[val_mask], y[val_mask]
+        X_conformal, y_conformal = X.loc[conf_mask], y[conf_mask]
+        if X_train.empty or X_val.empty or X_conformal.empty:
+            raise ValueError("Season-blocked split produced an empty partition")
+        self._split_metadata = {"train_seasons": unique_seasons[:-2], "validation_season": validation_season, "calibration_season": conformal_season}
 
         self.model.fit(
             X_train, y_train,
@@ -911,6 +923,7 @@ class PerformanceModel:
             "n_samples":      len(X),
             "n_features":     len(self.feature_names),
             "data_signature": metrics.get("data_signature", ""),
+            **getattr(self, "_split_metadata", {}),
         }
         metrics["lineage"] = lineage
         logger.info("[PerformanceModel] Lineage: %s", lineage)

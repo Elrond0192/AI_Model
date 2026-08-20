@@ -35,8 +35,8 @@
 
 | Aspect                   | Description                                                               |
 |--------------------------|---------------------------------------------------------------------------|
-| **Source type**          | Synthetic (generated) or real data loaded from Azure SQL Server           |
-| **Real DB schema**       | Multi-schema SQL Server: `Analisi`, `Boxscore`, `Anagrafiche`             |
+| **Source type**          | PostgreSQL canonical views; synthetic CSV is a test fixture only          |
+| **Real DB schema**       | Canonical PostgreSQL views in `ai_source`                                  |
 | **Leagues covered**      | Up to 20 leagues (NBA, EuroLeague, BCL, ACB, Bundesliga, Lega Basket, …) |
 | **Seasons**              | Multiple seasons (typically 2019-20 through 2023-24)                      |
 | **Competition types**    | Regular Season (RS), Playoffs (PO), Cup (CUP), Super Cup (SUPERCUP)       |
@@ -138,7 +138,7 @@ Input features (57+)
 
 ## 8. Privacy and Data Governance
 
-- When using the Azure SQL backend, all data access is through read-only parameterised
+- PostgreSQL source access is through a read-only role and canonical views; writes are restricted to schema `ai`.
   queries via SQLAlchemy.
 - No player PII is stored in model artefacts (`.joblib` files contain only numeric weights
   and scaler parameters).

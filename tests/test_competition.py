@@ -84,7 +84,7 @@ def tiny_data_with_competition():
         # assign a per-player PO tendency (positive = improves in PO)
         rng = np.random.default_rng(pid)
         po_tendency = float(rng.normal(0.0, 0.15))
-        for season in ["2021-22", "2022-23", "2023-24"]:
+        for season in ["2019-20", "2020-21", "2021-22", "2022-23", "2023-24"]:
             mpg = float(rng.uniform(18, 36))
             rs_rating = float(rng.uniform(5.0, 9.0))
             base = dict(
