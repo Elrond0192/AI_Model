@@ -63,9 +63,9 @@ def run_backtest(
     """Evaluate the complete production path on untouched future seasons.
 
     Each fold trains/calibrates using only seasons up to ``target-1`` and then
-    predicts the actual player/team outcome in ``target``.  The report compares
-    the final ensemble against both its base XGBoost score and a persistence
-    baseline (previous-season rating), and measures interval coverage.
+    predicts exact same-league/same-competition outcomes in ``target``.  The
+    final ensemble is compared with base XGBoost and persistence and is also
+    reported independently for every observed competition.
     """
     stats = data.get("player_stats", pd.DataFrame())
     if stats.empty or "season" not in stats.columns:
@@ -76,7 +76,7 @@ def run_backtest(
         }
     if data.get("team_season_stats") is None or data["team_season_stats"].empty:
         return {
-            "error": "team_season_stats is required",
+            "error": "team competition history is required",
             "valid": False,
             "folds": [],
         }
@@ -130,12 +130,17 @@ def run_backtest(
                 "ensemble_vs_base_delta": base_rmse - summary["rmse"],
                 "ensemble_vs_persistence_delta": persistence_rmse - summary["rmse"],
                 "by_league": _segment_metrics(records, "league_id"),
+                "by_competition": _segment_metrics(records, "competition"),
                 "by_position": _segment_metrics(records, "position"),
                 "by_age_band": _segment_metrics(records, "age_band"),
                 "training": {
                     "validation_rmse": train_metrics.get("val_rmse"),
                     "calibration": train_metrics.get("final_calibration"),
                     "consecutive_pairs": train_metrics.get("consecutive_pairs"),
+                    "competition_vocabulary": train_metrics.get("competition_vocabulary"),
+                    "compatibility_samples_by_competition": train_metrics.get(
+                        "compatibility_samples_by_competition"
+                    ),
                 },
             }
             folds.append(fold)
@@ -176,7 +181,7 @@ def run_backtest(
     )
     report: Dict[str, Any] = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
-        "method": "expanding_walk_forward_full_ensemble",
+        "method": "expanding_walk_forward_full_ensemble_competition_aware",
         "n_folds": len(folds),
         "target_seasons": targets,
         "folds": folds,
@@ -193,6 +198,7 @@ def run_backtest(
             else float("nan")
         ),
         "by_league": _segment_metrics(all_records, "league_id") if all_records else {},
+        "by_competition": _segment_metrics(all_records, "competition") if all_records else {},
         "by_position": _segment_metrics(all_records, "position") if all_records else {},
         "by_age_band": _segment_metrics(all_records, "age_band") if all_records else {},
         "valid": valid,
