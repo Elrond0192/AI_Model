@@ -57,7 +57,9 @@ if _HYPOTHESIS_AVAILABLE:
             # Invariants
             assert 0.0 <= feats["consistency_score"] <= 1.0, "consistency out of [0,1]"
             assert 0.0 <= feats["durability_score"] <= 1.0, "durability out of [0,1]"
-            assert 0.0 <= feats["scoring_profile"] <= 1.0, "scoring_profile out of [0,1]"
+            assert feats["scoring_profile"] in {
+                "3pt_specialist", "paint_scorer", "volume_scorer", "efficient_scorer"
+            }, "unexpected scoring profile"
             assert feats["positional_peak_age"] >= 20, "peak age too low"
             assert feats["pts_per_36"] >= 0, "negative per-36 points"
 
