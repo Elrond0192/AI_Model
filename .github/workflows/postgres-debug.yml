@@ -3,6 +3,8 @@ name: PostgreSQL Debug
 on:
   push:
     branches: ["codex/ml-production-hardening"]
+  pull_request:
+    branches: ["main"]
 
 permissions:
   contents: read
