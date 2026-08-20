@@ -1,58 +1,43 @@
 # Data Card — AI_Model PostgreSQL Contract
 
-**Contract:** `ai_source` v1  
+**Contract:** `ai_source` v2  
 **Model target:** season-ahead player rating (`t -> t+1`)
 
-AI_Model does not query BBallstat physical tables directly. The database adapter
-in `basketball_ai/data/ai_source_schema.sql` creates five stable, read-only
-views over the unified PostgreSQL tables.
+AI_Model never queries BBallstat physical tables directly. The PostgreSQL adapter exposes stable read-only model views, while source schemas remain untouched.
 
 ## Canonical views
 
 ### `ai_source.leagues`
-
-One row per discovered league, including stable internal ID, league key,
-country, observed pace/offensive rating and `max_games` for durability features.
+One row per discovered league. Includes stable internal ID, league key, country and observed metadata used by feature engineering.
 
 ### `ai_source.teams`
+One row per team `IdGlobal`, using the latest registry/team state. This view is appropriate for current entity lookup only; it must not be used as historical team context during training or backtesting.
 
-One row per team `IdGlobal`, using the latest registry state. It exposes
-`global_id`, name, league, pace, ORtg/DRtg/NetRtg, 3PA rate and assists.
-Playing style and star usage are derived after load.
+### `ai_source.team_season_stats`
+One row per global team and season. Created by `basketball_ai/data/ai_source_team_season.sql` after the base adapter. It contains historical pace, ORtg, DRtg, NetRtg, three-point attempt rate, assists and roster-independent team context. This view is mandatory for leakage-safe compatibility training and historical prediction snapshots.
 
 ### `ai_source.players`
-
-One row per player `IdGlobal`, using the latest registry state. It exposes
-`global_id`, identity/demographics, position and current team/league.
-`IdGlobal` is the cross-season identity; physical per-league `Id` values are
-adapter-only join keys.
+One row per player `IdGlobal`, using the latest identity state. `IdGlobal` is the cross-season server-side identity; league-local IDs are adapter-only join keys.
 
 ### `ai_source.player_stats`
+Exactly one canonical target row per player and season. Physical data can contain domestic/European, `TOT`, `RS`, `PO`, team-specific and all-team rows for the same season. Those rows are not separate chronological seasons and are collapsed before model training.
 
-Exactly one canonical row per player and season. Physical tables can contain
-`TOT`, `RS`, `PO`, team-specific and all-team rows for the same season. Treating
-those as separate chronological observations would corrupt a `t -> t+1` target.
-
-Selection priority is:
-
-1. all-team row (`TeamId IS NULL`);
-2. `TOT`;
-3. `RS`;
-4. another competition only if neither exists.
-
-The selected `TOT` aggregate is exposed as season context `RS` because the
-production forecast is season-level, not a competition-split forecast.
-Season-total volume columns are converted to per-game values. Rows without a
-non-null `ValLegaPerGame` / `rating` target are excluded.
+Rows without a non-null `ValLegaPerGame` / `rating` target are excluded. The production training pipeline then creates a sample only when the same player has an **exact next season**: a 2023 row may target 2024, but never 2025 if 2024 is missing.
 
 ### `ai_source.team_player_relations`
+Canonical player/team membership by season, assembled from available Boxscore, player aggregate and anagraphic information and resolved through global identities.
 
-Canonical player/team membership by season, assembled from Boxscore and
-team-specific player aggregate rows and resolved through `IdGlobal`.
+## Installation order
+
+```bash
+psql -d YOUR_DATABASE -f basketball_ai/data/ai_source_schema.sql
+psql -d YOUR_DATABASE -f basketball_ai/data/ai_source_team_season.sql
+psql -d YOUR_DATABASE -f basketball_ai/data/ai_schema.sql
+```
+
+Re-run the source adapters after adding a new league or materially changing physical table schemas.
 
 ## Physical source discovery
-
-The adapter discovers current unified tables automatically:
 
 ```text
 Anagrafiche.<LEAGUE>
@@ -65,26 +50,41 @@ Analisi.AdvancedStats_Clutch_<LEAGUE>       optional
 Boxscore.<LEAGUE>                            optional
 ```
 
-Every discovered table uses numeric `Season`. Legacy `<LEAGUE>_<YYYY>`
-partition naming is not used. Column-name case is normalized through JSONB so
-PostgreSQL imports that preserved SQL Server casing remain usable.
+The adapter expects numeric `Season`. Column-name case is normalized through JSONB so PostgreSQL imports that preserved historical casing remain usable.
+
+## Temporal correctness
+
+Production training/backtesting observes these rules:
+
+- one target observation per `player_id + season`;
+- one historical team row per `team_id + season`;
+- only exact consecutive `t -> t+1` samples;
+- team and player state in a historical prediction is clipped to the source season;
+- the calibration target season is never used for estimator fitting;
+- walk-forward test target seasons are not present in the corresponding training snapshot.
 
 ## Data quality gates
 
-`postgres_loader.py` checks that all five views exist, required columns exist,
-and players/teams/player stats are non-empty.
+`postgres_loader.py` fails closed when a required view/column is missing, when mandatory views are empty, or when player/team-season duplicates violate the contract.
 
 ```bash
 python main.py --mode validate-data --database-profile production
 ```
 
-The operations console expects at least five seasons.
+The validator also reports:
+
+- available seasons;
+- number of exact consecutive forecast pairs;
+- players with gaps in season history;
+- rating distribution by league;
+- a warning when league-level target means differ enough that `ValLegaPerGame` cross-league comparability should be reviewed.
+
+The application does **not** normalize the target across leagues automatically: such a transformation must be justified by real data and backtests rather than assumed.
 
 ## Identity and ownership
 
-`global_id` is a server-side database identity, not a browser identifier.
-AI_Model does not receive WordPress salts, user credentials or generic SQL.
+`global_id` is a server-side model/database identity, not a browser identifier. AI_Model receives it only through authenticated server-to-server calls.
 
-- `ai_source`: read-only adapter views.
-- `ai`: model-owned outputs (`model_runs`, `player_forecasts`).
+- `ai_source`: read-only adapter views;
+- `ai`: model-owned outputs (`model_runs`, `player_forecasts`);
 - `Anagrafiche`, `Analisi`, `Boxscore`: source schemas, never written by AI_Model.
