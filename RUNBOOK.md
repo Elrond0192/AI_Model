@@ -4,11 +4,10 @@
 
 | Service | Port | Purpose |
 |---|---:|---|
-| `admin` | 8501 | DB profile, training, backtest, promotion |
-| `api` | 8000 | typed FastAPI inference |
+| `admin` | 8501 | DB profile, validation, training, backtest, promotion, rollback |
+| `api` | 8000 | promoted typed FastAPI v2 inference |
 
-PostgreSQL runs on the host. Containers reach it through
-`host.docker.internal:5432`.
+PostgreSQL runs on the host. Containers reach it through `host.docker.internal:5432`.
 
 ## Start / stop
 
@@ -23,12 +22,15 @@ docker compose logs -f admin
 docker compose down
 ```
 
-Runtime data is persisted under `runtime/`.
+Runtime state is persisted under `runtime/`.
 
 ## First database setup
 
+Apply all contracts in order:
+
 ```bash
 psql -d YOUR_DATABASE -f basketball_ai/data/ai_source_schema.sql
+psql -d YOUR_DATABASE -f basketball_ai/data/ai_source_team_season.sql
 psql -d YOUR_DATABASE -f basketball_ai/data/ai_schema.sql
 ```
 
@@ -38,17 +40,26 @@ Verify:
 SELECT count(*) FROM ai_source.players;
 SELECT count(*) FROM ai_source.teams;
 SELECT min(season), max(season), count(*) FROM ai_source.player_stats;
-SELECT * FROM ai_source.leagues ORDER BY name;
+SELECT min(season), max(season), count(*) FROM ai_source.team_season_stats;
+
+SELECT player_id, season, count(*)
+FROM ai_source.player_stats
+GROUP BY player_id, season
+HAVING count(*) > 1;
+
+SELECT team_id, season, count(*)
+FROM ai_source.team_season_stats
+GROUP BY team_id, season
+HAVING count(*) > 1;
 ```
 
-Re-run `ai_source_schema.sql` after adding a new league table or materially
-changing the physical source schema. It is idempotent and does not modify source
-tables.
+Both duplicate queries must return zero rows.
+
+Re-run `ai_source_schema.sql` and then `ai_source_team_season.sql` after adding a league or materially changing the physical source schema.
 
 ## Database connectivity incident
 
-Symptoms: admin Test connection fails, `/health/ready` returns 503 or logs show
-PostgreSQL/canonical-view errors.
+Symptoms: admin connection test fails, `/health/ready` returns 503, or logs show PostgreSQL/canonical-view errors.
 
 ```bash
 docker compose exec api getent hosts host.docker.internal
@@ -61,20 +72,19 @@ On the host:
 ss -ltnp | grep 5432
 ```
 
-Verify PostgreSQL accepts the Docker bridge subnet/user/database, uses
-`host.docker.internal` from the container profile and does not expose 5432 to
-the public Internet.
+Verify PostgreSQL accepts only the intended Docker bridge subnet/user/database and does not expose 5432 publicly.
 
 ## Canonical contract incident
 
 ```bash
 psql -d YOUR_DATABASE -f basketball_ai/data/ai_source_schema.sql
+psql -d YOUR_DATABASE -f basketball_ai/data/ai_source_team_season.sql
 
 docker compose run --rm admin \
   python main.py --mode validate-data --database-profile production
 ```
 
-Required views:
+Required read views:
 
 ```text
 ai_source.leagues
@@ -82,9 +92,12 @@ ai_source.teams
 ai_source.players
 ai_source.player_stats
 ai_source.team_player_relations
+ai_source.team_season_stats
 ```
 
-## Training
+`validate-data` must report no hard issues. Review any cross-league target-distribution warning before training.
+
+## Training a candidate
 
 ```bash
 docker compose run --rm admin \
@@ -93,8 +106,15 @@ docker compose run --rm admin \
   --model-dir /app/models_saved
 ```
 
-Training produces a candidate only if backtesting is valid. Review and promote
-it from the admin Model Registry.
+A successful run is immutable under:
+
+```text
+/app/models_saved/runs/<model_run_id>/
+```
+
+and is registered as **candidate**. Training never replaces `/app/models_saved/production`.
+
+The run is rejected before registration if its full-ensemble walk-forward backtest is invalid.
 
 ## Backtest only
 
@@ -105,9 +125,53 @@ docker compose run --rm admin \
   --model-dir /app/models_saved
 ```
 
-A failed/empty backtest is not promotable.
+Review at least:
+
+- ensemble RMSE/MAE/bias;
+- base XGBoost RMSE;
+- persistence RMSE;
+- interval coverage/width;
+- per-league regressions;
+- fold sample counts and target seasons.
+
+A failed fold invalidates the report.
+
+## Promotion
+
+```bash
+docker compose run --rm admin \
+  python main.py --mode promote \
+  --model-dir /app/models_saved
+```
+
+Promotion fails closed unless configured gates pass. A successful promotion atomically activates:
+
+```text
+/app/models_saved/production/
+```
+
+Restart/reload the API after promotion:
+
+```bash
+docker compose restart api
+curl -fsS http://127.0.0.1:8000/health/ready
+```
+
+## Rollback
+
+```bash
+docker compose run --rm admin \
+  python main.py --mode rollback \
+  --model-dir /app/models_saved
+
+docker compose restart api
+```
+
+Rollback reactivates the previous immutable run; it does not retrain a model.
 
 ## Batch publishing
+
+Only the promoted production model may publish:
 
 ```bash
 docker compose run --rm admin \
@@ -132,7 +196,7 @@ curl -fsS http://127.0.0.1:8000/health/live
 curl -fsS http://127.0.0.1:8000/health/ready
 ```
 
-`/health/live` checks the process; `/health/ready` requires data and model.
+`/health/live` checks process liveness. `/health/ready` requires PostgreSQL data and a fully loaded promoted model.
 
 ## Dynamic prediction smoke test
 
@@ -150,17 +214,17 @@ curl -fsS -X POST \
   }'
 ```
 
-When `JWT_SECRET` is configured, use a Bearer token instead; API-key auth is
-disabled in JWT mode.
+`season` is the source-season snapshot; the target is the next season. Supported competition values: `RS`, `PO`, `CUP`, `SUPERCUP`.
+
+When `JWT_SECRET` is configured, use the externally provisioned Bearer token instead of `X-API-Key`.
 
 ## First admin credentials
 
-First boot writes one-time credentials to `runtime/auth/.admin_credentials`.
-Read it once, change the password and delete the file.
+First boot writes one-time credentials to `runtime/auth/.admin_credentials`. Read them once, change the password and delete that file.
 
 ## Backup
 
-Back up runtime state, not repository artifacts:
+Back up runtime state, including immutable runs and active production artifacts:
 
 ```bash
 tar -C . -czf ai-model-runtime-$(date +%F).tar.gz runtime/
@@ -173,11 +237,20 @@ PostgreSQL model output is covered by the normal PostgreSQL backup strategy.
 ```bash
 git pull --ff-only
 docker compose build --pull
+```
+
+If either source SQL adapter changed, apply both before training or API restart:
+
+```bash
+psql -d YOUR_DATABASE -f basketball_ai/data/ai_source_schema.sql
+psql -d YOUR_DATABASE -f basketball_ai/data/ai_source_team_season.sql
+```
+
+Then:
+
+```bash
 docker compose up -d
 curl -fsS http://127.0.0.1:8000/health/live
 ```
 
-If `ai_source_schema.sql` changed, apply it before restarting API/training.
-
-Never commit `.env`, DB profile JSON, trained `.joblib` files, generated
-registry/metadata, sessions, SQLite audit files or one-time credentials.
+Never commit `.env`, DB profile JSON, trained `.joblib` files, generated registries/metadata, sessions, audit databases or one-time credentials.
