@@ -65,6 +65,115 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y postgresql-client
 
+      - name: Seed representative BBallstat RS and PO source rows
+        env:
+          PGPASSWORD: postgres
+        run: |
+          set -euo pipefail
+          psql -h 127.0.0.1 -U postgres -d ai_model_test -v ON_ERROR_STOP=1 <<'SQL'
+          CREATE SCHEMA "Anagrafiche";
+          CREATE SCHEMA "Analisi";
+          CREATE SCHEMA "Boxscore";
+
+          CREATE TABLE "Anagrafiche"."ITA1" (
+            "Season" integer NOT NULL,
+            "Id" text NOT NULL,
+            "IdGlobal" text NOT NULL,
+            "PlayerName" text NOT NULL,
+            "BirthDate" date,
+            "Pos" text,
+            "TeamName" text
+          );
+
+          CREATE TABLE "Anagrafiche"."Team_ITA1" (
+            "Season" integer NOT NULL,
+            "Id" text NOT NULL,
+            "IdGlobal" text NOT NULL,
+            "TeamName" text NOT NULL,
+            "ShortName" text
+          );
+
+          CREATE TABLE "Analisi"."AdvancedStats_Player_ITA1" (
+            "Season" integer NOT NULL,
+            "Id" text NOT NULL,
+            "TeamId" text,
+            "Competition" text NOT NULL,
+            "Games" double precision,
+            "Min" double precision,
+            "Pts" double precision,
+            "TR" double precision,
+            "Ast" double precision,
+            "Stl" double precision,
+            "Blk" double precision,
+            "TO" double precision,
+            "PF" double precision,
+            "TsPct" double precision,
+            "UsgPct" double precision,
+            "OBpm" double precision,
+            "DBpm" double precision,
+            "ThreePAr" double precision,
+            "ValLegaPerGame" double precision
+          );
+
+          CREATE TABLE "Analisi"."AdvancedStatsTeam_ITA1" (
+            "Season" integer NOT NULL,
+            "TeamId" text NOT NULL,
+            "Competition" text NOT NULL,
+            "Games" double precision,
+            "Pace" double precision,
+            "ORtg" double precision,
+            "DRtg" double precision,
+            "NetRtg" double precision,
+            "ThreePAr" double precision,
+            "AstPerGame" double precision
+          );
+
+          CREATE TABLE "Boxscore"."ITA1" (
+            "Season" integer NOT NULL,
+            "Id" text NOT NULL,
+            "TeamId" text,
+            "Game" text,
+            "SF" boolean,
+            "Competition" text NOT NULL
+          );
+
+          INSERT INTO "Anagrafiche"."ITA1"
+            ("Season", "Id", "IdGlobal", "PlayerName", "BirthDate", "Pos", "TeamName")
+          VALUES
+            (2024, 'P_LOCAL', 'P_GLOBAL', 'Test Player', DATE '2000-01-01', 'PG', 'Test Team'),
+            (2025, 'P_LOCAL', 'P_GLOBAL', 'Test Player', DATE '2000-01-01', 'PG', 'Test Team');
+
+          INSERT INTO "Anagrafiche"."Team_ITA1"
+            ("Season", "Id", "IdGlobal", "TeamName", "ShortName")
+          VALUES
+            (2024, 'T_LOCAL', 'T_GLOBAL', 'Test Team', 'TST'),
+            (2025, 'T_LOCAL', 'T_GLOBAL', 'Test Team', 'TST');
+
+          INSERT INTO "Analisi"."AdvancedStats_Player_ITA1"
+            ("Season", "Id", "TeamId", "Competition", "Games", "Min", "Pts", "TR", "Ast", "Stl", "Blk", "TO", "PF", "TsPct", "UsgPct", "OBpm", "DBpm", "ThreePAr", "ValLegaPerGame")
+          VALUES
+            (2024, 'P_LOCAL', 'T_LOCAL', 'Regular Season', 30, 750, 360, 120, 150, 30, 5, 60, 50, 0.580, 22.0, 2.0, 0.5, 0.35, 6.50),
+            (2024, 'P_LOCAL', 'T_LOCAL', 'Playoffs',        8, 224, 112,  36,  48, 10, 2, 18, 16, 0.610, 24.0, 3.0, 0.8, 0.38, 7.00),
+            (2025, 'P_LOCAL', 'T_LOCAL', 'RS',             30, 780, 390, 126, 156, 32, 6, 58, 48, 0.590, 22.5, 2.4, 0.6, 0.36, 6.70),
+            (2025, 'P_LOCAL', 'T_LOCAL', 'PO',              9, 261, 135,  40,  54, 11, 2, 17, 15, 0.620, 25.0, 3.3, 0.9, 0.40, 7.20);
+
+          INSERT INTO "Analisi"."AdvancedStatsTeam_ITA1"
+            ("Season", "TeamId", "Competition", "Games", "Pace", "ORtg", "DRtg", "NetRtg", "ThreePAr", "AstPerGame")
+          VALUES
+            (2024, 'T_LOCAL', 'Regular Season', 30, 74.0, 112.0, 108.0, 4.0, 0.34, 20.0),
+            (2024, 'T_LOCAL', 'Playoffs',        8, 71.0, 115.0, 106.0, 9.0, 0.39, 22.0),
+            (2025, 'T_LOCAL', 'RS',             30, 75.0, 113.0, 107.0, 6.0, 0.35, 21.0),
+            (2025, 'T_LOCAL', 'PO',              9, 70.0, 116.0, 105.0, 11.0, 0.41, 23.0);
+
+          INSERT INTO "Boxscore"."ITA1"
+            ("Season", "Id", "TeamId", "Game", "SF", "Competition")
+          VALUES
+            (2024, 'P_LOCAL', 'T_LOCAL', 'RS-1', true, 'RS'),
+            (2024, 'P_LOCAL', 'T_LOCAL', 'PO-1', true, 'Playoffs'),
+            (2025, 'P_LOCAL', 'T_LOCAL', 'RS-2', true, 'Regular Season'),
+            (2025, 'P_LOCAL', 'T_LOCAL', 'PO-2', true, 'PO');
+          SQL
+
       - name: Install source and output contracts
         env:
           PGPASSWORD: postgres
@@ -75,13 +184,21 @@ jobs:
           $PSQL -f basketball_ai/data/ai_source_competition.sql
           $PSQL -f basketball_ai/data/ai_schema.sql
 
-      - name: Verify canonical views and competition normalization
+      - name: Verify canonical views, isolation and normalization
         env:
           PGPASSWORD: postgres
         run: |
           set -euo pipefail
           psql -h 127.0.0.1 -U postgres -d ai_model_test -v ON_ERROR_STOP=1 <<'SQL'
           DO $$
+          DECLARE
+            player_rows integer;
+            team_rows integer;
+            relation_rows integer;
+            rs_rating double precision;
+            po_rating double precision;
+            rs_pace double precision;
+            po_pace double precision;
           BEGIN
             IF to_regclass('ai_source.leagues') IS NULL
                OR to_regclass('ai_source.teams') IS NULL
@@ -92,6 +209,64 @@ jobs:
                OR to_regclass('ai.model_runs') IS NULL
                OR to_regclass('ai.player_forecasts') IS NULL THEN
               RAISE EXCEPTION 'Required AI_Model PostgreSQL contract object is missing';
+            END IF;
+
+            SELECT count(*) INTO player_rows
+            FROM ai_source.player_competition_stats
+            WHERE league_key = 'ITA1';
+            IF player_rows <> 4 THEN
+              RAISE EXCEPTION 'Expected 4 player competition rows, got %', player_rows;
+            END IF;
+
+            SELECT count(*) INTO team_rows
+            FROM ai_source.team_competition_stats
+            WHERE league_key = 'ITA1';
+            IF team_rows <> 4 THEN
+              RAISE EXCEPTION 'Expected 4 team competition rows, got %', team_rows;
+            END IF;
+
+            SELECT count(*) INTO relation_rows
+            FROM ai_source.team_player_relations;
+            IF relation_rows <> 2 THEN
+              RAISE EXCEPTION 'Expected 2 season roster relations, got %', relation_rows;
+            END IF;
+
+            SELECT rating INTO rs_rating
+            FROM ai_source.player_competition_stats
+            WHERE league_key = 'ITA1' AND season = 2025 AND competition = 'RS';
+            SELECT rating INTO po_rating
+            FROM ai_source.player_competition_stats
+            WHERE league_key = 'ITA1' AND season = 2025 AND competition = 'PO';
+            IF rs_rating <> 6.70 OR po_rating <> 7.20 THEN
+              RAISE EXCEPTION 'RS/PO player ratings were not isolated: RS %, PO %', rs_rating, po_rating;
+            END IF;
+
+            SELECT pace INTO rs_pace
+            FROM ai_source.team_competition_stats
+            WHERE league_key = 'ITA1' AND season = 2025 AND competition = 'RS';
+            SELECT pace INTO po_pace
+            FROM ai_source.team_competition_stats
+            WHERE league_key = 'ITA1' AND season = 2025 AND competition = 'PO';
+            IF rs_pace <> 75.0 OR po_pace <> 70.0 THEN
+              RAISE EXCEPTION 'RS/PO team contexts were not isolated: RS %, PO %', rs_pace, po_pace;
+            END IF;
+
+            IF EXISTS (
+              SELECT 1
+              FROM ai_source.player_competition_stats
+              GROUP BY player_id, league_id, season, competition
+              HAVING count(*) > 1
+            ) THEN
+              RAISE EXCEPTION 'Duplicate player competition keys detected';
+            END IF;
+
+            IF EXISTS (
+              SELECT 1
+              FROM ai_source.team_competition_stats
+              GROUP BY team_id, league_id, season, competition
+              HAVING count(*) > 1
+            ) THEN
+              RAISE EXCEPTION 'Duplicate team competition keys detected';
             END IF;
           END
           $$;
@@ -106,7 +281,7 @@ jobs:
           END AS competition_normalization_ok;
           SQL
 
-      - name: Reinstall adapters to prove idempotency
+      - name: Reinstall adapters and recheck data to prove idempotency
         env:
           PGPASSWORD: postgres
         run: |
@@ -115,6 +290,14 @@ jobs:
           $PSQL -f basketball_ai/data/ai_source_schema.sql
           $PSQL -f basketball_ai/data/ai_source_competition.sql
           $PSQL -f basketball_ai/data/ai_schema.sql
+          $PSQL <<'SQL'
+          SELECT CASE WHEN (
+            SELECT count(*) FROM ai_source.player_competition_stats WHERE league_key = 'ITA1'
+          ) = 4 THEN 1 ELSE 1 / 0 END AS player_rows_survived_reinstall;
+          SELECT CASE WHEN (
+            SELECT count(*) FROM ai_source.team_competition_stats WHERE league_key = 'ITA1'
+          ) = 4 THEN 1 ELSE 1 / 0 END AS team_rows_survived_reinstall;
+          SQL
 
   lint:
     name: Lint (ruff + flake8)
