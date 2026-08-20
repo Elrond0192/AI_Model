@@ -16,6 +16,9 @@ _logger = logging.getLogger(__name__)
 PROMOTION_THRESHOLD_PCT = float(os.getenv("MODEL_PROMOTION_THRESHOLD_PCT", "2.0"))
 MAX_SEGMENT_REGRESSION_PCT = float(os.getenv("MODEL_MAX_SEGMENT_REGRESSION_PCT", "15.0"))
 MIN_BACKTEST_SAMPLES = int(os.getenv("MODEL_MIN_BACKTEST_SAMPLES", "20"))
+MIN_COMPETITION_SAMPLES = int(
+    os.getenv("MODEL_MIN_COMPETITION_BACKTEST_SAMPLES", "10")
+)
 TARGET_INTERVAL_COVERAGE = float(os.getenv("MODEL_TARGET_INTERVAL_COVERAGE", "0.90"))
 INTERVAL_COVERAGE_TOLERANCE = float(os.getenv("MODEL_INTERVAL_COVERAGE_TOLERANCE", "0.10"))
 _REQUIRED_ARTIFACTS = (
@@ -170,18 +173,45 @@ def _promotion_gate_errors(candidate: dict) -> list[str]:
                 )
         except (TypeError, ValueError):
             errors.append("interval coverage is non-finite")
+
+    competition_segments = report.get("by_competition") or {}
+    if not competition_segments:
+        errors.append("competition-segmented backtest metrics are missing")
+    for competition, segment in competition_segments.items():
+        if not isinstance(segment, dict):
+            continue
+        samples = int(segment.get("n", 0) or 0)
+        if samples < MIN_COMPETITION_SAMPLES:
+            continue
+        for metric in ("rmse", "mae", "bias"):
+            try:
+                if not math.isfinite(float(segment.get(metric))):
+                    raise ValueError
+            except (TypeError, ValueError):
+                errors.append(
+                    f"competition {competition} {metric} is missing/non-finite"
+                )
+        segment_coverage = segment.get("interval_coverage")
+        if segment_coverage is None:
+            errors.append(f"competition {competition} interval coverage is missing")
     return errors
 
 
-def _segment_regressions(candidate: dict, production: dict) -> list[str]:
-    cand_segments = (candidate.get("backtest") or {}).get("by_league") or {}
-    prod_segments = (production.get("backtest") or {}).get("by_league") or {}
+def _segment_regressions_for_dimension(
+    candidate: dict,
+    production: dict,
+    dimension: str,
+    minimum_samples: int,
+    label: str,
+) -> list[str]:
+    cand_segments = (candidate.get("backtest") or {}).get(dimension) or {}
+    prod_segments = (production.get("backtest") or {}).get(dimension) or {}
     errors: list[str] = []
     for segment, cand in cand_segments.items():
         prod = prod_segments.get(segment)
         if not isinstance(cand, dict) or not isinstance(prod, dict):
             continue
-        if min(int(cand.get("n", 0) or 0), int(prod.get("n", 0) or 0)) < 5:
+        if min(int(cand.get("n", 0) or 0), int(prod.get("n", 0) or 0)) < minimum_samples:
             continue
         cand_rmse = cand.get("rmse")
         prod_rmse = prod.get("rmse")
@@ -192,9 +222,25 @@ def _segment_regressions(candidate: dict, production: dict) -> list[str]:
         )
         if regression_pct > MAX_SEGMENT_REGRESSION_PCT:
             errors.append(
-                f"league {segment} RMSE regresses {regression_pct:.2f}% "
+                f"{label} {segment} RMSE regresses {regression_pct:.2f}% "
                 f"(limit {MAX_SEGMENT_REGRESSION_PCT:.2f}%)"
             )
+    return errors
+
+
+def _segment_regressions(candidate: dict, production: dict) -> list[str]:
+    errors = _segment_regressions_for_dimension(
+        candidate, production, "by_league", 5, "league"
+    )
+    errors.extend(
+        _segment_regressions_for_dimension(
+            candidate,
+            production,
+            "by_competition",
+            MIN_COMPETITION_SAMPLES,
+            "competition",
+        )
+    )
     return errors
 
 
