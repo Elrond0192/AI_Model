@@ -1,12 +1,14 @@
-"""Publish bounded current-team forecasts from the promoted production model."""
+"""Publish bounded current-context forecasts from the promoted model."""
 from __future__ import annotations
 
 import json
 from pathlib import Path
 
+import pandas as pd
 from sqlalchemy import text
 
 from basketball_ai.data.postgres_loader import get_engine, load_all_data
+from basketball_ai.models.competition_training import normalize_competition
 
 
 def publish_current_team_forecasts(model_dir: str) -> int:
@@ -29,38 +31,63 @@ def publish_current_team_forecasts(model_dir: str) -> int:
     model = StrictProductionEnsembleModel()
     model.load(str(model_path))
     latest_season = int(
-        max(
-            int(str(value).split("-")[0])
-            for value in data["player_stats"]["season"].dropna()
-        )
+        max(int(str(value).split("-")[0]) for value in data["player_stats"]["season"].dropna())
     )
     snapshot = build_historical_snapshot(data, latest_season)
     inference = StrictWhatIfEngine(model, snapshot)
 
+    source = snapshot["player_stats"].copy()
+    source["_season_year"] = pd.to_numeric(source["season"], errors="coerce")
+    source = source[source["_season_year"] == latest_season]
+    source = source.dropna(subset=["player_id", "team_id", "league_id", "competition"])
+
     rows = []
-    for player_id, player in snapshot["player_dict"].items():
-        team_id = player.get("current_team_id")
-        player_gid = player.get("global_id")
-        team = snapshot["team_dict"].get(team_id)
-        if not team_id or not player_gid or not team or not team.get("global_id"):
+    seen: set[tuple[int, int, int, str]] = set()
+    for _, context in source.iterrows():
+        player_id = int(context["player_id"])
+        team_id = int(context["team_id"])
+        league_id = int(context["league_id"])
+        competition = normalize_competition(context["competition"])
+        key = (player_id, team_id, league_id, competition)
+        if key in seen:
             continue
-        result = inference.predict_in_team(
-            int(player_id), int(team_id), latest_season, competition="RS"
-        )
+        seen.add(key)
+
+        player = snapshot["player_dict"].get(player_id)
+        team = data["team_dict"].get(team_id)
+        if not player or not team or not player.get("global_id") or not team.get("global_id"):
+            continue
+        if competition not in model._competition_encoding_state:
+            continue
+        try:
+            result = inference.predict_in_team(
+                player_id,
+                team_id,
+                latest_season,
+                competition=competition,
+                league_id=league_id,
+            )
+        except (ValueError, RuntimeError):
+            continue
+
         rows.append(
             {
                 "model_run_id": metadata["model_run_id"],
-                "player_global_id": str(player_gid),
+                "player_global_id": str(player["global_id"]),
                 "team_global_id": str(team["global_id"]),
-                "league": str(team.get("league_key", team.get("league_id", ""))),
+                "league": str(context.get("league_key", league_id)),
                 "season": latest_season,
-                "competition": "RS",
+                "competition": competition,
                 "target_season": latest_season + 1,
                 "predicted_rating": result.predicted_rating,
                 "confidence_low": result.confidence_low,
                 "confidence_high": result.confidence_high,
                 "payload": json.dumps(
-                    {"method": "forecast_t_plus_1", "status": "production"}
+                    {
+                        "method": "forecast_t_plus_1",
+                        "status": "production",
+                        "context": "isolated_league_competition",
+                    }
                 ),
             }
         )
