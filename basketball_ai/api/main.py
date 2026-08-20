@@ -70,6 +70,7 @@ def _empty_data() -> Dict[str, Any]:
         "players": pd.DataFrame(),
         "player_stats": pd.DataFrame(),
         "team_player_relations": pd.DataFrame(),
+        "team_season_stats": pd.DataFrame(),
         "league_dict": {},
         "team_dict": {},
         "player_dict": {},
@@ -78,13 +79,13 @@ def _empty_data() -> Dict[str, Any]:
 
 
 def _load_app_state() -> None:
-    """Load PostgreSQL data and a fully trained production model.
+    """Load PostgreSQL data and the exact production model implementation.
 
     A missing/invalid model deliberately leaves ``engine`` as ``None`` so
     ``/health/ready`` returns 503 and v2 inference cannot silently fall back to
     an untrained estimator.
     """
-    from basketball_ai.models.ensemble import EnsembleModel
+    from basketball_ai.models.strict_production import StrictProductionEnsembleModel
     from basketball_ai.scenarios.engine import WhatIfEngine
 
     data_source = os.environ.get("DATA_SOURCE", "postgres")
@@ -120,12 +121,12 @@ def _load_app_state() -> None:
         return
 
     try:
-        ensemble = EnsembleModel()
+        ensemble = StrictProductionEnsembleModel()
         ensemble.load(model_dir)
         if not ensemble.is_trained:
             raise RuntimeError("loaded ensemble is not trained")
         app_state["engine"] = WhatIfEngine(ensemble, data)
-        logger.info("[API] Data and trained model loaded")
+        logger.info("[API] Data and strict production model loaded")
     except Exception as exc:
         logger.error("[API] Model load failed: %s", exc, exc_info=True)
         app_state["engine"] = None
