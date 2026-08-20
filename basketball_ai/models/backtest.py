@@ -12,8 +12,8 @@ from typing import Any, Dict, Iterable, List, Optional
 import numpy as np
 import pandas as pd
 
-from basketball_ai.models.production_training import (
-    ProductionEnsembleModel,
+from basketball_ai.models.strict_production import (
+    StrictProductionEnsembleModel,
     build_historical_snapshot,
     evaluate_target_season,
     metric_summary,
@@ -105,7 +105,7 @@ def run_backtest(
         source_season = target_season - 1
         try:
             train_data = build_historical_snapshot(data, source_season)
-            ensemble = ProductionEnsembleModel()
+            ensemble = StrictProductionEnsembleModel()
             train_metrics = ensemble.train(train_data)
             records = evaluate_target_season(ensemble, data, target_season)
             if len(records) < minimum:
@@ -181,7 +181,6 @@ def run_backtest(
         "target_seasons": targets,
         "folds": folds,
         "overall": overall,
-        # Backward-compatible top-level key used by operational tooling.
         "overall_rmse": overall.get("rmse", float("nan")),
         "base_rmse": base_rmse,
         "persistence_rmse": persistence_rmse,
