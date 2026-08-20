@@ -24,6 +24,7 @@ from basketball_ai.models.competition_training import (
     scope_prediction_context,
 )
 from basketball_ai.models.production_training import (
+    ProductionEnsembleModel,
     build_historical_snapshot as _build_historical_snapshot,
     metric_summary,
     season_year,
@@ -206,46 +207,20 @@ class AsOfPositionPerformanceModel(CompetitionSeasonAheadPerformanceModel):
         )
 
 
-class StrictProductionEnsembleModel:
+class StrictProductionEnsembleModel(ProductionEnsembleModel):
     """Exact competition-aware model implementation used by production."""
 
-    def __new__(cls, *args: Any, **kwargs: Any):
-        # Build on the existing production ensemble without duplicating its API.
-        from basketball_ai.models.production_training import ProductionEnsembleModel
-
-        if cls is StrictProductionEnsembleModel:
-            instance = super().__new__(cls)
-            ProductionEnsembleModel.__init__(
-                instance,
-                performance_model=kwargs.pop(
-                    "performance_model", AsOfPositionPerformanceModel()
-                ),
-                compatibility_model=kwargs.pop(
-                    "compatibility_model", CompetitionTemporalCompatibilityModel()
-                ),
-                *args,
-                **kwargs,
-            )
-            instance._strict_initialise()
-            return instance
-        return super().__new__(cls)
-
-    def _strict_initialise(self) -> None:
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        kwargs.setdefault("performance_model", AsOfPositionPerformanceModel())
+        kwargs.setdefault(
+            "compatibility_model", CompetitionTemporalCompatibilityModel()
+        )
+        super().__init__(*args, **kwargs)
         self._conformal_nominal_coverage: Optional[float] = None
         self._style_bounds_state: Optional[Dict[str, float]] = None
         self._competition_encoding_state: Dict[str, int] = {}
         self._conformal_by_competition: Dict[str, float] = {}
         self._conformal_samples_by_competition: Dict[str, int] = {}
-
-    # The methods below delegate explicitly because __new__ installs the
-    # ProductionEnsembleModel state while this wrapper owns the strict contract.
-    def clear_cache(self) -> None:
-        from basketball_ai.models.ensemble import EnsembleModel
-        EnsembleModel.clear_cache(self)
-
-    @property
-    def is_trained(self) -> bool:
-        return bool(self.perf_model.is_trained and self.compat_model.is_trained)
 
     def _restore_style_bounds(self) -> None:
         if not self._style_bounds_state:
@@ -434,13 +409,11 @@ class StrictProductionEnsembleModel:
                 for value in stats["season"].dropna()
             )
         from basketball_ai.models.age_curve import reset_fitted_params
-        from basketball_ai.models.ensemble import EnsembleModel
 
         reset_fitted_params()
         self._restore_style_bounds()
         self._restore_competition_encoding()
-        return EnsembleModel.predict(
-            self,
+        return super().predict(
             player_id,
             team_id,
             data,
@@ -458,8 +431,6 @@ class StrictProductionEnsembleModel:
         target_age: Optional[int] = None,
         competition: str = "RS",
     ):
-        from basketball_ai.models.ensemble import EnsembleModel
-
         competition = normalize_competition(competition)
         context_competition = data.get("_prediction_competition")
         if context_competition is not None and normalize_competition(
@@ -470,8 +441,7 @@ class StrictProductionEnsembleModel:
         bounded_data = self._data_with_asof_position(
             player_id, data, int(season)
         )
-        result = EnsembleModel._predict_uncached(
-            self,
+        result = super()._predict_uncached(
             player_id,
             team_id,
             bounded_data,
@@ -498,13 +468,11 @@ class StrictProductionEnsembleModel:
         directory: str = "models_saved",
         metrics: Optional[Dict[str, Any]] = None,
     ) -> None:
-        from basketball_ai.models.production_training import ProductionEnsembleModel
-
         if not self._style_bounds_state:
             raise RuntimeError("Production style calibration state is missing")
         if not self._competition_encoding_state:
             raise RuntimeError("Production competition vocabulary is missing")
-        ProductionEnsembleModel.save(self, directory, metrics)
+        super().save(directory, metrics)
         joblib.dump(
             {
                 "style_bounds": dict(self._style_bounds_state),
@@ -520,10 +488,9 @@ class StrictProductionEnsembleModel:
 
     def load(self, directory: str = "models_saved") -> None:
         from basketball_ai.models.age_curve import reset_fitted_params
-        from basketball_ai.models.production_training import ProductionEnsembleModel
 
         reset_fitted_params()
-        ProductionEnsembleModel.load(self, directory)
+        super().load(directory)
         state_path = Path(directory) / _STATE_FILE
         if not state_path.is_file():
             raise RuntimeError(f"Strict production state is missing: {state_path}")
