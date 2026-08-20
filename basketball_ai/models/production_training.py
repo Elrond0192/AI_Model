@@ -110,8 +110,6 @@ class SeasonAheadPerformanceModel(PerformanceModel):
                 f"{examples}"
             )
 
-        # Role dictionaries may use any state available in source seasons, but
-        # never need the target season's outcome to encode a value.
         def build_encoding(column: str) -> Dict[str, int]:
             if column not in player_stats.columns:
                 return {}
@@ -243,7 +241,7 @@ class SeasonAheadPerformanceModel(PerformanceModel):
         sort_idx = np.argsort(target_years, kind="stable")
         X = X.iloc[sort_idx].reset_index(drop=True)
         y = y[sort_idx]
-        target_years = target_years[sort_idx]  # critical: masks follow sorted X/y
+        target_years = target_years[sort_idx]
 
         unique_targets = sorted(set(target_years.tolist()))
         if len(unique_targets) < 3:
@@ -257,7 +255,7 @@ class SeasonAheadPerformanceModel(PerformanceModel):
         cal_mask = target_years == calibration_season
         X_train, y_train = X.loc[train_mask], y[train_mask]
         X_val, y_val = X.loc[val_mask], y[val_mask]
-        X_cal, y_cal = X.loc[cal_mask], y[cal_mask]
+        X_cal = X.loc[cal_mask]
         if X_train.empty or X_val.empty or X_cal.empty:
             raise ValueError("Season-blocked split produced an empty partition")
 
@@ -279,8 +277,6 @@ class SeasonAheadPerformanceModel(PerformanceModel):
         ss_tot = float(np.sum((y_val - np.mean(y_val)) ** 2))
         val_r2 = 1.0 - ss_res / ss_tot if ss_tot > 0 else 0.0
 
-        # Once the tree count has been selected without touching calibration,
-        # refit on train + validation. The calibration target remains untouched.
         fit_mask = target_years <= validation_season
         X_fit, y_fit = X.loc[fit_mask], y[fit_mask]
         self.model = _xgb(selected_trees, early_stopping=False)
@@ -311,7 +307,6 @@ class SeasonAheadPerformanceModel(PerformanceModel):
             baselines["baseline_mean_val_rmse"] - val_rmse
         )
 
-        # Optional CV is season-blocked, never row-blocked.
         if cv_folds > 1:
             candidate_val_seasons = unique_targets[1:-1]
             candidate_val_seasons = candidate_val_seasons[-int(cv_folds):]
@@ -534,8 +529,6 @@ def build_historical_snapshot(data: Dict[str, Any], source_season: int) -> Dict[
     stats = data["player_stats"].copy()
     stats["_season_year"] = _numeric_seasons(stats)
     stats = stats[stats["_season_year"] <= source_season].copy()
-    # Legacy inference helpers compare against str(season); keep this snapshot
-    # representation compatible without changing the canonical DB contract.
     stats["season"] = stats["_season_year"].astype(int).astype(str)
     stats = stats.drop(columns=["_season_year"])
     snapshot["player_stats"] = stats.reset_index(drop=True)
@@ -734,8 +727,6 @@ class ProductionEnsembleModel(EnsembleModel):
             logger.warning("Could not capture drift reference: %s", exc)
             self._drift_reference = None
 
-        # Calibrate intervals on the actual final ensemble output. Nothing in
-        # this model has been fitted on the calibration target season.
         calibration_records = evaluate_target_season(
             self, data, calibration_season
         )
@@ -750,7 +741,6 @@ class ProductionEnsembleModel(EnsembleModel):
         self._conformal_q_lo = None
         self._conformal_q_hi = None
         self._calibrate_conformal(residuals)
-        # Re-evaluate after the interval is calibrated for descriptive metadata.
         calibrated_records = evaluate_target_season(
             self, data, calibration_season
         )
