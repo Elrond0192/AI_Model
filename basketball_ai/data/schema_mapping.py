@@ -80,7 +80,7 @@ TABLE_PLAYERS: List[ColumnDef] = [
 
 TABLE_PLAYER_STATS: List[ColumnDef] = [
     ColumnDef("Id", "player_id", "Player identifier from season advanced stats."),
-    ColumnDef(None, "season", "Static season label.", default="2024"),
+    ColumnDef(None, "season", "Numeric source season; required.", default=None),
     ColumnDef("TeamId", "team_id", "Most recent team identifier from Boxscore.*.", default=None),
     ColumnDef("Competition", "competition", "Competition code from season stats.", default="RS"),
     ColumnDef("Games", "games_played", "Games played.", default=0),
@@ -169,7 +169,7 @@ TABLE_PLAYER_STATS: List[ColumnDef] = [
 TABLE_TEAM_PLAYER_RELATIONS: List[ColumnDef] = [
     ColumnDef("TeamId", "team_id", "Team identifier from Boxscore.*.", default=None),
     ColumnDef("Id", "player_id", "Player identifier from Boxscore.*."),
-    ColumnDef(None, "season", "Static season label.", default="2024"),
+    ColumnDef(None, "season", "Numeric source season; required.", default=None),
     ColumnDef("Pos", "role", "Player role / position from Anagrafiche.*.", default=""),
     ColumnDef("ShirtNumber", "jersey_number", "Player jersey number.", default=0),
 ]

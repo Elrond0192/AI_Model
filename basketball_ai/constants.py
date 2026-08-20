@@ -11,6 +11,7 @@ import time.
 from __future__ import annotations
 
 import re
+from datetime import datetime as _datetime
 from typing import Dict
 
 # ---------------------------------------------------------------------------
@@ -113,9 +114,7 @@ SUPPORTED_LEAGUES: tuple[str, ...] = (
 )
 
 #: All supported season years (integer) in chronological order.
-SUPPORTED_SEASONS: tuple[int, ...] = (
-    2019, 2020, 2021, 2022, 2023, 2024, 2025,
-)
+SUPPORTED_SEASONS: tuple[int, ...] = tuple(range(2019, _datetime.now().year + 2))
 
 #: Regex for safe SQL table-name identifiers (alphanumeric + underscore only).
 _SAFE_IDENTIFIER_RE = re.compile(r'^[A-Za-z][A-Za-z0-9_]{0,127}$')

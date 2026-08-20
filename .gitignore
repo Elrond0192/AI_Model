@@ -7,7 +7,9 @@ __pycache__/
 users.json
 audit.log
 .admin_credentials
+.env
+.env.*
+!.env.example
 .sql_cache/
+runtime/
 *.lock
-# P4: requirements.lock is intentionally committed for reproducible builds
-!requirements.lock

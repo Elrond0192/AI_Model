@@ -60,7 +60,7 @@ def capture_reference(data: Dict) -> Dict[str, Dict]:
     """Capture per-column distribution statistics from a training dataset.
 
     Args:
-        data: Full data dict (from loader.load_all_data or sql_loader).
+        data: Full data dict from the PostgreSQL loader.
 
     Returns:
         Reference dict mapping column → {"edges": ..., "expected_pct": ...}.

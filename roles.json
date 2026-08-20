@@ -6,7 +6,6 @@
       "training",
       "predictions",
       "scenarios",
-      "chat",
       "scouting",
       "mapping",
       "export",
@@ -20,15 +19,13 @@
       "training",
       "predictions",
       "scenarios",
-      "chat",
       "scouting"
     ]
   },
   "viewer": {
-    "description": "Accesso in sola lettura a predizioni e chat",
+    "description": "Accesso in sola lettura a predizioni e scouting",
     "sections": [
       "predictions",
-      "chat",
       "scouting"
     ]
   }

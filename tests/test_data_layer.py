@@ -125,7 +125,7 @@ def test_constants_supported_leagues():
 
 def test_constants_supported_seasons():
     from basketball_ai.constants import SUPPORTED_SEASONS
-    assert "2024-25" in SUPPORTED_SEASONS
+    assert SUPPORTED_SEASONS and all(isinstance(season, int) for season in SUPPORTED_SEASONS)
 
 
 def test_is_safe_identifier():

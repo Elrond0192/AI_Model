@@ -25,31 +25,3 @@ def get_engine(request: Request) -> Optional[Any]:
     except Exception as exc:
         logger.debug("[_deps] get_engine app_state access failed: %s", exc)
     return getattr(request.app.state, "engine", None)
-
-def get_chat_engine(request: Request) -> Optional[Any]:
-    ce = None
-    try:
-        from basketball_ai.api.main import app_state
-        ce = app_state.get("chat_engine")
-    except Exception as exc:
-        logger.debug("[_deps] get_chat_engine app_state access failed: %s", exc)
-    if ce is None:
-        ce = getattr(request.app.state, "chat_engine", None)
-    if ce is not None:
-        return ce
-    engine = get_engine(request)
-    data = get_data(request)
-    if engine is None or not data or not data.get("player_dict"):
-        return None
-    from basketball_ai.chat.engine import ChatEngine
-    ce = ChatEngine(engine, data)
-    try:
-        from basketball_ai.api.main import app_state
-        app_state["chat_engine"] = ce
-    except Exception:
-        pass
-    try:
-        request.app.state.chat_engine = ce
-    except Exception:
-        pass
-    return ce

@@ -33,15 +33,8 @@ development workflow, and quality standards for this project.
 ```bash
 pytest tests/test_models.py   # Model tests
 pytest tests/test_api.py      # API tests
-pytest tests/test_chat.py     # Chat engine tests
 pytest tests/ --cov=basketball_ai --cov-report=term-missing
 ```
-
-## Adding a new chat intent
-
-1. Add the intent to `basketball_ai/chat/intent.py` (`Intent` enum + examples).
-2. Register a handler in `basketball_ai/chat/handlers.py` using `@register_handler(Intent.MY_INTENT)`.
-3. Add tests in `tests/test_chat.py`.
 
 ## Architecture overview
 
@@ -53,7 +46,6 @@ See `docs/architecture/` for C4 diagrams. Key modules:
 | `basketball_ai/features/` | Feature engineering (player, team, context) |
 | `basketball_ai/models/` | XGBoost performance model, ensemble, age curve |
 | `basketball_ai/scenarios/` | What-if engine, transfer analysis, lineup optimisation |
-| `basketball_ai/chat/` | Intent detection, session management, response generation |
 | `basketball_ai/api/` | FastAPI routes, auth middleware, rate limiting |
 | `basketball_ai/auth/` | User management, RBAC, session tokens |
 | `gui/` | Streamlit multi-user GUI |

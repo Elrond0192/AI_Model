@@ -15,7 +15,7 @@ import json
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 import pandas as pd
@@ -31,7 +31,7 @@ def run_backtest(
     """Run walk-forward cross-validation and return a backtest report.
 
     Args:
-        data:        Full data dict (from loader/sql_loader).
+        data:        Full data dict from the PostgreSQL loader.
         n_folds:     Number of temporal folds.
         output_path: If set, write JSON report to this path.
 
@@ -46,10 +46,7 @@ def run_backtest(
     if player_stats.empty or "season" not in player_stats.columns:
         return {"error": "player_stats empty or missing season column"}
 
-    # Build birth_year_map: player_id -> birth_year, derived from current age
-    # (age is stored for the current/latest year; we use it to back-compute
-    # historical ages per-season rather than using a fixed current age).
-    _CURRENT_YEAR = 2024  # reference year for age column in players_df
+    latest_data_year = max((int(str(s).split("-")[0]) for s in player_stats["season"].dropna()), default=datetime.now(timezone.utc).year)
     birth_year_map: Dict[int, int] = {}
     if not players_df.empty and "id" in players_df.columns and "age" in players_df.columns:
         for _, _pr in players_df.iterrows():
@@ -57,7 +54,8 @@ def run_backtest(
                 _pid = int(_pr["id"])
                 _age = _pr.get("age")
                 if _age is not None and not (isinstance(_age, float) and np.isnan(_age)):
-                    birth_year_map[_pid] = _CURRENT_YEAR - int(_age)
+                    birth_date = _pr.get("birth_date", _pr.get("date_of_birth"))
+                    birth_year_map[_pid] = int(str(birth_date)[:4]) if birth_date else latest_data_year - int(_age)
             except (TypeError, ValueError):
                 pass
 
@@ -70,17 +68,19 @@ def run_backtest(
                 pass
 
     seasons = sorted(player_stats["season"].unique())
-    if len(seasons) < n_folds + 1:
-        n_folds = max(1, len(seasons) - 1)
-
-    fold_size = len(seasons) // (n_folds + 1)
+    # PerformanceModel requires three target-season blocks internally, which
+    # means at least four source seasons before the first out-of-time fold.
+    if len(seasons) < 5:
+        return {"error": "at least five seasons are required", "valid": False, "folds": []}
+    n_folds = min(n_folds, len(seasons) - 4)
     folds_results: List[Dict[str, Any]] = []
     all_preds: List[float] = []
     all_truths: List[float] = []
 
     for i in range(n_folds):
-        train_seasons = seasons[: (i + 1) * fold_size]
-        val_seasons   = seasons[(i + 1) * fold_size : (i + 2) * fold_size]
+        train_end = 4 + i
+        train_seasons = seasons[:train_end]
+        val_seasons = seasons[train_end:train_end + 1]
         if not val_seasons:
             break
 
@@ -88,6 +88,7 @@ def run_backtest(
         val_stats   = player_stats[player_stats["season"].isin(val_seasons)]
 
         if train_stats.empty or val_stats.empty:
+            folds_results.append({"fold": i + 1, "train_seasons": [str(s) for s in train_seasons], "val_seasons": [str(s) for s in val_seasons], "valid": False, "error": "empty train or validation partition"})
             continue
 
         fold_data = {**data, "player_stats": train_stats}
@@ -96,36 +97,54 @@ def run_backtest(
             model.train(fold_data)
         except Exception as exc:
             _logger.warning("[Backtest] Fold %d train failed: %s", i, exc)
+            folds_results.append({"fold": i + 1, "train_seasons": [str(s) for s in train_seasons], "val_seasons": [str(s) for s in val_seasons], "valid": False, "error": str(exc)})
             continue
 
         # Predict on validation fold
-        y_true = val_stats["rating"].values
         fold_preds: List[float] = []
+        fold_truths: List[float] = []
+        fold_leagues: List[Any] = []
+        excluded_no_history = 0
         for _, row in val_stats.iterrows():
             try:
                 hist = train_stats[train_stats["player_id"] == row["player_id"]]
+                if hist.empty:
+                    raise ValueError("player has no prior-season history")
                 _pid = int(row["player_id"])
                 # Compute age for the historical season rather than using
                 # the player's current age (which would introduce temporal leakage)
-                _season_str = str(row.get("season", "2024"))
+                _season_str = str(row.get("season", latest_data_year))
                 try:
                     _season_year = int(_season_str.split("-")[0])
                 except (ValueError, IndexError):
-                    _season_year = _CURRENT_YEAR
+                    raise ValueError("invalid season")
                 _by = birth_year_map.get(_pid)
                 if _by is not None:
                     age = _season_year - _by
                 else:
                     age = 25  # fallback when birth_year unknown
                 pos = position_map.get(_pid, "PG")
-                feat = model._build_row(row, age, pos, hist)
+                source = hist.sort_values("season").iloc[-1]
+                feat = model._build_row(source, age - 1, pos, hist)
                 feat_df = pd.DataFrame([feat]).reindex(columns=model.feature_names, fill_value=0.0)
                 pred = float(model.model.predict(feat_df)[0])
-            except Exception:
-                pred = float(np.mean(y_true)) if len(y_true) > 0 else 5.0
+            except ValueError as exc:
+                if "prior-season history" in str(exc):
+                    excluded_no_history += 1
+                    continue
+                raise RuntimeError(f"Backtest fold {i + 1} prediction failed") from exc
+            except Exception as exc:
+                raise RuntimeError(f"Backtest fold {i + 1} prediction failed") from exc
             fold_preds.append(pred)
+            fold_truths.append(float(row["rating"]))
+            fold_leagues.append(row.get("league_id"))
+
+        if not fold_preds:
+            folds_results.append({"fold": i + 1, "train_seasons": [str(s) for s in train_seasons], "val_seasons": [str(s) for s in val_seasons], "valid": False, "error": "no validation players with prior history"})
+            continue
 
         fold_preds_arr = np.array(fold_preds)
+        y_true = np.array(fold_truths)
         fold_rmse = float(np.sqrt(np.mean((fold_preds_arr - y_true) ** 2)))
         all_preds.extend(fold_preds)
         all_truths.extend(y_true.tolist())
@@ -133,8 +152,7 @@ def run_backtest(
         # Per-league RMSE for this fold
         by_league: Dict[str, float] = {}
         if "league_id" in val_stats.columns:
-            val_with_preds = val_stats.copy()
-            val_with_preds["_pred"] = fold_preds_arr
+            val_with_preds = pd.DataFrame({"league_id": fold_leagues, "rating": fold_truths, "_pred": fold_preds_arr})
             for league_id, grp in val_with_preds.groupby("league_id"):
                 rmse_l = float(np.sqrt(np.mean((grp["_pred"].values - grp["rating"].values) ** 2)))
                 by_league[str(league_id)] = round(rmse_l, 4)
@@ -146,13 +164,15 @@ def run_backtest(
             "val_rmse":      round(fold_rmse, 4),
             "val_n":         len(y_true),
             "by_league":     by_league,
+            "valid":         True,
+            "excluded_no_history": excluded_no_history,
         })
         _logger.info("[Backtest] Fold %d: val_rmse=%.4f on %d samples", i + 1, fold_rmse, len(y_true))
 
     overall_rmse = (
         float(np.sqrt(np.mean((np.array(all_preds) - np.array(all_truths)) ** 2)))
         if all_preds
-        else 0.0
+        else float("nan")
     )
 
     # Aggregate by_league across folds
@@ -168,6 +188,7 @@ def run_backtest(
         "overall_rmse": round(overall_rmse, 4),
         "folds":        folds_results,
         "by_league":    by_league_mean,
+        "valid": bool(folds_results) and len(folds_results) == n_folds and all(f.get("valid") for f in folds_results),
     }
 
     if output_path:

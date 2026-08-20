@@ -39,7 +39,7 @@ def wp_client():
 
     stat_rows = []
     for _, p in players.iterrows():
-        for season in ["2021-22", "2022-23", "2023-24"]:
+        for season in ["2019-20", "2020-21", "2021-22", "2022-23", "2023-24"]:
             mpg = np.random.uniform(15, 35)
             stat_rows.append({
                 "player_id": int(p["id"]), "season": season,
@@ -97,7 +97,6 @@ def wp_client():
         from basketball_ai.api import main as api_main
         api_main.app_state["data"]        = data
         api_main.app_state["engine"]      = engine
-        api_main.app_state["chat_engine"] = None
         yield tc
 
 

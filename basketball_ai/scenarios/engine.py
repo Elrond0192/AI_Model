@@ -9,6 +9,10 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
+from basketball_ai.features.context_features import compute_context_features
+from basketball_ai.features.player_features import compute_player_features
+from basketball_ai.features.team_features import compute_team_features, get_style_position_compat
+from basketball_ai.models.age_curve import PEAK_AGES, maybe_fit_from_db, peak_age_window
 from basketball_ai.models.ensemble import EnsembleModel, PredictionResult
 from basketball_ai.utils.helpers import (
     team_display_name as _team_display_name,
@@ -22,11 +26,6 @@ def _safe_int(val: Any, default: int = 0) -> int:
         return int(f) if math.isfinite(f) else default
     except (TypeError, ValueError):
         return default
-
-from basketball_ai.models.age_curve import PEAK_AGES, maybe_fit_from_db, peak_age_window
-from basketball_ai.features.context_features import compute_context_features
-from basketball_ai.features.player_features import compute_player_features
-from basketball_ai.features.team_features import compute_team_features, get_style_position_compat
 
 logger = logging.getLogger(__name__)
 
@@ -261,7 +260,7 @@ class WhatIfEngine:
 
     # ------------------------------------------------------------------
     def predict_in_team(
-        self, player_id: int, target_team_id: int, season: int = 2024,
+        self, player_id: int, target_team_id: int, season: Optional[int] = None,
         competition: str = "RS",
     ) -> PredictionResult:
         """Predict how a player would perform at a given team.
@@ -298,11 +297,16 @@ class WhatIfEngine:
     def predict_age_trajectory(
         self,
         player_id: int,
+        season_base: Optional[int] = None,
         age_range: Optional[Tuple[int, int]] = None,
         team_id: Optional[int] = None,
-        season_base: int = 2024,
     ) -> List[TrajectoryPoint]:
         """Return rating predictions across an age range."""
+        if season_base is None:
+            seasons = self.data["player_stats"]["season"].dropna()
+            if seasons.empty:
+                raise ValueError("season_base is required")
+            season_base = max(int(str(value).split("-")[0]) for value in seasons) + 1
         player      = self.data["player_dict"].get(_normalize_id(player_id), {})
         current_age = _safe_int(player.get("age", 25), 25)
 
@@ -331,7 +335,7 @@ class WhatIfEngine:
 
     # ------------------------------------------------------------------
     def compare_scenarios(
-        self, player_id: int, team_ids: List[int], season: int = 2024,
+        self, player_id: int, team_ids: List[int], season: Optional[int] = None,
         competition: str = "RS",
     ) -> ComparisonResult:
         """Compare player performance across multiple team scenarios."""
@@ -367,8 +371,8 @@ class WhatIfEngine:
 
     # ------------------------------------------------------------------
     def best_team_fit(
-        self, player_id: int, league_id: Optional[int] = None,
-        top_n: int = 10, season: int = 2024,
+        self, player_id: int, season: Optional[int] = None,
+        league_id: Optional[int] = None, top_n: int = 10,
     ) -> List[TeamFitResult]:
         """Find the top-N teams where the player would perform best."""
         teams_df    = self.data["teams"]
@@ -406,8 +410,8 @@ class WhatIfEngine:
 
     # ------------------------------------------------------------------
     def best_player_for_team(
-        self, team_id: int, position: Optional[str] = None,
-        top_n: int = 10, season: int = 2024,
+        self, team_id: int, season: Optional[int] = None,
+        position: Optional[str] = None, top_n: int = 10,
     ) -> List[PlayerFitResult]:
         """Find the top-N players who would fit best at a team."""
         players_df = self.data["players"]
@@ -452,7 +456,7 @@ class WhatIfEngine:
     # ------------------------------------------------------------------
     def simulate_transfer(
         self, player_id: int, from_team_id: int, to_team_id: int,
-        season: int = 2024, competition: str = "RS",
+        season: Optional[int] = None, competition: str = "RS",
     ) -> TransferImpactResult:
         """Simulate the performance impact of a transfer between two teams."""
         pred_before = self.ensemble.predict(player_id, from_team_id, self.data, season,
@@ -487,7 +491,7 @@ class WhatIfEngine:
         self,
         player_id: int,
         team_id: int,
-        season: int = 2024,
+        season: Optional[int] = None,
         competition: str = "RS",
     ) -> Optional[Dict[str, Any]]:
         """Predict which per-game statistics a player would average at *team_id*.
@@ -598,7 +602,7 @@ class WhatIfEngine:
     # ------------------------------------------------------------------
     def what_if_teammates(
         self, player_id: int, team_id: int,
-        hypothetical_avg_rating: float, season: int = 2024,
+        hypothetical_avg_rating: float, season: Optional[int] = None,
     ) -> PredictionResult:
         """What if the player's teammates had a different average rating?"""
         pred       = self.ensemble.predict(player_id, team_id, self.data, season)
@@ -657,7 +661,7 @@ class WhatIfEngine:
         player_id: int,
         team_id: int,
         lineup_player_ids: List[int],
-        season: int = 2024,
+        season: Optional[int] = None,
     ) -> LineupAnalysisResult:
         """Predict player X's performance in team Y with a specific named lineup.
 
@@ -800,7 +804,7 @@ class WhatIfEngine:
         self,
         player_ids: List[int],
         team_id: int,
-        season: int = 2024,
+        season: Optional[int] = None,
     ) -> LineupSynergyResult:
         """Compute a comprehensive synergy score for a set of players."""
         player_dict = self.data["player_dict"]
@@ -964,7 +968,7 @@ class WhatIfEngine:
         target_player_id: int,
         team_id: int,
         desired_roles: List[str],
-        season: int = 2024,
+        season: Optional[int] = None,
         top_n_per_role: int = 5,
         role_dimension: str = "ruolo_combinato",
     ) -> LineupByRolesResult:

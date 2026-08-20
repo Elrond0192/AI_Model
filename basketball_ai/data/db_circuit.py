@@ -10,7 +10,7 @@ Usage::
 
     from basketball_ai.data.db_circuit import CircuitBreaker, retry_with_backoff
 
-    breaker = CircuitBreaker(name="azure_sql")
+    breaker = CircuitBreaker(name="postgresql")
 
     def load():
         with breaker:

@@ -21,7 +21,7 @@ def _build_regression_data():
 
     rng = np.random.default_rng(42)
     n_players = 30
-    n_seasons = 3
+    n_seasons = 5
 
     players = pd.DataFrame({
         "id": range(1, n_players + 1),
@@ -31,7 +31,7 @@ def _build_regression_data():
         "nationality": ["American"] * n_players,
     })
 
-    seasons = ["2020-21", "2021-22", "2022-23"]
+    seasons = ["2018-19", "2019-20", "2020-21", "2021-22", "2022-23"]
     records = []
     for pid in range(1, n_players + 1):
         for season in seasons:

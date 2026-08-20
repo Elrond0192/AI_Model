@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import numpy as np
+import pandas as pd
 
 from basketball_ai.models.age_curve import age_performance_factor, maybe_fit_from_db
 
@@ -265,7 +266,7 @@ class EnsembleModel:
         player_id: int,
         team_id: int,
         data: Dict[str, Any],
-        season: int = 2024,
+        season: Optional[int] = None,
         target_age: Optional[int] = None,
         competition: str = "RS",
     ) -> PredictionResult:
@@ -290,6 +291,11 @@ class EnsembleModel:
         Returns:
             PredictionResult with predicted rating and full breakdown.
         """
+        if season is None:
+            seasons = data.get("player_stats", pd.DataFrame()).get("season", pd.Series(dtype=object)).dropna()
+            if seasons.empty:
+                raise ValueError("season is required when data has no season")
+            season = max(int(str(value).split("-")[0]) for value in seasons) + 1
         cache_key = (_normalize_id(player_id), _normalize_id(team_id), season, target_age, competition)
         cached = self._cache_get(cache_key)
         if cached is not None:
@@ -304,7 +310,7 @@ class EnsembleModel:
         player_id: int,
         team_id: int,
         data: Dict[str, Any],
-        season: int = 2024,
+        season: int,
         target_age: Optional[int] = None,
         competition: str = "RS",
     ) -> PredictionResult:

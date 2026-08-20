@@ -7,7 +7,7 @@
 ## Context
 
 The API needs to authenticate requests from multiple clients (Streamlit GUI,
-REST API consumers, the chat widget). Session-based auth requires sticky sessions
+REST API consumers and WordPress). Session-based auth requires sticky sessions
 or a shared session store, which adds infrastructure complexity.
 
 ## Decision

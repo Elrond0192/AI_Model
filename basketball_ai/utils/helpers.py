@@ -41,7 +41,7 @@ def normalize_id(value: Any) -> Any:
 # ---------------------------------------------------------------------------
 
 #: Env-var that stores per-country field preferences, e.g. "IT:name,ES:short_name"
-TEAM_DISPLAY_FIELD_MAP_ENV = "AZURE_TEAM_DISPLAY_FIELD_MAP"
+TEAM_DISPLAY_FIELD_MAP_ENV = "TEAM_DISPLAY_FIELD_MAP"
 
 
 def parse_team_display_map(raw: str = "") -> Dict[str, str]:
