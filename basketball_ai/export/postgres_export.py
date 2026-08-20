@@ -12,9 +12,9 @@ from basketball_ai.data.postgres_loader import get_engine, load_all_data
 def publish_current_team_forecasts(model_dir: str) -> int:
     from basketball_ai.models.strict_production import (
         StrictProductionEnsembleModel,
+        StrictWhatIfEngine,
         build_historical_snapshot,
     )
-    from basketball_ai.scenarios.engine import WhatIfEngine
 
     model_path = Path(model_dir)
     metadata_path = model_path / "metadata.json"
@@ -29,10 +29,13 @@ def publish_current_team_forecasts(model_dir: str) -> int:
     model = StrictProductionEnsembleModel()
     model.load(str(model_path))
     latest_season = int(
-        max(int(str(value).split("-")[0]) for value in data["player_stats"]["season"].dropna())
+        max(
+            int(str(value).split("-")[0])
+            for value in data["player_stats"]["season"].dropna()
+        )
     )
     snapshot = build_historical_snapshot(data, latest_season)
-    inference = WhatIfEngine(model, snapshot)
+    inference = StrictWhatIfEngine(model, snapshot)
 
     rows = []
     for player_id, player in snapshot["player_dict"].items():
@@ -56,7 +59,9 @@ def publish_current_team_forecasts(model_dir: str) -> int:
                 "predicted_rating": result.predicted_rating,
                 "confidence_low": result.confidence_low,
                 "confidence_high": result.confidence_high,
-                "payload": json.dumps({"method": "forecast_t_plus_1", "status": "production"}),
+                "payload": json.dumps(
+                    {"method": "forecast_t_plus_1", "status": "production"}
+                ),
             }
         )
 
