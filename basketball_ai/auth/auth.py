@@ -16,7 +16,6 @@ Sections
 - ``training``    – 🏋️ Training
 - ``predictions`` – 🎯 Predizioni
 - ``scenarios``   – 🔀 Scenari
-- ``chat``        – 💬 Chat
 - ``scouting``    – 🔬 Scouting AI
 - ``mapping``     – 🗺️ Mapping colonne DB
 - ``admin``       – 👥 Gestione Utenti
@@ -107,7 +106,7 @@ _lockout_registry: Dict[str, Tuple[int, str]] = {}
 #: Ordered list of all section identifiers that map to GUI tabs.
 ALL_SECTIONS: List[str] = [
     "data", "training", "predictions", "scenarios",
-    "chat", "scouting", "mapping", "export", "admin",
+    "scouting", "mapping", "export", "admin",
 ]
 
 #: Human-readable labels for each section (used in the admin UI).
@@ -116,7 +115,6 @@ SECTION_LABELS: Dict[str, str] = {
     "training":    "🏋️ Training",
     "predictions": "🎯 Predizioni",
     "scenarios":   "🔀 Scenari",
-    "chat":        "💬 Chat",
     "scouting":    "🔬 Scouting AI",
     "mapping":     "🗺️ Mapping",
     "export":      "📤 Export SQL",
@@ -132,11 +130,11 @@ DEFAULT_ROLES: Dict[str, Dict] = {
     },
     "analyst": {
         "description": "Accesso alle funzionalità analitiche (no gestione utenti/mapping)",
-        "sections": ["data", "training", "predictions", "scenarios", "chat", "scouting", "export"],
+        "sections": ["data", "training", "predictions", "scenarios", "scouting", "export"],
     },
     "viewer": {
-        "description": "Accesso in sola lettura a predizioni e chat",
-        "sections": ["predictions", "chat", "scouting"],
+        "description": "Accesso in sola lettura a predizioni e scouting",
+        "sections": ["predictions", "scouting"],
     },
 }
 

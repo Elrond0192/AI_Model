@@ -96,17 +96,15 @@ def _load_app_state() -> None:
             data = load_all_data()
         except Exception as exc:
             logger.error("[API] ERROR loading SQL data: %s", exc)
-            app_state["data"]        = _empty_data()
-            app_state["engine"]      = None
-            app_state["chat_engine"] = None
+            app_state["data"] = _empty_data()
+            app_state["engine"] = None
             return
     else:
         from basketball_ai.data.loader import load_all_data, data_exists
         if not data_exists(data_dir):
             logger.warning("[API] data not found – run --mode generate-data first")
-            app_state["data"]        = _empty_data()
-            app_state["engine"]      = None
-            app_state["chat_engine"] = None
+            app_state["data"] = _empty_data()
+            app_state["engine"] = None
             return
         logger.info("[API] Loading data from CSV files …")
         data = load_all_data(data_dir)
@@ -124,8 +122,7 @@ def _load_app_state() -> None:
         logger.warning("[API] No pre-trained models found – starting without trained models.")
 
     engine = WhatIfEngine(ensemble, data)
-    app_state["engine"]      = engine
-    app_state["chat_engine"] = None   # deprecated: chat belongs to WordPress
+    app_state["engine"] = engine
     logger.info("[API] Ready.")
 
 
@@ -172,7 +169,6 @@ async def lifespan(app: FastAPI):
     # Sync app.state for DI-based access (P5 – gradual migration)
     app.state.data = app_state.get("data", {})
     app.state.engine = app_state.get("engine")
-    app.state.chat_engine = app_state.get("chat_engine")
     metadata_path = Path(os.environ.get("MODEL_DIR", "models_saved")) / "metadata.json"
     metadata = _json.loads(metadata_path.read_text()) if metadata_path.exists() else {}
     app.state.model_metadata = {"model_run_id": str(metadata.get("model_run_id", "unversioned")), "model_version": str(metadata.get("model_version", "v2")), "feature_version": str(metadata.get("feature_version", "unknown")), "data_cutoff": str(metadata.get("data_cutoff", "1970-01-01"))}
@@ -209,8 +205,7 @@ def create_app() -> FastAPI:
         description=(
             "Professional AI system for estimating basketball player performance "
             "across leagues and teams. Supports What-If scenario analysis, "
-            "age trajectory, transfer impact, team/player fit ranking, "
-            "and a natural-language chat interface."
+            "age trajectory, transfer impact, and team/player fit ranking."
         ),
         version="2.0.0",
         lifespan=lifespan,

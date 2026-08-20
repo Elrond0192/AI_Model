@@ -1,4 +1,4 @@
-"""Version 2 prediction endpoints; this service is inference-only, never chat."""
+"""Version 2 typed prediction endpoints."""
 from __future__ import annotations
 from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, Request

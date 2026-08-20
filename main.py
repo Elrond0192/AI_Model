@@ -19,7 +19,7 @@ def parse_args(argv=None):
     )
     parser.add_argument(
         "--mode",
-        choices=["generate-data", "train", "demo", "api", "export-chat-model", "publish-batch", "validate-data", "backup", "backtest"],
+        choices=["generate-data", "train", "demo", "api", "publish-batch", "validate-data", "backup", "backtest"],
         required=True,
     )
     parser.add_argument("--data-dir",  default="data/sample",   help="Data directory (file source)")
@@ -43,30 +43,14 @@ def parse_args(argv=None):
         default=False,
         help="D8: Replace player names with anonymous IDs in export output",
     )
-    parser.add_argument(
-        "--out",
-        default="chat_model.json.gz",
-        help="Output file for export-chat-model (default: chat_model.json.gz)",
-    )
-    parser.add_argument(
-        "--top-players",
-        type=int,
-        default=None,
-        help="Limit players in chat model export (omit = all players)",
-    )
-    parser.add_argument(
-        "--top-teams",
-        type=int,
-        default=None,
-        help="Limit teams in chat model export (omit = all teams)",
-    )
     return parser.parse_args(argv)
 
 
 def _load_data(args):
     """Load the selected PostgreSQL profile."""
     import os
-    if args.database_profile: os.environ["DATABASE_PROFILE"] = args.database_profile
+    if args.database_profile:
+        os.environ["DATABASE_PROFILE"] = args.database_profile
     from basketball_ai.data.postgres_loader import load_all_data
     print(f"[Data] Loading PostgreSQL profile {args.database_profile or os.getenv('DATABASE_PROFILE', '<active>')} …")
     return load_all_data()
@@ -105,7 +89,6 @@ def mode_train(args) -> None:
 def mode_demo(args) -> None:
     from basketball_ai.models.ensemble import EnsembleModel
     from basketball_ai.scenarios.engine import WhatIfEngine
-    from basketball_ai.utils.helpers import format_prediction_output
     from basketball_ai.data.loader import _to_int
 
     print("=" * 60)
@@ -126,7 +109,6 @@ def mode_demo(args) -> None:
     players_df  = data["players"]
     teams_df    = data["teams"]
     team_dict   = data["team_dict"]
-    league_dict = data["league_dict"]
 
     # --- Demo 1: Performance comparison across teams --------------------
     sample_pos = ["PG", "SG/SF", "PF/C", "C"]
@@ -352,40 +334,6 @@ def mode_export_wordpress(args) -> None:
 # ---------------------------------------------------------------------------
 
 
-def mode_export_chat_model(args) -> None:
-    """Export pre-computed predictions for the HoopMetrics local chat backend."""
-    from basketball_ai.models.ensemble import EnsembleModel
-    from basketball_ai.scenarios.engine import WhatIfEngine
-    from basketball_ai.export.chat_model_export import export_chat_model
-
-    print("=" * 60)
-    print("  Exporting chat model (hoopmetrics-chat local backend) …")
-    print("=" * 60)
-
-    data     = _load_data(args)
-    ensemble = EnsembleModel()
-
-    if (Path(args.model_dir) / "performance_model.joblib").exists():
-        ensemble.load(args.model_dir)
-    else:
-        print("[WARN] No trained models – training now …")
-        ensemble.train(data)
-        ensemble.save(args.model_dir)
-
-    engine = WhatIfEngine(ensemble, data)
-
-    export_chat_model(
-        engine=engine,
-        data=data,
-        out_path=Path(args.out),
-        top_players=args.top_players,
-        top_teams=args.top_teams,
-    )
-
-
-# ---------------------------------------------------------------------------
-
-
 def mode_publish_batch(args) -> None:
     from basketball_ai.export.postgres_export import publish_current_team_forecasts
     print(f"[Batch] Published {publish_current_team_forecasts(args.model_dir)} forecasts")
@@ -394,7 +342,8 @@ def mode_backtest(args) -> None:
     from basketball_ai.models.backtest import run_backtest
     report = run_backtest(_load_data(args), output_path=str(Path(args.model_dir) / "backtest_report.json"))
     print(report)
-    if not report.get("valid"): raise SystemExit(2)
+    if not report.get("valid"):
+        raise SystemExit(2)
 
 
 # ---------------------------------------------------------------------------
@@ -527,7 +476,6 @@ def main(argv=None):
         "train":            mode_train,
         "demo":             mode_demo,
         "api":              mode_api,
-        "export-chat-model": mode_export_chat_model,
         "publish-batch":    mode_publish_batch,
         "validate-data":    mode_validate_data,
         "backup":           mode_backup,

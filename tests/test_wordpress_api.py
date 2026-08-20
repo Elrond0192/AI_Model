@@ -97,7 +97,6 @@ def wp_client():
         from basketball_ai.api import main as api_main
         api_main.app_state["data"]        = data
         api_main.app_state["engine"]      = engine
-        api_main.app_state["chat_engine"] = None
         yield tc
 
 

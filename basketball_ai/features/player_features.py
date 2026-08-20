@@ -7,15 +7,23 @@ Provides two layers:
 """
 from __future__ import annotations
 
+import math as _math
 from typing import Any, Dict, List, Optional
 
 import numpy as np
 import pandas as pd
 
+from basketball_ai.constants import (
+    LEAGUE_MAX_GAMES_BY_NAME,
+    LEAGUE_MAX_GAMES_DEFAULT,
+    POSITIONAL_PEAK_AGES,
+    _peak_age,
+    _primary_pos,
+    get_peak_age,
+)
+from basketball_ai.data.loader import _to_int as _lid_to_int
 from basketball_ai.data.models import Player, PlayerStats
 from basketball_ai.utils.helpers import normalize_id as _normalize_id
-from basketball_ai.data.loader import _to_int as _lid_to_int
-import math as _math
 
 def _safe_int(val: Any, default: int = 0) -> int:
     """Convert val to int, treating NaN/inf as default."""
@@ -24,15 +32,6 @@ def _safe_int(val: Any, default: int = 0) -> int:
         return int(f) if _math.isfinite(f) else default
     except (TypeError, ValueError):
         return default
-from basketball_ai.constants import (
-    POSITIONAL_PEAK_AGES,
-    LEAGUE_MAX_GAMES_BY_NAME,
-    LEAGUE_MAX_GAMES_DEFAULT,
-    get_peak_age,
-    _primary_pos,
-    _peak_age,
-)
-
 # Re-export so that existing importers (e.g. tests) continue to work.
 __all__ = [
     "POSITIONAL_PEAK_AGES",

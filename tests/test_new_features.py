@@ -185,10 +185,9 @@ class TestPredictionCache:
 
 class TestLimiterModule:
     def test_limiter_is_importable(self):
-        from basketball_ai.api.limiter import limiter, RATE_LIMIT_PREDICTIONS, RATE_LIMIT_CHAT
+        from basketball_ai.api.limiter import limiter, RATE_LIMIT_PREDICTIONS
         assert limiter is not None
         assert isinstance(RATE_LIMIT_PREDICTIONS, str)
-        assert isinstance(RATE_LIMIT_CHAT, str)
 
 
 # ---------------------------------------------------------------------------

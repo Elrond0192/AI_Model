@@ -1,6 +1,7 @@
 """Pydantic v2 schemas for the Basketball Performance AI API."""
+
 from __future__ import annotations
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Optional
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -13,12 +14,13 @@ class APIResponse(BaseModel):
 # Players
 # ---------------------------------------------------------------------------
 
+
 class PlayerOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: int
     name: str
     age: int
-    position: str          # e.g. "PG", "PF/C", "SG/SF"
+    position: str  # e.g. "PG", "PF/C", "SG/SF"
     nationality: str
     height_cm: Optional[float] = None
     weight_kg: Optional[float] = None
@@ -68,12 +70,15 @@ class PlayerProfileOut(BaseModel):
 # Teams
 # ---------------------------------------------------------------------------
 
+
 class TeamOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: int
     name: str
     league_id: int
-    playing_style: str    # pace_and_space|pick_and_roll|isolation|defensive|motion_offense|post_up
+    playing_style: (
+        str  # pace_and_space|pick_and_roll|isolation|defensive|motion_offense|post_up
+    )
     formation: str
     pace: float
     offensive_rating: float
@@ -95,6 +100,7 @@ class TeamAnalysisOut(BaseModel):
 # ---------------------------------------------------------------------------
 # Predictions
 # ---------------------------------------------------------------------------
+
 
 class PredictionOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -137,6 +143,7 @@ class PeakPredictionOut(BaseModel):
 # ---------------------------------------------------------------------------
 # Scenarios
 # ---------------------------------------------------------------------------
+
 
 class WhatIfRequest(BaseModel):
     player_id: int
@@ -245,6 +252,7 @@ class LineupAnalysisOut(BaseModel):
 # WordPress player card
 # ---------------------------------------------------------------------------
 
+
 class TeamFitSummary(BaseModel):
     rank: int
     team_name: str
@@ -254,6 +262,7 @@ class TeamFitSummary(BaseModel):
 
 class PlayerCardOut(BaseModel):
     """Compact player snapshot intended for WordPress shortcodes / REST blocks."""
+
     model_config = ConfigDict(from_attributes=True)
 
     player_id: int
@@ -268,20 +277,3 @@ class PlayerCardOut(BaseModel):
     peak_age: Optional[int] = None
     top_teams: List[TeamFitSummary] = Field(default_factory=list)
     generated_at: str = ""
-
-
-# ---------------------------------------------------------------------------
-# Chat
-# ---------------------------------------------------------------------------
-
-class ChatRequest(BaseModel):
-    message: str = Field(..., min_length=1, max_length=1000)
-    session_id: Optional[str] = None
-
-
-class ChatMessageResponse(BaseModel):
-    reply: str
-    session_id: str
-    intent: str
-    data: Dict[str, Any] = Field(default_factory=dict)
-    suggestions: List[str] = Field(default_factory=list)

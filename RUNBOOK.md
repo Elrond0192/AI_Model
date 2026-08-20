@@ -13,7 +13,6 @@ This runbook covers common operational procedures and incident responses.
 |------------------|-------|----------------------|
 | REST API         | 8000  | FastAPI / uvicorn    |
 | Admin panel      | 8501  | Streamlit            |
-| Chat widget      | 8502  | Streamlit embed      |
 
 ```bash
 docker-compose up -d          # start all services
