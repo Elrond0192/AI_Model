@@ -8,20 +8,21 @@ import math
 import os
 from pathlib import Path
 import shutil
-from typing import Any, Dict, Iterable
+from typing import Any, Dict
 import uuid
 
 _logger = logging.getLogger(__name__)
 
 PROMOTION_THRESHOLD_PCT = float(os.getenv("MODEL_PROMOTION_THRESHOLD_PCT", "2.0"))
 MAX_SEGMENT_REGRESSION_PCT = float(os.getenv("MODEL_MAX_SEGMENT_REGRESSION_PCT", "15.0"))
-MIN_BACKTEST_SAMPLES = int(os.getenv("MODEL_MIN_BACKTEST_SAMPLES", "1"))
+MIN_BACKTEST_SAMPLES = int(os.getenv("MODEL_MIN_BACKTEST_SAMPLES", "20"))
 TARGET_INTERVAL_COVERAGE = float(os.getenv("MODEL_TARGET_INTERVAL_COVERAGE", "0.90"))
 INTERVAL_COVERAGE_TOLERANCE = float(os.getenv("MODEL_INTERVAL_COVERAGE_TOLERANCE", "0.10"))
 _REQUIRED_ARTIFACTS = (
     "performance_model.joblib",
     "compatibility_model.joblib",
     "conformal.joblib",
+    "production_state.joblib",
     "metadata.json",
 )
 
@@ -66,7 +67,9 @@ def _run_path(model_root: Path, entry: dict) -> Path:
 
 
 def _artifacts_exist(run_dir: Path) -> bool:
-    return run_dir.is_dir() and all((run_dir / name).is_file() for name in _REQUIRED_ARTIFACTS)
+    return run_dir.is_dir() and all(
+        (run_dir / name).is_file() for name in _REQUIRED_ARTIFACTS
+    )
 
 
 def register_candidate(
@@ -107,38 +110,66 @@ def register_candidate(
     return entry
 
 
+def _finite_metric(overall: dict, name: str, errors: list[str]) -> None:
+    value = overall.get(name)
+    try:
+        if not math.isfinite(float(value)):
+            raise ValueError
+    except (TypeError, ValueError):
+        errors.append(f"overall {name} is missing or non-finite")
+
+
 def _promotion_gate_errors(candidate: dict) -> list[str]:
     errors: list[str] = []
     report = candidate.get("backtest") or {}
     overall = report.get("overall") or {}
     if not report.get("valid"):
         errors.append("backtest is not valid")
-    rmse = overall.get("rmse", report.get("overall_rmse"))
-    try:
-        if not math.isfinite(float(rmse)):
-            raise ValueError
-    except (TypeError, ValueError):
-        errors.append("overall RMSE is missing or non-finite")
+
+    _finite_metric(overall, "rmse", errors)
+    _finite_metric(overall, "mae", errors)
+    _finite_metric(overall, "bias", errors)
+
     n = int(overall.get("n", 0) or 0)
     if n < MIN_BACKTEST_SAMPLES:
-        errors.append(f"backtest has {n} samples; minimum is {MIN_BACKTEST_SAMPLES}")
+        errors.append(
+            f"backtest has {n} samples; minimum is {MIN_BACKTEST_SAMPLES}"
+        )
 
-    # The contextual ensemble must justify its complexity on untouched seasons.
     ensemble_vs_base = report.get("ensemble_vs_base_delta")
-    if ensemble_vs_base is None or float(ensemble_vs_base) < 0:
+    try:
+        if not math.isfinite(float(ensemble_vs_base)) or float(ensemble_vs_base) < 0:
+            raise ValueError
+    except (TypeError, ValueError):
         errors.append("full ensemble does not beat the base XGBoost forecast")
+
     ensemble_vs_persistence = report.get("ensemble_vs_persistence_delta")
-    if ensemble_vs_persistence is None or float(ensemble_vs_persistence) < 0:
+    try:
+        if (
+            not math.isfinite(float(ensemble_vs_persistence))
+            or float(ensemble_vs_persistence) < 0
+        ):
+            raise ValueError
+    except (TypeError, ValueError):
         errors.append("full ensemble does not beat previous-season persistence")
 
     coverage = overall.get("interval_coverage")
-    if coverage is not None:
-        lo = TARGET_INTERVAL_COVERAGE - INTERVAL_COVERAGE_TOLERANCE
-        hi = min(1.0, TARGET_INTERVAL_COVERAGE + INTERVAL_COVERAGE_TOLERANCE)
-        if not lo <= float(coverage) <= hi:
-            errors.append(
-                f"interval coverage {float(coverage):.3f} outside [{lo:.3f}, {hi:.3f}]"
-            )
+    if coverage is None:
+        errors.append("interval coverage is missing")
+    else:
+        try:
+            coverage_value = float(coverage)
+            if not math.isfinite(coverage_value):
+                raise ValueError
+            lo = TARGET_INTERVAL_COVERAGE - INTERVAL_COVERAGE_TOLERANCE
+            hi = min(1.0, TARGET_INTERVAL_COVERAGE + INTERVAL_COVERAGE_TOLERANCE)
+            if not lo <= coverage_value <= hi:
+                errors.append(
+                    f"interval coverage {coverage_value:.3f} outside "
+                    f"[{lo:.3f}, {hi:.3f}]"
+                )
+        except (TypeError, ValueError):
+            errors.append("interval coverage is non-finite")
     return errors
 
 
@@ -156,7 +187,9 @@ def _segment_regressions(candidate: dict, production: dict) -> list[str]:
         prod_rmse = prod.get("rmse")
         if cand_rmse is None or prod_rmse in (None, 0):
             continue
-        regression_pct = (float(cand_rmse) - float(prod_rmse)) / float(prod_rmse) * 100.0
+        regression_pct = (
+            (float(cand_rmse) - float(prod_rmse)) / float(prod_rmse) * 100.0
+        )
         if regression_pct > MAX_SEGMENT_REGRESSION_PCT:
             errors.append(
                 f"league {segment} RMSE regresses {regression_pct:.2f}% "
@@ -217,7 +250,9 @@ def promote_if_better(
         if cand_rmse is None or prod_rmse in (None, 0):
             errors.append("candidate/production OOT RMSE is unavailable")
         else:
-            improvement = (float(prod_rmse) - float(cand_rmse)) / float(prod_rmse) * 100
+            improvement = (
+                (float(prod_rmse) - float(cand_rmse)) / float(prod_rmse) * 100
+            )
             if improvement < float(min_improvement_pct):
                 errors.append(
                     f"OOT RMSE improvement {improvement:.2f}% is below "
