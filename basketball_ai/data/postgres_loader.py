@@ -1,9 +1,9 @@
 """Canonical PostgreSQL data access for AI_Model.
 
-Production reads the stable read-only ``ai_source`` contract.  In addition to
-entity/player-season views, professional time-aware training requires
-``team_season_stats`` so historical samples never see a team's future style.
-The model never writes to BBallstat source schemas.
+Production reads entity/roster views from ``ai_source`` and the competition-
+preserving statistical contract created by ``ai_source_competition.sql``.
+Training therefore sees one observation per entity + league + season +
+competition instead of collapsing PO/CUP/TOT into a single season row.
 """
 from __future__ import annotations
 
@@ -25,6 +25,16 @@ from basketball_ai.data.loader import (
 
 _SCHEMA_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
+# Internal application key -> PostgreSQL view.
+_SOURCE_VIEWS = {
+    "leagues": "leagues",
+    "teams": "teams",
+    "players": "players",
+    "player_stats": "player_competition_stats",
+    "team_player_relations": "team_player_relations",
+    "team_season_stats": "team_competition_stats",
+}
+
 _REQUIRED_COLUMNS: dict[str, set[str]] = {
     "leagues": {"id", "name"},
     "teams": {"id", "global_id", "name", "league_id"},
@@ -33,6 +43,7 @@ _REQUIRED_COLUMNS: dict[str, set[str]] = {
         "player_id",
         "season",
         "league_id",
+        "league_key",
         "games_played",
         "minutes_per_game",
         "points",
@@ -45,7 +56,9 @@ _REQUIRED_COLUMNS: dict[str, set[str]] = {
         "global_id",
         "name",
         "league_id",
+        "league_key",
         "season",
+        "competition",
         "pace",
         "offensive_rating",
         "defensive_rating",
@@ -78,15 +91,15 @@ def _load_view(engine: Engine, schema: str, name: str) -> pd.DataFrame:
     try:
         return pd.read_sql(text(f'SELECT * FROM "{schema}"."{name}"'), engine)
     except Exception as exc:
-        extra = (
-            " Then run basketball_ai/data/ai_source_team_season.sql."
-            if name == "team_season_stats"
+        competition_hint = (
+            " Then run basketball_ai/data/ai_source_competition.sql."
+            if name in {"player_competition_stats", "team_competition_stats"}
             else ""
         )
         raise RuntimeError(
             f'Cannot read canonical view "{schema}"."{name}". '
             "Run basketball_ai/data/ai_source_schema.sql against BBallstat PostgreSQL."
-            + extra
+            + competition_hint
             + " Verify the AI read role has SELECT access."
         ) from exc
 
@@ -106,20 +119,36 @@ def _validate_contract(data: dict[str, pd.DataFrame], schema: str) -> None:
     errors.extend(validate_dataframes(core))
 
     player_stats = data.get("player_stats")
-    if player_stats is not None and {"player_id", "season"}.issubset(player_stats.columns):
-        duplicates = player_stats.duplicated(["player_id", "season"], keep=False)
+    player_key = {"player_id", "league_id", "season", "competition"}
+    if player_stats is not None and player_key.issubset(player_stats.columns):
+        duplicates = player_stats.duplicated(
+            ["player_id", "league_id", "season", "competition"], keep=False
+        )
         if duplicates.any():
             errors.append(
-                "player_stats must contain exactly one row per player_id+season"
+                "player_competition_stats must contain exactly one row per "
+                "player_id+league_id+season+competition"
             )
 
     team_history = data.get("team_season_stats")
-    if team_history is not None and {"team_id", "season"}.issubset(team_history.columns):
-        duplicates = team_history.duplicated(["team_id", "season"], keep=False)
+    team_key = {"team_id", "league_id", "season", "competition"}
+    if team_history is not None and team_key.issubset(team_history.columns):
+        duplicates = team_history.duplicated(
+            ["team_id", "league_id", "season", "competition"], keep=False
+        )
         if duplicates.any():
             errors.append(
-                "team_season_stats must contain exactly one row per team_id+season"
+                "team_competition_stats must contain exactly one row per "
+                "team_id+league_id+season+competition"
             )
+
+    for table in ("player_stats", "team_season_stats"):
+        frame = data.get(table)
+        if frame is None or "competition" not in frame.columns:
+            continue
+        invalid = frame["competition"].isna() | frame["competition"].astype(str).str.strip().eq("")
+        if invalid.any():
+            errors.append(f"{table}.competition contains null/empty values")
 
     if errors:
         raise RuntimeError("Invalid ai_source contract: " + " | ".join(errors))
@@ -152,6 +181,12 @@ def _normalise_ids(data: dict[str, pd.DataFrame]) -> None:
                 data[table]["season"], errors="coerce"
             ).astype("Int64")
 
+    for table in ("player_stats", "team_season_stats"):
+        if "competition" in data[table].columns:
+            data[table]["competition"] = (
+                data[table]["competition"].fillna("RS").astype(str).str.strip().str.upper()
+            )
+
 
 def _build_lookups(data: dict[str, pd.DataFrame]) -> None:
     def indexed(frame: pd.DataFrame, id_column: str = "id") -> dict[int, dict[str, Any]]:
@@ -168,12 +203,22 @@ def _build_lookups(data: dict[str, pd.DataFrame]) -> None:
     data["team_dict"] = indexed(data["teams"])
     data["player_dict"] = indexed(data["players"])
 
-    team_season_dict: dict[tuple[int, int], dict[str, Any]] = {}
+    team_context_dict: dict[tuple[int, int, int, str], dict[str, Any]] = {}
     for _, row in data["team_season_stats"].iterrows():
-        if pd.isna(row.get("team_id")) or pd.isna(row.get("season")):
+        if (
+            pd.isna(row.get("team_id"))
+            or pd.isna(row.get("league_id"))
+            or pd.isna(row.get("season"))
+        ):
             continue
-        team_season_dict[(_to_int(row["team_id"]), int(row["season"]))] = row.to_dict()
-    data["team_season_dict"] = team_season_dict
+        key = (
+            _to_int(row["team_id"]),
+            _to_int(row["league_id"]),
+            int(row["season"]),
+            str(row.get("competition", "RS") or "RS").upper(),
+        )
+        team_context_dict[key] = row.to_dict()
+    data["team_season_dict"] = team_context_dict
 
     league_teams: dict[int, list[int]] = {}
     for team_id, team in data["team_dict"].items():
@@ -193,15 +238,10 @@ def load_all_data(
         raise ValueError("Invalid PostgreSQL source schema")
 
     engine = get_engine(url)
-    views = (
-        "leagues",
-        "teams",
-        "players",
-        "player_stats",
-        "team_player_relations",
-        "team_season_stats",
-    )
-    data: dict[str, Any] = {name: _load_view(engine, schema, name) for name in views}
+    data: dict[str, Any] = {
+        key: _load_view(engine, schema, view)
+        for key, view in _SOURCE_VIEWS.items()
+    }
 
     _validate_contract(data, schema)
     _normalise_ids(data)
@@ -212,8 +252,8 @@ def load_all_data(
 
     data["player_stats"] = (
         data["player_stats"]
-        .dropna(subset=["player_id", "season", "rating"])
-        .sort_values(["player_id", "season"])
+        .dropna(subset=["player_id", "league_id", "season", "rating", "competition"])
+        .sort_values(["player_id", "league_id", "competition", "season"])
         .reset_index(drop=True)
     )
     data["team_player_relations"] = (
@@ -224,10 +264,11 @@ def load_all_data(
     )
     data["team_season_stats"] = (
         data["team_season_stats"]
-        .dropna(subset=["team_id", "season"])
-        .sort_values(["team_id", "season"])
+        .dropna(subset=["team_id", "league_id", "season", "competition"])
+        .sort_values(["team_id", "league_id", "competition", "season"])
         .reset_index(drop=True)
     )
 
     _build_lookups(data)
+    data["source_contract"] = "competition-v1"
     return data
