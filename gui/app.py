@@ -269,11 +269,11 @@ elif page == "Training Runs":
         elif st.button("Start training run", type="primary"):
             try:
                 from basketball_ai.models.backtest import run_backtest
-                from basketball_ai.models.production_training import ProductionEnsembleModel
+                from basketball_ai.models.strict_production import StrictProductionEnsembleModel
                 from basketball_ai.models.promote import register_candidate
 
                 with st.status("Training run in progress", expanded=True) as run_status:
-                    model = ProductionEnsembleModel()
+                    model = StrictProductionEnsembleModel()
                     metrics = model.train(data)
                     run_status.write("Running full-ensemble walk-forward backtest…")
                     report = run_backtest(
