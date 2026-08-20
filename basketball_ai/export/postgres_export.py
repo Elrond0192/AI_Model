@@ -10,8 +10,10 @@ from basketball_ai.data.postgres_loader import get_engine, load_all_data
 
 
 def publish_current_team_forecasts(model_dir: str) -> int:
-    from basketball_ai.models.ensemble import EnsembleModel
-    from basketball_ai.models.production_training import build_historical_snapshot
+    from basketball_ai.models.strict_production import (
+        StrictProductionEnsembleModel,
+        build_historical_snapshot,
+    )
     from basketball_ai.scenarios.engine import WhatIfEngine
 
     model_path = Path(model_dir)
@@ -24,7 +26,7 @@ def publish_current_team_forecasts(model_dir: str) -> int:
         raise RuntimeError("Model metadata is not contract-v2 compatible")
 
     data = load_all_data()
-    model = EnsembleModel()
+    model = StrictProductionEnsembleModel()
     model.load(str(model_path))
     latest_season = int(
         max(int(str(value).split("-")[0]) for value in data["player_stats"]["season"].dropna())
