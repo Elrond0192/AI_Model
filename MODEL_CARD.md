@@ -7,6 +7,7 @@
 | Version | 2.1.0 |
 | Feature contract | `forecast-t-plus-1-v2` |
 | Primary target | next-season player rating (`t -> t+1`) |
+| Supported production context | season-level `RS` |
 | Base estimator | XGBoost regressor |
 | Team/context layer | temporally trained k-NN compatibility + bounded context adjustments |
 | Output | predicted rating 0–10 + empirically validated interval |
@@ -19,10 +20,12 @@ AI_Model is an inference/training service, not a conversational model. WordPress
 The forecast unit is strictly:
 
 ```text
-features available at season t  ->  observed rating at season t+1
+features available at season t  ->  observed season-level rating at season t+1
 ```
 
 A pair is created only when `target_season == source_season + 1`. Missing intermediate seasons are excluded rather than treated as one-year forecasts. The canonical PostgreSQL adapter provides one target row per global player and season.
+
+The source contract deliberately collapses `TOT`/`RS`/`PO` duplicates to one season-level target. For this reason the production V2 contract accepts `competition="RS"` only. `PO`, `CUP` and `SUPERCUP` forecasts require a separately trained competition-specific target and are rejected rather than extrapolated from an unsupported categorical code.
 
 ## Temporal split and estimator selection
 
@@ -34,21 +37,25 @@ Target seasons are blocked as whole seasons:
 
 After validation selects the number of boosting trees, XGBoost is refit on train + validation. The calibration target remains unseen by estimator fitting.
 
+Role vocabularies are also bounded to information available through the permitted source season. A role label first observed beyond that horizon is treated as out-of-vocabulary rather than changing historical role codes.
+
 Optional cross-validation is season-blocked; row-level random CV is not used for production evidence.
 
 ## Historical team/player context
 
-`ai_source.team_season_stats` preserves team style by season. Compatibility training for a target season can use only player history and team context available before that target. Historical backtests and historical API requests create an as-of snapshot that removes future player stats, future roster state and future team style.
+`ai_source.team_season_stats` preserves team context by season. Compatibility training for a target season can use only player history and team information available before that target. Historical backtests and historical API requests create an as-of snapshot that removes future player stats, future roster state, future player position and future team state.
+
+Team-style normalization bounds are calibrated on the same pre-calibration snapshot. They are stored as run-owned state and restored before inference, so a backtest fold or another model instance cannot silently change the promoted model's team vectors.
 
 ## Feature families
 
-- age and position;
+- source-season age and roster position;
 - per-36 volume: points, assists, rebounds, steals, blocks;
 - efficiency/usage: PIE, TS%, USG%, OBPM, DBPM;
 - RAPTOR, LEBRON, SPM, OWS/DWS, FIC and related advanced metrics when present;
 - career form, consistency and trajectory;
 - league-aware durability;
-- role labels;
+- temporally bounded role labels;
 - on/off, clutch and starter context when available;
 - bounded interaction features.
 
@@ -70,8 +77,10 @@ historical team state as of t
       final production rating
              |
              v
- empirically calibrated interval
+ finite-sample split-conformal interval
 ```
+
+The interval is calibrated on absolute residuals of the **final ensemble output** on an untouched calibration season. A single finite-sample quantile is applied directly around the final prediction; player-specific reliability scaling is not applied after calibration.
 
 Supported dynamic endpoint: `POST /api/v2/predictions/player-team`.
 
@@ -95,7 +104,9 @@ Fold failures invalidate the backtest; target values are never used as fallback 
 
 Training creates immutable artifacts under `models_saved/runs/<model_run_id>/`. A run is registered as **candidate** and cannot alter production directly.
 
-Promotion requires the configured quality gates, including valid OOT evaluation, sample minimum, acceptable interval coverage, ensemble improvement over base and persistence, and bounded per-league regressions. When a production run already exists, the candidate must also improve its OOT RMSE by the configured threshold.
+A complete production run includes estimator artifacts, conformal/instance calibration, `production_state.joblib` for run-owned style calibration, and metadata. Missing runtime state makes the run non-promotable.
+
+Promotion requires the configured quality gates, including valid OOT evaluation, finite RMSE/MAE/bias, sample minimum, mandatory interval coverage, ensemble improvement over base and persistence, and bounded per-league regressions. When a production run already exists, the candidate must also improve its OOT RMSE by the configured threshold.
 
 Only promoted artifacts are copied atomically to `models_saved/production/`, which is the directory loaded by the API container. Rollback reactivates the previous immutable run.
 
@@ -112,7 +123,8 @@ The base tree model exposes SHAP values when the optional SHAP runtime is availa
 - Team-fit effects remain observational/associative rather than causal transfer estimates.
 - Injury, contract, coaching and off-court information are not explicitly modelled.
 - Sparse-history players may be excluded from OOT folds or have weaker career features.
-- The season-level target intentionally collapses multiple same-season competition rows. Competition-specific API context is a scenario feature, not a separate competition-specific supervised target.
+- Competition-specific forecasts are not supported by the current season-level supervised target.
+- The production age-scenario curve uses deterministic default parameters until a row-level historical age calibration contract is explicitly trained and versioned.
 - New leagues or material source-schema changes require rebuilding and validating the PostgreSQL adapter before retraining.
 - Real effectiveness must be judged on the deployment dataset's untouched future seasons; synthetic metrics are not production quality claims.
 
