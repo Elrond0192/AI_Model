@@ -6,7 +6,6 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE_SQL = ROOT / "basketball_ai" / "data" / "ai_source_schema.sql"
 TEAM_SEASON_SQL = ROOT / "basketball_ai" / "data" / "ai_source_team_season.sql"
@@ -24,13 +23,18 @@ def test_ai_source_schema_defines_core_public_contract():
         assert f"create view {view}" in sql
 
 
-def test_team_season_schema_defines_temporal_context():
+def test_team_season_schema_defines_independent_temporal_context():
     sql = TEAM_SEASON_SQL.read_text(encoding="utf-8").lower()
     assert "create view ai_source.team_season_stats" in sql
+    assert "create view ai_source._team_season_registry" in sql
+    assert "create view ai_source._team_season_stats_raw" in sql
     assert "partition by tr.global_id, tr.season" in sql
-    assert "ai_source._team_stats_raw" in sql
-    assert "ai_source._team_registry" in sql
-    assert "tr.season" in sql
+    assert "advancedstatsteam_" in sql
+    assert "information_schema.columns" in sql
+    # Do not depend on the base adapter's internal views: otherwise re-running
+    # ai_source_schema.sql would be blocked by PostgreSQL view dependencies.
+    assert "from ai_source._team_registry" not in sql
+    assert "from ai_source._team_stats_raw" not in sql
 
 
 def test_ai_source_schema_is_postgres_unified_table_adapter():
@@ -45,7 +49,10 @@ def test_ai_source_schema_is_postgres_unified_table_adapter():
 
 
 def test_ai_source_schemas_have_no_sql_server_ddl():
-    sql = (SOURCE_SQL.read_text(encoding="utf-8") + TEAM_SEASON_SQL.read_text(encoding="utf-8")).lower()
+    sql = (
+        SOURCE_SQL.read_text(encoding="utf-8")
+        + TEAM_SEASON_SQL.read_text(encoding="utf-8")
+    ).lower()
     forbidden = (
         "set ansi_nulls",
         "set quoted_identifier",
@@ -154,7 +161,7 @@ def test_postgres_loader_rejects_duplicate_player_seasons():
     data["player_stats"] = pd.concat(
         [data["player_stats"], data["player_stats"]], ignore_index=True
     )
-    with pytest.raises(RuntimeError, match="one row per player_id\+season"):
+    with pytest.raises(RuntimeError, match=r"one row per player_id\+season"):
         _validate_contract(data, "ai_source")
 
 
@@ -165,7 +172,7 @@ def test_postgres_loader_rejects_duplicate_team_seasons():
     data["team_season_stats"] = pd.concat(
         [data["team_season_stats"], data["team_season_stats"]], ignore_index=True
     )
-    with pytest.raises(RuntimeError, match="one row per team_id\+season"):
+    with pytest.raises(RuntimeError, match=r"one row per team_id\+season"):
         _validate_contract(data, "ai_source")
 
 
