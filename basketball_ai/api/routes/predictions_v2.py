@@ -9,7 +9,7 @@ from basketball_ai.api.contracts_v2 import (
     PlayerTeamPredictionRequestV2,
     PlayerTeamPredictionV2,
 )
-from basketball_ai.models.production_training import build_historical_snapshot
+from basketball_ai.models.strict_production import build_historical_snapshot
 from basketball_ai.scenarios.engine import WhatIfEngine
 
 router = APIRouter(prefix="/api/v2/predictions", tags=["predictions-v2"])
@@ -79,5 +79,8 @@ async def player_team(body: PlayerTeamPredictionRequestV2, request: Request):
         confidence_low=result.confidence_low,
         confidence_high=result.confidence_high,
         generated_at=datetime.now(timezone.utc),
-        explanation={"method": "forecast_t_plus_1", "context": "historical_as_of_source_season"},
+        explanation={
+            "method": "forecast_t_plus_1",
+            "context": "historical_as_of_source_season",
+        },
     )
