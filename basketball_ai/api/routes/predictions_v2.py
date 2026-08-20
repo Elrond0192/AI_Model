@@ -9,8 +9,10 @@ from basketball_ai.api.contracts_v2 import (
     PlayerTeamPredictionRequestV2,
     PlayerTeamPredictionV2,
 )
-from basketball_ai.models.strict_production import build_historical_snapshot
-from basketball_ai.scenarios.engine import WhatIfEngine
+from basketball_ai.models.strict_production import (
+    StrictWhatIfEngine,
+    build_historical_snapshot,
+)
 
 router = APIRouter(prefix="/api/v2/predictions", tags=["predictions-v2"])
 
@@ -56,7 +58,7 @@ async def player_team(body: PlayerTeamPredictionRequestV2, request: Request):
             "Resolved player or team has no state at the requested source season",
         )
 
-    historical_engine = WhatIfEngine(engine.ensemble, snapshot)
+    historical_engine = StrictWhatIfEngine(engine.ensemble, snapshot)
     try:
         result = historical_engine.predict_in_team(
             player_id,
