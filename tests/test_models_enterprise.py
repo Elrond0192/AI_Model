@@ -12,6 +12,7 @@ def _valid_backtest(rmse: float = 0.5, league_rmse: float | None = None) -> dict
             "n": 100,
             "rmse": rmse,
             "mae": rmse * 0.8,
+            "bias": 0.0,
             "interval_coverage": 0.90,
         },
         "overall_rmse": rmse,
@@ -33,6 +34,7 @@ def _run(tmp_path: Path, run_id: str, rmse: float = 0.5) -> tuple[Path, dict]:
         "performance_model.joblib",
         "compatibility_model.joblib",
         "conformal.joblib",
+        "production_state.joblib",
     ):
         (run_dir / name).write_bytes(b"artifact")
     metadata = {
@@ -75,6 +77,7 @@ def test_promote_activates_immutable_candidate(tmp_path):
     result = promote_if_better(str(tmp_path))
     assert result["promoted"] is True
     assert (tmp_path / "production" / "performance_model.joblib").is_file()
+    assert (tmp_path / "production" / "production_state.joblib").is_file()
     assert (tmp_path / "production" / "production_manifest.json").is_file()
     status = get_promotion_status(str(tmp_path))
     assert status["production"]["run_id"] == "run-v2"
@@ -91,6 +94,28 @@ def test_promote_requires_valid_full_ensemble_gates(tmp_path):
     assert result["promoted"] is False
     assert "does not beat the base" in result["reason"]
     assert not (tmp_path / "production").exists()
+
+
+def test_promote_rejects_missing_interval_coverage(tmp_path):
+    from basketball_ai.models.promote import promote_if_better, register_candidate
+
+    run_dir, metadata = _run(tmp_path, "no-coverage", 0.50)
+    metadata["backtest"]["overall"].pop("interval_coverage")
+    register_candidate(str(tmp_path), "no-coverage", run_dir, metadata)
+    result = promote_if_better(str(tmp_path))
+    assert result["promoted"] is False
+    assert "interval coverage is missing" in result["reason"]
+
+
+def test_candidate_requires_versioned_runtime_state(tmp_path):
+    import pytest
+
+    from basketball_ai.models.promote import register_candidate
+
+    run_dir, metadata = _run(tmp_path, "missing-state", 0.50)
+    (run_dir / "production_state.joblib").unlink()
+    with pytest.raises(RuntimeError, match="missing required model artifacts"):
+        register_candidate(str(tmp_path), "missing-state", run_dir, metadata)
 
 
 def test_promote_rejects_insufficient_improvement(tmp_path):
