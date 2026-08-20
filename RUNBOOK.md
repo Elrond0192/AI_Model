@@ -4,87 +4,53 @@
 
 | Service | Port | Purpose |
 |---|---:|---|
-| `admin` | 8501 | DB profile, training, backtest, promotion |
-| `api` | 8000 | typed FastAPI inference |
+| `admin` | 8501 | DB profile, validation, training, backtest, promotion, rollback |
+| `api` | 8000 | promoted typed FastAPI v2 inference |
 
-PostgreSQL runs on the host. Containers reach it through
-`host.docker.internal:5432`.
-
-## Start / stop
-
-```bash
-docker compose up -d --build
-docker compose ps
-docker compose logs -f api
-docker compose logs -f admin
-```
-
-```bash
-docker compose down
-```
-
-Runtime data is persisted under `runtime/`.
+PostgreSQL runs on the host and Docker reaches it through `host.docker.internal:5432`.
 
 ## First database setup
 
 ```bash
 psql -d YOUR_DATABASE -f basketball_ai/data/ai_source_schema.sql
+psql -d YOUR_DATABASE -f basketball_ai/data/ai_source_competition.sql
 psql -d YOUR_DATABASE -f basketball_ai/data/ai_schema.sql
 ```
 
-Verify:
+Verify the production contract:
 
 ```sql
-SELECT count(*) FROM ai_source.players;
-SELECT count(*) FROM ai_source.teams;
-SELECT min(season), max(season), count(*) FROM ai_source.player_stats;
-SELECT * FROM ai_source.leagues ORDER BY name;
+SELECT competition, count(*)
+FROM ai_source.player_competition_stats
+GROUP BY competition ORDER BY competition;
+
+SELECT competition, count(*)
+FROM ai_source.team_competition_stats
+GROUP BY competition ORDER BY competition;
+
+SELECT player_id, league_id, season, competition, count(*)
+FROM ai_source.player_competition_stats
+GROUP BY player_id, league_id, season, competition
+HAVING count(*) > 1;
+
+SELECT team_id, league_id, season, competition, count(*)
+FROM ai_source.team_competition_stats
+GROUP BY team_id, league_id, season, competition
+HAVING count(*) > 1;
 ```
 
-Re-run `ai_source_schema.sql` after adding a new league table or materially
-changing the physical source schema. It is idempotent and does not modify source
-tables.
+Both duplicate queries must return zero rows. Re-run both source adapters after league/schema/competition ingestion changes.
 
-## Database connectivity incident
-
-Symptoms: admin Test connection fails, `/health/ready` returns 503 or logs show
-PostgreSQL/canonical-view errors.
+## Validate data
 
 ```bash
-docker compose exec api getent hosts host.docker.internal
-docker compose logs --tail=200 api
-```
-
-On the host:
-
-```bash
-ss -ltnp | grep 5432
-```
-
-Verify PostgreSQL accepts the Docker bridge subnet/user/database, uses
-`host.docker.internal` from the container profile and does not expose 5432 to
-the public Internet.
-
-## Canonical contract incident
-
-```bash
-psql -d YOUR_DATABASE -f basketball_ai/data/ai_source_schema.sql
-
 docker compose run --rm admin \
   python main.py --mode validate-data --database-profile production
 ```
 
-Required views:
+Check `consecutive_pairs_by_competition`. A competition can exist in PostgreSQL but is not trainable/serveable until real same-league, same-competition `t -> t+1` pairs exist.
 
-```text
-ai_source.leagues
-ai_source.teams
-ai_source.players
-ai_source.player_stats
-ai_source.team_player_relations
-```
-
-## Training
+## Train candidate
 
 ```bash
 docker compose run --rm admin \
@@ -93,10 +59,9 @@ docker compose run --rm admin \
   --model-dir /app/models_saved
 ```
 
-Training produces a candidate only if backtesting is valid. Review and promote
-it from the admin Model Registry.
+Runs are immutable under `/app/models_saved/runs/<model_run_id>/`; production is unchanged until promotion. A complete run includes `production_state.joblib` containing the competition vocabulary and conformal state.
 
-## Backtest only
+## Backtest
 
 ```bash
 docker compose run --rm admin \
@@ -105,36 +70,35 @@ docker compose run --rm admin \
   --model-dir /app/models_saved
 ```
 
-A failed/empty backtest is not promotable.
+Review global RMSE/MAE/bias/coverage, base and persistence RMSE, `by_league`, **`by_competition`**, fold samples and target seasons. A failed fold invalidates the report.
 
-## Batch publishing
+## Promotion
 
 ```bash
 docker compose run --rm admin \
-  python main.py --mode publish-batch \
-  --database-profile production \
-  --model-dir /app/models_saved
+  python main.py --mode promote --model-dir /app/models_saved
 ```
 
-Verify:
+Promotion fails closed unless OOT gates pass. Competition segments with sufficient samples are compared against production, so a large PO/CUP regression can block promotion even when global RMSE improves.
 
-```sql
-SELECT model_run_id, count(*)
-FROM ai.player_forecasts
-GROUP BY model_run_id
-ORDER BY model_run_id DESC;
-```
-
-## Health
+After promotion:
 
 ```bash
-curl -fsS http://127.0.0.1:8000/health/live
+docker compose restart api
 curl -fsS http://127.0.0.1:8000/health/ready
 ```
 
-`/health/live` checks the process; `/health/ready` requires data and model.
+## Rollback
 
-## Dynamic prediction smoke test
+```bash
+docker compose run --rm admin \
+  python main.py --mode rollback --model-dir /app/models_saved
+docker compose restart api
+```
+
+## Competition smoke test
+
+For playoffs:
 
 ```bash
 curl -fsS -X POST \
@@ -146,38 +110,57 @@ curl -fsS -X POST \
     "team_global_id": "TEAM_GLOBAL_ID",
     "league": "ITA1",
     "season": 2025,
-    "competition": "RS"
+    "competition": "PO"
   }'
 ```
 
-When `JWT_SECRET` is configured, use a Bearer token instead; API-key auth is
-disabled in JWT mode.
+A successful response must report `competition="PO"` and `competition_support.mode="isolated"`. Verify `source_games`, `exact_source_games`, `calibration_samples` and `calibration_scope` before presenting the confidence level as competition-specific.
+
+A `422` is expected if the player/team lacks the requested isolated source context or the promoted model was trained before that competition acquired supervised consecutive history.
+
+## Batch publishing
+
+```bash
+docker compose run --rm admin \
+  python main.py --mode publish-batch \
+  --database-profile production \
+  --model-dir /app/models_saved
+```
+
+Verify forecasts by competition:
+
+```sql
+SELECT model_run_id, league, competition, count(*)
+FROM ai.player_forecasts
+GROUP BY model_run_id, league, competition
+ORDER BY model_run_id DESC, league, competition;
+```
+
+## Connectivity / health
+
+```bash
+docker compose exec api getent hosts host.docker.internal
+docker compose logs --tail=200 api
+ss -ltnp | grep 5432
+curl -fsS http://127.0.0.1:8000/health/live
+curl -fsS http://127.0.0.1:8000/health/ready
+```
+
+PostgreSQL 5432 and admin 8501 must stay private.
 
 ## First admin credentials
 
-First boot writes one-time credentials to `runtime/auth/.admin_credentials`.
-Read it once, change the password and delete the file.
+First boot writes one-time credentials to `runtime/auth/.admin_credentials`. Read once, change the password and delete the file.
 
-## Backup
-
-Back up runtime state, not repository artifacts:
+## Backup / deployment
 
 ```bash
 tar -C . -czf ai-model-runtime-$(date +%F).tar.gz runtime/
-```
-
-PostgreSQL model output is covered by the normal PostgreSQL backup strategy.
-
-## Deployment update
-
-```bash
 git pull --ff-only
 docker compose build --pull
+psql -d YOUR_DATABASE -f basketball_ai/data/ai_source_schema.sql
+psql -d YOUR_DATABASE -f basketball_ai/data/ai_source_competition.sql
 docker compose up -d
-curl -fsS http://127.0.0.1:8000/health/live
 ```
 
-If `ai_source_schema.sql` changed, apply it before restarting API/training.
-
-Never commit `.env`, DB profile JSON, trained `.joblib` files, generated
-registry/metadata, sessions, SQLite audit files or one-time credentials.
+Never commit `.env`, DB profile JSON, model artifacts, registries/metadata, sessions, audit DBs or one-time credentials.

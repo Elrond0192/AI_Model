@@ -1,200 +1,212 @@
-"""Walk-forward backtesting for the PerformanceModel.
-
-Splits the player_stats data chronologically into training/validation windows
-and reports per-fold and per-league RMSE metrics.
-
-Usage::
-
-    from basketball_ai.models.backtest import run_backtest
-    report = run_backtest(data, n_folds=3)
-    # report: {"folds": [...], "overall_rmse": ..., "by_league": {...}}
-"""
+"""Expanding walk-forward backtest for the exact production ensemble."""
 from __future__ import annotations
 
 import json
 import logging
 from datetime import datetime, timezone
+import math
+import os
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 
 import numpy as np
 import pandas as pd
 
+from basketball_ai.models.strict_production import (
+    StrictProductionEnsembleModel,
+    build_historical_snapshot,
+    evaluate_target_season,
+    metric_summary,
+    season_year,
+)
+
 _logger = logging.getLogger(__name__)
+
+
+def _rmse(records: Iterable[Dict[str, Any]], key: str) -> float:
+    rows = list(records)
+    if not rows:
+        return float("nan")
+    actual = np.asarray([row["actual"] for row in rows], dtype=float)
+    prediction = np.asarray([row[key] for row in rows], dtype=float)
+    return float(np.sqrt(np.mean((prediction - actual) ** 2)))
+
+
+def _segment_metrics(records: List[Dict[str, Any]], key: str) -> Dict[str, Dict[str, float]]:
+    groups: Dict[str, List[Dict[str, Any]]] = {}
+    for row in records:
+        value = row.get(key)
+        if value is None or (isinstance(value, float) and pd.isna(value)):
+            continue
+        groups.setdefault(str(value), []).append(row)
+    return {name: metric_summary(rows) for name, rows in groups.items()}
+
+
+def _age_band(age: int) -> str:
+    if age <= 21:
+        return "<=21"
+    if age <= 24:
+        return "22-24"
+    if age <= 28:
+        return "25-28"
+    if age <= 32:
+        return "29-32"
+    return "33+"
 
 
 def run_backtest(
     data: Dict[str, Any],
     n_folds: int = 3,
     output_path: Optional[str] = "models_saved/backtest_report.json",
+    min_samples_per_fold: Optional[int] = None,
 ) -> Dict[str, Any]:
-    """Run walk-forward cross-validation and return a backtest report.
+    """Evaluate the complete production path on untouched future seasons.
 
-    Args:
-        data:        Full data dict from the PostgreSQL loader.
-        n_folds:     Number of temporal folds.
-        output_path: If set, write JSON report to this path.
-
-    Returns:
-        Dict with keys ``folds``, ``overall_rmse``, ``by_league``.
+    Each fold trains/calibrates using only seasons up to ``target-1`` and then
+    predicts exact same-league/same-competition outcomes in ``target``.  The
+    final ensemble is compared with base XGBoost and persistence and is also
+    reported independently for every observed competition.
     """
-    from basketball_ai.models.performance_model import PerformanceModel
+    stats = data.get("player_stats", pd.DataFrame())
+    if stats.empty or "season" not in stats.columns:
+        return {
+            "error": "player_stats empty or missing season column",
+            "valid": False,
+            "folds": [],
+        }
+    if data.get("team_season_stats") is None or data["team_season_stats"].empty:
+        return {
+            "error": "team competition history is required",
+            "valid": False,
+            "folds": [],
+        }
 
-    player_stats: pd.DataFrame = data.get("player_stats", pd.DataFrame())
-    players_df:   pd.DataFrame = data.get("players",      pd.DataFrame())
-
-    if player_stats.empty or "season" not in player_stats.columns:
-        return {"error": "player_stats empty or missing season column"}
-
-    latest_data_year = max((int(str(s).split("-")[0]) for s in player_stats["season"].dropna()), default=datetime.now(timezone.utc).year)
-    birth_year_map: Dict[int, int] = {}
-    if not players_df.empty and "id" in players_df.columns and "age" in players_df.columns:
-        for _, _pr in players_df.iterrows():
-            try:
-                _pid = int(_pr["id"])
-                _age = _pr.get("age")
-                if _age is not None and not (isinstance(_age, float) and np.isnan(_age)):
-                    birth_date = _pr.get("birth_date", _pr.get("date_of_birth"))
-                    birth_year_map[_pid] = int(str(birth_date)[:4]) if birth_date else latest_data_year - int(_age)
-            except (TypeError, ValueError):
-                pass
-
-    position_map: Dict[int, str] = {}
-    if not players_df.empty and "id" in players_df.columns and "position" in players_df.columns:
-        for _, _pr in players_df.iterrows():
-            try:
-                position_map[int(_pr["id"])] = str(_pr["position"])
-            except (TypeError, ValueError):
-                pass
-
-    seasons = sorted(player_stats["season"].unique())
-    # PerformanceModel requires three target-season blocks internally, which
-    # means at least four source seasons before the first out-of-time fold.
+    seasons = sorted({season_year(value) for value in stats["season"].dropna()})
     if len(seasons) < 5:
-        return {"error": "at least five seasons are required", "valid": False, "folds": []}
-    n_folds = min(n_folds, len(seasons) - 4)
-    folds_results: List[Dict[str, Any]] = []
-    all_preds: List[float] = []
-    all_truths: List[float] = []
+        return {
+            "error": "at least five seasons are required",
+            "valid": False,
+            "folds": [],
+        }
 
-    for i in range(n_folds):
-        train_end = 4 + i
-        train_seasons = seasons[:train_end]
-        val_seasons = seasons[train_end:train_end + 1]
-        if not val_seasons:
-            break
-
-        train_stats = player_stats[player_stats["season"].isin(train_seasons)]
-        val_stats   = player_stats[player_stats["season"].isin(val_seasons)]
-
-        if train_stats.empty or val_stats.empty:
-            folds_results.append({"fold": i + 1, "train_seasons": [str(s) for s in train_seasons], "val_seasons": [str(s) for s in val_seasons], "valid": False, "error": "empty train or validation partition"})
-            continue
-
-        fold_data = {**data, "player_stats": train_stats}
-        model = PerformanceModel()
-        try:
-            model.train(fold_data)
-        except Exception as exc:
-            _logger.warning("[Backtest] Fold %d train failed: %s", i, exc)
-            folds_results.append({"fold": i + 1, "train_seasons": [str(s) for s in train_seasons], "val_seasons": [str(s) for s in val_seasons], "valid": False, "error": str(exc)})
-            continue
-
-        # Predict on validation fold
-        fold_preds: List[float] = []
-        fold_truths: List[float] = []
-        fold_leagues: List[Any] = []
-        excluded_no_history = 0
-        for _, row in val_stats.iterrows():
-            try:
-                hist = train_stats[train_stats["player_id"] == row["player_id"]]
-                if hist.empty:
-                    raise ValueError("player has no prior-season history")
-                _pid = int(row["player_id"])
-                # Compute age for the historical season rather than using
-                # the player's current age (which would introduce temporal leakage)
-                _season_str = str(row.get("season", latest_data_year))
-                try:
-                    _season_year = int(_season_str.split("-")[0])
-                except (ValueError, IndexError):
-                    raise ValueError("invalid season")
-                _by = birth_year_map.get(_pid)
-                if _by is not None:
-                    age = _season_year - _by
-                else:
-                    age = 25  # fallback when birth_year unknown
-                pos = position_map.get(_pid, "PG")
-                source = hist.sort_values("season").iloc[-1]
-                feat = model._build_row(source, age - 1, pos, hist)
-                feat_df = pd.DataFrame([feat]).reindex(columns=model.feature_names, fill_value=0.0)
-                pred = float(model.model.predict(feat_df)[0])
-            except ValueError as exc:
-                if "prior-season history" in str(exc):
-                    excluded_no_history += 1
-                    continue
-                raise RuntimeError(f"Backtest fold {i + 1} prediction failed") from exc
-            except Exception as exc:
-                raise RuntimeError(f"Backtest fold {i + 1} prediction failed") from exc
-            fold_preds.append(pred)
-            fold_truths.append(float(row["rating"]))
-            fold_leagues.append(row.get("league_id"))
-
-        if not fold_preds:
-            folds_results.append({"fold": i + 1, "train_seasons": [str(s) for s in train_seasons], "val_seasons": [str(s) for s in val_seasons], "valid": False, "error": "no validation players with prior history"})
-            continue
-
-        fold_preds_arr = np.array(fold_preds)
-        y_true = np.array(fold_truths)
-        fold_rmse = float(np.sqrt(np.mean((fold_preds_arr - y_true) ** 2)))
-        all_preds.extend(fold_preds)
-        all_truths.extend(y_true.tolist())
-
-        # Per-league RMSE for this fold
-        by_league: Dict[str, float] = {}
-        if "league_id" in val_stats.columns:
-            val_with_preds = pd.DataFrame({"league_id": fold_leagues, "rating": fold_truths, "_pred": fold_preds_arr})
-            for league_id, grp in val_with_preds.groupby("league_id"):
-                rmse_l = float(np.sqrt(np.mean((grp["_pred"].values - grp["rating"].values) ** 2)))
-                by_league[str(league_id)] = round(rmse_l, 4)
-
-        folds_results.append({
-            "fold":          i + 1,
-            "train_seasons": [str(s) for s in train_seasons],
-            "val_seasons":   [str(s) for s in val_seasons],
-            "val_rmse":      round(fold_rmse, 4),
-            "val_n":         len(y_true),
-            "by_league":     by_league,
-            "valid":         True,
-            "excluded_no_history": excluded_no_history,
-        })
-        _logger.info("[Backtest] Fold %d: val_rmse=%.4f on %d samples", i + 1, fold_rmse, len(y_true))
-
-    overall_rmse = (
-        float(np.sqrt(np.mean((np.array(all_preds) - np.array(all_truths)) ** 2)))
-        if all_preds
-        else float("nan")
+    eligible_targets = seasons[4:]
+    requested_folds = max(1, int(n_folds))
+    targets = eligible_targets[-min(requested_folds, len(eligible_targets)):]
+    minimum = (
+        int(os.getenv("BACKTEST_MIN_SAMPLES_PER_FOLD", "1"))
+        if min_samples_per_fold is None
+        else int(min_samples_per_fold)
     )
 
-    # Aggregate by_league across folds
-    agg_by_league: Dict[str, List[float]] = {}
-    for fold in folds_results:
-        for lig, rmse in fold.get("by_league", {}).items():
-            agg_by_league.setdefault(lig, []).append(rmse)
-    by_league_mean = {k: round(float(np.mean(v)), 4) for k, v in agg_by_league.items()}
+    folds: List[Dict[str, Any]] = []
+    all_records: List[Dict[str, Any]] = []
 
+    for index, target_season in enumerate(targets, 1):
+        source_season = target_season - 1
+        try:
+            train_data = build_historical_snapshot(data, source_season)
+            ensemble = StrictProductionEnsembleModel()
+            train_metrics = ensemble.train(train_data)
+            records = evaluate_target_season(ensemble, data, target_season)
+            if len(records) < minimum:
+                raise RuntimeError(
+                    f"only {len(records)} evaluable samples; minimum is {minimum}"
+                )
+
+            summary = metric_summary(records)
+            base_rmse = _rmse(records, "base_prediction")
+            persistence_rmse = _rmse(records, "persistence_prediction")
+            for row in records:
+                row["age_band"] = _age_band(int(row.get("age", 0) or 0))
+
+            fold = {
+                "fold": index,
+                "train_through_season": source_season,
+                "target_season": target_season,
+                "valid": True,
+                **summary,
+                "base_rmse": base_rmse,
+                "persistence_rmse": persistence_rmse,
+                "ensemble_vs_base_delta": base_rmse - summary["rmse"],
+                "ensemble_vs_persistence_delta": persistence_rmse - summary["rmse"],
+                "by_league": _segment_metrics(records, "league_id"),
+                "by_competition": _segment_metrics(records, "competition"),
+                "by_position": _segment_metrics(records, "position"),
+                "by_age_band": _segment_metrics(records, "age_band"),
+                "training": {
+                    "validation_rmse": train_metrics.get("val_rmse"),
+                    "calibration": train_metrics.get("final_calibration"),
+                    "consecutive_pairs": train_metrics.get("consecutive_pairs"),
+                    "competition_vocabulary": train_metrics.get("competition_vocabulary"),
+                    "compatibility_samples_by_competition": train_metrics.get(
+                        "compatibility_samples_by_competition"
+                    ),
+                },
+            }
+            folds.append(fold)
+            all_records.extend(records)
+            _logger.info(
+                "[Backtest] target=%s n=%d ensemble_rmse=%.4f base=%.4f persistence=%.4f",
+                target_season,
+                len(records),
+                summary["rmse"],
+                base_rmse,
+                persistence_rmse,
+            )
+        except Exception as exc:
+            _logger.exception("[Backtest] fold target=%s failed", target_season)
+            folds.append(
+                {
+                    "fold": index,
+                    "train_through_season": source_season,
+                    "target_season": target_season,
+                    "valid": False,
+                    "error": str(exc),
+                }
+            )
+
+    overall = metric_summary(all_records)
+    base_rmse = _rmse(all_records, "base_prediction")
+    persistence_rmse = _rmse(all_records, "persistence_prediction")
+    if all_records:
+        for row in all_records:
+            row["age_band"] = _age_band(int(row.get("age", 0) or 0))
+
+    valid = (
+        bool(folds)
+        and len(folds) == len(targets)
+        and all(fold.get("valid") for fold in folds)
+        and bool(overall)
+        and math.isfinite(float(overall.get("rmse", float("nan"))))
+    )
     report: Dict[str, Any] = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
-        "n_folds":      len(folds_results),
-        "overall_rmse": round(overall_rmse, 4),
-        "folds":        folds_results,
-        "by_league":    by_league_mean,
-        "valid": bool(folds_results) and len(folds_results) == n_folds and all(f.get("valid") for f in folds_results),
+        "method": "expanding_walk_forward_full_ensemble_competition_aware",
+        "n_folds": len(folds),
+        "target_seasons": targets,
+        "folds": folds,
+        "overall": overall,
+        "overall_rmse": overall.get("rmse", float("nan")),
+        "base_rmse": base_rmse,
+        "persistence_rmse": persistence_rmse,
+        "ensemble_vs_base_delta": (
+            base_rmse - overall["rmse"] if overall and math.isfinite(base_rmse) else float("nan")
+        ),
+        "ensemble_vs_persistence_delta": (
+            persistence_rmse - overall["rmse"]
+            if overall and math.isfinite(persistence_rmse)
+            else float("nan")
+        ),
+        "by_league": _segment_metrics(all_records, "league_id") if all_records else {},
+        "by_competition": _segment_metrics(all_records, "competition") if all_records else {},
+        "by_position": _segment_metrics(all_records, "position") if all_records else {},
+        "by_age_band": _segment_metrics(all_records, "age_band") if all_records else {},
+        "valid": valid,
     }
 
     if output_path:
-        p = Path(output_path)
-        p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(json.dumps(report, indent=2), encoding="utf-8")
-        _logger.info("[Backtest] Report saved to %s", p)
-
+        path = Path(output_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(report, indent=2, default=str), encoding="utf-8")
+        _logger.info("[Backtest] report saved to %s", path)
     return report

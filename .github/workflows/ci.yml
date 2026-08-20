@@ -6,12 +6,10 @@ on:
   pull_request:
     branches: ["main", "master"]
 
-# Minimal permissions for all jobs by default
 permissions:
   contents: read
 
 jobs:
-  # ─── test ────────────────────────────────────────────────────────────────
   test:
     name: Test (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
@@ -39,7 +37,202 @@ jobs:
       - name: Run tests
         run: pytest tests/ -q --tb=short --cov=basketball_ai --cov-report=term-missing --cov-report=xml --cov-fail-under=60
 
-  # ─── lint ────────────────────────────────────────────────────────────────
+  postgres-contract:
+    name: PostgreSQL contract integration
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: ai_model_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d ai_model_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install PostgreSQL client
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y postgresql-client
+
+      - name: Seed representative BBallstat RS and PO source rows
+        env:
+          PGPASSWORD: postgres
+        run: |
+          set -euo pipefail
+          psql -h 127.0.0.1 -U postgres -d ai_model_test -v ON_ERROR_STOP=1 \
+            -f tests/fixtures/postgres_competition_fixture.sql
+
+      - name: Install source and output contracts
+        env:
+          PGPASSWORD: postgres
+        run: |
+          set -euo pipefail
+          PSQL="psql -h 127.0.0.1 -U postgres -d ai_model_test -v ON_ERROR_STOP=1"
+          $PSQL -f basketball_ai/data/ai_source_schema.sql
+          $PSQL -f basketball_ai/data/ai_source_competition.sql
+          $PSQL -f basketball_ai/data/ai_schema.sql
+
+      - name: Verify canonical views, isolation and normalization
+        env:
+          PGPASSWORD: postgres
+        run: |
+          set -euo pipefail
+          psql -h 127.0.0.1 -U postgres -d ai_model_test -v ON_ERROR_STOP=1 <<'SQL'
+          DO $$
+          DECLARE
+            player_rows integer;
+            team_rows integer;
+            relation_rows integer;
+            rs_rating double precision;
+            po_rating double precision;
+            rs_pace double precision;
+            po_pace double precision;
+          BEGIN
+            IF to_regclass('ai_source.leagues') IS NULL
+               OR to_regclass('ai_source.teams') IS NULL
+               OR to_regclass('ai_source.players') IS NULL
+               OR to_regclass('ai_source.team_player_relations') IS NULL
+               OR to_regclass('ai_source.player_competition_stats') IS NULL
+               OR to_regclass('ai_source.team_competition_stats') IS NULL
+               OR to_regclass('ai.model_runs') IS NULL
+               OR to_regclass('ai.player_forecasts') IS NULL THEN
+              RAISE EXCEPTION 'Required AI_Model PostgreSQL contract object is missing';
+            END IF;
+
+            SELECT count(*) INTO player_rows
+            FROM ai_source.player_competition_stats
+            WHERE league_key = 'ITA1';
+            IF player_rows <> 4 THEN
+              RAISE EXCEPTION 'Expected 4 player competition rows, got %', player_rows;
+            END IF;
+
+            SELECT count(*) INTO team_rows
+            FROM ai_source.team_competition_stats
+            WHERE league_key = 'ITA1';
+            IF team_rows <> 4 THEN
+              RAISE EXCEPTION 'Expected 4 team competition rows, got %', team_rows;
+            END IF;
+
+            SELECT count(*) INTO relation_rows
+            FROM ai_source.team_player_relations;
+            IF relation_rows <> 2 THEN
+              RAISE EXCEPTION 'Expected 2 season roster relations, got %', relation_rows;
+            END IF;
+
+            SELECT rating INTO rs_rating
+            FROM ai_source.player_competition_stats
+            WHERE league_key = 'ITA1' AND season = 2025 AND competition = 'RS';
+            SELECT rating INTO po_rating
+            FROM ai_source.player_competition_stats
+            WHERE league_key = 'ITA1' AND season = 2025 AND competition = 'PO';
+            IF rs_rating <> 6.70 OR po_rating <> 7.20 THEN
+              RAISE EXCEPTION 'RS/PO player ratings were not isolated: RS %, PO %', rs_rating, po_rating;
+            END IF;
+
+            SELECT pace INTO rs_pace
+            FROM ai_source.team_competition_stats
+            WHERE league_key = 'ITA1' AND season = 2025 AND competition = 'RS';
+            SELECT pace INTO po_pace
+            FROM ai_source.team_competition_stats
+            WHERE league_key = 'ITA1' AND season = 2025 AND competition = 'PO';
+            IF rs_pace <> 75.0 OR po_pace <> 70.0 THEN
+              RAISE EXCEPTION 'RS/PO team contexts were not isolated: RS %, PO %', rs_pace, po_pace;
+            END IF;
+
+            IF EXISTS (
+              SELECT 1
+              FROM ai_source.player_competition_stats
+              GROUP BY player_id, league_id, season, competition
+              HAVING count(*) > 1
+            ) THEN
+              RAISE EXCEPTION 'Duplicate player competition keys detected';
+            END IF;
+
+            IF EXISTS (
+              SELECT 1
+              FROM ai_source.team_competition_stats
+              GROUP BY team_id, league_id, season, competition
+              HAVING count(*) > 1
+            ) THEN
+              RAISE EXCEPTION 'Duplicate team competition keys detected';
+            END IF;
+
+            IF ai_source._competition('Regular Season') <> 'RS'
+               OR ai_source._competition('playoffs') <> 'PO'
+               OR ai_source._competition('TOTAL') <> 'TOT'
+               OR ai_source._competition('Final Four') <> 'FINAL_FOUR' THEN
+              RAISE EXCEPTION 'Competition normalization contract failed';
+            END IF;
+          END
+          $$;
+          SQL
+
+      - name: Reinstall adapters and prove idempotency
+        env:
+          PGPASSWORD: postgres
+        run: |
+          set -euo pipefail
+          PSQL="psql -h 127.0.0.1 -U postgres -d ai_model_test -v ON_ERROR_STOP=1"
+          $PSQL -f basketball_ai/data/ai_source_schema.sql
+          $PSQL -f basketball_ai/data/ai_source_competition.sql
+          $PSQL -f basketball_ai/data/ai_schema.sql
+          $PSQL <<'SQL'
+          DO $$
+          DECLARE
+            player_rows integer;
+            team_rows integer;
+            relation_rows integer;
+            rs_rating double precision;
+            po_rating double precision;
+            rs_pace double precision;
+            po_pace double precision;
+          BEGIN
+            SELECT count(*) INTO player_rows
+            FROM ai_source.player_competition_stats
+            WHERE league_key = 'ITA1';
+            SELECT count(*) INTO team_rows
+            FROM ai_source.team_competition_stats
+            WHERE league_key = 'ITA1';
+            SELECT count(*) INTO relation_rows
+            FROM ai_source.team_player_relations;
+
+            IF player_rows <> 4 OR team_rows <> 4 OR relation_rows <> 2 THEN
+              RAISE EXCEPTION 'Contract changed after reinstall: players %, teams %, relations %',
+                player_rows, team_rows, relation_rows;
+            END IF;
+
+            SELECT rating INTO rs_rating
+            FROM ai_source.player_competition_stats
+            WHERE league_key = 'ITA1' AND season = 2025 AND competition = 'RS';
+            SELECT rating INTO po_rating
+            FROM ai_source.player_competition_stats
+            WHERE league_key = 'ITA1' AND season = 2025 AND competition = 'PO';
+            SELECT pace INTO rs_pace
+            FROM ai_source.team_competition_stats
+            WHERE league_key = 'ITA1' AND season = 2025 AND competition = 'RS';
+            SELECT pace INTO po_pace
+            FROM ai_source.team_competition_stats
+            WHERE league_key = 'ITA1' AND season = 2025 AND competition = 'PO';
+
+            IF rs_rating <> 6.70 OR po_rating <> 7.20 OR rs_pace <> 75.0 OR po_pace <> 70.0 THEN
+              RAISE EXCEPTION 'RS/PO values changed after reinstall: ratings %/%, pace %/%',
+                rs_rating, po_rating, rs_pace, po_pace;
+            END IF;
+          END
+          $$;
+          SQL
+
   lint:
     name: Lint (ruff + flake8)
     runs-on: ubuntu-latest
@@ -65,7 +258,6 @@ jobs:
       - name: Run flake8
         run: flake8 basketball_ai/ --max-line-length=120 --extend-ignore=E501,W503,E221,E231,E241,E272,E302,E303,E305,E225,E203,E127,W391,E261
 
-  # ─── security ────────────────────────────────────────────────────────────
   security:
     name: Security audit (pip-audit)
     runs-on: ubuntu-latest
@@ -83,16 +275,14 @@ jobs:
       - name: Install project deps
         run: pip install -e . --quiet
       - name: Run pip-audit
-        run: pip-audit --desc on --skip-editable || true
-        # || true: report vulnerabilities but don't fail build until baseline is set
+        run: pip-audit --desc on --skip-editable
 
-  # ─── build-docker ────────────────────────────────────────────────────────
   build-docker:
     name: Build Docker image
     runs-on: ubuntu-latest
     permissions:
       contents: read
-    needs: [test, lint]
+    needs: [test, lint, security, postgres-contract]
 
     steps:
       - uses: actions/checkout@v4
@@ -115,7 +305,6 @@ jobs:
         run: |
           docker run -d --name ba-smoke -p 8000:8000 \
             -e API_ENV=development basketball-ai:latest
-          # Wait up to 30 s for the service to be ready
           for i in $(seq 1 15); do
             if curl -sf http://localhost:8000/health/live; then
               echo "Container is healthy"; break

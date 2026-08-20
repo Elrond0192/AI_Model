@@ -1,138 +1,374 @@
-"""Model promotion and rollback logic.
-
-Models are promoted from 'candidate' to 'production' status in registry.json
-only when the new model's val_rmse improves over the current production model
-by at least PROMOTION_THRESHOLD_PCT percent.
-
-Usage::
-
-    from basketball_ai.models.promote import promote_if_better, rollback_to_previous
-
-    result = promote_if_better("models_saved", min_improvement_pct=2.0)
-    # result: {"promoted": True, "reason": "..."}
-"""
+"""Immutable model-run registry, promotion gates and rollback."""
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import json
 import logging
+import math
+import os
 from pathlib import Path
+import shutil
 from typing import Any, Dict
+import uuid
 
 _logger = logging.getLogger(__name__)
 
-PROMOTION_THRESHOLD_PCT = float(
-    __import__("os").environ.get("MODEL_PROMOTION_THRESHOLD_PCT", "2.0")
+PROMOTION_THRESHOLD_PCT = float(os.getenv("MODEL_PROMOTION_THRESHOLD_PCT", "2.0"))
+MAX_SEGMENT_REGRESSION_PCT = float(os.getenv("MODEL_MAX_SEGMENT_REGRESSION_PCT", "15.0"))
+MIN_BACKTEST_SAMPLES = int(os.getenv("MODEL_MIN_BACKTEST_SAMPLES", "20"))
+MIN_COMPETITION_SAMPLES = int(
+    os.getenv("MODEL_MIN_COMPETITION_BACKTEST_SAMPLES", "10")
+)
+TARGET_INTERVAL_COVERAGE = float(os.getenv("MODEL_TARGET_INTERVAL_COVERAGE", "0.90"))
+INTERVAL_COVERAGE_TOLERANCE = float(os.getenv("MODEL_INTERVAL_COVERAGE_TOLERANCE", "0.10"))
+_REQUIRED_ARTIFACTS = (
+    "performance_model.joblib",
+    "compatibility_model.joblib",
+    "conformal.joblib",
+    "production_state.joblib",
+    "metadata.json",
 )
 
 
-def _load_registry(model_dir: Path) -> dict:
-    reg_path = model_dir / "registry.json"
-    if not reg_path.exists():
-        return {}
-    registry = json.loads(reg_path.read_text(encoding="utf-8"))
-    return registry if isinstance(registry, dict) else {"history": registry}
+def _utcnow() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
-def _save_registry(model_dir: Path, reg: dict) -> None:
-    (model_dir / "registry.json").write_text(
-        json.dumps(reg, indent=2, default=str), encoding="utf-8"
+def _load_registry(model_root: Path) -> dict:
+    path = model_root / "registry.json"
+    if not path.exists():
+        return {"history": []}
+    parsed = json.loads(path.read_text(encoding="utf-8"))
+    if isinstance(parsed, list):
+        return {"history": parsed}
+    if not isinstance(parsed, dict):
+        raise RuntimeError("registry.json must contain an object")
+    parsed.setdefault("history", [])
+    return parsed
+
+
+def _atomic_json(path: Path, payload: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    temporary.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
+    os.replace(temporary, path)
+
+
+def _save_registry(model_root: Path, registry: dict) -> None:
+    _atomic_json(model_root / "registry.json", registry)
+
+
+def _run_path(model_root: Path, entry: dict) -> Path:
+    raw = str(entry.get("path", "")).strip()
+    if not raw:
+        raise RuntimeError("Registry entry has no immutable run path")
+    path = (model_root / raw).resolve()
+    root = model_root.resolve()
+    if root not in path.parents:
+        raise RuntimeError("Registry run path escapes model root")
+    return path
+
+
+def _artifacts_exist(run_dir: Path) -> bool:
+    return run_dir.is_dir() and all(
+        (run_dir / name).is_file() for name in _REQUIRED_ARTIFACTS
     )
+
+
+def register_candidate(
+    model_dir: str,
+    run_id: str,
+    run_path: str | Path,
+    metadata: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Register an immutable trained run without changing production."""
+    model_root = Path(model_dir)
+    model_root.mkdir(parents=True, exist_ok=True)
+    run_dir = Path(run_path).resolve()
+    root = model_root.resolve()
+    if root not in run_dir.parents:
+        raise ValueError("run_path must live below model_dir")
+    if not _artifacts_exist(run_dir):
+        raise RuntimeError("Candidate run is missing required model artifacts")
+    report = metadata.get("backtest") or {}
+    overall = report.get("overall") or {}
+    entry = {
+        "run_id": str(run_id),
+        "path": str(run_dir.relative_to(root)),
+        "status": "candidate",
+        "registered_at": _utcnow(),
+        "model_version": metadata.get("model_version"),
+        "feature_version": metadata.get("feature_version"),
+        "data_cutoff": metadata.get("data_cutoff"),
+        "overall_rmse": overall.get("rmse", report.get("overall_rmse")),
+        "backtest": report,
+        "metadata": metadata,
+    }
+    registry = _load_registry(model_root)
+    registry["candidate"] = entry
+    registry.setdefault("history", []).append(
+        {"event": "candidate_registered", "at": _utcnow(), "run_id": str(run_id)}
+    )
+    _save_registry(model_root, registry)
+    return entry
+
+
+def _finite_metric(overall: dict, name: str, errors: list[str]) -> None:
+    value = overall.get(name)
+    try:
+        if not math.isfinite(float(value)):
+            raise ValueError
+    except (TypeError, ValueError):
+        errors.append(f"overall {name} is missing or non-finite")
+
+
+def _promotion_gate_errors(candidate: dict) -> list[str]:
+    errors: list[str] = []
+    report = candidate.get("backtest") or {}
+    overall = report.get("overall") or {}
+    if not report.get("valid"):
+        errors.append("backtest is not valid")
+
+    _finite_metric(overall, "rmse", errors)
+    _finite_metric(overall, "mae", errors)
+    _finite_metric(overall, "bias", errors)
+
+    n = int(overall.get("n", 0) or 0)
+    if n < MIN_BACKTEST_SAMPLES:
+        errors.append(
+            f"backtest has {n} samples; minimum is {MIN_BACKTEST_SAMPLES}"
+        )
+
+    ensemble_vs_base = report.get("ensemble_vs_base_delta")
+    try:
+        if not math.isfinite(float(ensemble_vs_base)) or float(ensemble_vs_base) < 0:
+            raise ValueError
+    except (TypeError, ValueError):
+        errors.append("full ensemble does not beat the base XGBoost forecast")
+
+    ensemble_vs_persistence = report.get("ensemble_vs_persistence_delta")
+    try:
+        if (
+            not math.isfinite(float(ensemble_vs_persistence))
+            or float(ensemble_vs_persistence) < 0
+        ):
+            raise ValueError
+    except (TypeError, ValueError):
+        errors.append("full ensemble does not beat previous-season persistence")
+
+    coverage = overall.get("interval_coverage")
+    if coverage is None:
+        errors.append("interval coverage is missing")
+    else:
+        try:
+            coverage_value = float(coverage)
+            if not math.isfinite(coverage_value):
+                raise ValueError
+            lo = TARGET_INTERVAL_COVERAGE - INTERVAL_COVERAGE_TOLERANCE
+            hi = min(1.0, TARGET_INTERVAL_COVERAGE + INTERVAL_COVERAGE_TOLERANCE)
+            if not lo <= coverage_value <= hi:
+                errors.append(
+                    f"interval coverage {coverage_value:.3f} outside "
+                    f"[{lo:.3f}, {hi:.3f}]"
+                )
+        except (TypeError, ValueError):
+            errors.append("interval coverage is non-finite")
+
+    competition_segments = report.get("by_competition") or {}
+    if not competition_segments:
+        errors.append("competition-segmented backtest metrics are missing")
+    for competition, segment in competition_segments.items():
+        if not isinstance(segment, dict):
+            continue
+        samples = int(segment.get("n", 0) or 0)
+        if samples < MIN_COMPETITION_SAMPLES:
+            continue
+        for metric in ("rmse", "mae", "bias"):
+            try:
+                if not math.isfinite(float(segment.get(metric))):
+                    raise ValueError
+            except (TypeError, ValueError):
+                errors.append(
+                    f"competition {competition} {metric} is missing/non-finite"
+                )
+        segment_coverage = segment.get("interval_coverage")
+        if segment_coverage is None:
+            errors.append(f"competition {competition} interval coverage is missing")
+    return errors
+
+
+def _segment_regressions_for_dimension(
+    candidate: dict,
+    production: dict,
+    dimension: str,
+    minimum_samples: int,
+    label: str,
+) -> list[str]:
+    cand_segments = (candidate.get("backtest") or {}).get(dimension) or {}
+    prod_segments = (production.get("backtest") or {}).get(dimension) or {}
+    errors: list[str] = []
+    for segment, cand in cand_segments.items():
+        prod = prod_segments.get(segment)
+        if not isinstance(cand, dict) or not isinstance(prod, dict):
+            continue
+        if min(int(cand.get("n", 0) or 0), int(prod.get("n", 0) or 0)) < minimum_samples:
+            continue
+        cand_rmse = cand.get("rmse")
+        prod_rmse = prod.get("rmse")
+        if cand_rmse is None or prod_rmse in (None, 0):
+            continue
+        regression_pct = (
+            (float(cand_rmse) - float(prod_rmse)) / float(prod_rmse) * 100.0
+        )
+        if regression_pct > MAX_SEGMENT_REGRESSION_PCT:
+            errors.append(
+                f"{label} {segment} RMSE regresses {regression_pct:.2f}% "
+                f"(limit {MAX_SEGMENT_REGRESSION_PCT:.2f}%)"
+            )
+    return errors
+
+
+def _segment_regressions(candidate: dict, production: dict) -> list[str]:
+    errors = _segment_regressions_for_dimension(
+        candidate, production, "by_league", 5, "league"
+    )
+    errors.extend(
+        _segment_regressions_for_dimension(
+            candidate,
+            production,
+            "by_competition",
+            MIN_COMPETITION_SAMPLES,
+            "competition",
+        )
+    )
+    return errors
+
+
+def _activate_run(model_root: Path, entry: dict) -> Path:
+    source = _run_path(model_root, entry)
+    if not _artifacts_exist(source):
+        raise RuntimeError("Run artifacts are incomplete")
+    production = model_root / "production"
+    stage = model_root / f".production-{uuid.uuid4().hex}"
+    backup = model_root / f".production-backup-{uuid.uuid4().hex}"
+    shutil.copytree(source, stage)
+    _atomic_json(
+        stage / "production_manifest.json",
+        {
+            "run_id": entry.get("run_id"),
+            "activated_at": _utcnow(),
+            "source_path": entry.get("path"),
+        },
+    )
+    try:
+        if production.exists():
+            production.rename(backup)
+        stage.rename(production)
+        if backup.exists():
+            shutil.rmtree(backup)
+    except Exception:
+        if production.exists() and backup.exists():
+            shutil.rmtree(production, ignore_errors=True)
+        if backup.exists() and not production.exists():
+            backup.rename(production)
+        shutil.rmtree(stage, ignore_errors=True)
+        raise
+    return production
 
 
 def promote_if_better(
     model_dir: str = "models_saved",
     min_improvement_pct: float = PROMOTION_THRESHOLD_PCT,
 ) -> Dict[str, Any]:
-    """Promote 'candidate' model to 'production' if it beats the current production model.
-
-    Args:
-        model_dir:            Directory containing registry.json and model files.
-        min_improvement_pct:  Minimum percentage improvement in val_rmse required.
-
-    Returns:
-        Dict with keys 'promoted' (bool) and 'reason' (str).
-    """
-    model_path = Path(model_dir)
-    reg = _load_registry(model_path)
-
-    candidate  = reg.get("candidate")
-    production = reg.get("production")
-
+    """Promote a candidate only after OOT full-ensemble and segment gates pass."""
+    model_root = Path(model_dir)
+    registry = _load_registry(model_root)
+    candidate = registry.get("candidate")
+    production = registry.get("production")
     if not candidate:
         return {"promoted": False, "reason": "No candidate model in registry"}
 
-    cand_rmse = candidate.get("val_rmse")
-    if cand_rmse is None:
-        return {"promoted": False, "reason": "Candidate has no val_rmse metric"}
-
+    errors = _promotion_gate_errors(candidate)
     if production:
-        prod_rmse = production.get("val_rmse")
-        if prod_rmse is not None:
-            improvement = (prod_rmse - cand_rmse) / prod_rmse * 100
-            if improvement < min_improvement_pct:
-                msg = (
-                    f"Candidate val_rmse={cand_rmse:.4f} does not improve over "
-                    f"production val_rmse={prod_rmse:.4f} by {min_improvement_pct}% "
-                    f"(actual improvement: {improvement:.2f}%)"
+        errors.extend(_segment_regressions(candidate, production))
+        cand_rmse = candidate.get("overall_rmse")
+        prod_rmse = production.get("overall_rmse")
+        if cand_rmse is None or prod_rmse in (None, 0):
+            errors.append("candidate/production OOT RMSE is unavailable")
+        else:
+            improvement = (
+                (float(prod_rmse) - float(cand_rmse)) / float(prod_rmse) * 100
+            )
+            if improvement < float(min_improvement_pct):
+                errors.append(
+                    f"OOT RMSE improvement {improvement:.2f}% is below "
+                    f"required {float(min_improvement_pct):.2f}%"
                 )
-                _logger.info("[Promotion] Rejected: %s", msg)
-                return {"promoted": False, "reason": msg}
+    if errors:
+        reason = "; ".join(errors)
+        _logger.info("[Promotion] rejected: %s", reason)
+        return {"promoted": False, "reason": reason, "gates": errors}
 
-    # Archive current production as 'previous'
+    _activate_run(model_root, candidate)
     if production:
-        reg["previous"] = production
-        _logger.info("[Promotion] Archived production as previous")
-
-    # Promote candidate
-    reg["production"] = {**candidate, "status": "production"}
-    reg.pop("candidate", None)
-    _save_registry(model_path, reg)
-
-    prod_rmse_str = (
-        f"{production.get('val_rmse'):.4f}"
-        if production and production.get("val_rmse") is not None
-        else "?"
+        registry["previous"] = production
+    registry["production"] = {
+        **candidate,
+        "status": "production",
+        "promoted_at": _utcnow(),
+    }
+    registry.pop("candidate", None)
+    registry.setdefault("history", []).append(
+        {"event": "promoted", "at": _utcnow(), "run_id": candidate.get("run_id")}
     )
-    msg = (
-        f"Promoted candidate (val_rmse={cand_rmse:.4f}) to production"
-        + (f", replaced production (val_rmse={prod_rmse_str})" if production else "")
-    )
-    _logger.info("[Promotion] %s", msg)
-    return {"promoted": True, "reason": msg}
+    _save_registry(model_root, registry)
+    return {
+        "promoted": True,
+        "reason": f"Promoted run {candidate.get('run_id')} to production",
+        "run_id": candidate.get("run_id"),
+        "production_dir": str(model_root / "production"),
+    }
 
 
 def rollback_to_previous(model_dir: str = "models_saved") -> Dict[str, Any]:
-    """Roll back production to the previously saved model.
-
-    Args:
-        model_dir: Directory containing registry.json.
-
-    Returns:
-        Dict with 'rolled_back' (bool) and 'reason' (str).
-    """
-    model_path = Path(model_dir)
-    reg = _load_registry(model_path)
-
-    previous   = reg.get("previous")
-    production = reg.get("production")
-
+    model_root = Path(model_dir)
+    registry = _load_registry(model_root)
+    previous = registry.get("previous")
+    production = registry.get("production")
     if not previous:
         return {"rolled_back": False, "reason": "No previous model to roll back to"}
-
-    reg["candidate"] = production  # demote current to candidate
-    reg["production"] = {**previous, "status": "production"}
-    reg.pop("previous", None)
-    _save_registry(model_path, reg)
-
-    _logger.info("[Rollback] Rolled back to previous model")
-    return {"rolled_back": True, "reason": "Rolled back to previous model"}
+    _activate_run(model_root, previous)
+    registry["production"] = {
+        **previous,
+        "status": "production",
+        "promoted_at": _utcnow(),
+    }
+    if production:
+        registry["previous"] = production
+    registry.setdefault("history", []).append(
+        {"event": "rollback", "at": _utcnow(), "run_id": previous.get("run_id")}
+    )
+    _save_registry(model_root, registry)
+    return {
+        "rolled_back": True,
+        "reason": f"Rolled back to run {previous.get('run_id')}",
+        "run_id": previous.get("run_id"),
+    }
 
 
 def get_promotion_status(model_dir: str = "models_saved") -> Dict[str, Any]:
-    """Return current promotion state from registry.json."""
-    reg = _load_registry(Path(model_dir))
+    registry = _load_registry(Path(model_dir))
     return {
-        "production": reg.get("production"),
-        "candidate":  reg.get("candidate"),
-        "previous":   reg.get("previous"),
+        "production": registry.get("production"),
+        "candidate": registry.get("candidate"),
+        "previous": registry.get("previous"),
+        "history": registry.get("history", [])[-20:],
     }
+
+
+def production_model_dir(model_dir: str = "models_saved") -> Path:
+    """Return the active production artifact directory or fail closed."""
+    path = Path(model_dir) / "production"
+    if not _artifacts_exist(path):
+        raise RuntimeError("No promoted production model is available")
+    return path

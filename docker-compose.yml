@@ -6,7 +6,7 @@ services:
     env_file: [.env]
     environment:
       DATA_SOURCE: postgres
-      MODEL_DIR: /app/models_saved
+      MODEL_DIR: /app/models_saved/production
       DATABASE_PROFILES_FILE: /app/config/database_profiles.json
       API_ENV: production
       LOG_FORMAT: json

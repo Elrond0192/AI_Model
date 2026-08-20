@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "basketball-ai"
-version = "2.0.0"
-description = "PostgreSQL-backed BBallstat forecasting and scenario inference service"
+version = "2.2.0"
+description = "PostgreSQL-backed BBallstat competition-aware forecasting and scenario inference service"
 requires-python = ">=3.11,<3.13"
 dependencies = [
     "fastapi>=0.104.0",
