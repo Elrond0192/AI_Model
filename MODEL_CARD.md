@@ -4,14 +4,14 @@
 
 | Field | Value |
 |---|---|
-| Version | 2.1.0 |
-| Feature contract | `forecast-t-plus-1-v2` |
-| Primary target | next-season player rating (`t -> t+1`) |
-| Supported production context | season-level `RS` |
-| Base estimator | XGBoost regressor |
-| Team/context layer | temporally trained k-NN compatibility + bounded context adjustments |
-| Output | predicted rating 0–10 + empirically validated interval |
-| Production source | PostgreSQL `ai_source` canonical views |
+| Version | 2.2.0 |
+| Feature contract | `forecast-t-plus-1-competition-v1` |
+| Primary target | same-league, same-competition next-season rating (`t -> t+1`) |
+| Competition support | data-driven; any normalized competition with supervised consecutive history |
+| Base estimator | pooled XGBoost regressor with explicit competition feature |
+| Team/context layer | temporally trained competition-aware k-NN + bounded context adjustments |
+| Output | predicted rating 0–10 + calibrated interval + competition support metadata |
+| Production source | PostgreSQL `ai_source` competition-preserving views |
 
 AI_Model is an inference/training service, not a conversational model. WordPress Chat V3/Bax owns intent detection, entity resolution and natural-language responses.
 
@@ -20,118 +20,104 @@ AI_Model is an inference/training service, not a conversational model. WordPress
 The forecast unit is strictly:
 
 ```text
-features available at season t  ->  observed season-level rating at season t+1
+player P / league L / competition C / season t
+                         ->
+player P / league L / competition C / season t+1
 ```
 
-A pair is created only when `target_season == source_season + 1`. Missing intermediate seasons are excluded rather than treated as one-year forecasts. The canonical PostgreSQL adapter provides one target row per global player and season.
+Missing intermediate seasons, league switches and competition switches do not form training pairs. `RS -> PO` and domestic-league -> EuroLeague pairs are invalid. The model is pooled across valid contexts so it can learn shared basketball relationships, while `competition` remains an explicit learned feature and every row's historical features are isolated to its own league/competition.
 
-The source contract deliberately collapses `TOT`/`RS`/`PO` duplicates to one season-level target. For this reason the production V2 contract accepts `competition="RS"` only. `PO`, `CUP` and `SUPERCUP` forecasts require a separately trained competition-specific target and are rejected rather than extrapolated from an unsupported categorical code.
+Known labels are normalized (`PLAYOFFS -> PO`, `REGULAR SEASON -> RS`). New labels are retained in normalized form. A competition is not serveable merely because its label exists: it must have produced supervised consecutive pairs in the promoted training run.
 
 ## Temporal split and estimator selection
 
 Target seasons are blocked as whole seasons:
 
-- older target seasons: estimator training;
-- penultimate target season: validation and XGBoost tree-count selection;
+- older targets: estimator training;
+- penultimate target season: validation/tree-count selection;
 - latest target season: untouched final-ensemble interval calibration.
 
-After validation selects the number of boosting trees, XGBoost is refit on train + validation. The calibration target remains unseen by estimator fitting.
+XGBoost is refit on train + validation after tree selection. Calibration outcomes remain unseen by estimator fitting. Role vocabularies are temporally bounded and row-level random CV is not used as production evidence.
 
-Role vocabularies are also bounded to information available through the permitted source season. A role label first observed beyond that horizon is treated as out-of-vocabulary rather than changing historical role codes.
+## Historical player/team/competition context
 
-Optional cross-validation is season-blocked; row-level random CV is not used for production evidence.
+`ai_source.player_competition_stats` and `ai_source.team_competition_stats` preserve league, season and competition. Historical inference constructs an as-of source-season snapshot and then scopes it to the requested league/competition.
 
-## Historical team/player context
+For a playoff request, player form, target-team pace/ORtg/DRtg/style, compatibility and persistence come from playoff rows in that league. Regular-season statistics are not silently substituted. If the required isolated source context is missing, inference fails explicitly.
 
-`ai_source.team_season_stats` preserves team context by season. Compatibility training for a target season can use only player history and team information available before that target. Historical backtests and historical API requests create an as-of snapshot that removes future player stats, future roster state, future player position and future team state.
-
-Team-style normalization bounds are calibrated on the same pre-calibration snapshot. They are stored as run-owned state and restored before inference, so a backtest fold or another model instance cannot silently change the promoted model's team vectors.
+Team-style normalization bounds and the trained competition vocabulary are run-owned state persisted in `production_state.joblib` and restored before inference.
 
 ## Feature families
 
 - source-season age and roster position;
-- per-36 volume: points, assists, rebounds, steals, blocks;
-- efficiency/usage: PIE, TS%, USG%, OBPM, DBPM;
-- RAPTOR, LEBRON, SPM, OWS/DWS, FIC and related advanced metrics when present;
-- career form, consistency and trajectory;
-- league-aware durability;
+- explicit competition encoding;
+- per-36 volume and efficiency/usage;
+- PIE, TS%, USG%, OBPM, DBPM, RAPTOR, LEBRON, SPM, OWS/DWS, FIC when available;
+- career form/trajectory **inside the requested league/competition**;
 - temporally bounded role labels;
-- on/off, clutch and starter context when available;
-- bounded interaction features.
-
-Missing optional advanced fields may use neutral defaults; target identity, chronology and required source-contract fields may not.
+- on/off, clutch and starter context when available for that competition;
+- competition-specific team style/context;
+- bounded interactions.
 
 ## Production prediction path
 
 ```text
-historical player state through t
-historical team state as of t
+league + competition + source season
              |
              v
-        XGBoost t+1
-             |
-             +-- compatibility
-             +-- league/context
-             +-- minutes / age scenario logic
-             v
-      final production rating
+isolated player history + team context
              |
              v
- finite-sample split-conformal interval
+       XGBoost t+1
+             |
+       compatibility
+       context / league
+       minutes / age scenario
+             |
+             v
+    final production rating
+             |
+             v
+competition conformal interval if sufficiently calibrated
+otherwise explicitly reported global conformal fallback
 ```
 
-The interval is calibrated on absolute residuals of the **final ensemble output** on an untouched calibration season. A single finite-sample quantile is applied directly around the final prediction; player-specific reliability scaling is not applied after calibration.
-
-Supported dynamic endpoint: `POST /api/v2/predictions/player-team`.
+The global interval is calibrated on final-ensemble absolute residuals. Per-competition finite-sample quantiles are used only when that competition reaches the configured calibration minimum. The API reports which calibration scope was used.
 
 ## Evaluation
 
-Promotion evidence comes from an expanding walk-forward backtest of the **same final ensemble behavior used in production**, not only the base estimator. Every fold trains on information available before its target season and predicts the untouched next season.
+Promotion evidence comes from expanding walk-forward backtests of the same final ensemble used online. Reported metrics include RMSE, MAE, R², bias, coverage/width, base-XGBoost and persistence comparisons, plus segmentation by league, **competition**, position and age band.
 
-Reported metrics include:
-
-- RMSE, MAE, R² and bias;
-- final interval coverage and mean width;
-- base XGBoost RMSE;
-- previous-season persistence RMSE;
-- ensemble improvement over both baselines;
-- per-league, per-position and age-band performance;
-- fold-level target seasons and sample counts.
-
-Fold failures invalidate the backtest; target values are never used as fallback predictions.
+A candidate cannot hide a serious PO/CUP regression behind a better global average: promotion compares competition segments against production when both have enough samples.
 
 ## Candidate / production lifecycle
 
-Training creates immutable artifacts under `models_saved/runs/<model_run_id>/`. A run is registered as **candidate** and cannot alter production directly.
+Training creates immutable `models_saved/runs/<model_run_id>/` artifacts and registers a candidate without replacing production. `production_state.joblib` contains style calibration, competition vocabulary and per-competition interval state. Promotion requires valid OOT evidence, sufficient samples, interval coverage, ensemble improvement and bounded league/competition regressions. Rollback reactivates a previous immutable run.
 
-A complete production run includes estimator artifacts, conformal/instance calibration, `production_state.joblib` for run-owned style calibration, and metadata. Missing runtime state makes the run non-promotable.
+## Sparse competition evidence
 
-Promotion requires the configured quality gates, including valid OOT evaluation, finite RMSE/MAE/bias, sample minimum, mandatory interval coverage, ensemble improvement over base and persistence, and bounded per-league regressions. When a production run already exists, the candidate must also improve its OOT RMSE by the configured threshold.
+`competition_support` reports:
 
-Only promoted artifacts are copied atomically to `models_saved/production/`, which is the directory loaded by the API container. Rollback reactivates the previous immutable run.
+- number of historical source seasons in that league/competition;
+- total games represented;
+- exact source-season games;
+- number of calibration samples;
+- whether confidence bounds use competition-specific or global calibration.
 
-## Explainability and monitoring
-
-The base tree model exposes SHAP values when the optional SHAP runtime is available. Training records a data signature and lineage metadata. Drift monitoring stores a training reference and supports PSI/segment checks; drift is a monitoring signal, not a substitute for retraining/backtesting.
+The model never claims an unseen competition is trained. A newly ingested competition becomes available only after data validation, training/backtesting and promotion of a model whose competition vocabulary contains it.
 
 ## Target comparability
 
-`ValLegaPerGame` / `rating` is treated as the supervised target. `validate-data` reports target distributions by league and warns when league means diverge substantially. AI_Model does not automatically normalize the target across leagues because that transformation must be demonstrated to improve real OOT performance rather than assumed.
+`ValLegaPerGame` / `rating` is the supervised target. The validator reports rating distributions by league and competition. Cross-league normalization is not applied automatically; it must be justified by OOT evidence.
 
 ## Limitations
 
-- Team-fit effects remain observational/associative rather than causal transfer estimates.
+- Team-fit effects remain observational rather than causal transfer estimates.
 - Injury, contract, coaching and off-court information are not explicitly modelled.
-- Sparse-history players may be excluded from OOT folds or have weaker career features.
-- Competition-specific forecasts are not supported by the current season-level supervised target.
-- The production age-scenario curve uses deterministic default parameters until a row-level historical age calibration contract is explicitly trained and versioned.
-- New leagues or material source-schema changes require rebuilding and validating the PostgreSQL adapter before retraining.
-- Real effectiveness must be judged on the deployment dataset's untouched future seasons; synthetic metrics are not production quality claims.
+- Sparse-history players/competitions produce less evidence; competition-specific interval calibration may fall back to the global conformal interval.
+- If a player has no exact requested source-season competition row, the service refuses the isolated forecast rather than mixing contexts.
+- Real effectiveness must be judged on untouched future seasons from the deployment dataset.
 
 ## Privacy and security
 
-- Source schemas are read-only to AI_Model.
-- Writes are restricted to model-owned schema `ai`.
-- PostgreSQL credentials and API secrets are runtime secrets and are never committed.
-- Browser clients never receive database credentials, `IdGlobal`, or generic SQL access.
-- WordPress communicates with AI_Model server-to-server over authenticated HTTPS.
+Source schemas are read-only; writes are restricted to schema `ai`; secrets are runtime-only; browser clients never receive DB credentials or `IdGlobal`; WordPress calls AI_Model server-to-server over authenticated HTTPS.
