@@ -1,30 +1,18 @@
-# ADR 0003 – SQLite for local operational state (no external broker)
+# ADR 0003 — SQLite for local API operational state
 
-**Status:** Accepted  
-**Date:** 2025-05-21  
+**Status:** Accepted
 
-## Context
+PostgreSQL is the basketball data/model store. Small single-node API concerns
+that do not belong in BBallstat remain local to the container runtime:
 
-Several operational concerns require persisted state:
-- Ingestion idempotency (game processing status).
-- Audit logging.
-- Token revocation.
-- Tenant usage metering.
+- request audit log;
+- JWT revocation state;
+- tenant usage counters.
 
-Options considered: PostgreSQL (external), Redis (external), SQLite (embedded).
+These SQLite files live under ignored runtime volumes and are never committed.
 
-## Decision
+The retired game-ingestion tracker is not part of AI_Model anymore. Source data
+is loaded directly from the canonical PostgreSQL `ai_source` views.
 
-Use SQLite for all local operational state:
-- `data/ingestion.db` – ingestion state tracker.
-- `audit.db` – request audit log.
-- `data/revoked_tokens.db` – JWT revocation blocklist.
-- `audit.db` (shared) – tenant usage counters.
-
-## Consequences
-
-- **Good:** Zero external dependencies; works in Docker single-container deployments.
-- **Good:** Atomic writes via WAL mode; concurrent readers supported.
-- **Bad:** Not horizontally scalable (single-writer). Acceptable for current deployment model.
-- **Migration path:** Replace `AuditDB`, `IngestionTracker`, `TenantManager` with
-  PostgreSQL adapters when horizontal scaling is required.
+If the API is scaled to multiple replicas, move this operational state to a
+shared store before enabling horizontal writes.

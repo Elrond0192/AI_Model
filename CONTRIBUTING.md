@@ -1,56 +1,85 @@
-# Contributing to Basketball Performance AI
-
-Thank you for your interest in contributing! This guide explains the conventions,
-development workflow, and quality standards for this project.
+# Contributing to AI_Model
 
 ## Prerequisites
 
 - Python 3.11 or 3.12
-- `pip install -e ".[dev]"` to install in editable mode with dev dependencies
-- (Optional) `pre-commit install` to activate pre-commit hooks
+- PostgreSQL for integration testing when changing the data contract
+- Docker / Docker Compose for production-like smoke tests
 
-## Development workflow
-
-1. Fork the repository and create a feature branch from `main`.
-2. Make your changes (see **Code conventions** below).
-3. Run the test suite: `pytest tests/ -q --tb=short`
-4. Run the linter: `ruff check basketball_ai/ --select E,F,W --ignore E501`
-5. Open a pull request against `main`.
-
-## Code conventions
-
-- **Python style**: follow PEP 8; line length ≤ 120 chars; Google-style docstrings.
-- **Type hints**: all public functions must have type annotations.
-- **Tests**: add a test for every new feature or bug fix; target ≥ 80 % coverage in
-  `basketball_ai/models/` and `basketball_ai/api/`.
-- **Commits**: one logical change per commit; use the imperative mood
-  ("Add feature X", not "Added feature X").
-- **Logging**: use `logging.getLogger(__name__)`; never use `print()` in library code.
-- **Security**: never commit secrets; use `.env` for local configuration.
-
-## Running specific test suites
+Install development dependencies:
 
 ```bash
-pytest tests/test_models.py   # Model tests
-pytest tests/test_api.py      # API tests
-pytest tests/ --cov=basketball_ai --cov-report=term-missing
+pip install -e ".[dev]"
 ```
 
-## Architecture overview
+Optional hooks:
 
-See `docs/architecture/` for C4 diagrams. Key modules:
+```bash
+pre-commit install
+```
 
-| Module | Responsibility |
-|--------|---------------|
-| `basketball_ai/data/` | Data loading, schema mapping, synthetic generator |
-| `basketball_ai/features/` | Feature engineering (player, team, context) |
-| `basketball_ai/models/` | XGBoost performance model, ensemble, age curve |
-| `basketball_ai/scenarios/` | What-if engine, transfer analysis, lineup optimisation |
-| `basketball_ai/api/` | FastAPI routes, auth middleware, rate limiting |
-| `basketball_ai/auth/` | User management, RBAC, session tokens |
-| `gui/` | Streamlit multi-user GUI |
+## Workflow
 
-## Reporting bugs
+1. Create a feature branch from `main`.
+2. Keep production data access behind `ai_source` canonical views.
+3. Add tests for model/data/API contract changes.
+4. Run:
 
-Open a GitHub Issue with: Python version, steps to reproduce, expected vs. actual behaviour,
-and any relevant log output.
+```bash
+pytest tests/ -q --tb=short
+ruff check basketball_ai/ --select E,F,W --ignore E501
+```
+
+5. Build the Docker image before deployment-sensitive changes:
+
+```bash
+docker build -t basketball-ai:test .
+```
+
+## Project boundaries
+
+| Area | Responsibility |
+|---|---|
+| `basketball_ai/data/postgres_loader.py` | load and validate the canonical PostgreSQL contract |
+| `basketball_ai/data/ai_source_schema.sql` | adapt BBallstat physical tables to `ai_source.*` |
+| `basketball_ai/data/ai_schema.sql` | model-owned PostgreSQL output tables |
+| `basketball_ai/features/` | feature engineering |
+| `basketball_ai/models/` | forecast, compatibility, calibration, registry |
+| `basketball_ai/scenarios/` | bounded what-if/team context logic |
+| `basketball_ai/api/` | authenticated typed inference |
+| `gui/app.py` | technical operations console |
+
+Conversation, natural-language intent routing and public entity resolution belong
+in WordPress Chat V3/Bax, not AI_Model.
+
+## Rules
+
+- Never commit `.env`, database profiles, API keys, trained model artefacts,
+  sessions or audit databases.
+- No SQL Server/Azure SQL compatibility code in the production data layer.
+- No generic SQL endpoint.
+- Source BBallstat schemas are read-only to AI_Model; writes belong only in
+  schema `ai`.
+- New league tables should be picked up by `ai_source_schema.sql` without
+  Python changes.
+- Preserve season chronology: a player must not have multiple training rows for
+  the same target season.
+- Use type hints on public Python APIs and structured logging in library code.
+- Do not weaken failed backtests/readiness into silent fallbacks.
+
+## PostgreSQL contract changes
+
+After modifying `ai_source_schema.sql`, run it against a representative database
+and verify:
+
+```sql
+SELECT count(*) FROM ai_source.players;
+SELECT count(*) FROM ai_source.teams;
+SELECT min(season), max(season), count(*) FROM ai_source.player_stats;
+SELECT player_id, season, count(*)
+FROM ai_source.player_stats
+GROUP BY player_id, season
+HAVING count(*) > 1;
+```
+
+The final query must return zero rows.

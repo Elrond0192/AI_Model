@@ -3,13 +3,33 @@ __pycache__/
 *.pyo
 *.egg-info/
 .pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
 .DS_Store
-users.json
-audit.log
-.admin_credentials
+
+# Secrets / runtime identity
 .env
 .env.*
 !.env.example
-.sql_cache/
+users.json
+roles.json
+sessions.json
+.admin_credentials
+audit.log
+audit.db
+*.db
+*.sqlite
+*.sqlite3
+
+# Generated runtime state
 runtime/
+models_saved/
+backups/
+data/quality_reports/
+.sql_cache/
 *.lock
+
+# Local tooling
+.vscode/
+.idea/

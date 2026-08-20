@@ -10,13 +10,16 @@ services:
       DATABASE_PROFILES_FILE: /app/config/database_profiles.json
       API_ENV: production
       LOG_FORMAT: json
-    ports: ["8000:8000"]
+      AUDIT_DB_PATH: /app/runtime/audit/audit.db
+    ports:
+      - "127.0.0.1:8000:8000"
     volumes:
       - ./runtime/config:/app/config:ro
       - ./runtime/models:/app/models_saved:ro
       - ./runtime/auth:/app/runtime/auth:rw
       - ./runtime/audit:/app/runtime/audit:rw
-    extra_hosts: ["host.docker.internal:host-gateway"]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/ready')"]
       interval: 30s
@@ -30,16 +33,21 @@ services:
     restart: unless-stopped
     env_file: [.env]
     environment:
+      DATA_SOURCE: postgres
       MODEL_DIR: /app/models_saved
       DATABASE_PROFILES_FILE: /app/config/database_profiles.json
       BASKETBALL_AI_USERS_FILE: /app/runtime/auth/users.json
       BASKETBALL_AI_ROLES_FILE: /app/runtime/auth/roles.json
+      BASKETBALL_AI_SESSIONS_FILE: /app/runtime/auth/sessions.json
       BASKETBALL_AI_ADMIN_CREDENTIALS_FILE: /app/runtime/auth/.admin_credentials
-    ports: ["8501:8501"]
+      BASKETBALL_AI_AUDIT_LOG: /app/runtime/audit/admin-audit.log
+    ports:
+      - "127.0.0.1:8501:8501"
     volumes:
       - ./runtime/config:/app/config:rw
       - ./runtime/models:/app/models_saved:rw
       - ./runtime/auth:/app/runtime/auth:rw
       - ./runtime/audit:/app/runtime/audit:rw
-    extra_hosts: ["host.docker.internal:host-gateway"]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     command: ["streamlit", "run", "gui/app.py", "--server.port=8501", "--server.address=0.0.0.0", "--server.headless=true"]
