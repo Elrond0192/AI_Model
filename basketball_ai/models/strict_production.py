@@ -1,7 +1,8 @@
 """Strict production model contract shared by training, backtest and API runtime.
 
 Production callers use this module so model fitting, historical evaluation,
-batch publishing and online inference all execute the same leakage-safe path.
+batch publishing and online inference all execute the same leakage-safe,
+competition-aware path.
 """
 from __future__ import annotations
 
@@ -15,10 +16,14 @@ import numpy as np
 import pandas as pd
 
 from basketball_ai.data.loader import _to_int
+from basketball_ai.models.competition_training import (
+    CompetitionSeasonAheadPerformanceModel,
+    CompetitionTemporalCompatibilityModel,
+    apply_competition_encoding,
+    normalize_competition,
+    scope_prediction_context,
+)
 from basketball_ai.models.production_training import (
-    ProductionEnsembleModel,
-    SeasonAheadPerformanceModel,
-    TemporalCompatibilityModel,
     build_historical_snapshot as _build_historical_snapshot,
     metric_summary,
     season_year,
@@ -101,8 +106,6 @@ def build_historical_snapshot(data: Dict[str, Any], source_season: int) -> Dict[
             for _, row in players.iterrows()
         }
 
-    # Do not let latest-team categorical metadata survive inside an as-of team
-    # row. Historical style is derived from the bounded numerical team context.
     teams = snapshot.get("teams")
     if teams is not None and not teams.empty:
         teams = teams.copy()
@@ -120,8 +123,8 @@ def build_historical_snapshot(data: Dict[str, Any], source_season: int) -> Dict[
     return snapshot
 
 
-class AsOfPositionPerformanceModel(SeasonAheadPerformanceModel):
-    """Season-ahead XGBoost model using source-season roster positions."""
+class AsOfPositionPerformanceModel(CompetitionSeasonAheadPerformanceModel):
+    """Competition-aware XGBoost using source-season roster positions."""
 
     _position_relations: Optional[pd.DataFrame] = None
     _role_vocabulary_cutoff: Optional[int] = None
@@ -134,7 +137,12 @@ class AsOfPositionPerformanceModel(SeasonAheadPerformanceModel):
             lambda value: season_year(value) if pd.notna(value) else np.nan
         )
         target_years: set[int] = set()
-        for _, group in stats.dropna(subset=["_season_year"]).groupby("player_id"):
+        grouping = ["player_id"]
+        if "league_id" in stats.columns:
+            grouping.append("league_id")
+        if "competition" in stats.columns:
+            grouping.append("competition")
+        for _, group in stats.dropna(subset=["_season_year"]).groupby(grouping):
             years = {int(value) for value in group["_season_year"].tolist()}
             target_years.update(year + 1 for year in years if year + 1 in years)
         ordered_targets = sorted(target_years)
@@ -142,9 +150,6 @@ class AsOfPositionPerformanceModel(SeasonAheadPerformanceModel):
             clean = stats.drop(columns=["_season_year"])
             return {**data, "player_stats": clean}
 
-        # Latest target season is calibration. Its source season equals the
-        # validation target season, so vocabulary through the penultimate target
-        # is information that would genuinely be available at forecast time.
         cutoff = ordered_targets[-2]
         future_mask = stats["_season_year"] > cutoff
         for column in _ROLE_COLUMNS:
@@ -201,15 +206,46 @@ class AsOfPositionPerformanceModel(SeasonAheadPerformanceModel):
         )
 
 
-class StrictProductionEnsembleModel(ProductionEnsembleModel):
-    """Exact model implementation used by every production entry point."""
+class StrictProductionEnsembleModel:
+    """Exact competition-aware model implementation used by production."""
 
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
-        kwargs.setdefault("performance_model", AsOfPositionPerformanceModel())
-        kwargs.setdefault("compatibility_model", TemporalCompatibilityModel())
-        super().__init__(*args, **kwargs)
+    def __new__(cls, *args: Any, **kwargs: Any):
+        # Build on the existing production ensemble without duplicating its API.
+        from basketball_ai.models.production_training import ProductionEnsembleModel
+
+        if cls is StrictProductionEnsembleModel:
+            instance = super().__new__(cls)
+            ProductionEnsembleModel.__init__(
+                instance,
+                performance_model=kwargs.pop(
+                    "performance_model", AsOfPositionPerformanceModel()
+                ),
+                compatibility_model=kwargs.pop(
+                    "compatibility_model", CompetitionTemporalCompatibilityModel()
+                ),
+                *args,
+                **kwargs,
+            )
+            instance._strict_initialise()
+            return instance
+        return super().__new__(cls)
+
+    def _strict_initialise(self) -> None:
         self._conformal_nominal_coverage: Optional[float] = None
         self._style_bounds_state: Optional[Dict[str, float]] = None
+        self._competition_encoding_state: Dict[str, int] = {}
+        self._conformal_by_competition: Dict[str, float] = {}
+        self._conformal_samples_by_competition: Dict[str, int] = {}
+
+    # The methods below delegate explicitly because __new__ installs the
+    # ProductionEnsembleModel state while this wrapper owns the strict contract.
+    def clear_cache(self) -> None:
+        from basketball_ai.models.ensemble import EnsembleModel
+        EnsembleModel.clear_cache(self)
+
+    @property
+    def is_trained(self) -> bool:
+        return bool(self.perf_model.is_trained and self.compat_model.is_trained)
 
     def _restore_style_bounds(self) -> None:
         if not self._style_bounds_state:
@@ -218,6 +254,12 @@ class StrictProductionEnsembleModel(ProductionEnsembleModel):
 
         _style_bounds.clear()
         _style_bounds.update(self._style_bounds_state)
+
+    def _restore_competition_encoding(self) -> None:
+        if not self._competition_encoding_state:
+            return
+        apply_competition_encoding(self._competition_encoding_state)
+        self.perf_model.competition_encoding = dict(self._competition_encoding_state)
 
     def _data_with_asof_position(
         self,
@@ -244,38 +286,69 @@ class StrictProductionEnsembleModel(ProductionEnsembleModel):
         patched["player_dict"] = patched_players
         return patched
 
+    @staticmethod
+    def _finite_conformal_quantile(
+        residuals: List[float],
+        coverage: float,
+        minimum: int,
+    ) -> Optional[float]:
+        finite = np.asarray(residuals, dtype=float)
+        finite = finite[np.isfinite(finite)]
+        if len(finite) < int(minimum):
+            return None
+        rank = min(
+            len(finite),
+            int(math.ceil((len(finite) + 1) * coverage)),
+        )
+        return float(np.sort(finite)[rank - 1])
+
     def _calibrate_conformal(self, conformal_residuals: Optional[List[float]]) -> None:
-        """Finite-sample split-conformal interval for final ensemble errors."""
-        if not conformal_residuals or len(conformal_residuals) < 10:
-            self._conformal_q_lo = None
-            self._conformal_q_hi = None
-            self._conformal_nominal_coverage = None
-            return
-        residuals = np.asarray(conformal_residuals, dtype=float)
-        residuals = residuals[np.isfinite(residuals)]
-        if len(residuals) < 10:
+        if not conformal_residuals:
             self._conformal_q_lo = None
             self._conformal_q_hi = None
             self._conformal_nominal_coverage = None
             return
         coverage = float(os.getenv("MODEL_TARGET_INTERVAL_COVERAGE", "0.90"))
         coverage = float(np.clip(coverage, 0.50, 0.999))
-        rank = min(
-            len(residuals),
-            int(math.ceil((len(residuals) + 1) * coverage)),
+        quantile = self._finite_conformal_quantile(
+            list(conformal_residuals), coverage, 10
         )
-        quantile = float(np.sort(residuals)[rank - 1])
         self._conformal_q_lo = quantile
         self._conformal_q_hi = quantile
-        self._conformal_nominal_coverage = coverage
+        self._conformal_nominal_coverage = coverage if quantile is not None else None
+
+    def _calibrate_competitions(self, records: List[Dict[str, Any]]) -> None:
+        self._conformal_by_competition = {}
+        self._conformal_samples_by_competition = {}
+        coverage = float(self._conformal_nominal_coverage or 0.90)
+        minimum = int(os.getenv("MODEL_MIN_COMPETITION_CALIBRATION_SAMPLES", "10"))
+        grouped: Dict[str, List[float]] = {}
+        for row in records:
+            competition = normalize_competition(row.get("competition"))
+            grouped.setdefault(competition, []).append(
+                abs(float(row["prediction"]) - float(row["actual"]))
+            )
+        for competition, residuals in grouped.items():
+            self._conformal_samples_by_competition[competition] = len(residuals)
+            quantile = self._finite_conformal_quantile(
+                residuals, coverage, minimum
+            )
+            if quantile is not None:
+                self._conformal_by_competition[competition] = quantile
 
     def train(self, data: Dict[str, Any]) -> Dict[str, Any]:
-        """Fit every production component strictly before calibration season."""
         from basketball_ai.features.team_features import calibrate_style_bounds
         from basketball_ai.models.age_curve import reset_fitted_params
 
         reset_fitted_params()
         metrics = self.perf_model.train(data)
+        self._competition_encoding_state = dict(
+            getattr(self.perf_model, "competition_encoding", {})
+        )
+        if not self._competition_encoding_state:
+            raise RuntimeError("Training produced no competition vocabulary")
+        self._restore_competition_encoding()
+
         calibration_season = int(
             self.perf_model._split_metadata["calibration_season"]
         )
@@ -289,15 +362,12 @@ class StrictProductionEnsembleModel(ProductionEnsembleModel):
 
         try:
             from basketball_ai.monitoring.drift import capture_reference
-
             self._drift_reference = capture_reference(fit_data)
         except Exception:
             self._drift_reference = None
 
         calibration_records = evaluate_target_season(
-            self,
-            data,
-            calibration_season,
+            self, data, calibration_season
         )
         if len(calibration_records) < 10:
             raise RuntimeError(
@@ -310,19 +380,30 @@ class StrictProductionEnsembleModel(ProductionEnsembleModel):
         self._calibrate_conformal(residuals)
         if self._conformal_q_hi is None:
             raise RuntimeError("Final-ensemble conformal calibration failed")
+        self._calibrate_competitions(calibration_records)
 
         calibrated_records = evaluate_target_season(
-            self,
-            data,
-            calibration_season,
+            self, data, calibration_season
         )
         metrics["final_calibration"] = {
             "target_season": calibration_season,
             "nominal_coverage": self._conformal_nominal_coverage,
             **metric_summary(calibrated_records),
         }
+        metrics["competition_vocabulary"] = dict(
+            self._competition_encoding_state
+        )
+        metrics["competition_calibration_samples"] = dict(
+            self._conformal_samples_by_competition
+        )
+        metrics["competition_specific_intervals"] = sorted(
+            self._conformal_by_competition
+        )
         metrics["compatibility_training_samples"] = int(
             getattr(self.compat_model, "training_samples", 0)
+        )
+        metrics["compatibility_samples_by_competition"] = dict(
+            getattr(self.compat_model, "training_samples_by_competition", {})
         )
         metrics["role_vocabulary_cutoff"] = getattr(
             self.perf_model, "_role_vocabulary_cutoff", None
@@ -338,10 +419,11 @@ class StrictProductionEnsembleModel(ProductionEnsembleModel):
         target_age: Optional[int] = None,
         competition: str = "RS",
     ):
-        """Predict from a source season; ``None`` means latest observed season."""
-        if competition != "RS":
+        competition = normalize_competition(competition)
+        if competition not in self._competition_encoding_state:
             raise ValueError(
-                "Production season-ahead model supports RS season context only"
+                f"Competition {competition!r} was not present when this model was trained; "
+                "refresh the source contract and retrain before serving it"
             )
         if season is None:
             stats = data.get("player_stats", pd.DataFrame())
@@ -352,16 +434,19 @@ class StrictProductionEnsembleModel(ProductionEnsembleModel):
                 for value in stats["season"].dropna()
             )
         from basketball_ai.models.age_curve import reset_fitted_params
+        from basketball_ai.models.ensemble import EnsembleModel
 
         reset_fitted_params()
         self._restore_style_bounds()
-        return super().predict(
+        self._restore_competition_encoding()
+        return EnsembleModel.predict(
+            self,
             player_id,
             team_id,
             data,
             season=season,
             target_age=target_age,
-            competition="RS",
+            competition=competition,
         )
 
     def _predict_uncached(
@@ -373,27 +458,37 @@ class StrictProductionEnsembleModel(ProductionEnsembleModel):
         target_age: Optional[int] = None,
         competition: str = "RS",
     ):
+        from basketball_ai.models.ensemble import EnsembleModel
+
+        competition = normalize_competition(competition)
+        context_competition = data.get("_prediction_competition")
+        if context_competition is not None and normalize_competition(
+            context_competition
+        ) != competition:
+            raise ValueError("Prediction data is scoped to a different competition")
+
         bounded_data = self._data_with_asof_position(
-            player_id,
-            data,
-            int(season),
+            player_id, data, int(season)
         )
-        result = super()._predict_uncached(
+        result = EnsembleModel._predict_uncached(
+            self,
             player_id,
             team_id,
             bounded_data,
             season,
             target_age,
-            "RS",
+            competition,
         )
-        if self._conformal_q_hi is not None:
-            half_width = float(self._conformal_q_hi)
+        half_width = self._conformal_by_competition.get(
+            competition, self._conformal_q_hi
+        )
+        if half_width is not None:
             result.confidence_low = round(
-                float(np.clip(result.predicted_rating - half_width, 0.0, 10.0)),
+                float(np.clip(result.predicted_rating - float(half_width), 0.0, 10.0)),
                 3,
             )
             result.confidence_high = round(
-                float(np.clip(result.predicted_rating + half_width, 0.0, 10.0)),
+                float(np.clip(result.predicted_rating + float(half_width), 0.0, 10.0)),
                 3,
             )
         return result
@@ -403,22 +498,32 @@ class StrictProductionEnsembleModel(ProductionEnsembleModel):
         directory: str = "models_saved",
         metrics: Optional[Dict[str, Any]] = None,
     ) -> None:
+        from basketball_ai.models.production_training import ProductionEnsembleModel
+
         if not self._style_bounds_state:
             raise RuntimeError("Production style calibration state is missing")
-        super().save(directory, metrics)
+        if not self._competition_encoding_state:
+            raise RuntimeError("Production competition vocabulary is missing")
+        ProductionEnsembleModel.save(self, directory, metrics)
         joblib.dump(
             {
                 "style_bounds": dict(self._style_bounds_state),
+                "competition_encoding": dict(self._competition_encoding_state),
                 "conformal_nominal_coverage": self._conformal_nominal_coverage,
+                "conformal_by_competition": dict(self._conformal_by_competition),
+                "conformal_samples_by_competition": dict(
+                    self._conformal_samples_by_competition
+                ),
             },
             str(Path(directory) / _STATE_FILE),
         )
 
     def load(self, directory: str = "models_saved") -> None:
         from basketball_ai.models.age_curve import reset_fitted_params
+        from basketball_ai.models.production_training import ProductionEnsembleModel
 
         reset_fitted_params()
-        super().load(directory)
+        ProductionEnsembleModel.load(self, directory)
         state_path = Path(directory) / _STATE_FILE
         if not state_path.is_file():
             raise RuntimeError(f"Strict production state is missing: {state_path}")
@@ -426,15 +531,33 @@ class StrictProductionEnsembleModel(ProductionEnsembleModel):
         style_bounds = state.get("style_bounds")
         if not isinstance(style_bounds, dict) or not style_bounds:
             raise RuntimeError("Strict production style bounds are missing")
+        competition_encoding = state.get("competition_encoding")
+        if not isinstance(competition_encoding, dict) or not competition_encoding:
+            raise RuntimeError("Strict production competition vocabulary is missing")
         self._style_bounds_state = {
             str(key): float(value)
             for key, value in style_bounds.items()
         }
-        self._restore_style_bounds()
+        self._competition_encoding_state = {
+            str(key): int(value)
+            for key, value in competition_encoding.items()
+        }
+        self._conformal_by_competition = {
+            str(key): float(value)
+            for key, value in (state.get("conformal_by_competition") or {}).items()
+        }
+        self._conformal_samples_by_competition = {
+            str(key): int(value)
+            for key, value in (
+                state.get("conformal_samples_by_competition") or {}
+            ).items()
+        }
         nominal = state.get("conformal_nominal_coverage")
         self._conformal_nominal_coverage = (
             float(nominal) if nominal is not None else None
         )
+        self._restore_style_bounds()
+        self._restore_competition_encoding()
 
 
 def evaluate_target_season(
@@ -442,7 +565,7 @@ def evaluate_target_season(
     data: Dict[str, Any],
     target_season: int,
 ) -> List[Dict[str, Any]]:
-    """Evaluate exactly what production would have served before target season."""
+    """Evaluate same-league, same-competition t -> t+1 forecasts."""
     target_season = int(target_season)
     source_season = target_season - 1
     snapshot = build_historical_snapshot(data, source_season)
@@ -459,25 +582,41 @@ def evaluate_target_season(
     records: List[Dict[str, Any]] = []
     ensemble.clear_cache()
     for _, target in target_stats.iterrows():
-        if pd.isna(target.get("player_id")) or pd.isna(target.get("team_id")):
+        if (
+            pd.isna(target.get("player_id"))
+            or pd.isna(target.get("team_id"))
+            or pd.isna(target.get("league_id"))
+        ):
             continue
         pid = _to_int(target["player_id"])
         tid = _to_int(target["team_id"])
-        if pid not in snapshot.get("player_dict", {}) or tid not in snapshot.get("team_dict", {}):
+        league_id = _to_int(target["league_id"])
+        competition = normalize_competition(target.get("competition"))
+        if competition not in ensemble._competition_encoding_state:
             continue
         prior = source_stats[
             (source_stats["player_id"].map(_to_int) == pid)
+            & (source_stats["league_id"].map(_to_int) == league_id)
+            & (source_stats["competition"].map(normalize_competition) == competition)
             & (source_stats["_season_year"] == source_season)
         ]
         if prior.empty:
             continue
         try:
+            scoped = scope_prediction_context(
+                snapshot,
+                pid,
+                tid,
+                league_id,
+                competition,
+                source_season,
+            )
             result = ensemble.predict(
                 pid,
                 tid,
-                snapshot,
+                scoped,
                 season=source_season,
-                competition="RS",
+                competition=competition,
             )
         except (ValueError, RuntimeError):
             continue
@@ -485,9 +624,9 @@ def evaluate_target_season(
             {
                 "player_id": pid,
                 "team_id": tid,
-                "league_id": target.get("league_id"),
+                "league_id": league_id,
                 "target_season": target_season,
-                "competition": "RS",
+                "competition": competition,
                 "actual": float(target["rating"]),
                 "prediction": float(result.predicted_rating),
                 "base_prediction": float(result.base_rating),
@@ -501,6 +640,7 @@ def evaluate_target_season(
                     str(snapshot["player_dict"][pid].get("position", "PG")),
                 ),
                 "age": int(snapshot["player_dict"][pid].get("age", 0) or 0) + 1,
+                "competition_support": scoped.get("_competition_support", {}),
             }
         )
     ensemble.clear_cache()
@@ -515,7 +655,7 @@ from basketball_ai.scenarios.engine import (  # noqa: E402
 
 
 class StrictWhatIfEngine(_WhatIfEngine):
-    """Scenario engine that skips legacy global calibrator mutation."""
+    """Scenario engine that scopes predictions to an explicit competition."""
 
     def __init__(
         self,
@@ -531,11 +671,30 @@ class StrictWhatIfEngine(_WhatIfEngine):
         target_team_id: int,
         season: Optional[int] = None,
         competition: str = "RS",
+        league_id: Optional[int] = None,
     ):
+        competition = normalize_competition(competition)
+        if season is None:
+            stats = self.data.get("player_stats", pd.DataFrame())
+            if stats.empty:
+                raise ValueError("season is required")
+            season = max(season_year(value) for value in stats["season"].dropna())
+        scoped = self.data
+        if league_id is not None:
+            scoped = scope_prediction_context(
+                self.data,
+                player_id,
+                target_team_id,
+                league_id,
+                competition,
+                int(season),
+            )
+        elif self.data.get("_prediction_league_id") is None:
+            raise ValueError("league_id is required for competition-aware prediction")
         return self.ensemble.predict(
             player_id,
             target_team_id,
-            self.data,
+            scoped,
             season=season,
             competition=competition,
         )
@@ -566,6 +725,9 @@ class StrictWhatIfEngine(_WhatIfEngine):
             min(40, current_age + 8),
         )
         points: List[_TrajectoryPoint] = []
+        competition = normalize_competition(
+            self.data.get("_prediction_competition", "RS")
+        )
         for age in range(low, high + 1):
             source_season = int(season_base) + (age - current_age)
             prediction = self.ensemble.predict(
@@ -574,6 +736,7 @@ class StrictWhatIfEngine(_WhatIfEngine):
                 self.data,
                 season=source_season,
                 target_age=age,
+                competition=competition,
             )
             points.append(
                 _TrajectoryPoint(
