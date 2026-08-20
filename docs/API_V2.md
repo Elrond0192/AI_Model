@@ -16,18 +16,11 @@
 
 `season` is the **source season**. The forecast target is always `season + 1`.
 
-Supported competition values are:
-
-- `RS`
-- `PO`
-- `CUP`
-- `SUPERCUP`
-
-The API does not silently coerce arbitrary competition strings.
+The current production target is one canonical season-level rating per player, so the only supported competition value is `RS`. Requests for `PO`, `CUP` or `SUPERCUP` return validation error `422`; AI_Model does not fabricate competition-specific forecasts from a model that was not trained on a competition-specific target.
 
 ## Historical boundary
 
-Before inference the service builds an as-of snapshot for the requested source season. Player history, roster relations and team style after that season are excluded from the calculation. This prevents a historical request/backtest from reading current team/player state.
+Before inference the service builds an as-of snapshot for the requested source season. Player history, roster relations, source-season player position and team context after that season are excluded from the calculation. Team-style normalization is restored from the promoted run's versioned production state.
 
 The request is rejected if the player or target team has no resolvable state for the requested source-season context.
 
@@ -45,7 +38,9 @@ Every successful response includes:
 - confidence bounds
 - `generated_at`
 
-Production Docker loads only the explicitly promoted artifacts in `models_saved/production`; candidate runs are never served by the API.
+The confidence interval is a finite-sample split-conformal interval calibrated on absolute residuals of the final ensemble output on an untouched calibration season.
+
+Production Docker loads only the explicitly promoted artifacts in `models_saved/production`; candidate runs are never served by the API. The promoted artifact set includes `production_state.joblib`, which contains the run-owned team-style calibration state.
 
 Precomputed forecasts belong in PostgreSQL `ai.player_forecasts`; high-cardinality player/team scenarios are evaluated dynamically.
 
