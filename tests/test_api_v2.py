@@ -9,36 +9,66 @@ from fastapi.testclient import TestClient
 
 
 def _fake_state(app) -> None:
-    class FakeEngine:
-        def predict_in_team(self, player_id: int, team_id: int, season: int):
-            assert player_id == 101
-            assert team_id == 202
-            return SimpleNamespace(
-                predicted_rating=7.25,
-                confidence_low=6.8,
-                confidence_high=7.7,
-            )
-
-    app.state.engine = FakeEngine()
+    app.state.engine = SimpleNamespace(ensemble=object())
     app.state.data = {
         "player_dict": {101: {"id": 101, "global_id": "PLAYER-IDGLOBAL"}},
         "team_dict": {202: {"id": 202, "global_id": "TEAM-IDGLOBAL"}},
     }
     app.state.model_metadata = {
         "model_run_id": "run-1",
-        "model_version": "2.0.0",
-        "feature_version": "forecast-t-plus-1-v1",
+        "model_version": "2.1.0",
+        "feature_version": "forecast-t-plus-1-v2",
         "data_cutoff": "2025-12-31",
     }
 
 
-def _payload() -> dict:
+def _patch_inference(monkeypatch, *, expected_competition: str = "RS") -> dict:
+    import basketball_ai.api.routes.predictions_v2 as route
+
+    seen: dict = {}
+
+    def fake_snapshot(data, source_season):
+        seen["source_season"] = source_season
+        return {
+            "player_dict": {101: {"id": 101, "global_id": "PLAYER-IDGLOBAL"}},
+            "team_dict": {202: {"id": 202, "global_id": "TEAM-IDGLOBAL"}},
+        }
+
+    class FakeWhatIfEngine:
+        def __init__(self, ensemble, data):
+            seen["ensemble"] = ensemble
+            seen["snapshot"] = data
+
+        def predict_in_team(
+            self,
+            player_id: int,
+            team_id: int,
+            season: int,
+            competition: str = "RS",
+        ):
+            assert player_id == 101
+            assert team_id == 202
+            assert season == 2025
+            assert competition == expected_competition
+            seen["competition"] = competition
+            return SimpleNamespace(
+                predicted_rating=7.25,
+                confidence_low=6.8,
+                confidence_high=7.7,
+            )
+
+    monkeypatch.setattr(route, "build_historical_snapshot", fake_snapshot)
+    monkeypatch.setattr(route, "WhatIfEngine", FakeWhatIfEngine)
+    return seen
+
+
+def _payload(competition: str = "RS") -> dict:
     return {
         "player_global_id": "PLAYER-IDGLOBAL",
         "team_global_id": "TEAM-IDGLOBAL",
         "league": "ITA1",
         "season": 2025,
-        "competition": "RS",
+        "competition": competition,
     }
 
 
@@ -101,7 +131,7 @@ def test_model_metadata_defaults_and_file(tmp_path):
             {
                 "model_run_id": "run-42",
                 "model_version": "2.1.0",
-                "feature_version": "features-v2",
+                "feature_version": "forecast-t-plus-1-v2",
                 "data_cutoff": "2026-06-30",
             }
         ),
@@ -111,7 +141,7 @@ def test_model_metadata_defaults_and_file(tmp_path):
     assert metadata == {
         "model_run_id": "run-42",
         "model_version": "2.1.0",
-        "feature_version": "features-v2",
+        "feature_version": "forecast-t-plus-1-v2",
         "data_cutoff": "2026-06-30",
     }
 
@@ -123,9 +153,10 @@ def test_model_metadata_invalid_json_falls_back(tmp_path):
     assert _model_metadata(str(tmp_path))["model_version"] == "v2"
 
 
-def test_v2_player_team_contract_uses_real_global_ids():
+def test_v2_player_team_uses_historical_source_season(monkeypatch):
     from basketball_ai.api.routes.predictions_v2 import router
 
+    seen = _patch_inference(monkeypatch)
     app = FastAPI()
     app.include_router(router)
     _fake_state(app)
@@ -133,15 +164,33 @@ def test_v2_player_team_contract_uses_real_global_ids():
     response = TestClient(app).post("/api/v2/predictions/player-team", json=_payload())
     assert response.status_code == 200
     body = response.json()
+    assert seen["source_season"] == 2025
     assert body["player_global_id"] == "PLAYER-IDGLOBAL"
     assert body["team_global_id"] == "TEAM-IDGLOBAL"
     assert body["target_season"] == 2026
     assert body["predicted_rating"] == 7.25
+    assert body["explanation"]["context"] == "historical_as_of_source_season"
 
 
-def test_v2_returns_404_for_unknown_global_id():
+def test_v2_propagates_playoff_competition(monkeypatch):
     from basketball_ai.api.routes.predictions_v2 import router
 
+    seen = _patch_inference(monkeypatch, expected_competition="PO")
+    app = FastAPI()
+    app.include_router(router)
+    _fake_state(app)
+    response = TestClient(app).post(
+        "/api/v2/predictions/player-team", json=_payload("PO")
+    )
+    assert response.status_code == 200
+    assert response.json()["competition"] == "PO"
+    assert seen["competition"] == "PO"
+
+
+def test_v2_returns_404_for_unknown_global_id(monkeypatch):
+    from basketball_ai.api.routes.predictions_v2 import router
+
+    _patch_inference(monkeypatch)
     app = FastAPI()
     app.include_router(router)
     _fake_state(app)
@@ -198,6 +247,7 @@ def test_api_key_protects_v2_and_allows_service_call(monkeypatch):
     monkeypatch.delenv("JWT_SECRET", raising=False)
     from basketball_ai.api.main import create_app
 
+    _patch_inference(monkeypatch)
     app = create_app()
     _fake_state(app)
     client = TestClient(app)
@@ -222,8 +272,7 @@ def test_request_body_limit_short_circuits(monkeypatch):
     from basketball_ai.api.main import create_app
 
     response = TestClient(create_app()).get(
-        "/health/live",
-        headers={"content-length": "1000001"},
+        "/health/live", headers={"content-length": "1000001"}
     )
     assert response.status_code == 413
 
@@ -238,5 +287,10 @@ def test_parse_allowed_origins_modes(monkeypatch):
     monkeypatch.setenv("API_ENV", "development")
     assert main_mod._parse_allowed_origins() == ["*"]
 
-    monkeypatch.setenv("ALLOWED_ORIGINS", "https://one.example, https://two.example")
-    assert main_mod._parse_allowed_origins() == ["https://one.example", "https://two.example"]
+    monkeypatch.setenv(
+        "ALLOWED_ORIGINS", "https://one.example, https://two.example"
+    )
+    assert main_mod._parse_allowed_origins() == [
+        "https://one.example",
+        "https://two.example",
+    ]
