@@ -30,6 +30,7 @@ _VALID_POSITIONS = {
     "PF/C", "C/PF", "PG/SF", "SF/PG", "SG/PF", "PF/SG",
 }
 _STATE_FILE = "production_state.joblib"
+_ROLE_COLUMNS = ("ruolo_combinato", "ruolo_offensivo", "ruolo_difensivo")
 
 
 def _normalise_position(value: Any) -> Optional[str]:
@@ -100,6 +101,21 @@ def build_historical_snapshot(data: Dict[str, Any], source_season: int) -> Dict[
             for _, row in players.iterrows()
         }
 
+    # Do not let latest-team categorical metadata survive inside an as-of team
+    # row. Historical style is derived from the bounded numerical team context.
+    teams = snapshot.get("teams")
+    if teams is not None and not teams.empty:
+        teams = teams.copy()
+        if "playing_style" in teams.columns:
+            teams["playing_style"] = ""
+        if "formation" in teams.columns:
+            teams["formation"] = ""
+        snapshot["teams"] = teams
+        snapshot["team_dict"] = {
+            _to_int(row["id"]): row.to_dict()
+            for _, row in teams.iterrows()
+        }
+
     snapshot["_as_of_season"] = source_season
     return snapshot
 
@@ -108,6 +124,37 @@ class AsOfPositionPerformanceModel(SeasonAheadPerformanceModel):
     """Season-ahead XGBoost model using source-season roster positions."""
 
     _position_relations: Optional[pd.DataFrame] = None
+    _role_vocabulary_cutoff: Optional[int] = None
+
+    @staticmethod
+    def _allowed_role_vocabulary_data(data: Dict[str, Any]) -> Dict[str, Any]:
+        """Hide role labels that first appear after the allowed source horizon."""
+        stats = data["player_stats"].copy()
+        stats["_season_year"] = stats["season"].map(
+            lambda value: season_year(value) if pd.notna(value) else np.nan
+        )
+        target_years: set[int] = set()
+        for _, group in stats.dropna(subset=["_season_year"]).groupby("player_id"):
+            years = {int(value) for value in group["_season_year"].tolist()}
+            target_years.update(year + 1 for year in years if year + 1 in years)
+        ordered_targets = sorted(target_years)
+        if len(ordered_targets) < 2:
+            clean = stats.drop(columns=["_season_year"])
+            return {**data, "player_stats": clean}
+
+        # Latest target season is calibration. Its source season equals the
+        # validation target season, so vocabulary through the penultimate target
+        # is information that would genuinely be available at forecast time.
+        cutoff = ordered_targets[-2]
+        future_mask = stats["_season_year"] > cutoff
+        for column in _ROLE_COLUMNS:
+            if column in stats.columns:
+                stats.loc[future_mask, column] = ""
+        clean = stats.drop(columns=["_season_year"])
+        safe_data = dict(data)
+        safe_data["player_stats"] = clean
+        safe_data["_role_vocabulary_cutoff"] = cutoff
+        return safe_data
 
     def prepare_features(
         self,
@@ -116,8 +163,10 @@ class AsOfPositionPerformanceModel(SeasonAheadPerformanceModel):
         split_season: Optional[str] = None,
     ) -> Tuple[pd.DataFrame, np.ndarray]:
         self._position_relations = data.get("team_player_relations")
+        safe_data = self._allowed_role_vocabulary_data(data)
+        self._role_vocabulary_cutoff = safe_data.get("_role_vocabulary_cutoff")
         return super().prepare_features(
-            data,
+            safe_data,
             extra_metrics=extra_metrics,
             split_season=split_season,
         )
@@ -275,6 +324,9 @@ class StrictProductionEnsembleModel(ProductionEnsembleModel):
         metrics["compatibility_training_samples"] = int(
             getattr(self.compat_model, "training_samples", 0)
         )
+        metrics["role_vocabulary_cutoff"] = getattr(
+            self.perf_model, "_role_vocabulary_cutoff", None
+        )
         return metrics
 
     def predict(
@@ -287,6 +339,10 @@ class StrictProductionEnsembleModel(ProductionEnsembleModel):
         competition: str = "RS",
     ):
         """Predict from a source season; ``None`` means latest observed season."""
+        if competition != "RS":
+            raise ValueError(
+                "Production season-ahead model supports RS season context only"
+            )
         if season is None:
             stats = data.get("player_stats", pd.DataFrame())
             if stats.empty or "season" not in stats.columns:
@@ -305,7 +361,7 @@ class StrictProductionEnsembleModel(ProductionEnsembleModel):
             data,
             season=season,
             target_age=target_age,
-            competition=competition,
+            competition="RS",
         )
 
     def _predict_uncached(
@@ -328,7 +384,7 @@ class StrictProductionEnsembleModel(ProductionEnsembleModel):
             bounded_data,
             season,
             target_age,
-            competition,
+            "RS",
         )
         if self._conformal_q_hi is not None:
             half_width = float(self._conformal_q_hi)
@@ -415,14 +471,13 @@ def evaluate_target_season(
         ]
         if prior.empty:
             continue
-        competition = str(target.get("competition", "RS") or "RS").upper()
         try:
             result = ensemble.predict(
                 pid,
                 tid,
                 snapshot,
                 season=source_season,
-                competition=competition,
+                competition="RS",
             )
         except (ValueError, RuntimeError):
             continue
@@ -432,7 +487,7 @@ def evaluate_target_season(
                 "team_id": tid,
                 "league_id": target.get("league_id"),
                 "target_season": target_season,
-                "competition": competition,
+                "competition": "RS",
                 "actual": float(target["rating"]),
                 "prediction": float(result.predicted_rating),
                 "base_prediction": float(result.base_rating),
@@ -452,20 +507,23 @@ def evaluate_target_season(
     return records
 
 
-class StrictWhatIfEngine:
-    """Production scenario engine that never mutates model calibration state."""
+from basketball_ai.scenarios.engine import (  # noqa: E402
+    TrajectoryPoint as _TrajectoryPoint,
+    WhatIfEngine as _WhatIfEngine,
+    _safe_int as _scenario_safe_int,
+)
 
-    def __init__(self, ensemble: StrictProductionEnsembleModel, data: Dict[str, Any]) -> None:
-        from basketball_ai.scenarios.engine import WhatIfEngine
 
-        self._engine = object.__new__(WhatIfEngine)
-        self._engine.ensemble = ensemble
-        self._engine.data = data
+class StrictWhatIfEngine(_WhatIfEngine):
+    """Scenario engine that skips legacy global calibrator mutation."""
+
+    def __init__(
+        self,
+        ensemble: StrictProductionEnsembleModel,
+        data: Dict[str, Any],
+    ) -> None:
         self.ensemble = ensemble
         self.data = data
-
-    def __getattr__(self, name: str):
-        return getattr(self._engine, name)
 
     def predict_in_team(
         self,
@@ -488,9 +546,7 @@ class StrictWhatIfEngine:
         season_base: Optional[int] = None,
         age_range: Optional[Tuple[int, int]] = None,
         team_id: Optional[int] = None,
-    ):
-        from basketball_ai.scenarios.engine import TrajectoryPoint, _safe_int
-
+    ) -> List[_TrajectoryPoint]:
         if season_base is None:
             stats = self.data.get("player_stats", pd.DataFrame())
             if stats.empty:
@@ -499,7 +555,7 @@ class StrictWhatIfEngine:
                 season_year(value) for value in stats["season"].dropna()
             )
         player = self.data["player_dict"].get(_to_int(player_id), {})
-        current_age = _safe_int(player.get("age", 25), 25)
+        current_age = _scenario_safe_int(player.get("age", 25), 25)
         if team_id is None:
             current_team = player.get("current_team_id")
             if current_team is None:
@@ -509,7 +565,7 @@ class StrictWhatIfEngine:
             max(18, current_age - 4),
             min(40, current_age + 8),
         )
-        points = []
+        points: List[_TrajectoryPoint] = []
         for age in range(low, high + 1):
             source_season = int(season_base) + (age - current_age)
             prediction = self.ensemble.predict(
@@ -520,7 +576,7 @@ class StrictWhatIfEngine:
                 target_age=age,
             )
             points.append(
-                TrajectoryPoint(
+                _TrajectoryPoint(
                     age=age,
                     season=source_season + 1,
                     predicted_rating=prediction.predicted_rating,
