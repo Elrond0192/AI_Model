@@ -216,11 +216,7 @@ class StrictProductionEnsembleModel(ProductionEnsembleModel):
         from basketball_ai.features.team_features import calibrate_style_bounds
         from basketball_ai.models.age_curve import reset_fitted_params
 
-        # Age-curve parameters are module globals in the legacy implementation.
-        # Production t+1 does not empirically fit them until a row-level historical
-        # age contract is available; reset prevents state from another run/fold.
         reset_fitted_params()
-
         metrics = self.perf_model.train(data)
         calibration_season = int(
             self.perf_model._split_metadata["calibration_season"]
@@ -271,6 +267,39 @@ class StrictProductionEnsembleModel(ProductionEnsembleModel):
         )
         return metrics
 
+    def predict(
+        self,
+        player_id: int,
+        team_id: int,
+        data: Dict[str, Any],
+        season: Optional[int] = None,
+        target_age: Optional[int] = None,
+        competition: str = "RS",
+    ):
+        """Predict from a source season; ``None`` means latest observed season."""
+        if season is None:
+            stats = data.get("player_stats", pd.DataFrame())
+            if stats.empty or "season" not in stats.columns:
+                raise ValueError("season is required when data has no season")
+            season = max(
+                season_year(value)
+                for value in stats["season"].dropna()
+            )
+        # The legacy scenario constructor can empirically mutate global age
+        # parameters. Production currently uses deterministic defaults until a
+        # row-level historical age contract is explicitly trained/versioned.
+        from basketball_ai.models.age_curve import reset_fitted_params
+
+        reset_fitted_params()
+        return super().predict(
+            player_id,
+            team_id,
+            data,
+            season=season,
+            target_age=target_age,
+            competition=competition,
+        )
+
     def _predict_uncached(
         self,
         player_id: int,
@@ -310,7 +339,6 @@ class StrictProductionEnsembleModel(ProductionEnsembleModel):
         directory: str = "models_saved",
         metrics: Optional[Dict[str, Any]] = None,
     ) -> None:
-        """Persist estimator artifacts plus data-derived runtime calibration."""
         super().save(directory, metrics)
         from basketball_ai.features.team_features import _style_bounds
 
@@ -323,7 +351,6 @@ class StrictProductionEnsembleModel(ProductionEnsembleModel):
         )
 
     def load(self, directory: str = "models_saved") -> None:
-        """Restore the same data-derived state used when the run was trained."""
         from basketball_ai.features.team_features import _style_bounds
         from basketball_ai.models.age_curve import reset_fitted_params
 
@@ -331,9 +358,7 @@ class StrictProductionEnsembleModel(ProductionEnsembleModel):
         super().load(directory)
         state_path = Path(directory) / _STATE_FILE
         if not state_path.is_file():
-            raise RuntimeError(
-                f"Strict production state is missing: {state_path}"
-            )
+            raise RuntimeError(f"Strict production state is missing: {state_path}")
         state = joblib.load(str(state_path))
         style_bounds = state.get("style_bounds")
         if not isinstance(style_bounds, dict) or not style_bounds:
@@ -417,9 +442,91 @@ def evaluate_target_season(
     return records
 
 
+class StrictWhatIfEngine:
+    """Production scenario engine that never mutates model calibration state."""
+
+    def __init__(self, ensemble: StrictProductionEnsembleModel, data: Dict[str, Any]) -> None:
+        from basketball_ai.scenarios.engine import WhatIfEngine
+
+        # Avoid WhatIfEngine.__init__ because it empirically refits a module-global
+        # age curve. Methods are delegated to a lightweight wrapped instance whose
+        # state is set directly.
+        self._engine = object.__new__(WhatIfEngine)
+        self._engine.ensemble = ensemble
+        self._engine.data = data
+        self.ensemble = ensemble
+        self.data = data
+
+    def __getattr__(self, name: str):
+        return getattr(self._engine, name)
+
+    def predict_in_team(
+        self,
+        player_id: int,
+        target_team_id: int,
+        season: Optional[int] = None,
+        competition: str = "RS",
+    ):
+        return self.ensemble.predict(
+            player_id,
+            target_team_id,
+            self.data,
+            season=season,
+            competition=competition,
+        )
+
+    def predict_age_trajectory(
+        self,
+        player_id: int,
+        season_base: Optional[int] = None,
+        age_range: Optional[Tuple[int, int]] = None,
+        team_id: Optional[int] = None,
+    ):
+        from basketball_ai.scenarios.engine import TrajectoryPoint, _safe_int
+
+        if season_base is None:
+            stats = self.data.get("player_stats", pd.DataFrame())
+            if stats.empty:
+                raise ValueError("season_base is required")
+            season_base = max(season_year(value) for value in stats["season"].dropna())
+        player = self.data["player_dict"].get(_to_int(player_id), {})
+        current_age = _safe_int(player.get("age", 25), 25)
+        if team_id is None:
+            current_team = player.get("current_team_id")
+            if current_team is None:
+                raise ValueError("team_id is required when player has no current team")
+            team_id = _to_int(current_team)
+        low, high = age_range if age_range else (
+            max(18, current_age - 4),
+            min(40, current_age + 8),
+        )
+        points = []
+        for age in range(low, high + 1):
+            source_season = int(season_base) + (age - current_age)
+            prediction = self.ensemble.predict(
+                player_id,
+                team_id,
+                self.data,
+                season=source_season,
+                target_age=age,
+            )
+            points.append(
+                TrajectoryPoint(
+                    age=age,
+                    season=source_season + 1,
+                    predicted_rating=prediction.predicted_rating,
+                    confidence_low=prediction.confidence_low,
+                    confidence_high=prediction.confidence_high,
+                    age_factor=prediction.age_factor,
+                )
+            )
+        return points
+
+
 __all__ = [
     "AsOfPositionPerformanceModel",
     "StrictProductionEnsembleModel",
+    "StrictWhatIfEngine",
     "build_historical_snapshot",
     "evaluate_target_season",
     "metric_summary",
