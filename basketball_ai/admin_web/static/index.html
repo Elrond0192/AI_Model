@@ -86,7 +86,17 @@
 
   <template id="page-data">
     <section class="page">
-      <div class="page-heading"><div><h1>Data Sources</h1><p>Profili PostgreSQL protetti e contratto dati canonico AI_Model</p></div></div>
+      <div class="page-heading"><div><h1>Data &amp; preparation</h1><p>Flusso guidato: connetti PostgreSQL, prepara lo storico del modello, poi avvia training.</p></div></div>
+      <section class="panel lifecycle-panel">
+        <div class="panel-heading"><h2>Come funziona</h2><span class="registry-badge">Nessun terminale per l’operatività ordinaria</span></div>
+        <div class="quality-grid lifecycle-grid">
+          <div class="quality-card"><span>1 · Database</span><strong>Testa il profilo</strong><small>Verifica connessione e contratto AI.</small></div>
+          <div class="quality-card"><span>2 · Storico modello</span><strong>Prepara storico modello</strong><small>Legge solo Anagrafiche e AdvancedStats: non carica PBP.</small></div>
+          <div class="quality-card"><span>3 · Training</span><strong>Usa lo snapshot</strong><small>Genera un candidate; production resta invariato.</small></div>
+          <div class="quality-card"><span>4 · Scenari avanzati</span><strong>On demand</strong><small>PBP e lineup sono separati dal training.</small></div>
+        </div>
+        <p class="microcopy">La migrazione iniziale degli schemi PostgreSQL resta un’operazione tecnica una tantum. Dopo l’installazione, usa questa pagina per il normale ciclo dati.</p>
+      </section>
       <div class="split-grid data-grid">
         <section class="panel"><div class="panel-heading"><h2>Configured profiles</h2><button id="refresh-profiles" class="btn btn-small btn-secondary">Aggiorna</button></div><div id="profiles-list" class="profile-list"></div></section>
         <section class="panel"><div class="panel-heading"><h2>Create or replace a profile</h2></div>
@@ -103,7 +113,7 @@
           </form>
         </section>
       </div>
-      <section class="panel"><div class="panel-heading"><h2>Training snapshots</h2><button id="refresh-snapshots" class="btn btn-small btn-secondary">Aggiorna</button></div><div id="snapshots-list" class="profile-list"></div></section>
+      <section class="panel"><div class="panel-heading"><h2>Storico pronto per il modello</h2><button id="refresh-snapshots" class="btn btn-small btn-secondary">Aggiorna</button></div><p class="microcopy">Uno snapshot è una copia immutabile dei dati core storici. Prepararlo non allena il modello e non legge play-by-play.</p><div id="snapshots-list" class="profile-list"></div></section>
       <section class="panel contract-panel"><div class="panel-heading"><h2>Canonical data contract</h2></div><div class="contract-tags"><span>"AI_Source"."Leagues"</span><span>"AI_Source"."Teams"</span><span>"AI_Source"."Players"</span><span>player_competition_stats</span><span>team_competition_stats</span><span>immutable training snapshot</span><span>scenario_* serving</span></div></section>
     </section>
   </template>
