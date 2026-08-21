@@ -4,7 +4,7 @@ on:
   push:
     branches: ["**"]
   pull_request:
-    branches: ["main", "master"]
+    branches: ["main", "master", "codex/chat-v3-scenario-engine"]
 
 permissions:
   contents: read
