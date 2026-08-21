@@ -61,6 +61,7 @@ SESSION_COOKIE = "hm_ai_admin_session"
 CSRF_COOKIE = "hm_ai_admin_csrf"
 COOKIE_SECURE = os.getenv("ADMIN_COOKIE_SECURE", "true").strip().lower() not in {"0", "false", "no"}
 COOKIE_TTL_DAYS = int(os.getenv("SESSION_COOKIE_TTL_DAYS", "7"))
+SEASON_LIFECYCLE_FILE = Path(os.getenv("SEASON_LIFECYCLE_FILE", "/app/config/season_lifecycle.json"))
 
 
 @dataclass
@@ -115,8 +116,40 @@ class PasswordPayload(BaseModel):
     new_password: str = Field(min_length=1, max_length=512)
 
 
+class SeasonLifecyclePayload(BaseModel):
+    season: int = Field(ge=2000, le=2100)
+    status: str = Field(pattern="^(in_progress|complete|locked)$")
+
+
 def _utcnow() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _season_lifecycle() -> dict[str, dict[str, str]]:
+    try:
+        raw = json.loads(SEASON_LIFECYCLE_FILE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return raw if isinstance(raw, dict) else {}
+
+
+def _save_season_lifecycle(value: dict[str, dict[str, str]]) -> None:
+    SEASON_LIFECYCLE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    temporary = SEASON_LIFECYCLE_FILE.with_suffix(".tmp")
+    temporary.write_text(json.dumps(value, indent=2, sort_keys=True), encoding="utf-8")
+    if os.name != "nt":
+        temporary.chmod(0o600)
+    temporary.replace(SEASON_LIFECYCLE_FILE)
+    if os.name != "nt":
+        SEASON_LIFECYCLE_FILE.chmod(0o600)
+
+
+def _lifecycle_rows(seasons: list[int]) -> list[dict[str, Any]]:
+    values = _season_lifecycle()
+    return [
+        {"season": season, "status": values.get(str(season), {}).get("status", "unclassified")}
+        for season in sorted(seasons, reverse=True)
+    ]
 
 
 def _seasons(data: dict[str, Any] | None) -> list[int]:
@@ -566,6 +599,24 @@ def snapshots(user: dict[str, str] = Depends(_operator)) -> dict[str, Any]:
     return {"active": active, "snapshots": list_training_snapshots()}
 
 
+@app.get("/admin-api/season-lifecycle")
+def season_lifecycle(user: dict[str, str] = Depends(_operator)) -> dict[str, Any]:
+    del user
+    with STATE.lock:
+        seasons = list(STATE.summary.get("seasons", []))
+    return {"seasons": _lifecycle_rows(seasons)}
+
+
+@app.post("/admin-api/season-lifecycle")
+def update_season_lifecycle(
+    payload: SeasonLifecyclePayload, user: dict[str, str] = Depends(_csrf)
+) -> dict[str, Any]:
+    values = _season_lifecycle()
+    values[str(payload.season)] = {"status": payload.status, "updated_at": _utcnow(), "updated_by": user["username"]}
+    _save_season_lifecycle(values)
+    return {"ok": True, "season": payload.season, "status": payload.status}
+
+
 @app.post("/admin-api/snapshots/{snapshot_id}/activate")
 async def activate_snapshot(
     snapshot_id: str, user: dict[str, str] = Depends(_csrf)
@@ -598,12 +649,15 @@ def training(user: dict[str, str] = Depends(_operator)) -> dict[str, Any]:
         snapshot = dict(STATE.snapshot) if STATE.snapshot else None
     seasons = summary.get("seasons", [])
     competitions = summary.get("competitions", [])
+    lifecycle = _lifecycle_rows(seasons)
+    can_train_snapshot = bool(lifecycle) and all(item["status"] == "complete" for item in lifecycle)
     return {
         "profile": active,
         "snapshot": snapshot,
         "summary": summary,
         "job": job,
-        "can_start": bool(STATE.data is not None and len(seasons) >= 5 and job.get("status") != "running"),
+        "can_start": bool(STATE.data is not None and len(seasons) >= 5 and can_train_snapshot and job.get("status") != "running"),
+        "lifecycle": lifecycle,
         "contract": [
             {"stage": "Fit", "seasons": f"through {seasons[-2]}" if len(seasons) >= 2 else "—", "purpose": "Same player + league + competition, exact t → t+1"},
             {"stage": "Calibration", "seasons": str(seasons[-1]) if seasons else "—", "purpose": "Final ensemble + per-competition intervals"},
@@ -630,6 +684,13 @@ def start_training(user: dict[str, str] = Depends(_csrf)) -> dict[str, Any]:
         seasons = _seasons(STATE.data)
         if len(seasons) < 5:
             raise HTTPException(status_code=400, detail="Servono almeno cinque stagioni")
+        blocked = [row["season"] for row in _lifecycle_rows(seasons) if row["status"] != "complete"]
+        if blocked:
+            raise HTTPException(
+                status_code=400,
+                detail="Classifica come Complete le stagioni presenti nello snapshot prima del training: "
+                + ", ".join(map(str, blocked)),
+            )
         if STATE.training.get("status") == "running":
             raise HTTPException(status_code=409, detail="Un training è già in corso")
         data = STATE.data
