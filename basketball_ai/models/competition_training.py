@@ -378,7 +378,7 @@ class CompetitionTemporalCompatibilityModel(TemporalCompatibilityModel):
     @staticmethod
     def _mean_before(prefix: tuple[np.ndarray, np.ndarray, float], index: int) -> float:
         sums, counts, fallback = prefix
-        if index <= 0:
+        if index <= 0 or index > len(counts):
             return fallback
         count = int(counts[index - 1])
         return float(sums[index - 1] / count) if count else fallback
