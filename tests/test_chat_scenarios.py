@@ -133,6 +133,11 @@ def test_scenario_api_resolves_global_ids_and_returns_structured_payload(monkeyp
 
     monkeypatch.setattr(route, "ChatScenarioEngine", FakeEngine)
     monkeypatch.setattr(route, "resolve_league_id", lambda data, value: 10 if value == "ITA1" else 20)
+    monkeypatch.setattr(
+        route,
+        "load_scenario_feeds",
+        lambda *args, **kwargs: {"pbp_events": pd.DataFrame()},
+    )
     app = FastAPI()
     app.include_router(route.router)
     data = _data()
