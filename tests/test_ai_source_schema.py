@@ -10,6 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SOURCE_SQL = ROOT / "basketball_ai" / "data" / "ai_source_schema.sql"
 COMPETITION_SQL = ROOT / "basketball_ai" / "data" / "ai_source_competition.sql"
 SIMULATION_SQL = ROOT / "basketball_ai" / "data" / "ai_source_simulation.sql"
+SERVING_SQL = ROOT / "basketball_ai" / "data" / "ai_scenario_serving.sql"
 
 
 def test_ai_source_schema_defines_entity_contract():
@@ -70,6 +71,7 @@ def test_ai_source_schemas_have_no_sql_server_ddl():
         SOURCE_SQL.read_text(encoding="utf-8")
         + COMPETITION_SQL.read_text(encoding="utf-8")
         + SIMULATION_SQL.read_text(encoding="utf-8")
+        + SERVING_SQL.read_text(encoding="utf-8")
     ).lower()
     forbidden = (
         "set ansi_nulls", "set quoted_identifier", "nvarchar(", "datetime2",
@@ -77,6 +79,25 @@ def test_ai_source_schemas_have_no_sql_server_ddl():
     )
     for token in forbidden:
         assert token not in sql
+
+
+def test_scenario_serving_is_physical_indexed_and_incremental():
+    sql = SERVING_SQL.read_text(encoding="utf-8").lower()
+    for table in (
+        "training_player_competition_stats",
+        "training_team_competition_stats",
+        "scenario_play_type_stats",
+        "scenario_shot_profiles",
+        "scenario_defender_matchups",
+        "scenario_lineup_stats",
+    ):
+        assert f"create table if not exists ai_source.{table}" in sql
+    assert "create or replace procedure ai_source.refresh_scenario_serving" in sql
+    assert "create or replace procedure ai_source.refresh_training_serving" in sql
+    assert "p_league_key text" in sql
+    assert "p_season integer" in sql
+    assert "p_competition text" in sql
+    assert "create index if not exists" in sql
 
 
 def test_stable_id_keeps_null_relations_null():

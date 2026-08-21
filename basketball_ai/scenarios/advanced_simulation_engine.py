@@ -361,7 +361,7 @@ class AdvancedSimulationEngine:
         if not pbp.empty and {"offensive_player_id", "defender_id"}.issubset(pbp.columns):
             pair = pbp[(pbp["offensive_player_id"].map(_to_int) == _to_int(offense_id)) & (pbp["defender_id"].map(_to_int) == _to_int(defender_id))]
             if not pair.empty:
-                exposures.append({"possessions": float(len(pair)), "assignment_probability": _finite(pair.get("assignment_probability", pd.Series([1.0])).mean(), 1.0), "points_allowed": _finite(pair.get("points", pd.Series(dtype=float)).sum()), "turnovers_forced": float(pair.get("turnover", pd.Series(dtype=bool)).fillna(False).astype(bool).sum())})
+                exposures.append({"possessions": _finite(pair.get("possessions", pd.Series(dtype=float)).sum(), float(len(pair))), "assignment_probability": _finite(pair.get("assignment_probability", pd.Series([1.0])).mean(), 1.0), "points_allowed": _finite(pair.get("points", pd.Series(dtype=float)).sum()), "turnovers_forced": _finite(pair.get("turnovers_forced", pd.Series(dtype=float)).sum())})
         possessions = sum(item["possessions"] * item["assignment_probability"] for item in exposures)
         points = sum(item["points_allowed"] * item["assignment_probability"] for item in exposures)
         turnovers = sum(item["turnovers_forced"] * item["assignment_probability"] for item in exposures)

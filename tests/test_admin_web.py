@@ -57,6 +57,7 @@ def _reset_state():
         admin.STATE.data = None
         admin.STATE.active_profile = None
         admin.STATE.summary = {}
+        admin.STATE.snapshot = None
         admin.STATE.training = {
             "status": "idle",
             "stage": "Ready",
@@ -294,13 +295,37 @@ async def test_profile_test_and_load(monkeypatch):
         return data
 
     monkeypatch.setattr(admin, "load_all_data", fake_load_all_data)
+    monkeypatch.setattr(
+        admin,
+        "create_training_snapshot",
+        lambda data, *, profile: {"snapshot_id": "snapshot-1", "profile": profile},
+    )
     loaded = await admin.load_database_profile("production", {"username": "admin", "role": "admin", "token": "x"})
     assert loaded["summary"]["player_rows"] == 5
     assert admin.STATE.active_profile == "production"
     assert received["include_optional"] is False
+    assert loaded["snapshot"]["snapshot_id"] == "snapshot-1"
 
     with pytest.raises(HTTPException):
         await admin.test_database_profile("missing", {"username": "admin", "role": "admin", "token": "x"})
+
+
+@pytest.mark.asyncio
+async def test_snapshot_list_and_activation(monkeypatch):
+    _reset_state()
+    data = _data()
+    manifest = {"snapshot_id": "snapshot-1", "profile": "production", "sha256": "abc"}
+    monkeypatch.setattr(admin, "list_training_snapshots", lambda: [manifest])
+    monkeypatch.setattr(admin, "load_training_snapshot", lambda snapshot_id: data)
+
+    listed = admin.snapshots({"username": "admin", "role": "admin", "token": "x"})
+    assert listed["snapshots"] == [manifest]
+    activated = await admin.activate_snapshot(
+        "snapshot-1", {"username": "admin", "role": "admin", "token": "x"}
+    )
+    assert activated["snapshot"] == manifest
+    assert admin.STATE.snapshot == manifest
+    assert admin.STATE.summary["player_rows"] == 5
 
 
 def test_training_view_and_start(monkeypatch):

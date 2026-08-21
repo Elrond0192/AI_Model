@@ -7,6 +7,7 @@ Engine. See [docs/SIMULATION_ENGINE.md](docs/SIMULATION_ENGINE.md) for the
 probabilistic, matchup, lineup, roster and causal contracts.
 
 For PostgreSQL deployments, run `basketball_ai/data/ai_source_simulation.sql`
+followed by `basketball_ai/data/ai_scenario_serving.sql`
 after the core and competition adapters to expose available PBP/lineup feeds.
 
 `AI_Model` is **not a chatbot**. It reads a stable PostgreSQL contract, trains strict season-ahead forecasts (`t -> t+1`) inside the same league and competition, evaluates the exact production ensemble out of time, promotes immutable model runs, stores bounded forecasts in PostgreSQL schema `ai`, and exposes typed inference to WordPress Chat V3.
@@ -61,6 +62,8 @@ Apply the entity adapter, competition-preserving statistical adapter and model-o
 ```bash
 psql -d YOUR_DATABASE -f basketball_ai/data/ai_source_schema.sql
 psql -d YOUR_DATABASE -f basketball_ai/data/ai_source_competition.sql
+psql -d YOUR_DATABASE -f basketball_ai/data/ai_source_simulation.sql
+psql -d YOUR_DATABASE -f basketball_ai/data/ai_scenario_serving.sql
 psql -d YOUR_DATABASE -f basketball_ai/data/ai_schema.sql
 ```
 
@@ -173,17 +176,37 @@ docker compose run --rm admin \
 
 The report includes observations and consecutive pairs for each competition. A competition with no real `t -> t+1` pairs remains visible in the data report but is not considered trained/serveable.
 
-Train and backtest:
+Prepare one immutable snapshot, then train and backtest without re-reading the
+growing PostgreSQL history:
 
 ```bash
 docker compose run --rm admin \
-  python main.py --mode train --database-profile production \
+  python main.py --mode prepare-snapshot --database-profile production \
+  --snapshot-dir /app/models_saved/snapshots
+
+# Use the snapshot_id printed by the previous command.
+docker compose run --rm admin \
+  python main.py --mode train --snapshot-id SNAPSHOT_ID \
+  --snapshot-dir /app/models_saved/snapshots \
   --model-dir /app/models_saved
 
 docker compose run --rm admin \
-  python main.py --mode backtest --database-profile production \
+  python main.py --mode backtest --snapshot-id SNAPSHOT_ID \
+  --snapshot-dir /app/models_saved/snapshots \
   --model-dir /app/models_saved
 ```
+
+After each ETL context completes, refresh only its serving partition:
+
+```sql
+CALL ai_source.refresh_scenario_serving('ITA1', 2025, 'RS');
+CALL ai_source.refresh_training_serving('ITA1', 2025, 'RS');
+```
+
+After the initial serving backfill, set `POSTGRES_TRAINING_SOURCE=serving` for
+the admin/training container. Snapshot preparation then reads the indexed
+physical feature store instead of rebuilding features from the growing raw
+boxscore history.
 
 Training writes immutable artifacts under `models_saved/runs/<model_run_id>/` and registers the run as **candidate**. It does not replace production. `production_state.joblib` stores data-derived runtime state, including the exact competition vocabulary and competition-specific conformal calibration.
 

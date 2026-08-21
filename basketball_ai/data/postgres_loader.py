@@ -37,16 +37,24 @@ _SOURCE_VIEWS = {
     "team_season_stats": "team_competition_stats",
 }
 
+
+def _core_source_views() -> dict[str, str]:
+    views = dict(_SOURCE_VIEWS)
+    if os.getenv("POSTGRES_TRAINING_SOURCE", "canonical").strip().lower() == "serving":
+        views["player_stats"] = "training_player_competition_stats"
+        views["team_season_stats"] = "training_team_competition_stats"
+    return views
+
 _OPTIONAL_SOURCE_VIEWS = {
-    "pbp_events": "simulation_pbp_events",
-    "lineup_stints": "simulation_lineup_stints",
-    "play_type_stats": "simulation_play_type_stats",
-    "shot_profiles": "simulation_shot_profiles",
+    "pbp_events": "scenario_defender_matchups",
+    "lineup_stints": "scenario_lineup_stats",
+    "play_type_stats": "scenario_play_type_stats",
+    "shot_profiles": "scenario_shot_profiles",
     "causal_panel": "simulation_causal_panel",
 }
 
 _OPTIONAL_COLUMNS = {
-    "pbp_events": ("league_key", "season", "competition", "game_id", "period", "offensive_player_id", "team_id", "opponent_team_id", "defender_id", "assignment_probability", "play_type", "points", "turnover", "event_type", "shot_zone", "x", "y"),
+    "pbp_events": ("league_key", "season", "competition", "offensive_player_id", "team_id", "opponent_team_id", "defender_id", "assignment_probability", "possessions", "points", "turnovers_forced"),
     "lineup_stints": ("league_key", "season", "competition", "player_ids", "team_id", "opponent_team_id", "offense_player_id", "defense_player_id", "assignment_probability", "possessions", "points", "points_allowed", "turnovers_forced", "ortg", "drtg", "net_rtg"),
     "play_type_stats": ("player_id", "team_id", "opponent_team_id", "league_key", "season", "competition", "play_type", "possessions", "ppp", "ppp_allowed"),
     "shot_profiles": ("player_id", "team_id", "league_key", "season", "competition", "zone", "attempts", "fg_pct"),
@@ -457,7 +465,7 @@ def load_all_data(
     engine = get_engine(url)
     try:
         data: dict[str, Any] = _load_views(
-            engine, schema, _SOURCE_VIEWS, optional=False
+            engine, schema, _core_source_views(), optional=False
         )
         if include_optional:
             data.update(

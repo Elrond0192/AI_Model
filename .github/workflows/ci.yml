@@ -82,6 +82,7 @@ jobs:
           $PSQL -f basketball_ai/data/ai_source_schema.sql
           $PSQL -f basketball_ai/data/ai_source_competition.sql
           $PSQL -f basketball_ai/data/ai_source_simulation.sql
+          $PSQL -f basketball_ai/data/ai_scenario_serving.sql
           $PSQL -f basketball_ai/data/ai_schema.sql
 
       - name: Verify canonical views, isolation and normalization
@@ -192,6 +193,7 @@ jobs:
           $PSQL -f basketball_ai/data/ai_source_schema.sql
           $PSQL -f basketball_ai/data/ai_source_competition.sql
           $PSQL -f basketball_ai/data/ai_source_simulation.sql
+          $PSQL -f basketball_ai/data/ai_scenario_serving.sql
           $PSQL -f basketball_ai/data/ai_schema.sql
           $PSQL <<'SQL'
           DO $$

@@ -51,6 +51,22 @@ def test_parse_args_supports_lifecycle_commands():
     assert args.model_dir == "/tmp/models"
 
 
+def test_load_data_uses_selected_snapshot(monkeypatch):
+    import basketball_ai.cli as cli
+    from basketball_ai.data import training_snapshots
+
+    expected = _data()
+    monkeypatch.setattr(
+        training_snapshots,
+        "load_training_snapshot",
+        lambda snapshot_id, root: expected,
+    )
+    args = argparse.Namespace(
+        database_profile=None, snapshot_id="snapshot-1", snapshot_dir="/snapshots"
+    )
+    assert cli._load_data(args) is expected
+
+
 def test_validate_data_pass(monkeypatch, capsys):
     import basketball_ai.cli as cli
 

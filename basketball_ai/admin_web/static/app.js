@@ -56,20 +56,21 @@ async function renderOverview(){
 }
 
 async function renderData(){
+  async function loadSnapshots(){const data=await api('/admin-api/snapshots'),active=data.active?.snapshot_id,items=data.snapshots||[];$('#snapshots-list').innerHTML=items.length?items.map(s=>`<div class="profile-card ${active===s.snapshot_id?'active':''}"><div class="profile-top"><div class="profile-name">${esc(s.snapshot_id)}</div>${active===s.snapshot_id?'<span class="registry-badge">active</span>':''}</div><div class="profile-meta"><span>${esc(s.profile||'—')}</span><span>${esc((s.seasons||[]).length?`${s.seasons[0]}–${s.seasons.at(-1)}`:'—')}</span><span>${fmtInt(s.player_rows)} player rows</span><span>SHA ${esc(String(s.sha256||'').slice(0,12))}</span></div><div class="button-row"><button class="btn btn-primary btn-small snapshot-activate" data-id="${esc(s.snapshot_id)}" ${active===s.snapshot_id?'disabled':''}>Use for training</button></div></div>`).join(''):empty('◫','Nessuno snapshot','Prepara il primo snapshot da un profilo PostgreSQL.');$$('.snapshot-activate').forEach(b=>b.addEventListener('click',async()=>{b.disabled=true;try{await api(`/admin-api/snapshots/${encodeURIComponent(b.dataset.id)}/activate`,{method:'POST',body:{}});toast(`Snapshot ${b.dataset.id} attivato`);await loadSnapshots();}catch(e){toast(e.message,'error');b.disabled=false;}}));}
   async function loadProfiles(){
     const data=await api('/admin-api/profiles');$('#top-db').textContent=data.active||'not selected';
-    const entries=Object.entries(data.profiles||{});$('#profiles-list').innerHTML=entries.length?entries.map(([name,p])=>`<div class="profile-card ${data.active===name?'active':''}"><div class="profile-top"><div class="profile-name">${esc(name)}</div>${data.active===name?'<span class="registry-badge">active</span>':''}</div><div class="profile-meta"><span>${esc(p.host||'—')}:${esc(p.port||5432)}</span><span>${esc(p.database||'—')}</span><span>${esc(p.user||'—')}</span><span>${esc(p.source_schema||'ai_source')} → ${esc(p.ai_schema||'ai')}</span></div><div class="button-row"><button class="btn btn-secondary btn-small profile-test" data-name="${esc(name)}">Test connection</button><button class="btn btn-primary btn-small profile-load" data-name="${esc(name)}">Select and load</button></div></div>`).join(''):empty('▤','Nessun profilo configurato','Crea il profilo PostgreSQL production nel pannello a destra.');
+    const entries=Object.entries(data.profiles||{});$('#profiles-list').innerHTML=entries.length?entries.map(([name,p])=>`<div class="profile-card ${data.active===name?'active':''}"><div class="profile-top"><div class="profile-name">${esc(name)}</div>${data.active===name?'<span class="registry-badge">active</span>':''}</div><div class="profile-meta"><span>${esc(p.host||'—')}:${esc(p.port||5432)}</span><span>${esc(p.database||'—')}</span><span>${esc(p.user||'—')}</span><span>${esc(p.source_schema||'ai_source')} → ${esc(p.ai_schema||'ai')}</span></div><div class="button-row"><button class="btn btn-secondary btn-small profile-test" data-name="${esc(name)}">Test connection</button><button class="btn btn-primary btn-small profile-load" data-name="${esc(name)}">Prepare snapshot</button></div></div>`).join(''):empty('▤','Nessun profilo configurato','Crea il profilo PostgreSQL production nel pannello a destra.');
     $$('.profile-test').forEach(b=>b.addEventListener('click',async()=>{b.disabled=true;try{const r=await api(`/admin-api/profiles/${encodeURIComponent(b.dataset.name)}/test`,{method:'POST',body:{}});toast(r.message);}catch(e){toast(e.message,'error');}finally{b.disabled=false;}}));
-    $$('.profile-load').forEach(b=>b.addEventListener('click',async()=>{b.disabled=true;b.textContent='Caricamento…';try{const r=await api(`/admin-api/profiles/${encodeURIComponent(b.dataset.name)}/load`,{method:'POST',body:{}});toast(`Profilo ${r.profile} caricato: ${fmtInt(r.summary.player_rows)} righe`);await loadProfiles();}catch(e){toast(e.message,'error');}finally{b.disabled=false;b.textContent='Select and load';}}));
+    $$('.profile-load').forEach(b=>b.addEventListener('click',async()=>{b.disabled=true;b.textContent='Preparazione…';try{const r=await api(`/admin-api/profiles/${encodeURIComponent(b.dataset.name)}/load`,{method:'POST',body:{}});toast(`Snapshot ${r.snapshot?.snapshot_id||''} pronto: ${fmtInt(r.summary.player_rows)} righe`);await Promise.all([loadProfiles(),loadSnapshots()]);}catch(e){toast(e.message,'error');}finally{b.disabled=false;b.textContent='Prepare snapshot';}}));
   }
-  $('#refresh-profiles').addEventListener('click',loadProfiles);$('#profile-form').addEventListener('submit',async ev=>{ev.preventDefault();const form=new FormData(ev.currentTarget),body=Object.fromEntries(form.entries());body.port=Number(body.port);const btn=$('button[type="submit"]',ev.currentTarget);btn.disabled=true;try{await api('/admin-api/profiles',{method:'POST',body});toast('Profilo salvato');ev.currentTarget.querySelector('[name=password]').value='';await loadProfiles();}catch(e){toast(e.message,'error');}finally{btn.disabled=false;}});await loadProfiles();
+  $('#refresh-profiles').addEventListener('click',loadProfiles);$('#refresh-snapshots').addEventListener('click',loadSnapshots);$('#profile-form').addEventListener('submit',async ev=>{ev.preventDefault();const form=new FormData(ev.currentTarget),body=Object.fromEntries(form.entries());body.port=Number(body.port);const btn=$('button[type="submit"]',ev.currentTarget);btn.disabled=true;try{await api('/admin-api/profiles',{method:'POST',body});toast('Profilo salvato');ev.currentTarget.querySelector('[name=password]').value='';await loadProfiles();}catch(e){toast(e.message,'error');}finally{btn.disabled=false;}});await Promise.all([loadProfiles(),loadSnapshots()]);
 }
 
 async function renderTraining(){
   const d=await api('/admin-api/training'),s=d.summary||{},j=d.job||{};
   const datasetLoaded=s.player_rows!==undefined&&s.player_rows!==null;
   $('#training-kpis').innerHTML=[
-    kpi('▤','Data profile',d.profile||'—',`<span class="dot ${datasetLoaded?'green':'yellow'}"></span>${datasetLoaded?'Dataset loaded':'Dataset not loaded'}`),
+    kpi('▤','Training snapshot',d.snapshot?.snapshot_id?shortId(d.snapshot.snapshot_id):'—',`<span class="dot ${datasetLoaded?'green':'yellow'}"></span>${datasetLoaded?'Immutable snapshot ready':'Snapshot not prepared'}`),
     kpi('◫','Season range',s.season_min?`${s.season_min}–${s.season_max}`:'—','<span>training history</span>','green'),
     kpi('◉','Competitions',String((s.competitions||[]).length||'—'),'<span>observed</span>','violet'),
     kpi('▥','Observations',fmtInt(s.player_rows),'<span>player rows</span>','orange')
@@ -86,13 +87,13 @@ async function renderTraining(){
     start.disabled=true;
     try{
       if(!d.profile)throw new Error('Seleziona prima un profilo database');
-      start.textContent='Caricamento dati…';
-      const loaded=await api(`/admin-api/profiles/${encodeURIComponent(d.profile)}/load`,{method:'POST',body:{}});
+      start.textContent=datasetLoaded?'Snapshot pronto':'Preparazione snapshot…';
+      const loaded=datasetLoaded?{summary:s,snapshot:d.snapshot}:await api(`/admin-api/profiles/${encodeURIComponent(d.profile)}/load`,{method:'POST',body:{}});
       const seasons=loaded.summary?.seasons||[];
       if(seasons.length<5)throw new Error(`Servono almeno cinque stagioni per il training. Disponibili: ${seasons.length}.`);
       start.textContent='Avvio training…';
       await api('/admin-api/training/start',{method:'POST',body:{}});
-      toast(`Dati aggiornati (${fmtInt(loaded.summary?.player_rows)} righe) e training avviato`);
+      toast(`Training avviato sullo snapshot ${loaded.snapshot?.snapshot_id||'attivo'}`);
       await renderTraining();
     }catch(e){
       toast(e.message,'error');
