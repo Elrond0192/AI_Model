@@ -67,11 +67,39 @@ async function renderData(){
 
 async function renderTraining(){
   const d=await api('/admin-api/training'),s=d.summary||{},j=d.job||{};
-  $('#training-kpis').innerHTML=[kpi('▤','Data profile',d.profile||'—','<span>source</span>'),kpi('◫','Season range',s.season_min?`${s.season_min}–${s.season_max}`:'—','<span>training history</span>','green'),kpi('◉','Competitions',String((s.competitions||[]).length||'—'),'<span>observed</span>','violet'),kpi('▥','Observations',fmtInt(s.player_rows),'<span>player rows</span>','orange')].join('');
+  const datasetLoaded=s.player_rows!==undefined&&s.player_rows!==null;
+  $('#training-kpis').innerHTML=[
+    kpi('▤','Data profile',d.profile||'—',`<span class="dot ${datasetLoaded?'green':'yellow'}"></span>${datasetLoaded?'Dataset loaded':'Dataset not loaded'}`),
+    kpi('◫','Season range',s.season_min?`${s.season_min}–${s.season_max}`:'—','<span>training history</span>','green'),
+    kpi('◉','Competitions',String((s.competitions||[]).length||'—'),'<span>observed</span>','violet'),
+    kpi('▥','Observations',fmtInt(s.player_rows),'<span>player rows</span>','orange')
+  ].join('');
   $('#training-contract').innerHTML=(d.contract||[]).map(r=>`<tr><td><strong>${esc(r.stage)}</strong></td><td>${esc(r.seasons)}</td><td>${esc(r.purpose)}</td></tr>`).join('');
   $('#training-config').innerHTML=Object.entries(d.configuration||{}).map(([a,b])=>`<div class="config-item"><span>${esc(a.replaceAll('_',' '))}</span><strong>${esc(Array.isArray(b)?b.join(', '):b)}</strong></div>`).join('');
-  const job=$('#training-job');job.innerHTML=`<div class="job-head"><div><div class="job-status">${esc(j.stage||'Ready')}</div><div class="job-message">${esc(j.error||j.message||'')}</div></div><span class="registry-badge ${j.status==='running'?'candidate':''}">${esc(j.status||'idle')}</span></div><div class="progress-track"><div class="progress-bar" style="width:${Math.max(0,Math.min(100,Number(j.progress)||0))}%"></div></div>${j.run_id?`<div class="job-message">Run ID: ${esc(j.run_id)}</div>`:''}`;
-  const start=$('#start-training');start.disabled=!d.can_start;start.addEventListener('click',async()=>{start.disabled=true;try{await api('/admin-api/training/start',{method:'POST',body:{}});toast('Training avviato');await renderTraining();}catch(e){toast(e.message,'error');start.disabled=false;}});
+  const job=$('#training-job');
+  const idleMessage=!datasetLoaded&&d.profile&&j.status==='idle'?`Il dataset verrà caricato automaticamente dal profilo ${d.profile} quando avvii il training.`:(j.error||j.message||'');
+  job.innerHTML=`<div class="job-head"><div><div class="job-status">${esc(j.stage||'Ready')}</div><div class="job-message">${esc(idleMessage)}</div></div><span class="registry-badge ${j.status==='running'?'candidate':''}">${esc(j.status||'idle')}</span></div><div class="progress-track"><div class="progress-bar" style="width:${Math.max(0,Math.min(100,Number(j.progress)||0))}%"></div></div>${j.run_id?`<div class="job-message">Run ID: ${esc(j.run_id)}</div>`:''}`;
+  const start=$('#start-training');
+  start.disabled=!d.profile||j.status==='running';
+  start.addEventListener('click',async()=>{
+    const originalText=start.textContent;
+    start.disabled=true;
+    try{
+      if(!d.profile)throw new Error('Seleziona prima un profilo database');
+      start.textContent='Caricamento dati…';
+      const loaded=await api(`/admin-api/profiles/${encodeURIComponent(d.profile)}/load`,{method:'POST',body:{}});
+      const seasons=loaded.summary?.seasons||[];
+      if(seasons.length<5)throw new Error(`Servono almeno cinque stagioni per il training. Disponibili: ${seasons.length}.`);
+      start.textContent='Avvio training…';
+      await api('/admin-api/training/start',{method:'POST',body:{}});
+      toast(`Dati aggiornati (${fmtInt(loaded.summary?.player_rows)} righe) e training avviato`);
+      await renderTraining();
+    }catch(e){
+      toast(e.message,'error');
+      start.disabled=false;
+      start.textContent=originalText;
+    }
+  });
   if(j.status==='running'&&App.page==='training')App.trainingTimer=setTimeout(()=>renderTraining().catch(e=>toast(e.message,'error')),2200);
 }
 
