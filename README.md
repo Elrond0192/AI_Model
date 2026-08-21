@@ -22,12 +22,14 @@ AI_Model Docker
   |- admin :8501   validate / train / backtest / promote / rollback
   `- api   :8000   promoted FastAPI v2 inference only
        ^
-       | HTTPS server-to-server
+       | HTTPS through Nginx
        |
-WordPress Chat V3 / Bax
+WordPress Chat V3 / Bax and authenticated operations users
 ```
 
-There is no SSH tunnel in production and no direct browser-to-database access.
+Expose neither Docker port directly. Production uses `ai.bballstat.com` for the
+API and `admin-ai.bballstat.com` for the operations GUI; PostgreSQL remains
+private and is never reachable from a browser.
 
 ## 1. Clone and configure
 
@@ -98,6 +100,52 @@ docker compose logs -f admin
 ```
 
 Keep `8501` private. First boot writes one-time admin credentials to `runtime/auth/.admin_credentials`. In **Data Sources**, create/select the PostgreSQL profile and load it. Loading fails closed on missing views, missing columns, empty mandatory data or duplicate competition keys.
+
+### Publish the GUI securely
+
+For BBallstat, create DNS records for `ai.bballstat.com` and
+`admin-ai.bballstat.com` pointing to the server. Keep Compose bound to
+`127.0.0.1`; Nginx is the only public entry point. Protect the GUI both with
+the application login and HTTP basic authentication:
+
+```bash
+sudo apt install -y apache2-utils
+sudo htpasswd -c /etc/nginx/.htpasswd-ai YOUR_OPERATIONS_USER
+```
+
+Create an Nginx virtual host for `admin-ai.bballstat.com`:
+
+```nginx
+server {
+    listen 80;
+    server_name admin-ai.bballstat.com;
+
+    location / {
+        auth_basic "AI_Model Operations";
+        auth_basic_user_file /etc/nginx/.htpasswd-ai;
+
+        proxy_pass http://127.0.0.1:8501;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```
+
+Enable the site, obtain TLS, and verify it:
+
+```bash
+sudo ln -s /etc/nginx/sites-available/admin-ai.bballstat.com /etc/nginx/sites-enabled/
+sudo nginx -t && sudo systemctl reload nginx
+sudo certbot --nginx -d admin-ai.bballstat.com
+curl -fsS https://admin-ai.bballstat.com
+```
+
+Use a separate Nginx virtual host for `ai.bballstat.com`, proxying only to
+`127.0.0.1:8000`. Do not use basic authentication on the API because WordPress
+authenticates with `X-API-Key` server-to-server.
 
 ## 5. Professional training lifecycle
 
