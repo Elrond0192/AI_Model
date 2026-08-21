@@ -1,8 +1,8 @@
 """FastAPI application for the production AI_Model v2 inference surface.
 
-The public service intentionally exposes only the typed v2 prediction contract
-plus health/observability endpoints.  Legacy v1 routers and unversioned
-prediction endpoints are not mounted.
+The public service intentionally exposes only typed v2 prediction/scenario
+contracts plus health/observability endpoints. Legacy v1 routers and
+unversioned prediction endpoints are not mounted.
 """
 from __future__ import annotations
 
@@ -85,8 +85,10 @@ def _load_app_state() -> None:
     ``/health/ready`` returns 503 and v2 inference cannot silently fall back to
     an untrained estimator.
     """
-    from basketball_ai.models.strict_production import StrictProductionEnsembleModel
-    from basketball_ai.scenarios.engine import WhatIfEngine
+    from basketball_ai.models.strict_production import (
+        StrictProductionEnsembleModel,
+        StrictWhatIfEngine,
+    )
 
     data_source = os.environ.get("DATA_SOURCE", "postgres")
     data_dir = os.environ.get("DATA_DIR", "data/sample")
@@ -125,7 +127,7 @@ def _load_app_state() -> None:
         ensemble.load(model_dir)
         if not ensemble.is_trained:
             raise RuntimeError("loaded ensemble is not trained")
-        app_state["engine"] = WhatIfEngine(ensemble, data)
+        app_state["engine"] = StrictWhatIfEngine(ensemble, data)
         logger.info("[API] Data and strict production model loaded")
     except Exception as exc:
         logger.error("[API] Model load failed: %s", exc, exc_info=True)
@@ -224,8 +226,8 @@ def _decode_jwt(token: str, primary_secret: str) -> dict[str, Any]:
 def create_app() -> FastAPI:
     app = FastAPI(
         title="BBallstat AI_Model",
-        description="Typed season-ahead basketball prediction service for Chat V3 and server-side clients.",
-        version="2.0.0",
+        description="Typed basketball prediction and scenario service for Chat V3 and server-side clients.",
+        version="2.3.0",
         lifespan=lifespan,
     )
 
@@ -384,8 +386,10 @@ def create_app() -> FastAPI:
         _Instrumentator().instrument(app).expose(app, endpoint="/metrics")
 
     from basketball_ai.api.routes.predictions_v2 import router as predictions_v2_router
+    from basketball_ai.api.routes.scenarios_v2 import router as scenarios_v2_router
 
     app.include_router(predictions_v2_router)
+    app.include_router(scenarios_v2_router)
 
     @app.get("/health")
     def health(request: Request):
