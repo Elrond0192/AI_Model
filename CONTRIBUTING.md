@@ -47,7 +47,7 @@ docker build -t basketball-ai:test .
 | `basketball_ai/models/` | forecast, compatibility, calibration, registry |
 | `basketball_ai/scenarios/` | bounded what-if/team context logic |
 | `basketball_ai/api/` | authenticated typed inference |
-| `gui/app.py` | technical operations console |
+| `docker-compose.yml` (`ops`) | one-shot technical operations CLI |
 
 Conversation, natural-language intent routing and public entity resolution belong
 in WordPress Chat V3/Bax, not AI_Model.

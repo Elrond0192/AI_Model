@@ -7,6 +7,8 @@ sull'host, AI_Model in Docker e Chat V3 via API.
 
 ```bash
 psql -d YOUR_DATABASE -f basketball_ai/data/ai_source_schema.sql
+psql -d YOUR_DATABASE -f basketball_ai/data/ai_source_competition.sql
+psql -d YOUR_DATABASE -f basketball_ai/data/ai_source_simulation.sql
 psql -d YOUR_DATABASE -f basketball_ai/data/ai_schema.sql
 ```
 
@@ -18,30 +20,38 @@ SELECT count(*) FROM ai_source.teams;
 SELECT min(season), max(season), count(*) FROM ai_source.player_stats;
 ```
 
-## 2. Avvia la console
+## 2. Configura il profilo PostgreSQL
 
 ```bash
 cp .env.example .env
-mkdir -p runtime/config runtime/models runtime/auth runtime/audit
-docker compose up -d --build admin
+mkdir -p runtime/config runtime/models runtime/audit
 ```
 
-Crea il profilo PostgreSQL con:
+Scrivi `runtime/config/database_profiles.json`:
 
-```text
-host = host.docker.internal
-port = 5432
-source_schema = ai_source
-output_schema = ai
+```json
+{
+  "production": {
+    "host": "host.docker.internal",
+    "port": 5432,
+    "database": "YOUR_DATABASE",
+    "user": "ai_model",
+    "password": "YOUR_PASSWORD"
+  }
+}
 ```
-
-Testa la connessione e carica i dati.
 
 ## 3. Training e promozione
 
-In **Training Runs** avvia il training. Il dataset deve avere almeno cinque
-stagioni. Controlla **Backtests**, quindi promuovi il candidato da
-**Model Registry**.
+Il dataset deve avere almeno cinque stagioni. Esegui validazione, training,
+backtest e promozione dalla CLI:
+
+```bash
+docker compose run --rm ops python main.py --mode validate-data --database-profile production
+docker compose run --rm ops python main.py --mode train --database-profile production --model-dir /app/models_saved
+docker compose run --rm ops python main.py --mode backtest --database-profile production --model-dir /app/models_saved
+docker compose run --rm ops python main.py --mode promote --model-dir /app/models_saved
+```
 
 ## 4. Avvia FastAPI
 

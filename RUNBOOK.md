@@ -4,7 +4,7 @@
 
 | Service | Port | Purpose |
 |---|---:|---|
-| `admin` | 8501 | DB profile, validation, training, backtest, promotion, rollback |
+| `ops` | none | On-demand validation, training, backtest, promotion, rollback |
 | `api` | 8000 | promoted typed FastAPI v2 inference |
 
 PostgreSQL runs on the host and Docker reaches it through `host.docker.internal:5432`.
@@ -14,6 +14,7 @@ PostgreSQL runs on the host and Docker reaches it through `host.docker.internal:
 ```bash
 psql -d YOUR_DATABASE -f basketball_ai/data/ai_source_schema.sql
 psql -d YOUR_DATABASE -f basketball_ai/data/ai_source_competition.sql
+psql -d YOUR_DATABASE -f basketball_ai/data/ai_source_simulation.sql
 psql -d YOUR_DATABASE -f basketball_ai/data/ai_schema.sql
 ```
 
@@ -44,7 +45,7 @@ Both duplicate queries must return zero rows. Re-run both source adapters after 
 ## Validate data
 
 ```bash
-docker compose run --rm admin \
+docker compose run --rm ops \
   python main.py --mode validate-data --database-profile production
 ```
 
@@ -53,7 +54,7 @@ Check `consecutive_pairs_by_competition`. A competition can exist in PostgreSQL 
 ## Train candidate
 
 ```bash
-docker compose run --rm admin \
+docker compose run --rm ops \
   python main.py --mode train \
   --database-profile production \
   --model-dir /app/models_saved
@@ -64,7 +65,7 @@ Runs are immutable under `/app/models_saved/runs/<model_run_id>/`; production is
 ## Backtest
 
 ```bash
-docker compose run --rm admin \
+docker compose run --rm ops \
   python main.py --mode backtest \
   --database-profile production \
   --model-dir /app/models_saved
@@ -75,7 +76,7 @@ Review global RMSE/MAE/bias/coverage, base and persistence RMSE, `by_league`, **
 ## Promotion
 
 ```bash
-docker compose run --rm admin \
+docker compose run --rm ops \
   python main.py --mode promote --model-dir /app/models_saved
 ```
 
@@ -91,7 +92,7 @@ curl -fsS http://127.0.0.1:8000/health/ready
 ## Rollback
 
 ```bash
-docker compose run --rm admin \
+docker compose run --rm ops \
   python main.py --mode rollback --model-dir /app/models_saved
 docker compose restart api
 ```
@@ -121,7 +122,7 @@ A `422` is expected if the player/team lacks the requested isolated source conte
 ## Batch publishing
 
 ```bash
-docker compose run --rm admin \
+docker compose run --rm ops \
   python main.py --mode publish-batch \
   --database-profile production \
   --model-dir /app/models_saved
@@ -146,11 +147,7 @@ curl -fsS http://127.0.0.1:8000/health/live
 curl -fsS http://127.0.0.1:8000/health/ready
 ```
 
-PostgreSQL 5432 and admin 8501 must stay private.
-
-## First admin credentials
-
-First boot writes one-time credentials to `runtime/auth/.admin_credentials`. Read once, change the password and delete the file.
+PostgreSQL 5432 must stay private. The `ops` container does not open a port.
 
 ## Backup / deployment
 
@@ -160,7 +157,8 @@ git pull --ff-only
 docker compose build --pull
 psql -d YOUR_DATABASE -f basketball_ai/data/ai_source_schema.sql
 psql -d YOUR_DATABASE -f basketball_ai/data/ai_source_competition.sql
+psql -d YOUR_DATABASE -f basketball_ai/data/ai_source_simulation.sql
 docker compose up -d
 ```
 
-Never commit `.env`, DB profile JSON, model artifacts, registries/metadata, sessions, audit DBs or one-time credentials.
+Never commit `.env`, DB profile JSON, model artifacts, registries/metadata or audit DBs.

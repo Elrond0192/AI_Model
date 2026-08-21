@@ -19,7 +19,7 @@ PostgreSQL on host
        | host.docker.internal:5432
        |
 AI_Model Docker
-  |- admin :8501   validate / train / backtest / promote / rollback
+  |- ops           validate / train / backtest / promote / rollback (on demand)
   `- api   :8000   promoted FastAPI v2 inference only
        ^
        | HTTPS server-to-server
@@ -35,7 +35,7 @@ There is no SSH tunnel in production and no direct browser-to-database access.
 git clone https://github.com/Elrond0192/AI_Model.git
 cd AI_Model
 cp .env.example .env
-mkdir -p runtime/config runtime/models runtime/auth runtime/audit
+mkdir -p runtime/config runtime/models runtime/audit
 ```
 
 Set at least:
@@ -46,7 +46,6 @@ DATABASE_PROFILES_FILE=/app/config/database_profiles.json
 DATA_SOURCE=postgres
 API_KEY=<random service key>
 JWT_SECRET=
-SESSION_SECRET_KEY=<random session secret>
 ALLOWED_ORIGINS=https://your-wordpress-host.example
 ```
 
@@ -59,6 +58,7 @@ Apply the entity adapter, competition-preserving statistical adapter and model-o
 ```bash
 psql -d YOUR_DATABASE -f basketball_ai/data/ai_source_schema.sql
 psql -d YOUR_DATABASE -f basketball_ai/data/ai_source_competition.sql
+psql -d YOUR_DATABASE -f basketball_ai/data/ai_source_simulation.sql
 psql -d YOUR_DATABASE -f basketball_ai/data/ai_schema.sql
 ```
 
@@ -90,14 +90,13 @@ Do not grant write access to source schemas and do not expose PostgreSQL 5432 pu
 
 `docker-compose.yml` maps `host.docker.internal` through `host-gateway`. Create the runtime profile with PostgreSQL host `host.docker.internal`, port `5432`, source schema `ai_source` and output schema `ai`. Restrict `pg_hba.conf` to the intended Docker bridge/user/database.
 
-## 4. Admin console
+## 4. Operations CLI
 
-```bash
-docker compose up -d --build admin
-docker compose logs -f admin
-```
-
-Keep `8501` private. First boot writes one-time admin credentials to `runtime/auth/.admin_credentials`. In **Data Sources**, create/select the PostgreSQL profile and load it. Loading fails closed on missing views, missing columns, empty mandatory data or duplicate competition keys.
+Streamlit is not part of the production package. Create
+`runtime/config/database_profiles.json` with the `production` PostgreSQL
+profile, then run validation, training and promotion through the one-shot
+`ops` container. It exposes no port, does not persist an admin session, and is
+excluded from ordinary `docker compose up` commands.
 
 ## 5. Professional training lifecycle
 
@@ -119,7 +118,7 @@ The production path uses:
 Validate before training:
 
 ```bash
-docker compose run --rm admin \
+docker compose run --rm ops \
   python main.py --mode validate-data --database-profile production
 ```
 
@@ -128,11 +127,11 @@ The report includes observations and consecutive pairs for each competition. A c
 Train and backtest:
 
 ```bash
-docker compose run --rm admin \
+docker compose run --rm ops \
   python main.py --mode train --database-profile production \
   --model-dir /app/models_saved
 
-docker compose run --rm admin \
+docker compose run --rm ops \
   python main.py --mode backtest --database-profile production \
   --model-dir /app/models_saved
 ```
@@ -142,7 +141,7 @@ Training writes immutable artifacts under `models_saved/runs/<model_run_id>/` an
 Promote only after reviewing the report:
 
 ```bash
-docker compose run --rm admin \
+docker compose run --rm ops \
   python main.py --mode promote --model-dir /app/models_saved
 ```
 
@@ -151,7 +150,7 @@ Promotion requires valid OOT metrics, enough samples, acceptable interval covera
 Rollback:
 
 ```bash
-docker compose run --rm admin \
+docker compose run --rm ops \
   python main.py --mode rollback --model-dir /app/models_saved
 ```
 
@@ -192,7 +191,7 @@ A competition is accepted only if the promoted model has actually seen supervise
 ## 7. Publish bounded batch forecasts
 
 ```bash
-docker compose run --rm admin \
+docker compose run --rm ops \
   python main.py --mode publish-batch \
   --database-profile production \
   --model-dir /app/models_saved
@@ -212,4 +211,4 @@ See `docs/API_INTEGRATION.md` and `docs/API_V2.md`.
 
 ## Runtime state
 
-Secrets, immutable model runs, production artifacts, sessions and audit state are runtime data and ignored by Git. Production state belongs under `runtime/`, not in the repository.
+Secrets, immutable model runs, production artifacts and audit state are runtime data and ignored by Git. Production state belongs under `runtime/`, not in the repository.

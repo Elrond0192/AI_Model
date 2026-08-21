@@ -16,7 +16,6 @@ services:
     volumes:
       - ./runtime/config:/app/config:ro
       - ./runtime/models:/app/models_saved:ro
-      - ./runtime/auth:/app/runtime/auth:rw
       - ./runtime/audit:/app/runtime/audit:rw
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -27,27 +26,18 @@ services:
       start_period: 60s
       retries: 3
 
-  admin:
+  ops:
     build: .
     image: basketball-ai:latest
-    restart: unless-stopped
+    profiles: ["ops"]
     env_file: [.env]
     environment:
       DATA_SOURCE: postgres
       MODEL_DIR: /app/models_saved
       DATABASE_PROFILES_FILE: /app/config/database_profiles.json
-      BASKETBALL_AI_USERS_FILE: /app/runtime/auth/users.json
-      BASKETBALL_AI_ROLES_FILE: /app/runtime/auth/roles.json
-      BASKETBALL_AI_SESSIONS_FILE: /app/runtime/auth/sessions.json
-      BASKETBALL_AI_ADMIN_CREDENTIALS_FILE: /app/runtime/auth/.admin_credentials
-      BASKETBALL_AI_AUDIT_LOG: /app/runtime/audit/admin-audit.log
-    ports:
-      - "127.0.0.1:8501:8501"
     volumes:
       - ./runtime/config:/app/config:rw
       - ./runtime/models:/app/models_saved:rw
-      - ./runtime/auth:/app/runtime/auth:rw
       - ./runtime/audit:/app/runtime/audit:rw
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    command: ["streamlit", "run", "gui/app.py", "--server.port=8501", "--server.address=0.0.0.0", "--server.headless=true"]
