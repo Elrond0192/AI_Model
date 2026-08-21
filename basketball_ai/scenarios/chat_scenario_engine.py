@@ -122,6 +122,7 @@ class ChatScenarioEngine:
             "lineup_fit": self._lineup_fit,
             "style_change": self._style_change,
             "player_role_change": self._player_role_change,
+            "role_minutes_projection": self._player_role_change,
             "team_add_player": self._team_add_player,
             "team_replace_player": self._team_replace_player,
             "best_team_fit": self._best_team_fit,
