@@ -25,6 +25,7 @@ from basketball_ai.models.strict_production import (
     StrictWhatIfEngine,
     build_historical_snapshot,
 )
+from basketball_ai.scenarios.advanced_simulation_engine import AdvancedSimulationEngine
 
 _PLAYER_METRICS = (
     "rating", "games_played", "minutes_per_game", "points", "rebounds", "assists",
@@ -96,6 +97,7 @@ class ChatScenarioEngine:
     ) -> None:
         self.ensemble = ensemble
         self.data = data
+        self.advanced = AdvancedSimulationEngine(data)
 
     def evaluate(
         self,
@@ -126,6 +128,16 @@ class ChatScenarioEngine:
             "best_player_fit": self._best_player_fit,
             "player_similarity": self._player_similarity,
             "age_trajectory": self._age_trajectory,
+            "probabilistic_boxscore": self.advanced.probabilistic_boxscore,
+            "opponent_matchup": self.advanced.opponent_matchup,
+            "defensive_matchup": self.advanced.defensive_matchup,
+            "play_type_matchup": self.advanced.play_type_matchup,
+            "shot_profile_counterfactual": self.advanced.shot_counterfactual,
+            "lineup_synergy": self.advanced.lineup_synergy,
+            "lineup_optimizer": self.advanced.lineup_optimizer,
+            "roster_optimizer": self.advanced.roster_optimizer,
+            "composite_scenario": self.advanced.composite,
+            "causal_effect": self.advanced.causal_effect,
         }
         if scenario not in dispatch:
             raise ValueError(f"Unsupported scenario {scenario!r}")

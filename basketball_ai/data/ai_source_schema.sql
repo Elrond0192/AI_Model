@@ -159,6 +159,21 @@ $$;
 -- external dependencies are visible instead of being silently destroyed.
 -- -------------------------------------------------------------------------
 
+-- Additive simulation views depend on the registries rebuilt below. Remove
+-- only these known adapter objects first; ai_source_simulation.sql recreates
+-- them after the competition contract is installed.
+DROP VIEW IF EXISTS ai_source.simulation_causal_panel;
+DROP VIEW IF EXISTS ai_source.simulation_shot_profiles;
+DROP VIEW IF EXISTS ai_source.simulation_play_type_stats;
+DROP VIEW IF EXISTS ai_source.simulation_lineup_stints;
+DROP VIEW IF EXISTS ai_source.simulation_pbp_events;
+DROP VIEW IF EXISTS ai_source._simulation_lineup_raw;
+DROP VIEW IF EXISTS ai_source._simulation_pbp_raw;
+DROP FUNCTION IF EXISTS ai_source._simulation_lineup_ids(text, integer, text);
+DROP FUNCTION IF EXISTS ai_source._simulation_player_id(text, integer, text);
+DROP FUNCTION IF EXISTS ai_source._simulation_team_id(text, integer, text);
+DROP FUNCTION IF EXISTS ai_source._simulation_play_type(text);
+
 DROP VIEW IF EXISTS ai_source.leagues;
 DROP VIEW IF EXISTS ai_source.player_stats;
 DROP VIEW IF EXISTS ai_source.players;

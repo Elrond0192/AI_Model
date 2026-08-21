@@ -35,6 +35,16 @@ _SOURCE_VIEWS = {
     "team_season_stats": "team_competition_stats",
 }
 
+# Possession-level feeds are additive. Deployments can expose any subset while
+# the strict season model continues to start from the required contract above.
+_OPTIONAL_SOURCE_VIEWS = {
+    "pbp_events": "simulation_pbp_events",
+    "lineup_stints": "simulation_lineup_stints",
+    "play_type_stats": "simulation_play_type_stats",
+    "shot_profiles": "simulation_shot_profiles",
+    "causal_panel": "simulation_causal_panel",
+}
+
 _REQUIRED_COLUMNS: dict[str, set[str]] = {
     "leagues": {"id", "name"},
     "teams": {"id", "global_id", "name", "league_id"},
@@ -102,6 +112,14 @@ def _load_view(engine: Engine, schema: str, name: str) -> pd.DataFrame:
             + competition_hint
             + " Verify the AI read role has SELECT access."
         ) from exc
+
+
+def _load_optional_view(engine: Engine, schema: str, name: str) -> pd.DataFrame:
+    """Read an additive simulation view, returning an empty frame if absent."""
+    try:
+        return pd.read_sql(text(f'SELECT * FROM "{schema}"."{name}"'), engine)
+    except Exception:
+        return pd.DataFrame()
 
 
 def _validate_contract(data: dict[str, pd.DataFrame], schema: str) -> None:
@@ -187,6 +205,26 @@ def _normalise_ids(data: dict[str, pd.DataFrame]) -> None:
                 data[table]["competition"].fillna("RS").astype(str).str.strip().str.upper()
             )
 
+    optional_id_columns = {
+        "pbp_events": ("player_id", "offensive_player_id", "defender_id", "team_id", "opponent_team_id"),
+        "lineup_stints": ("team_id", "opponent_team_id", "offense_player_id", "defense_player_id"),
+        "play_type_stats": ("player_id", "team_id", "opponent_team_id"),
+        "shot_profiles": ("player_id", "team_id"),
+    }
+    for table, columns in optional_id_columns.items():
+        frame = data.get(table)
+        if frame is None or frame.empty:
+            continue
+        for column in columns:
+            if column in frame.columns:
+                frame[column] = frame[column].apply(
+                    lambda value: None if pd.isna(value) else _to_int(value)
+                )
+        if "competition" in frame.columns:
+            frame["competition"] = frame["competition"].fillna("RS").astype(str).str.strip().str.upper()
+        if "season" in frame.columns:
+            frame["season"] = pd.to_numeric(frame["season"], errors="coerce").astype("Int64")
+
 
 def _build_lookups(data: dict[str, pd.DataFrame]) -> None:
     def indexed(frame: pd.DataFrame, id_column: str = "id") -> dict[int, dict[str, Any]]:
@@ -242,6 +280,10 @@ def load_all_data(
         key: _load_view(engine, schema, view)
         for key, view in _SOURCE_VIEWS.items()
     }
+    data.update({
+        key: _load_optional_view(engine, schema, view)
+        for key, view in _OPTIONAL_SOURCE_VIEWS.items()
+    })
 
     _validate_contract(data, schema)
     _normalise_ids(data)
@@ -270,5 +312,7 @@ def load_all_data(
     )
 
     _build_lookups(data)
-    data["source_contract"] = "competition-v1"
+    available = sorted(key for key in _OPTIONAL_SOURCE_VIEWS if not data[key].empty)
+    data["simulation_feeds"] = available
+    data["source_contract"] = "competition-v1+simulation-v1"
     return data

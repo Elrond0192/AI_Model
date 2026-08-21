@@ -81,6 +81,7 @@ jobs:
           PSQL="psql -h 127.0.0.1 -U postgres -d ai_model_test -v ON_ERROR_STOP=1"
           $PSQL -f basketball_ai/data/ai_source_schema.sql
           $PSQL -f basketball_ai/data/ai_source_competition.sql
+          $PSQL -f basketball_ai/data/ai_source_simulation.sql
           $PSQL -f basketball_ai/data/ai_schema.sql
 
       - name: Verify canonical views, isolation and normalization
@@ -105,6 +106,10 @@ jobs:
                OR to_regclass('ai_source.team_player_relations') IS NULL
                OR to_regclass('ai_source.player_competition_stats') IS NULL
                OR to_regclass('ai_source.team_competition_stats') IS NULL
+               OR to_regclass('ai_source.simulation_pbp_events') IS NULL
+               OR to_regclass('ai_source.simulation_lineup_stints') IS NULL
+               OR to_regclass('ai_source.simulation_play_type_stats') IS NULL
+               OR to_regclass('ai_source.simulation_shot_profiles') IS NULL
                OR to_regclass('ai.model_runs') IS NULL
                OR to_regclass('ai.player_forecasts') IS NULL THEN
               RAISE EXCEPTION 'Required AI_Model PostgreSQL contract object is missing';
@@ -186,6 +191,7 @@ jobs:
           PSQL="psql -h 127.0.0.1 -U postgres -d ai_model_test -v ON_ERROR_STOP=1"
           $PSQL -f basketball_ai/data/ai_source_schema.sql
           $PSQL -f basketball_ai/data/ai_source_competition.sql
+          $PSQL -f basketball_ai/data/ai_source_simulation.sql
           $PSQL -f basketball_ai/data/ai_schema.sql
           $PSQL <<'SQL'
           DO $$

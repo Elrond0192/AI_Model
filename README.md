@@ -2,6 +2,13 @@
 
 Production basketball forecasting service for BBallstat.
 
+The production API also exposes a composable Basketball Simulation & Causal
+Engine. See [docs/SIMULATION_ENGINE.md](docs/SIMULATION_ENGINE.md) for the
+probabilistic, matchup, lineup, roster and causal contracts.
+
+For PostgreSQL deployments, run `basketball_ai/data/ai_source_simulation.sql`
+after the core and competition adapters to expose available PBP/lineup feeds.
+
 `AI_Model` is **not a chatbot**. It reads a stable PostgreSQL contract, trains strict season-ahead forecasts (`t -> t+1`) inside the same league and competition, evaluates the exact production ensemble out of time, promotes immutable model runs, stores bounded forecasts in PostgreSQL schema `ai`, and exposes typed inference to WordPress Chat V3.
 
 ## Production architecture
