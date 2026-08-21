@@ -1,11 +1,16 @@
 """Typed composable scenario endpoint for Chat V3."""
 from __future__ import annotations
 
-from datetime import datetime, timezone
+import asyncio
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, HTTPException, Request
 
-from basketball_ai.api.scenario_contracts_v2 import ScenarioRequestV2, ScenarioResponseV2
+from basketball_ai.api.scenario_contracts_v2 import (
+    ScenarioRequestV2,
+    ScenarioResponseV2,
+)
+from basketball_ai.data.postgres_loader import load_scenario_feeds
 from basketball_ai.models.competition_training import resolve_league_id
 from basketball_ai.scenarios.chat_scenario_engine import ChatScenarioEngine
 
@@ -48,8 +53,24 @@ async def evaluate_scenario(body: ScenarioRequestV2, request: Request):
             if body.target_league is not None
             else None
         )
+        league_keys = []
+        for league_id in (source_league_id, target_league_id):
+            row = data.get("league_dict", {}).get(league_id, {})
+            key = row.get("league_key")
+            if key:
+                league_keys.append(str(key))
+        feeds = await asyncio.to_thread(
+            load_scenario_feeds,
+            body.scenario,
+            player_ids=player_ids,
+            team_ids=team_ids,
+            league_keys=league_keys,
+            season=body.season,
+            competition=body.competition,
+        )
+        scenario_data = {**data, **feeds}
         ensemble = runtime.ensemble
-        engine = ChatScenarioEngine(ensemble, data)
+        engine = ChatScenarioEngine(ensemble, scenario_data)
         payload = engine.evaluate(
             body.model_dump(),
             player_ids,
@@ -65,7 +86,7 @@ async def evaluate_scenario(body: ScenarioRequestV2, request: Request):
     return ScenarioResponseV2(
         **request.app.state.model_metadata,
         scenario=body.scenario,
-        generated_at=datetime.now(timezone.utc),
+        generated_at=datetime.now(UTC),
         result=payload.get("result", {}),
         evidence=payload.get("evidence", []),
         support=payload.get("support", {}),

@@ -13,9 +13,9 @@ psql -d YOUR_DATABASE -f basketball_ai/data/ai_schema.sql
 Verifica:
 
 ```sql
-SELECT count(*) FROM ai_source.players;
-SELECT count(*) FROM ai_source.teams;
-SELECT min(season), max(season), count(*) FROM ai_source.player_stats;
+SELECT count(*) FROM "AI_Source"."Players";
+SELECT count(*) FROM "AI_Source"."Teams";
+SELECT min(season), max(season), count(*) FROM "AI_Source"."PlayerStats";
 ```
 
 ## 2. Avvia la console
@@ -35,7 +35,7 @@ Crea il profilo PostgreSQL con:
 ```text
 host = host.docker.internal
 port = 5432
-source_schema = ai_source
+source_schema = "AI_Source"
 output_schema = ai
 ```
 

@@ -8,15 +8,15 @@ estimates.
 ## Optional possession contract
 
 The strict forecasting service still starts when only the competition-aware
-core views exist. The following `ai_source` views are additive and loaded when
+core views exist. The following `"AI_Source"` views are additive and loaded when
 available:
 
 | View | Required fields | Purpose |
 |---|---|---|
-| `simulation_pbp_events` | `season`, `competition`, `offensive_player_id`; optional `defender_id`, `assignment_probability`, `points`, `turnover` | Event evidence for defensive assignments |
-| `simulation_lineup_stints` | `player_ids`, `possessions`, `net_rtg`; optional `offense_player_id`, `defense_player_id`, `assignment_probability`, `points_allowed`, `turnovers_forced` | Partial-pooled lineup and matchup exposure |
-| `simulation_play_type_stats` | `season`, `competition`, `play_type`, `possessions`; `player_id` or `team_id`, plus `ppp` or `ppp_allowed` | Offensive strength × defensive weakness |
-| `simulation_shot_profiles` | `player_id`, `zone`, `attempts`, `fg_pct` | Shot-location counterfactuals |
+| `scenario_defender_matchups` | Indexed player-pair/context aggregates | Defensive assignment evidence without loading raw PBP |
+| `scenario_lineup_stats` | Indexed lineup/context aggregates | Partial-pooled lineup and matchup exposure |
+| `scenario_play_type_stats` | Indexed player/team/context aggregates | Offensive strength × defensive weakness |
+| `scenario_shot_profiles` | Indexed player/context aggregates | Shot-location counterfactuals |
 | `simulation_causal_panel` | `treatment`, `next_outcome`, configured covariates | Explicit longitudinal AIPW panel |
 
 All entity columns contain the same stable internal integer keys used by

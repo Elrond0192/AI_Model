@@ -18,5 +18,5 @@ Every response includes `model_run_id`, `model_version`, `feature_version` and
 does not expose a chat endpoint.
 
 For frequent forecasts, run `main.py --mode publish-batch`; results are upserted
-into `ai.player_forecasts`. JSON export is optional and not used by Chat V3 as
+into `"AI"."PlayerForecasts"`. JSON export is optional and not used by Chat V3 as
 its primary transport.

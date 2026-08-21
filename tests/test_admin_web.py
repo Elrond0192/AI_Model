@@ -57,6 +57,7 @@ def _reset_state():
         admin.STATE.data = None
         admin.STATE.active_profile = None
         admin.STATE.summary = {}
+        admin.STATE.snapshot = None
         admin.STATE.training = {
             "status": "idle",
             "stage": "Ready",
@@ -136,6 +137,30 @@ def test_authentication_helpers_and_csrf(monkeypatch):
     with pytest.raises(HTTPException) as exc:
         admin._csrf(req, "wrong", {"username": "admin", "role": "admin", "token": "x"})
     assert exc.value.status_code == 403
+
+
+def test_scenario_proxy_passes_api_key(monkeypatch):
+    monkeypatch.setenv("API_KEY", "internal-key")
+    captured = {}
+
+    class Response:
+        def __enter__(self): return self
+        def __exit__(self, *args): return False
+        def read(self): return b'{"scenario":"player_team","result":{"rating":7.1}}'
+
+    def fake_urlopen(request, timeout):
+        captured["url"] = request.full_url
+        captured["api_key"] = request.get_header("X-api-key")
+        captured["payload"] = json.loads(request.data)
+        assert timeout == 45.0
+        return Response()
+
+    monkeypatch.setattr(admin, "urlopen", fake_urlopen)
+    response = admin._evaluate_scenario({"scenario": "player_team"})
+    assert response["scenario"] == "player_team"
+    assert captured["url"].endswith("/api/v2/scenarios/evaluate")
+    assert captured["api_key"] == "internal-key"
+    assert captured["payload"] == {"scenario": "player_team"}
 
 
 def test_login_session_logout(monkeypatch):
@@ -263,13 +288,44 @@ async def test_profile_test_and_load(monkeypatch):
     assert tested["ok"] is True
 
     data = _data()
-    monkeypatch.setattr(admin, "load_all_data", lambda url, schema: data)
+    received = {}
+
+    def fake_load_all_data(url, schema, *, include_optional=None):
+        received.update(url=url, schema=schema, include_optional=include_optional)
+        return data
+
+    monkeypatch.setattr(admin, "load_all_data", fake_load_all_data)
+    monkeypatch.setattr(
+        admin,
+        "create_training_snapshot",
+        lambda data, *, profile: {"snapshot_id": "snapshot-1", "profile": profile},
+    )
     loaded = await admin.load_database_profile("production", {"username": "admin", "role": "admin", "token": "x"})
     assert loaded["summary"]["player_rows"] == 5
     assert admin.STATE.active_profile == "production"
+    assert received["include_optional"] is False
+    assert loaded["snapshot"]["snapshot_id"] == "snapshot-1"
 
     with pytest.raises(HTTPException):
         await admin.test_database_profile("missing", {"username": "admin", "role": "admin", "token": "x"})
+
+
+@pytest.mark.asyncio
+async def test_snapshot_list_and_activation(monkeypatch):
+    _reset_state()
+    data = _data()
+    manifest = {"snapshot_id": "snapshot-1", "profile": "production", "sha256": "abc"}
+    monkeypatch.setattr(admin, "list_training_snapshots", lambda: [manifest])
+    monkeypatch.setattr(admin, "load_training_snapshot", lambda snapshot_id: data)
+
+    listed = admin.snapshots({"username": "admin", "role": "admin", "token": "x"})
+    assert listed["snapshots"] == [manifest]
+    activated = await admin.activate_snapshot(
+        "snapshot-1", {"username": "admin", "role": "admin", "token": "x"}
+    )
+    assert activated["snapshot"] == manifest
+    assert admin.STATE.snapshot == manifest
+    assert admin.STATE.summary["player_rows"] == 5
 
 
 def test_training_view_and_start(monkeypatch):

@@ -15,6 +15,7 @@ from pathlib import Path
 import secrets
 import threading
 from typing import Any
+from urllib.error import HTTPError, URLError
 from urllib.request import Request as URLRequest, urlopen
 import uuid
 
@@ -37,6 +38,11 @@ from basketball_ai.auth.auth import (
 )
 from basketball_ai.data.connection_profiles import load_profiles, profile_url, save_profile
 from basketball_ai.data.postgres_loader import get_engine, load_all_data
+from basketball_ai.data.training_snapshots import (
+    create_training_snapshot,
+    list_training_snapshots,
+    load_training_snapshot,
+)
 from basketball_ai.models.promote import (
     MAX_SEGMENT_REGRESSION_PCT,
     MIN_BACKTEST_SAMPLES,
@@ -62,6 +68,7 @@ class AdminState:
     data: dict[str, Any] | None = None
     active_profile: str | None = field(default_factory=lambda: os.getenv("DATABASE_PROFILE") or None)
     summary: dict[str, Any] = field(default_factory=dict)
+    snapshot: dict[str, Any] | None = None
     training: dict[str, Any] = field(
         default_factory=lambda: {
             "status": "idle",
@@ -95,8 +102,8 @@ class ProfilePayload(BaseModel):
     database: str = Field(min_length=1, max_length=128)
     user: str = Field(min_length=1, max_length=128)
     password: str = Field(default="", max_length=1024)
-    source_schema: str = Field(default="ai_source", min_length=1, max_length=128)
-    ai_schema: str = Field(default="ai", min_length=1, max_length=128)
+    source_schema: str = Field(default="AI_Source", min_length=1, max_length=128)
+    ai_schema: str = Field(default="AI", min_length=1, max_length=128)
 
 
 class ConfirmPayload(BaseModel):
@@ -249,7 +256,11 @@ def _set_training(**updates: Any) -> None:
         STATE.training.update(updates)
 
 
-def _training_worker(data: dict[str, Any], active_profile: str | None) -> None:
+def _training_worker(
+    data: dict[str, Any],
+    active_profile: str | None,
+    snapshot: dict[str, Any] | None = None,
+) -> None:
     from basketball_ai.models.backtest import run_backtest
     from basketball_ai.models.promote import register_candidate
     from basketball_ai.models.strict_production import StrictProductionEnsembleModel
@@ -280,6 +291,8 @@ def _training_worker(data: dict[str, Any], active_profile: str | None) -> None:
             "data_cutoff": datetime.now(timezone.utc).date().isoformat(),
             "latest_observed_season": max(seasons),
             "database_profile": active_profile,
+            "training_snapshot_id": (snapshot or {}).get("snapshot_id"),
+            "training_snapshot_sha256": (snapshot or {}).get("sha256"),
             "source_contract": data.get("source_contract", "competition-v1"),
             "backtest": report,
         }
@@ -317,6 +330,32 @@ def _probe(path: str) -> dict[str, Any]:
             return {"ok": 200 <= response.status < 300, "status": response.status, "body": parsed}
     except Exception as exc:
         return {"ok": False, "status": None, "body": None, "error": str(exc)[:300]}
+
+
+def _evaluate_scenario(payload: dict[str, Any]) -> dict[str, Any]:
+    """Forward an authenticated admin request to the API scenario engine."""
+    api_key = os.environ.get("API_KEY", "").strip()
+    headers = {"Accept": "application/json", "Content-Type": "application/json"}
+    if api_key:
+        headers["X-API-Key"] = api_key
+    request = URLRequest(
+        f"{API_BASE_URL}/api/v2/scenarios/evaluate",
+        data=json.dumps(payload).encode("utf-8"),
+        headers=headers,
+        method="POST",
+    )
+    try:
+        with urlopen(request, timeout=45.0) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")
+        try:
+            detail = json.loads(body).get("detail", body)
+        except json.JSONDecodeError:
+            detail = body
+        raise RuntimeError(f"Scenario API: {detail}") from exc
+    except URLError as exc:
+        raise RuntimeError("Scenario API non raggiungibile") from exc
 
 
 @app.middleware("http")
@@ -404,7 +443,7 @@ async def overview(user: dict[str, str] = Depends(_operator)) -> dict[str, Any]:
             "component": "Competition context",
             "status": "ok" if data_loaded and summary.get("team_rows", 0) > 0 else "warning",
             "label": "OK" if data_loaded and summary.get("team_rows", 0) > 0 else "Da verificare",
-            "detail": "ai_source.player_competition_stats + team_competition_stats",
+            "detail": '"AI_Source"."PlayerCompetitionStats" + "TeamCompetitionStats"',
             "action": "data",
         },
         {
@@ -494,15 +533,59 @@ async def load_database_profile(name: str, user: dict[str, str] = Depends(_csrf)
     if profile is None:
         raise HTTPException(status_code=404, detail="Profilo non trovato")
     try:
-        loaded = await asyncio.to_thread(load_all_data, profile_url(name), profile.get("source_schema", "ai_source"))
+        # The admin load step prepares the core forecasting dataset.  Simulation
+        # feeds contain possession-level data and can be orders of magnitude
+        # larger; they are deliberately loaded only by consumers that need them.
+        loaded = await asyncio.to_thread(
+            load_all_data,
+            profile_url(name),
+            profile.get("source_schema", "AI_Source"),
+            include_optional=False,
+        )
     except Exception as exc:
         raise HTTPException(status_code=400, detail=_safe_error(exc)) from exc
     summary = _summary(loaded)
+    snapshot = await asyncio.to_thread(
+        create_training_snapshot,
+        loaded,
+        profile=name,
+    )
     with STATE.lock:
         STATE.data = loaded
         STATE.active_profile = name
         STATE.summary = summary
-    return {"ok": True, "profile": name, "summary": summary}
+        STATE.snapshot = snapshot
+    return {"ok": True, "profile": name, "summary": summary, "snapshot": snapshot}
+
+
+@app.get("/admin-api/snapshots")
+def snapshots(user: dict[str, str] = Depends(_operator)) -> dict[str, Any]:
+    del user
+    with STATE.lock:
+        active = dict(STATE.snapshot) if STATE.snapshot else None
+    return {"active": active, "snapshots": list_training_snapshots()}
+
+
+@app.post("/admin-api/snapshots/{snapshot_id}/activate")
+async def activate_snapshot(
+    snapshot_id: str, user: dict[str, str] = Depends(_csrf)
+) -> dict[str, Any]:
+    del user
+    try:
+        loaded = await asyncio.to_thread(load_training_snapshot, snapshot_id)
+    except (OSError, ValueError, RuntimeError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=400, detail=_safe_error(exc)) from exc
+    summary = _summary(loaded)
+    manifest = next(
+        (item for item in list_training_snapshots() if item.get("snapshot_id") == snapshot_id),
+        {"snapshot_id": snapshot_id},
+    )
+    with STATE.lock:
+        STATE.data = loaded
+        STATE.active_profile = str(manifest.get("profile") or STATE.active_profile or "snapshot")
+        STATE.summary = summary
+        STATE.snapshot = manifest
+    return {"ok": True, "profile": STATE.active_profile, "summary": summary, "snapshot": manifest}
 
 
 @app.get("/admin-api/training")
@@ -512,10 +595,12 @@ def training(user: dict[str, str] = Depends(_operator)) -> dict[str, Any]:
         summary = dict(STATE.summary)
         job = dict(STATE.training)
         active = STATE.active_profile
+        snapshot = dict(STATE.snapshot) if STATE.snapshot else None
     seasons = summary.get("seasons", [])
     competitions = summary.get("competitions", [])
     return {
         "profile": active,
+        "snapshot": snapshot,
         "summary": summary,
         "job": job,
         "can_start": bool(STATE.data is not None and len(seasons) >= 5 and job.get("status") != "running"),
@@ -549,6 +634,7 @@ def start_training(user: dict[str, str] = Depends(_csrf)) -> dict[str, Any]:
             raise HTTPException(status_code=409, detail="Un training è già in corso")
         data = STATE.data
         active = STATE.active_profile
+        snapshot = dict(STATE.snapshot) if STATE.snapshot else None
         STATE.training = {
             "status": "running",
             "stage": "Queued",
@@ -560,7 +646,7 @@ def start_training(user: dict[str, str] = Depends(_csrf)) -> dict[str, Any]:
             "finished_at": None,
             "actor": user["username"],
         }
-    STATE.executor.submit(_training_worker, data, active)
+    STATE.executor.submit(_training_worker, data, active, snapshot)
     return {"ok": True, "job": dict(STATE.training)}
 
 
@@ -570,6 +656,16 @@ def backtests(user: dict[str, str] = Depends(_operator)) -> dict[str, Any]:
     candidate = _registry().get("candidate") or {}
     report = candidate.get("backtest") or {}
     return {"candidate": candidate, "report": report, "quality": _candidate_quality(candidate)}
+
+
+@app.post("/admin-api/scenarios/evaluate")
+async def evaluate_scenario(payload: dict[str, Any], user: dict[str, str] = Depends(_csrf)) -> dict[str, Any]:
+    """Expose the production scenario engine in the authenticated admin UI."""
+    del user
+    try:
+        return await asyncio.to_thread(_evaluate_scenario, payload)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=_safe_error(exc)) from exc
 
 
 @app.get("/admin-api/registry")

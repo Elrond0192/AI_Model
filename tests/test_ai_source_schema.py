@@ -10,29 +10,34 @@ ROOT = Path(__file__).resolve().parents[1]
 SOURCE_SQL = ROOT / "basketball_ai" / "data" / "ai_source_schema.sql"
 COMPETITION_SQL = ROOT / "basketball_ai" / "data" / "ai_source_competition.sql"
 SIMULATION_SQL = ROOT / "basketball_ai" / "data" / "ai_source_simulation.sql"
+SERVING_SQL = ROOT / "basketball_ai" / "data" / "ai_scenario_serving.sql"
+OUTPUT_SQL = ROOT / "basketball_ai" / "data" / "ai_schema.sql"
+MIGRATION_SQL = ROOT / "basketball_ai" / "data" / "ai_pascalcase_migration.sql"
 
 
 def test_ai_source_schema_defines_entity_contract():
     sql = SOURCE_SQL.read_text(encoding="utf-8").lower()
     for view in (
-        "ai_source.leagues",
-        "ai_source.teams",
-        "ai_source.players",
-        "ai_source.team_player_relations",
+        '"ai_source"."leagues"',
+        '"ai_source"."teams"',
+        '"ai_source"."players"',
+        '"ai_source"."teamplayerrelations"',
     ):
         assert f"create view {view}" in sql
 
 
 def test_competition_schema_preserves_player_and_team_contexts():
     sql = COMPETITION_SQL.read_text(encoding="utf-8").lower()
-    assert "create view ai_source.player_competition_stats" in sql
-    assert "create view ai_source.team_competition_stats" in sql
+    assert 'create view "ai_source"."playercompetitionstats"' in sql
+    assert 'create view "ai_source"."teamcompetitionstats"' in sql
     assert "partition by pr.global_id, s.league_key, s.season, s.competition" in sql
     assert "partition by tr.global_id, ts.league_key, ts.season, ts.competition" in sql
-    assert "ai_source._competition" in sql
+    assert '"ai_source"."competitioncode"' in sql
     assert "advancedstats_player_" in sql
     assert "advancedstatsteam_" in sql
     assert "information_schema.columns" in sql
+    assert "'gamesstarted', 'games_started'" in sql
+    assert "coalesce(s.games_started, bs.games_started, 0)" in sql
 
 
 def test_competition_schema_keeps_tot_separate_from_rs():
@@ -53,11 +58,11 @@ def test_competition_schema_is_independent_of_base_internal_views():
 def test_simulation_schema_adapts_pbp_lineups_play_types_and_shots():
     sql = SIMULATION_SQL.read_text(encoding="utf-8").lower()
     for view in (
-        "ai_source.simulation_pbp_events",
-        "ai_source.simulation_lineup_stints",
-        "ai_source.simulation_play_type_stats",
-        "ai_source.simulation_shot_profiles",
-        "ai_source.simulation_causal_panel",
+        '"ai_source"."simulationpbpevents"',
+        '"ai_source"."simulationlineupstints"',
+        '"ai_source"."simulationplaytypestats"',
+        '"ai_source"."simulationshotprofiles"',
+        '"ai_source"."simulationcausalpanel"',
     ):
         assert f"create view {view}" in sql
     assert "advancedstats_lineups_quarter_" in sql
@@ -70,6 +75,7 @@ def test_ai_source_schemas_have_no_sql_server_ddl():
         SOURCE_SQL.read_text(encoding="utf-8")
         + COMPETITION_SQL.read_text(encoding="utf-8")
         + SIMULATION_SQL.read_text(encoding="utf-8")
+        + SERVING_SQL.read_text(encoding="utf-8")
     ).lower()
     forbidden = (
         "set ansi_nulls", "set quoted_identifier", "nvarchar(", "datetime2",
@@ -77,6 +83,43 @@ def test_ai_source_schemas_have_no_sql_server_ddl():
     )
     for token in forbidden:
         assert token not in sql
+
+
+def test_scenario_serving_is_physical_indexed_and_incremental():
+    sql = SERVING_SQL.read_text(encoding="utf-8").lower()
+    for table in (
+        "trainingplayercompetitionstats",
+        "trainingteamcompetitionstats",
+        "scenarioplaytypestats",
+        "scenarioshotprofiles",
+        "scenariodefendermatchups",
+        "scenariolineupstats",
+    ):
+        assert f'create table if not exists "ai_source"."{table}"' in sql
+    assert 'create or replace procedure "ai_source"."refreshscenarioserving"' in sql
+    assert 'create or replace procedure "ai_source"."refreshtrainingserving"' in sql
+    assert 'create or replace procedure "ai_source"."refreshcontext"' in sql
+    assert 'create table if not exists "ai_source"."servingrefreshstate"' in sql
+    assert "p_league_key text" in sql
+    assert "p_season integer" in sql
+    assert "p_competition text" in sql
+    assert "create index if not exists" in sql
+
+
+def test_ai_owned_schemas_and_relations_use_pascal_case():
+    source = SOURCE_SQL.read_text(encoding="utf-8")
+    serving = SERVING_SQL.read_text(encoding="utf-8")
+    output = OUTPUT_SQL.read_text(encoding="utf-8")
+    assert 'CREATE SCHEMA IF NOT EXISTS "AI_Source"' in source
+    assert 'CREATE SCHEMA IF NOT EXISTS "AI"' in output
+    assert '"AI_Source"."TrainingPlayerCompetitionStats"' in serving
+    assert '"AI_Source"."ServingRefreshState"' in serving
+    assert '"AI"."ModelRuns"' in output
+    assert '"AI"."PlayerForecasts"' in output
+    assert "CREATE SCHEMA IF NOT EXISTS ai_source" not in source
+    assert "CREATE TABLE IF NOT EXISTS ai." not in output
+    migration = MIGRATION_SQL.read_text(encoding="utf-8")
+    assert "DROP SCHEMA IF EXISTS ai_source CASCADE" in migration
 
 
 def test_stable_id_keeps_null_relations_null():

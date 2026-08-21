@@ -20,22 +20,69 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--mode",
         choices=(
             "train", "backtest", "validate-data", "publish-batch",
-            "promote", "rollback", "api",
+            "promote", "rollback", "prepare-snapshot", "refresh-serving", "api",
         ),
         required=True,
     )
     parser.add_argument("--database-profile", default=None)
     parser.add_argument("--model-dir", default="models_saved")
+    parser.add_argument("--snapshot-id", default=None)
+    parser.add_argument("--snapshot-dir", default=None)
+    parser.add_argument("--league-key", default=None)
+    parser.add_argument("--season", type=int, default=None)
+    parser.add_argument("--competition", default=None)
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8000)
     return parser.parse_args(argv)
 
 
 def _load_data(args: argparse.Namespace) -> dict[str, Any]:
+    snapshot_id = getattr(args, "snapshot_id", None)
+    if snapshot_id:
+        from basketball_ai.data.training_snapshots import load_training_snapshot
+
+        return load_training_snapshot(snapshot_id, getattr(args, "snapshot_dir", None))
     if args.database_profile:
         os.environ["DATABASE_PROFILE"] = args.database_profile
     from basketball_ai.data.postgres_loader import load_all_data
     return load_all_data()
+
+
+def mode_prepare_snapshot(args: argparse.Namespace) -> None:
+    from basketball_ai.data.training_snapshots import create_training_snapshot
+
+    data = _load_data(argparse.Namespace(database_profile=args.database_profile, snapshot_id=None))
+    manifest = create_training_snapshot(
+        data,
+        profile=args.database_profile or os.getenv("DATABASE_PROFILE", "production"),
+        root=args.snapshot_dir,
+    )
+    print(json.dumps(manifest, indent=2))
+
+
+def mode_refresh_serving(args: argparse.Namespace) -> None:
+    if not args.league_key or args.season is None or not args.competition:
+        raise SystemExit("--league-key, --season and --competition are required")
+    if args.database_profile:
+        os.environ["DATABASE_PROFILE"] = args.database_profile
+    from sqlalchemy import text
+
+    from basketball_ai.data.postgres_loader import get_engine
+
+    engine = get_engine()
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                text('CALL "AI_Source"."RefreshContext"(:league, :season, :competition)'),
+                {
+                    "league": args.league_key,
+                    "season": args.season,
+                    "competition": args.competition,
+                },
+            )
+    finally:
+        engine.dispose()
+    print(json.dumps({"refreshed": True, "league_key": args.league_key, "season": args.season, "competition": args.competition.upper()}))
 
 
 def _latest_season(data: dict[str, Any]) -> int:
@@ -66,6 +113,8 @@ def mode_train(args: argparse.Namespace) -> None:
         "data_cutoff": datetime.now(timezone.utc).date().isoformat(),
         "latest_observed_season": _latest_season(data),
         "database_profile": args.database_profile or os.getenv("DATABASE_PROFILE", ""),
+        "training_snapshot_id": data.get("training_snapshot_manifest", {}).get("snapshot_id"),
+        "training_snapshot_sha256": data.get("training_snapshot_manifest", {}).get("sha256"),
         "source_contract": data.get("source_contract", "competition-v1"),
         "backtest": report,
     }
@@ -228,6 +277,8 @@ def main(argv: list[str] | None = None) -> None:
         "publish-batch": mode_publish_batch,
         "promote": mode_promote,
         "rollback": mode_rollback,
+        "prepare-snapshot": mode_prepare_snapshot,
+        "refresh-serving": mode_refresh_serving,
         "api": mode_api,
     }[args.mode](args)
 

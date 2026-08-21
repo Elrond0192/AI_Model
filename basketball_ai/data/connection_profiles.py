@@ -22,7 +22,19 @@ def load_profiles() -> dict[str, dict[str, Any]]:
     raw = json.loads(injected) if injected else (json.loads(PROFILE_FILE.read_text(encoding="utf-8")) if PROFILE_FILE.exists() else {})
     if not isinstance(raw, dict):
         raise ValueError("Database profiles must be an object")
-    return {name: profile for name, profile in raw.items() if _NAME.fullmatch(name) and isinstance(profile, dict)}
+    profiles = {
+        name: dict(profile)
+        for name, profile in raw.items()
+        if _NAME.fullmatch(name) and isinstance(profile, dict)
+    }
+    # Transparently migrate pre-PascalCase runtime profiles. The persisted
+    # secret file is updated only on the next explicit save.
+    for profile in profiles.values():
+        if profile.get("source_schema") == "ai_source":
+            profile["source_schema"] = "AI_Source"
+        if profile.get("ai_schema") == "ai":
+            profile["ai_schema"] = "AI"
+    return profiles
 
 
 def _write_profiles(profiles: dict[str, dict[str, Any]]) -> None:

@@ -11,7 +11,7 @@
 | Base estimator | pooled XGBoost regressor with explicit competition feature |
 | Team/context layer | temporally trained competition-aware k-NN + bounded context adjustments |
 | Output | predicted rating 0–10 + calibrated interval + competition support metadata |
-| Production source | PostgreSQL `ai_source` competition-preserving views |
+| Production source | PostgreSQL `"AI_Source"` competition-preserving views |
 
 AI_Model is an inference/training service, not a conversational model. WordPress Chat V3/Bax owns intent detection, entity resolution and natural-language responses.
 
@@ -41,7 +41,7 @@ XGBoost is refit on train + validation after tree selection. Calibration outcome
 
 ## Historical player/team/competition context
 
-`ai_source.player_competition_stats` and `ai_source.team_competition_stats` preserve league, season and competition. Historical inference constructs an as-of source-season snapshot and then scopes it to the requested league/competition.
+`"AI_Source"."PlayerCompetitionStats"` and `"AI_Source"."TeamCompetitionStats"` preserve league, season and competition. Historical inference constructs an as-of source-season snapshot and then scopes it to the requested league/competition.
 
 For a playoff request, player form, target-team pace/ORtg/DRtg/style, compatibility and persistence come from playoff rows in that league. Regular-season statistics are not silently substituted. If the required isolated source context is missing, inference fails explicitly.
 

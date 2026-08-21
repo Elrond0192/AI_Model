@@ -1,4 +1,4 @@
--- PostgreSQL parallel-safety correction for ai_source parsing helpers.
+-- PostgreSQL parallel-safety correction for "AI_Source" parsing helpers.
 --
 -- _num() and _date() contain EXCEPTION handlers. PostgreSQL implements those
 -- handlers with subtransactions, which cannot execute inside parallel workers.
@@ -8,8 +8,8 @@
 
 BEGIN;
 
-ALTER FUNCTION ai_source._num(jsonb, text[]) PARALLEL UNSAFE;
-ALTER FUNCTION ai_source._int(jsonb, text[]) PARALLEL UNSAFE;
-ALTER FUNCTION ai_source._date(jsonb, text[]) PARALLEL UNSAFE;
+ALTER FUNCTION "AI_Source"."NumericValue"(jsonb, text[]) PARALLEL UNSAFE;
+ALTER FUNCTION "AI_Source"."IntValue"(jsonb, text[]) PARALLEL UNSAFE;
+ALTER FUNCTION "AI_Source"."DateValue"(jsonb, text[]) PARALLEL UNSAFE;
 
 COMMIT;

@@ -96,14 +96,14 @@ def publish_current_team_forecasts(model_dir: str) -> int:
     with engine.begin() as connection:
         connection.execute(
             text(
-                "INSERT INTO ai.model_runs(model_run_id,model_version,feature_version,data_cutoff,status,metrics) "
+                'INSERT INTO "AI"."ModelRuns"(model_run_id,model_version,feature_version,data_cutoff,status,metrics) '
                 "VALUES (:model_run_id,:model_version,:feature_version,:data_cutoff,'production',CAST(:metrics AS jsonb)) "
                 "ON CONFLICT(model_run_id) DO UPDATE SET status=EXCLUDED.status, metrics=EXCLUDED.metrics"
             ),
             {**metadata, "metrics": json.dumps(metadata.get("backtest", {}))},
         )
         statement = text(
-            "INSERT INTO ai.player_forecasts(model_run_id,player_global_id,team_global_id,league,season,competition,target_season,predicted_rating,confidence_low,confidence_high,payload) "
+            'INSERT INTO "AI"."PlayerForecasts"(model_run_id,player_global_id,team_global_id,league,season,competition,target_season,predicted_rating,confidence_low,confidence_high,payload) '
             "VALUES (:model_run_id,:player_global_id,:team_global_id,:league,:season,:competition,:target_season,:predicted_rating,:confidence_low,:confidence_high,CAST(:payload AS jsonb)) "
             "ON CONFLICT(model_run_id,player_global_id,team_global_id,league,season,competition) DO UPDATE SET "
             "predicted_rating=EXCLUDED.predicted_rating,confidence_low=EXCLUDED.confidence_low,confidence_high=EXCLUDED.confidence_high,payload=EXCLUDED.payload,created_at=now()"

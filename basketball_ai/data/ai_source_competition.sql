@@ -5,7 +5,7 @@
 
 BEGIN;
 
-CREATE OR REPLACE FUNCTION ai_source._competition(value text)
+CREATE OR REPLACE FUNCTION "AI_Source"."CompetitionCode"(value text)
 RETURNS text
 LANGUAGE sql
 IMMUTABLE
@@ -34,16 +34,16 @@ AS $$
     END;
 $$;
 
-DROP VIEW IF EXISTS ai_source.team_competition_stats;
-DROP VIEW IF EXISTS ai_source.player_competition_stats;
-DROP VIEW IF EXISTS ai_source._competition_boxscore_raw;
-DROP VIEW IF EXISTS ai_source._competition_clutch_raw;
-DROP VIEW IF EXISTS ai_source._competition_onoff_raw;
-DROP VIEW IF EXISTS ai_source._competition_roles_raw;
-DROP VIEW IF EXISTS ai_source._competition_team_stats_raw;
-DROP VIEW IF EXISTS ai_source._competition_stats_raw;
-DROP VIEW IF EXISTS ai_source._competition_team_registry;
-DROP VIEW IF EXISTS ai_source._competition_player_registry;
+DROP VIEW IF EXISTS "AI_Source"."TeamCompetitionStats";
+DROP VIEW IF EXISTS "AI_Source"."PlayerCompetitionStats";
+DROP VIEW IF EXISTS "AI_Source"."CompetitionBoxscoreRawInternal";
+DROP VIEW IF EXISTS "AI_Source"."CompetitionClutchRawInternal";
+DROP VIEW IF EXISTS "AI_Source"."CompetitionOnOffRawInternal";
+DROP VIEW IF EXISTS "AI_Source"."CompetitionRolesRawInternal";
+DROP VIEW IF EXISTS "AI_Source"."CompetitionTeamStatsRawInternal";
+DROP VIEW IF EXISTS "AI_Source"."CompetitionStatsRawInternal";
+DROP VIEW IF EXISTS "AI_Source"."CompetitionTeamRegistryInternal";
+DROP VIEW IF EXISTS "AI_Source"."CompetitionPlayerRegistryInternal";
 
 -- Player identity by league/season.
 DO $$
@@ -65,26 +65,26 @@ BEGIN
             format($sql$
                 SELECT
                     %L::text AS league_key,
-                    ai_source._int(j.doc, 'season')::integer AS season,
-                    ai_source._text(j.doc, 'id') AS source_player_id,
+                    "AI_Source"."IntValue"(j.doc, 'season')::integer AS season,
+                    "AI_Source"."TextValue"(j.doc, 'id') AS source_player_id,
                     COALESCE(
-                        ai_source._text(j.doc, 'idglobal', 'globalid'),
-                        %L || ':' || ai_source._text(j.doc, 'id')
+                        "AI_Source"."TextValue"(j.doc, 'idglobal', 'globalid'),
+                        %L || ':' || "AI_Source"."TextValue"(j.doc, 'id')
                     ) AS global_id,
                     COALESCE(
-                        ai_source._text(j.doc, 'normalizedplayername', 'playername', 'name'),
-                        ai_source._text(j.doc, 'id')
+                        "AI_Source"."TextValue"(j.doc, 'normalizedplayername', 'playername', 'name'),
+                        "AI_Source"."TextValue"(j.doc, 'id')
                     ) AS name,
-                    ai_source._date(j.doc, 'birthdate', 'dateofbirth', 'dob') AS birth_date,
-                    ai_source._int(j.doc, 'age')::integer AS age,
-                    COALESCE(ai_source._text(j.doc, 'pos', 'position'), 'PG') AS position,
-                    ai_source._text(j.doc, 'teamname') AS team_name
+                    "AI_Source"."DateValue"(j.doc, 'birthdate', 'dateofbirth', 'dob') AS birth_date,
+                    "AI_Source"."IntValue"(j.doc, 'age')::integer AS age,
+                    COALESCE("AI_Source"."TextValue"(j.doc, 'pos', 'position'), 'PG') AS position,
+                    "AI_Source"."TextValue"(j.doc, 'teamname') AS team_name
                 FROM %I.%I src
                 CROSS JOIN LATERAL (
-                    SELECT ai_source._lower_keys(to_jsonb(src)) AS doc
+                    SELECT "AI_Source"."LowerKeys"(to_jsonb(src)) AS doc
                 ) j
-                WHERE ai_source._int(j.doc, 'season') IS NOT NULL
-                  AND ai_source._text(j.doc, 'id') IS NOT NULL
+                WHERE "AI_Source"."IntValue"(j.doc, 'season') IS NOT NULL
+                  AND "AI_Source"."TextValue"(j.doc, 'id') IS NOT NULL
             $sql$, r.table_name, r.table_name, r.table_schema, r.table_name);
     END LOOP;
 
@@ -98,7 +98,7 @@ BEGIN
             WHERE false
         $empty$;
     END IF;
-    EXECUTE 'CREATE VIEW ai_source._competition_player_registry AS ' || body;
+    EXECUTE 'CREATE VIEW "AI_Source"."CompetitionPlayerRegistryInternal" AS ' || body;
 END;
 $$;
 
@@ -124,23 +124,23 @@ BEGIN
             format($sql$
                 SELECT
                     %L::text AS league_key,
-                    ai_source._int(j.doc, 'season')::integer AS season,
-                    ai_source._text(j.doc, 'id') AS source_team_id,
+                    "AI_Source"."IntValue"(j.doc, 'season')::integer AS season,
+                    "AI_Source"."TextValue"(j.doc, 'id') AS source_team_id,
                     COALESCE(
-                        ai_source._text(j.doc, 'idglobal', 'globalid'),
-                        %L || ':' || ai_source._text(j.doc, 'id')
+                        "AI_Source"."TextValue"(j.doc, 'idglobal', 'globalid'),
+                        %L || ':' || "AI_Source"."TextValue"(j.doc, 'id')
                     ) AS global_id,
                     COALESCE(
-                        ai_source._text(j.doc, 'teamname', 'name', 'shortname'),
-                        ai_source._text(j.doc, 'id')
+                        "AI_Source"."TextValue"(j.doc, 'teamname', 'name', 'shortname'),
+                        "AI_Source"."TextValue"(j.doc, 'id')
                     ) AS name,
-                    ai_source._text(j.doc, 'shortname', 'short_name') AS short_name
+                    "AI_Source"."TextValue"(j.doc, 'shortname', 'short_name') AS short_name
                 FROM %I.%I src
                 CROSS JOIN LATERAL (
-                    SELECT ai_source._lower_keys(to_jsonb(src)) AS doc
+                    SELECT "AI_Source"."LowerKeys"(to_jsonb(src)) AS doc
                 ) j
-                WHERE ai_source._int(j.doc, 'season') IS NOT NULL
-                  AND ai_source._text(j.doc, 'id') IS NOT NULL
+                WHERE "AI_Source"."IntValue"(j.doc, 'season') IS NOT NULL
+                  AND "AI_Source"."TextValue"(j.doc, 'id') IS NOT NULL
             $sql$, league_key, league_key, r.table_schema, r.table_name);
     END LOOP;
 
@@ -152,7 +152,7 @@ BEGIN
             WHERE false
         $empty$;
     END IF;
-    EXECUTE 'CREATE VIEW ai_source._competition_team_registry AS ' || body;
+    EXECUTE 'CREATE VIEW "AI_Source"."CompetitionTeamRegistryInternal" AS ' || body;
 END;
 $$;
 
@@ -179,81 +179,83 @@ BEGIN
             format($sql$
                 SELECT
                     %L::text AS league_key,
-                    ai_source._int(j.doc, 'season')::integer AS season,
-                    ai_source._text(j.doc, 'id', 'playerid', 'idplayer') AS source_player_id,
-                    ai_source._text(j.doc, 'teamid', 'idteam') AS source_team_id,
-                    ai_source._competition(ai_source._text(j.doc, 'competition')) AS competition,
-                    ai_source._num(j.doc, 'games', 'gamesplayed') AS games,
-                    ai_source._num(j.doc, 'min', 'minutes') AS minutes_total,
-                    ai_source._num(j.doc, 'pts', 'points') AS points_total,
-                    ai_source._num(j.doc, 'tr', 'reb', 'rebounds') AS rebounds_total,
-                    ai_source._num(j.doc, 'or', 'orb', 'offensiverebounds') AS offensive_rebounds_total,
-                    ai_source._num(j.doc, 'dr', 'drb', 'defensiverebounds') AS defensive_rebounds_total,
-                    ai_source._num(j.doc, 'ast', 'assists') AS assists_total,
-                    ai_source._num(j.doc, 'stl', 'steals') AS steals_total,
-                    ai_source._num(j.doc, 'blk', 'blocks') AS blocks_total,
-                    ai_source._num(j.doc, 'to', 'tov', 'turnovers') AS turnovers_total,
-                    ai_source._num(j.doc, 'pf', 'fouls', 'personalfouls') AS fouls_total,
-                    ai_source._num(j.doc, 'efgpct', 'fgpct', 'fg_pct') AS fg_pct,
-                    ai_source._num(j.doc, 'fg3pct', 'threepointpct', 'three_point_pct') AS three_point_pct,
-                    ai_source._num(j.doc, 'ftpct', 'ft_pct') AS ft_pct,
-                    ai_source._num(j.doc, 'plusminus', 'plus_minus') AS plus_minus,
-                    ai_source._num(j.doc, 'pie', 'per') AS per,
-                    ai_source._num(j.doc, 'tspct', 'ts_pct') AS ts_pct,
-                    ai_source._num(j.doc, 'usgpct', 'usg_pct') AS usg_pct,
-                    ai_source._num(j.doc, 'bpm') AS bpm,
-                    ai_source._num(j.doc, 'vorp') AS vorp,
-                    ai_source._num(j.doc, 'ws', 'winshares') AS win_shares,
-                    ai_source._num(j.doc, 'astratio', 'ast_ratio') AS ast_ratio,
-                    ai_source._num(j.doc, 'rebpct', 'reb_pct') AS reb_pct,
-                    ai_source._num(j.doc, 'vallegapergame', 'rating') AS rating,
-                    ai_source._num(j.doc, 'ortg') AS ortg,
-                    ai_source._num(j.doc, 'drtg') AS drtg,
-                    ai_source._num(j.doc, 'netrtg', 'net_rating') AS net_rtg,
-                    ai_source._text(j.doc, 'ruolooffensivo') AS ruolo_offensivo,
-                    ai_source._text(j.doc, 'ruolodifensivo') AS ruolo_difensivo,
-                    ai_source._text(j.doc, 'ruolocombinato') AS ruolo_combinato,
-                    ai_source._num(j.doc, 'netrtg_on', 'onnetrtg') AS on_net_rtg,
-                    ai_source._num(j.doc, 'netrtg_off', 'offnetrtg') AS off_net_rtg,
-                    ai_source._num(j.doc, 'netrtg_diff') AS net_rtg_diff,
-                    ai_source._num(j.doc, 'spm') AS spm,
-                    ai_source._num(j.doc, 'obpm') AS obpm,
-                    ai_source._num(j.doc, 'dbpm') AS dbpm,
-                    ai_source._num(j.doc, 'gmsc', 'gm_sc') AS gm_sc,
-                    ai_source._num(j.doc, 'fic') AS fic,
-                    ai_source._num(j.doc, 'ows') AS ows,
-                    ai_source._num(j.doc, 'dws') AS dws,
-                    ai_source._num(j.doc, 'raptoroff', 'raptor_off') AS raptor_off,
-                    ai_source._num(j.doc, 'raptordef', 'raptor_def') AS raptor_def,
-                    ai_source._num(j.doc, 'raptortotal', 'raptor_total') AS raptor_total,
-                    ai_source._num(j.doc, 'lebronoff', 'lebron_off') AS lebron_off,
-                    ai_source._num(j.doc, 'lebrondef', 'lebron_def') AS lebron_def,
-                    ai_source._num(j.doc, 'lebrontotal', 'lebron_total') AS lebron_total,
-                    ai_source._num(j.doc, 'scoringefficiency', 'scoring_efficiency') AS scoring_efficiency,
-                    ai_source._num(j.doc, 'ppsa') AS ppsa,
-                    ai_source._num(j.doc, 'fg2pct', 'twopointpct') AS two_point_pct,
-                    ai_source._num(j.doc, 'tovpct', 'tov_pct') AS tov_pct,
-                    ai_source._num(j.doc, 'astpct', 'ast_pct') AS ast_pct,
-                    ai_source._num(j.doc, 'stlpct', 'stl_pct') AS stl_pct,
-                    ai_source._num(j.doc, 'blkpct', 'blk_pct') AS blk_pct,
-                    ai_source._num(j.doc, 'orebpct', 'orbpct', 'orb_pct') AS orb_pct,
-                    ai_source._num(j.doc, 'drebpct', 'drbpct', 'drb_pct') AS drb_pct,
-                    ai_source._num(j.doc, 'threepar', 'three_par') AS three_par,
-                    ai_source._num(j.doc, 'tusgpct', 'trueusgpct', 'true_usg_pct') AS true_usg_pct,
-                    ai_source._num(j.doc, 'fouldrawingrate', 'foul_drawing_rate') AS foul_drawing_rate,
-                    ai_source._num(j.doc, 'rfpergame', 'rf_per_game') AS rf_per_game,
-                    ai_source._num(j.doc, 'hustleindex', 'hustle_index') AS hustle_index,
-                    ai_source._num(j.doc, 'ptsper40', 'pts_per_40') AS pts_per_40,
-                    ai_source._num(j.doc, 'astper40', 'ast_per_40') AS ast_per_40,
-                    ai_source._num(j.doc, 'trper40', 'rebper40', 'tr_per_40') AS tr_per_40,
-                    ai_source._num(j.doc, 'stlper40', 'stl_per_40') AS stl_per_40,
-                    ai_source._num(j.doc, 'blkper40', 'blk_per_40') AS blk_per_40
+                    "AI_Source"."IntValue"(j.doc, 'season')::integer AS season,
+                    "AI_Source"."TextValue"(j.doc, 'id', 'playerid', 'idplayer') AS source_player_id,
+                    "AI_Source"."TextValue"(j.doc, 'teamid', 'idteam') AS source_team_id,
+                    "AI_Source"."CompetitionCode"("AI_Source"."TextValue"(j.doc, 'competition')) AS competition,
+                    "AI_Source"."NumericValue"(j.doc, 'games', 'gamesplayed') AS games,
+                    "AI_Source"."NumericValue"(j.doc, 'gamesstarted', 'games_started') AS games_started,
+                    "AI_Source"."NumericValue"(j.doc, 'starterpct', 'starter_pct') AS starter_pct,
+                    "AI_Source"."NumericValue"(j.doc, 'min', 'minutes') AS minutes_total,
+                    "AI_Source"."NumericValue"(j.doc, 'pts', 'points') AS points_total,
+                    "AI_Source"."NumericValue"(j.doc, 'tr', 'reb', 'rebounds') AS rebounds_total,
+                    "AI_Source"."NumericValue"(j.doc, 'or', 'orb', 'offensiverebounds') AS offensive_rebounds_total,
+                    "AI_Source"."NumericValue"(j.doc, 'dr', 'drb', 'defensiverebounds') AS defensive_rebounds_total,
+                    "AI_Source"."NumericValue"(j.doc, 'ast', 'assists') AS assists_total,
+                    "AI_Source"."NumericValue"(j.doc, 'stl', 'steals') AS steals_total,
+                    "AI_Source"."NumericValue"(j.doc, 'blk', 'blocks') AS blocks_total,
+                    "AI_Source"."NumericValue"(j.doc, 'to', 'tov', 'turnovers') AS turnovers_total,
+                    "AI_Source"."NumericValue"(j.doc, 'pf', 'fouls', 'personalfouls') AS fouls_total,
+                    "AI_Source"."NumericValue"(j.doc, 'efgpct', 'fgpct', 'fg_pct') AS fg_pct,
+                    "AI_Source"."NumericValue"(j.doc, 'fg3pct', 'threepointpct', 'three_point_pct') AS three_point_pct,
+                    "AI_Source"."NumericValue"(j.doc, 'ftpct', 'ft_pct') AS ft_pct,
+                    "AI_Source"."NumericValue"(j.doc, 'plusminus', 'plus_minus') AS plus_minus,
+                    "AI_Source"."NumericValue"(j.doc, 'pie', 'per') AS per,
+                    "AI_Source"."NumericValue"(j.doc, 'tspct', 'ts_pct') AS ts_pct,
+                    "AI_Source"."NumericValue"(j.doc, 'usgpct', 'usg_pct') AS usg_pct,
+                    "AI_Source"."NumericValue"(j.doc, 'bpm') AS bpm,
+                    "AI_Source"."NumericValue"(j.doc, 'vorp') AS vorp,
+                    "AI_Source"."NumericValue"(j.doc, 'ws', 'winshares') AS win_shares,
+                    "AI_Source"."NumericValue"(j.doc, 'astratio', 'ast_ratio') AS ast_ratio,
+                    "AI_Source"."NumericValue"(j.doc, 'rebpct', 'reb_pct') AS reb_pct,
+                    "AI_Source"."NumericValue"(j.doc, 'vallegapergame', 'rating') AS rating,
+                    "AI_Source"."NumericValue"(j.doc, 'ortg') AS ortg,
+                    "AI_Source"."NumericValue"(j.doc, 'drtg') AS drtg,
+                    "AI_Source"."NumericValue"(j.doc, 'netrtg', 'net_rating') AS net_rtg,
+                    "AI_Source"."TextValue"(j.doc, 'ruolooffensivo') AS ruolo_offensivo,
+                    "AI_Source"."TextValue"(j.doc, 'ruolodifensivo') AS ruolo_difensivo,
+                    "AI_Source"."TextValue"(j.doc, 'ruolocombinato') AS ruolo_combinato,
+                    "AI_Source"."NumericValue"(j.doc, 'netrtg_on', 'onnetrtg') AS on_net_rtg,
+                    "AI_Source"."NumericValue"(j.doc, 'netrtg_off', 'offnetrtg') AS off_net_rtg,
+                    "AI_Source"."NumericValue"(j.doc, 'netrtg_diff') AS net_rtg_diff,
+                    "AI_Source"."NumericValue"(j.doc, 'spm') AS spm,
+                    "AI_Source"."NumericValue"(j.doc, 'obpm') AS obpm,
+                    "AI_Source"."NumericValue"(j.doc, 'dbpm') AS dbpm,
+                    "AI_Source"."NumericValue"(j.doc, 'gmsc', 'gm_sc') AS gm_sc,
+                    "AI_Source"."NumericValue"(j.doc, 'fic') AS fic,
+                    "AI_Source"."NumericValue"(j.doc, 'ows') AS ows,
+                    "AI_Source"."NumericValue"(j.doc, 'dws') AS dws,
+                    "AI_Source"."NumericValue"(j.doc, 'raptoroff', 'raptor_off') AS raptor_off,
+                    "AI_Source"."NumericValue"(j.doc, 'raptordef', 'raptor_def') AS raptor_def,
+                    "AI_Source"."NumericValue"(j.doc, 'raptortotal', 'raptor_total') AS raptor_total,
+                    "AI_Source"."NumericValue"(j.doc, 'lebronoff', 'lebron_off') AS lebron_off,
+                    "AI_Source"."NumericValue"(j.doc, 'lebrondef', 'lebron_def') AS lebron_def,
+                    "AI_Source"."NumericValue"(j.doc, 'lebrontotal', 'lebron_total') AS lebron_total,
+                    "AI_Source"."NumericValue"(j.doc, 'scoringefficiency', 'scoring_efficiency') AS scoring_efficiency,
+                    "AI_Source"."NumericValue"(j.doc, 'ppsa') AS ppsa,
+                    "AI_Source"."NumericValue"(j.doc, 'fg2pct', 'twopointpct') AS two_point_pct,
+                    "AI_Source"."NumericValue"(j.doc, 'tovpct', 'tov_pct') AS tov_pct,
+                    "AI_Source"."NumericValue"(j.doc, 'astpct', 'ast_pct') AS ast_pct,
+                    "AI_Source"."NumericValue"(j.doc, 'stlpct', 'stl_pct') AS stl_pct,
+                    "AI_Source"."NumericValue"(j.doc, 'blkpct', 'blk_pct') AS blk_pct,
+                    "AI_Source"."NumericValue"(j.doc, 'orebpct', 'orbpct', 'orb_pct') AS orb_pct,
+                    "AI_Source"."NumericValue"(j.doc, 'drebpct', 'drbpct', 'drb_pct') AS drb_pct,
+                    "AI_Source"."NumericValue"(j.doc, 'threepar', 'three_par') AS three_par,
+                    "AI_Source"."NumericValue"(j.doc, 'tusgpct', 'trueusgpct', 'true_usg_pct') AS true_usg_pct,
+                    "AI_Source"."NumericValue"(j.doc, 'fouldrawingrate', 'foul_drawing_rate') AS foul_drawing_rate,
+                    "AI_Source"."NumericValue"(j.doc, 'rfpergame', 'rf_per_game') AS rf_per_game,
+                    "AI_Source"."NumericValue"(j.doc, 'hustleindex', 'hustle_index') AS hustle_index,
+                    "AI_Source"."NumericValue"(j.doc, 'ptsper40', 'pts_per_40') AS pts_per_40,
+                    "AI_Source"."NumericValue"(j.doc, 'astper40', 'ast_per_40') AS ast_per_40,
+                    "AI_Source"."NumericValue"(j.doc, 'trper40', 'rebper40', 'tr_per_40') AS tr_per_40,
+                    "AI_Source"."NumericValue"(j.doc, 'stlper40', 'stl_per_40') AS stl_per_40,
+                    "AI_Source"."NumericValue"(j.doc, 'blkper40', 'blk_per_40') AS blk_per_40
                 FROM %I.%I src
                 CROSS JOIN LATERAL (
-                    SELECT ai_source._lower_keys(to_jsonb(src)) AS doc
+                    SELECT "AI_Source"."LowerKeys"(to_jsonb(src)) AS doc
                 ) j
-                WHERE ai_source._int(j.doc, 'season') IS NOT NULL
-                  AND ai_source._text(j.doc, 'id', 'playerid', 'idplayer') IS NOT NULL
+                WHERE "AI_Source"."IntValue"(j.doc, 'season') IS NOT NULL
+                  AND "AI_Source"."TextValue"(j.doc, 'id', 'playerid', 'idplayer') IS NOT NULL
             $sql$, league_key, r.table_schema, r.table_name);
     END LOOP;
 
@@ -262,6 +264,7 @@ BEGIN
             SELECT NULL::text AS league_key, NULL::integer AS season,
                    NULL::text AS source_player_id, NULL::text AS source_team_id,
                    NULL::text AS competition, NULL::double precision AS games,
+                   NULL::double precision AS games_started, NULL::double precision AS starter_pct,
                    NULL::double precision AS minutes_total, NULL::double precision AS points_total,
                    NULL::double precision AS rebounds_total, NULL::double precision AS offensive_rebounds_total,
                    NULL::double precision AS defensive_rebounds_total, NULL::double precision AS assists_total,
@@ -297,7 +300,7 @@ BEGIN
             WHERE false
         $empty$;
     END IF;
-    EXECUTE 'CREATE VIEW ai_source._competition_stats_raw AS ' || body;
+    EXECUTE 'CREATE VIEW "AI_Source"."CompetitionStatsRawInternal" AS ' || body;
 END;
 $$;
 
@@ -314,20 +317,20 @@ BEGIN
         league_key := substr(r.table_name, 13);
         body := body || CASE WHEN body = '' THEN '' ELSE E'\nUNION ALL\n' END || format($sql$
             SELECT %L::text AS league_key,
-                   ai_source._int(j.doc, 'season')::integer AS season,
-                   ai_source._text(j.doc, 'id', 'playerid') AS source_player_id,
-                   ai_source._competition(ai_source._text(j.doc, 'competition')) AS competition,
-                   ai_source._text(j.doc, 'ruolooffensivo') AS ruolo_offensivo,
-                   ai_source._text(j.doc, 'ruolodifensivo') AS ruolo_difensivo,
-                   ai_source._text(j.doc, 'ruolocombinato') AS ruolo_combinato
+                   "AI_Source"."IntValue"(j.doc, 'season')::integer AS season,
+                   "AI_Source"."TextValue"(j.doc, 'id', 'playerid') AS source_player_id,
+                   "AI_Source"."CompetitionCode"("AI_Source"."TextValue"(j.doc, 'competition')) AS competition,
+                   "AI_Source"."TextValue"(j.doc, 'ruolooffensivo') AS ruolo_offensivo,
+                   "AI_Source"."TextValue"(j.doc, 'ruolodifensivo') AS ruolo_difensivo,
+                   "AI_Source"."TextValue"(j.doc, 'ruolocombinato') AS ruolo_combinato
             FROM %I.%I src
-            CROSS JOIN LATERAL (SELECT ai_source._lower_keys(to_jsonb(src)) AS doc) j
-            WHERE ai_source._int(j.doc, 'season') IS NOT NULL
-              AND ai_source._text(j.doc, 'id', 'playerid') IS NOT NULL
+            CROSS JOIN LATERAL (SELECT "AI_Source"."LowerKeys"(to_jsonb(src)) AS doc) j
+            WHERE "AI_Source"."IntValue"(j.doc, 'season') IS NOT NULL
+              AND "AI_Source"."TextValue"(j.doc, 'id', 'playerid') IS NOT NULL
         $sql$, league_key, r.table_schema, r.table_name);
     END LOOP;
     IF body = '' THEN body := 'SELECT NULL::text league_key, NULL::integer season, NULL::text source_player_id, NULL::text competition, NULL::text ruolo_offensivo, NULL::text ruolo_difensivo, NULL::text ruolo_combinato WHERE false'; END IF;
-    EXECUTE 'CREATE VIEW ai_source._competition_roles_raw AS ' || body;
+    EXECUTE 'CREATE VIEW "AI_Source"."CompetitionRolesRawInternal" AS ' || body;
 END;
 $$;
 
@@ -343,23 +346,23 @@ BEGIN
         league_key := substr(r.table_name, 25);
         body := body || CASE WHEN body = '' THEN '' ELSE E'\nUNION ALL\n' END || format($sql$
             SELECT %L::text AS league_key,
-                   ai_source._int(j.doc, 'season')::integer AS season,
-                   ai_source._text(j.doc, 'id', 'playerid') AS source_player_id,
-                   ai_source._competition(ai_source._text(j.doc, 'competition')) AS competition,
-                   ai_source._num(j.doc, 'netrtg_on') AS on_net_rtg,
-                   ai_source._num(j.doc, 'netrtg_off') AS off_net_rtg,
-                   ai_source._num(j.doc, 'netrtg_diff') AS net_rtg_diff,
-                   ai_source._num(j.doc, 'ortg_on') AS ortg_on,
-                   ai_source._num(j.doc, 'ortg_off') AS ortg_off,
-                   ai_source._num(j.doc, 'ortg_diff') AS ortg_diff
+                   "AI_Source"."IntValue"(j.doc, 'season')::integer AS season,
+                   "AI_Source"."TextValue"(j.doc, 'id', 'playerid') AS source_player_id,
+                   "AI_Source"."CompetitionCode"("AI_Source"."TextValue"(j.doc, 'competition')) AS competition,
+                   "AI_Source"."NumericValue"(j.doc, 'netrtg_on') AS on_net_rtg,
+                   "AI_Source"."NumericValue"(j.doc, 'netrtg_off') AS off_net_rtg,
+                   "AI_Source"."NumericValue"(j.doc, 'netrtg_diff') AS net_rtg_diff,
+                   "AI_Source"."NumericValue"(j.doc, 'ortg_on') AS ortg_on,
+                   "AI_Source"."NumericValue"(j.doc, 'ortg_off') AS ortg_off,
+                   "AI_Source"."NumericValue"(j.doc, 'ortg_diff') AS ortg_diff
             FROM %I.%I src
-            CROSS JOIN LATERAL (SELECT ai_source._lower_keys(to_jsonb(src)) AS doc) j
-            WHERE ai_source._int(j.doc, 'season') IS NOT NULL
-              AND ai_source._text(j.doc, 'id', 'playerid') IS NOT NULL
+            CROSS JOIN LATERAL (SELECT "AI_Source"."LowerKeys"(to_jsonb(src)) AS doc) j
+            WHERE "AI_Source"."IntValue"(j.doc, 'season') IS NOT NULL
+              AND "AI_Source"."TextValue"(j.doc, 'id', 'playerid') IS NOT NULL
         $sql$, league_key, r.table_schema, r.table_name);
     END LOOP;
     IF body = '' THEN body := 'SELECT NULL::text league_key, NULL::integer season, NULL::text source_player_id, NULL::text competition, NULL::double precision on_net_rtg, NULL::double precision off_net_rtg, NULL::double precision net_rtg_diff, NULL::double precision ortg_on, NULL::double precision ortg_off, NULL::double precision ortg_diff WHERE false'; END IF;
-    EXECUTE 'CREATE VIEW ai_source._competition_onoff_raw AS ' || body;
+    EXECUTE 'CREATE VIEW "AI_Source"."CompetitionOnOffRawInternal" AS ' || body;
 END;
 $$;
 
@@ -375,23 +378,23 @@ BEGIN
         league_key := substr(r.table_name, 22);
         body := body || CASE WHEN body = '' THEN '' ELSE E'\nUNION ALL\n' END || format($sql$
             SELECT %L::text AS league_key,
-                   ai_source._int(j.doc, 'season')::integer AS season,
-                   ai_source._text(j.doc, 'id', 'playerid') AS source_player_id,
-                   ai_source._competition(ai_source._text(j.doc, 'competition')) AS competition,
-                   ai_source._num(j.doc, 'clutchgames', 'games') AS clutch_games,
-                   ai_source._num(j.doc, 'clutchpts', 'pts') AS clutch_pts,
-                   ai_source._num(j.doc, 'clutchtspct', 'tspct') AS clutch_ts_pct,
-                   ai_source._num(j.doc, 'asttotovratio', 'clutchasttotov') AS clutch_ast_to_tov,
-                   ai_source._num(j.doc, 'clutchnetrtg', 'netrtg') AS clutch_net_rtg,
-                   ai_source._num(j.doc, 'clutchefgpct', 'efgpct') AS clutch_efg_pct
+                   "AI_Source"."IntValue"(j.doc, 'season')::integer AS season,
+                   "AI_Source"."TextValue"(j.doc, 'id', 'playerid') AS source_player_id,
+                   "AI_Source"."CompetitionCode"("AI_Source"."TextValue"(j.doc, 'competition')) AS competition,
+                   "AI_Source"."NumericValue"(j.doc, 'clutchgames', 'games') AS clutch_games,
+                   "AI_Source"."NumericValue"(j.doc, 'clutchpts', 'pts') AS clutch_pts,
+                   "AI_Source"."NumericValue"(j.doc, 'clutchtspct', 'tspct') AS clutch_ts_pct,
+                   "AI_Source"."NumericValue"(j.doc, 'asttotovratio', 'clutchasttotov') AS clutch_ast_to_tov,
+                   "AI_Source"."NumericValue"(j.doc, 'clutchnetrtg', 'netrtg') AS clutch_net_rtg,
+                   "AI_Source"."NumericValue"(j.doc, 'clutchefgpct', 'efgpct') AS clutch_efg_pct
             FROM %I.%I src
-            CROSS JOIN LATERAL (SELECT ai_source._lower_keys(to_jsonb(src)) AS doc) j
-            WHERE ai_source._int(j.doc, 'season') IS NOT NULL
-              AND ai_source._text(j.doc, 'id', 'playerid') IS NOT NULL
+            CROSS JOIN LATERAL (SELECT "AI_Source"."LowerKeys"(to_jsonb(src)) AS doc) j
+            WHERE "AI_Source"."IntValue"(j.doc, 'season') IS NOT NULL
+              AND "AI_Source"."TextValue"(j.doc, 'id', 'playerid') IS NOT NULL
         $sql$, league_key, r.table_schema, r.table_name);
     END LOOP;
     IF body = '' THEN body := 'SELECT NULL::text league_key, NULL::integer season, NULL::text source_player_id, NULL::text competition, NULL::double precision clutch_games, NULL::double precision clutch_pts, NULL::double precision clutch_ts_pct, NULL::double precision clutch_ast_to_tov, NULL::double precision clutch_net_rtg, NULL::double precision clutch_efg_pct WHERE false'; END IF;
-    EXECUTE 'CREATE VIEW ai_source._competition_clutch_raw AS ' || body;
+    EXECUTE 'CREATE VIEW "AI_Source"."CompetitionClutchRawInternal" AS ' || body;
 END;
 $$;
 
@@ -409,20 +412,20 @@ BEGIN
     LOOP
         body := body || CASE WHEN body = '' THEN '' ELSE E'\nUNION ALL\n' END || format($sql$
             SELECT %L::text AS league_key,
-                   ai_source._int(j.doc, 'season')::integer AS season,
-                   ai_source._text(j.doc, 'id', 'idplayer', 'playerid') AS source_player_id,
-                   ai_source._text(j.doc, 'teamid', 'idteam') AS source_team_id,
-                   ai_source._text(j.doc, 'game', 'idgame', 'gamecode') AS game_id,
-                   ai_source._text(j.doc, 'sf', 'starter', 'isstarter') AS started_raw,
-                   ai_source._competition(ai_source._text(j.doc, 'competition')) AS competition
+                   "AI_Source"."IntValue"(j.doc, 'season')::integer AS season,
+                   "AI_Source"."TextValue"(j.doc, 'id', 'idplayer', 'playerid') AS source_player_id,
+                   "AI_Source"."TextValue"(j.doc, 'teamid', 'idteam') AS source_team_id,
+                   "AI_Source"."TextValue"(j.doc, 'game', 'idgame', 'gamecode') AS game_id,
+                   "AI_Source"."TextValue"(j.doc, 'sf', 'starter', 'isstarter') AS started_raw,
+                   "AI_Source"."CompetitionCode"("AI_Source"."TextValue"(j.doc, 'competition')) AS competition
             FROM %I.%I src
-            CROSS JOIN LATERAL (SELECT ai_source._lower_keys(to_jsonb(src)) AS doc) j
-            WHERE ai_source._int(j.doc, 'season') IS NOT NULL
-              AND ai_source._text(j.doc, 'id', 'idplayer', 'playerid') IS NOT NULL
+            CROSS JOIN LATERAL (SELECT "AI_Source"."LowerKeys"(to_jsonb(src)) AS doc) j
+            WHERE "AI_Source"."IntValue"(j.doc, 'season') IS NOT NULL
+              AND "AI_Source"."TextValue"(j.doc, 'id', 'idplayer', 'playerid') IS NOT NULL
         $sql$, r.table_name, r.table_schema, r.table_name);
     END LOOP;
     IF body = '' THEN body := 'SELECT NULL::text league_key, NULL::integer season, NULL::text source_player_id, NULL::text source_team_id, NULL::text game_id, NULL::text started_raw, NULL::text competition WHERE false'; END IF;
-    EXECUTE 'CREATE VIEW ai_source._competition_boxscore_raw AS ' || body;
+    EXECUTE 'CREATE VIEW "AI_Source"."CompetitionBoxscoreRawInternal" AS ' || body;
 END;
 $$;
 
@@ -439,31 +442,31 @@ BEGIN
         league_key := substr(r.table_name, 19);
         body := body || CASE WHEN body = '' THEN '' ELSE E'\nUNION ALL\n' END || format($sql$
             SELECT %L::text AS league_key,
-                   ai_source._int(j.doc, 'season')::integer AS season,
-                   ai_source._text(j.doc, 'teamid', 'id') AS source_team_id,
-                   ai_source._competition(ai_source._text(j.doc, 'competition')) AS competition,
-                   ai_source._num(j.doc, 'games') AS games,
-                   ai_source._num(j.doc, 'pace') AS pace,
-                   ai_source._num(j.doc, 'ortg') AS ortg,
-                   ai_source._num(j.doc, 'drtg') AS drtg,
-                   ai_source._num(j.doc, 'netrtg') AS net_rtg,
-                   ai_source._num(j.doc, 'threepar', 'fg3rate') AS three_par,
-                   ai_source._num(j.doc, 'fg3a') AS fg3a,
-                   ai_source._num(j.doc, 'fg2a') AS fg2a,
-                   ai_source._num(j.doc, 'ast') AS ast_total,
-                   ai_source._num(j.doc, 'astpergame') AS ast_per_game
+                   "AI_Source"."IntValue"(j.doc, 'season')::integer AS season,
+                   "AI_Source"."TextValue"(j.doc, 'teamid', 'id') AS source_team_id,
+                   "AI_Source"."CompetitionCode"("AI_Source"."TextValue"(j.doc, 'competition')) AS competition,
+                   "AI_Source"."NumericValue"(j.doc, 'games') AS games,
+                   "AI_Source"."NumericValue"(j.doc, 'pace') AS pace,
+                   "AI_Source"."NumericValue"(j.doc, 'ortg') AS ortg,
+                   "AI_Source"."NumericValue"(j.doc, 'drtg') AS drtg,
+                   "AI_Source"."NumericValue"(j.doc, 'netrtg') AS net_rtg,
+                   "AI_Source"."NumericValue"(j.doc, 'threepar', 'fg3rate') AS three_par,
+                   "AI_Source"."NumericValue"(j.doc, 'fg3a') AS fg3a,
+                   "AI_Source"."NumericValue"(j.doc, 'fg2a') AS fg2a,
+                   "AI_Source"."NumericValue"(j.doc, 'ast') AS ast_total,
+                   "AI_Source"."NumericValue"(j.doc, 'astpergame') AS ast_per_game
             FROM %I.%I src
-            CROSS JOIN LATERAL (SELECT ai_source._lower_keys(to_jsonb(src)) AS doc) j
-            WHERE ai_source._int(j.doc, 'season') IS NOT NULL
-              AND ai_source._text(j.doc, 'teamid', 'id') IS NOT NULL
+            CROSS JOIN LATERAL (SELECT "AI_Source"."LowerKeys"(to_jsonb(src)) AS doc) j
+            WHERE "AI_Source"."IntValue"(j.doc, 'season') IS NOT NULL
+              AND "AI_Source"."TextValue"(j.doc, 'teamid', 'id') IS NOT NULL
         $sql$, league_key, r.table_schema, r.table_name);
     END LOOP;
     IF body = '' THEN body := 'SELECT NULL::text league_key, NULL::integer season, NULL::text source_team_id, NULL::text competition, NULL::double precision games, NULL::double precision pace, NULL::double precision ortg, NULL::double precision drtg, NULL::double precision net_rtg, NULL::double precision three_par, NULL::double precision fg3a, NULL::double precision fg2a, NULL::double precision ast_total, NULL::double precision ast_per_game WHERE false'; END IF;
-    EXECUTE 'CREATE VIEW ai_source._competition_team_stats_raw AS ' || body;
+    EXECUTE 'CREATE VIEW "AI_Source"."CompetitionTeamStatsRawInternal" AS ' || body;
 END;
 $$;
 
-CREATE VIEW ai_source.player_competition_stats AS
+CREATE VIEW "AI_Source"."PlayerCompetitionStats" AS
 WITH resolved AS (
     SELECT s.*, pr.global_id AS player_global_id,
            direct_team.global_id AS direct_team_global_id,
@@ -473,12 +476,12 @@ WITH resolved AS (
                         COALESCE(s.games, 0) DESC,
                         s.source_team_id NULLS LAST
            ) AS rn
-    FROM ai_source._competition_stats_raw s
-    JOIN ai_source._competition_player_registry pr
+    FROM "AI_Source"."CompetitionStatsRawInternal" s
+    JOIN "AI_Source"."CompetitionPlayerRegistryInternal" pr
       ON pr.league_key = s.league_key
      AND pr.season = s.season
      AND pr.source_player_id = s.source_player_id
-    LEFT JOIN ai_source._competition_team_registry direct_team
+    LEFT JOIN "AI_Source"."CompetitionTeamRegistryInternal" direct_team
       ON direct_team.league_key = s.league_key
      AND direct_team.season = s.season
      AND direct_team.source_team_id = s.source_team_id
@@ -488,31 +491,31 @@ role_ranked AS (
     SELECT r.*, row_number() OVER (
         PARTITION BY r.league_key, r.season, r.source_player_id, r.competition
         ORDER BY r.source_player_id
-    ) AS rn FROM ai_source._competition_roles_raw r
+    ) AS rn FROM "AI_Source"."CompetitionRolesRawInternal" r
 ),
 onoff_ranked AS (
     SELECT o.*, row_number() OVER (
         PARTITION BY o.league_key, o.season, o.source_player_id, o.competition
         ORDER BY o.source_player_id
-    ) AS rn FROM ai_source._competition_onoff_raw o
+    ) AS rn FROM "AI_Source"."CompetitionOnOffRawInternal" o
 ),
 clutch_ranked AS (
     SELECT c.*, row_number() OVER (
         PARTITION BY c.league_key, c.season, c.source_player_id, c.competition
         ORDER BY c.source_player_id
-    ) AS rn FROM ai_source._competition_clutch_raw c
+    ) AS rn FROM "AI_Source"."CompetitionClutchRawInternal" c
 ),
-starts AS (
+boxscore_starts AS (
     SELECT league_key, season, source_player_id, competition,
-           count(DISTINCT game_id) FILTER (WHERE ai_source._truthy(started_raw))::double precision AS games_started
-    FROM ai_source._competition_boxscore_raw
+           count(DISTINCT game_id) FILTER (WHERE "AI_Source"."Truthy"(started_raw))::double precision AS games_started
+    FROM "AI_Source"."CompetitionBoxscoreRawInternal"
     GROUP BY league_key, season, source_player_id, competition
 ),
 roster_fallback AS (
     SELECT pr.global_id AS player_global_id, pr.league_key, pr.season,
            CASE WHEN count(DISTINCT tr.global_id) = 1 THEN min(tr.global_id) ELSE NULL END AS team_global_id
-    FROM ai_source._competition_player_registry pr
-    LEFT JOIN ai_source._competition_team_registry tr
+    FROM "AI_Source"."CompetitionPlayerRegistryInternal" pr
+    LEFT JOIN "AI_Source"."CompetitionTeamRegistryInternal" tr
       ON tr.league_key = pr.league_key
      AND tr.season = pr.season
      AND pr.team_name IS NOT NULL
@@ -523,13 +526,13 @@ roster_fallback AS (
     GROUP BY pr.global_id, pr.league_key, pr.season
 )
 SELECT
-    ai_source._stable_id('player', s.player_global_id) AS player_id,
+    "AI_Source"."StableId"('player', s.player_global_id) AS player_id,
     s.season,
     COALESCE(
-        ai_source._stable_id('team', s.direct_team_global_id),
-        ai_source._stable_id('team', rf.team_global_id)
+        "AI_Source"."StableId"('team', s.direct_team_global_id),
+        "AI_Source"."StableId"('team', rf.team_global_id)
     ) AS team_id,
-    ai_source._stable_id('league', s.league_key) AS league_id,
+    "AI_Source"."StableId"('league', s.league_key) AS league_id,
     COALESCE(s.games, 0)::integer AS games_played,
     CASE WHEN COALESCE(s.games, 0) > 0 THEN COALESCE(s.minutes_total, 0) / s.games ELSE 0 END AS minutes_per_game,
     CASE WHEN COALESCE(s.games, 0) > 0 THEN COALESCE(s.points_total, 0) / s.games ELSE 0 END AS points,
@@ -605,10 +608,13 @@ SELECT
     COALESCE(oo.ortg_on, 0) AS ortg_on,
     COALESCE(oo.ortg_off, 0) AS ortg_off,
     COALESCE(oo.ortg_diff, 0) AS ortg_diff,
-    COALESCE(st.games_started, 0)::integer AS games_started,
-    CASE WHEN COALESCE(s.games, 0) > 0
-         THEN LEAST(1.0, COALESCE(st.games_started, 0) / s.games)
-         ELSE 0 END AS starter_pct,
+    COALESCE(s.games_started, bs.games_started, 0)::integer AS games_started,
+    COALESCE(
+        s.starter_pct,
+        CASE WHEN COALESCE(s.games, 0) > 0
+             THEN LEAST(1.0, COALESCE(bs.games_started, 0) / s.games)
+             ELSE 0 END
+    ) AS starter_pct,
     s.league_key
 FROM resolved s
 LEFT JOIN roster_fallback rf
@@ -624,20 +630,20 @@ LEFT JOIN onoff_ranked oo
 LEFT JOIN clutch_ranked cr
   ON cr.league_key = s.league_key AND cr.season = s.season
  AND cr.source_player_id = s.source_player_id AND cr.competition = s.competition AND cr.rn = 1
-LEFT JOIN starts st
-  ON st.league_key = s.league_key AND st.season = s.season
- AND st.source_player_id = s.source_player_id AND st.competition = s.competition
+LEFT JOIN boxscore_starts bs
+  ON bs.league_key = s.league_key AND bs.season = s.season
+ AND bs.source_player_id = s.source_player_id AND bs.competition = s.competition
 WHERE s.rn = 1;
 
-CREATE VIEW ai_source.team_competition_stats AS
+CREATE VIEW "AI_Source"."TeamCompetitionStats" AS
 WITH resolved AS (
     SELECT ts.*, tr.global_id, tr.name, tr.short_name,
            row_number() OVER (
                PARTITION BY tr.global_id, ts.league_key, ts.season, ts.competition
                ORDER BY COALESCE(ts.games, 0) DESC, ts.source_team_id
            ) AS rn
-    FROM ai_source._competition_team_stats_raw ts
-    JOIN ai_source._competition_team_registry tr
+    FROM "AI_Source"."CompetitionTeamStatsRawInternal" ts
+    JOIN "AI_Source"."CompetitionTeamRegistryInternal" tr
       ON tr.league_key = ts.league_key
      AND tr.season = ts.season
      AND tr.source_team_id = ts.source_team_id
@@ -651,15 +657,15 @@ star_usage AS (
                    CASE WHEN max(usg_pct) > 1.5 THEN max(usg_pct) / 100.0 ELSE max(usg_pct) END
                )
            ) AS star_player_usage
-    FROM ai_source.player_competition_stats
+    FROM "AI_Source"."PlayerCompetitionStats"
     WHERE team_id IS NOT NULL AND usg_pct IS NOT NULL
     GROUP BY team_id, league_id, season, competition
 )
 SELECT
-    ai_source._stable_id('team', r.global_id) AS team_id,
+    "AI_Source"."StableId"('team', r.global_id) AS team_id,
     r.global_id,
     r.name,
-    ai_source._stable_id('league', r.league_key) AS league_id,
+    "AI_Source"."StableId"('league', r.league_key) AS league_id,
     r.league_key,
     r.season,
     r.competition,
@@ -686,8 +692,8 @@ SELECT
     COALESCE(r.short_name, '') AS short_name
 FROM resolved r
 LEFT JOIN star_usage su
-  ON su.team_id = ai_source._stable_id('team', r.global_id)
- AND su.league_id = ai_source._stable_id('league', r.league_key)
+  ON su.team_id = "AI_Source"."StableId"('team', r.global_id)
+ AND su.league_id = "AI_Source"."StableId"('league', r.league_key)
  AND su.season = r.season
  AND su.competition = r.competition
 WHERE r.rn = 1;
@@ -695,11 +701,11 @@ WHERE r.rn = 1;
 COMMIT;
 
 -- Verification:
--- SELECT competition, count(*) FROM ai_source.player_competition_stats GROUP BY competition ORDER BY competition;
--- SELECT competition, count(*) FROM ai_source.team_competition_stats GROUP BY competition ORDER BY competition;
+-- SELECT competition, count(*) FROM "AI_Source"."PlayerCompetitionStats" GROUP BY competition ORDER BY competition;
+-- SELECT competition, count(*) FROM "AI_Source"."TeamCompetitionStats" GROUP BY competition ORDER BY competition;
 -- SELECT player_id, league_id, season, competition, count(*)
--- FROM ai_source.player_competition_stats
+-- FROM "AI_Source"."PlayerCompetitionStats"
 -- GROUP BY player_id, league_id, season, competition HAVING count(*) > 1;
 -- SELECT team_id, league_id, season, competition, count(*)
--- FROM ai_source.team_competition_stats
+-- FROM "AI_Source"."TeamCompetitionStats"
 -- GROUP BY team_id, league_id, season, competition HAVING count(*) > 1;

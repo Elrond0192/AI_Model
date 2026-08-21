@@ -1,15 +1,17 @@
 """Canonical PostgreSQL data access for AI_Model.
 
-Production reads entity/roster views from ``ai_source`` and the competition-
+Production reads entity/roster views from ``"AI_Source"`` and the competition-
 preserving statistical contract created by ``ai_source_competition.sql``.
 Training therefore sees one observation per entity + league + season +
 competition instead of collapsing PO/CUP/TOT into a single season row.
 """
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor, as_completed
 import os
 import re
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
 import pandas as pd
@@ -27,21 +29,52 @@ from basketball_ai.data.loader import (
 _SCHEMA_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 _SOURCE_VIEWS = {
-    "leagues": "leagues",
-    "teams": "teams",
-    "players": "players",
-    "player_stats": "player_competition_stats",
-    "team_player_relations": "team_player_relations",
-    "team_season_stats": "team_competition_stats",
+    "leagues": "Leagues",
+    "teams": "Teams",
+    "players": "Players",
+    "player_stats": "PlayerCompetitionStats",
+    "team_player_relations": "TeamPlayerRelations",
+    "team_season_stats": "TeamCompetitionStats",
 }
 
+
+def _core_source_views() -> dict[str, str]:
+    views = dict(_SOURCE_VIEWS)
+    if os.getenv("POSTGRES_TRAINING_SOURCE", "canonical").strip().lower() == "serving":
+        views["player_stats"] = "TrainingPlayerCompetitionStats"
+        views["team_season_stats"] = "TrainingTeamCompetitionStats"
+    return views
+
 _OPTIONAL_SOURCE_VIEWS = {
-    "pbp_events": "simulation_pbp_events",
-    "lineup_stints": "simulation_lineup_stints",
-    "play_type_stats": "simulation_play_type_stats",
-    "shot_profiles": "simulation_shot_profiles",
-    "causal_panel": "simulation_causal_panel",
+    "pbp_events": "ScenarioDefenderMatchups",
+    "lineup_stints": "ScenarioLineupStats",
+    "play_type_stats": "ScenarioPlayTypeStats",
+    "shot_profiles": "ScenarioShotProfiles",
+    "causal_panel": "SimulationCausalPanel",
 }
+
+_OPTIONAL_COLUMNS = {
+    "pbp_events": ("league_key", "season", "competition", "offensive_player_id", "team_id", "opponent_team_id", "defender_id", "assignment_probability", "possessions", "points", "turnovers_forced"),
+    "lineup_stints": ("league_key", "season", "competition", "player_ids", "team_id", "opponent_team_id", "offense_player_id", "defense_player_id", "assignment_probability", "possessions", "points", "points_allowed", "turnovers_forced", "ortg", "drtg", "net_rtg"),
+    "play_type_stats": ("player_id", "team_id", "opponent_team_id", "league_key", "season", "competition", "play_type", "possessions", "ppp", "ppp_allowed"),
+    "shot_profiles": ("player_id", "team_id", "league_key", "season", "competition", "zone", "attempts", "fg_pct"),
+    "causal_panel": ("treatment", "next_outcome"),
+}
+
+_SCENARIO_FEEDS = {
+    "opponent_matchup": ("play_type_stats",),
+    "defensive_matchup": ("pbp_events", "lineup_stints"),
+    "play_type_matchup": ("play_type_stats",),
+    "shot_profile_counterfactual": ("shot_profiles",),
+    "lineup_synergy": ("lineup_stints",),
+    "lineup_optimizer": ("lineup_stints",),
+    "roster_optimizer": ("lineup_stints",),
+    "composite_scenario": ("pbp_events", "lineup_stints", "play_type_stats", "shot_profiles"),
+    "causal_effect": ("causal_panel",),
+}
+
+_scenario_cache: dict[tuple[Any, ...], tuple[float, dict[str, pd.DataFrame]]] = {}
+_scenario_cache_lock = threading.Lock()
 
 _REQUIRED_COLUMNS: dict[str, set[str]] = {
     "leagues": {"id", "name"},
@@ -79,7 +112,10 @@ _REQUIRED_COLUMNS: dict[str, set[str]] = {
 def get_engine(url: str | None = None) -> Engine:
     database_url = url or os.environ.get("DATABASE_URL", "")
     if not database_url:
-        from basketball_ai.data.connection_profiles import active_profile_name, profile_url
+        from basketball_ai.data.connection_profiles import (
+            active_profile_name,
+            profile_url,
+        )
 
         database_url = profile_url(active_profile_name())
     if not database_url.startswith("postgresql+psycopg://"):
@@ -101,7 +137,7 @@ def _load_view(engine: Engine, schema: str, name: str) -> pd.DataFrame:
     except Exception as exc:
         competition_hint = (
             " Then run basketball_ai/data/ai_source_competition.sql."
-            if name in {"player_competition_stats", "team_competition_stats"}
+            if name in {"PlayerCompetitionStats", "TeamCompetitionStats"}
             else ""
         )
         raise RuntimeError(
@@ -197,7 +233,7 @@ def _validate_contract(data: dict[str, pd.DataFrame], schema: str) -> None:
             errors.append(f"{table}.competition contains null/empty values")
 
     if errors:
-        raise RuntimeError("Invalid ai_source contract: " + " | ".join(errors))
+        raise RuntimeError('Invalid "AI_Source" contract: ' + " | ".join(errors))
     for required_non_empty in ("players", "teams", "player_stats", "team_season_stats"):
         if data[required_non_empty].empty:
             raise RuntimeError(f"{schema}.{required_non_empty} is empty")
@@ -213,7 +249,9 @@ def _normalise_ids(data: dict[str, pd.DataFrame]) -> None:
         "team_season_stats": ("team_id", "league_id"),
     }
     for table, columns in id_columns.items():
-        frame = data[table]
+        frame = data.get(table)
+        if frame is None:
+            continue
         for column in columns:
             if column not in frame.columns:
                 continue
@@ -222,13 +260,13 @@ def _normalise_ids(data: dict[str, pd.DataFrame]) -> None:
             )
 
     for table in ("player_stats", "team_player_relations", "team_season_stats"):
-        if "season" in data[table].columns:
+        if table in data and "season" in data[table].columns:
             data[table]["season"] = pd.to_numeric(
                 data[table]["season"], errors="coerce"
             ).astype("Int64")
 
     for table in ("player_stats", "team_season_stats"):
-        if "competition" in data[table].columns:
+        if table in data and "competition" in data[table].columns:
             data[table]["competition"] = (
                 data[table]["competition"].fillna("RS").astype(str).str.strip().str.upper()
             )
@@ -296,8 +334,115 @@ def _build_lookups(data: dict[str, pd.DataFrame]) -> None:
 
 
 def _env_optional_default() -> bool:
-    value = os.getenv("POSTGRES_INCLUDE_OPTIONAL", "true").strip().lower()
+    value = os.getenv("POSTGRES_INCLUDE_OPTIONAL", "false").strip().lower()
     return value not in {"0", "false", "no", "off"}
+
+
+def load_scenario_feeds(
+    scenario: str,
+    *,
+    player_ids: list[int],
+    team_ids: list[int],
+    league_keys: list[str],
+    season: int,
+    competition: str,
+    url: str | None = None,
+    source_schema: str | None = None,
+) -> dict[str, pd.DataFrame]:
+    """Load only the possession evidence required by one scenario request.
+
+    Queries are bounded by season/competition/league and, where the canonical
+    view supports them, by the requested players or teams. Results are cached
+    briefly; the API never materialises all simulation views at startup.
+    """
+    schema = source_schema or os.getenv("POSTGRES_SOURCE_SCHEMA", "AI_Source")
+    if not _SCHEMA_RE.fullmatch(schema):
+        raise ValueError("Invalid PostgreSQL source schema")
+    feeds = _SCENARIO_FEEDS.get(str(scenario), ())
+    empty = {key: pd.DataFrame() for key in _OPTIONAL_SOURCE_VIEWS}
+    if not feeds:
+        return empty
+
+    players = tuple(sorted({_to_int(value) for value in player_ids}))
+    teams = tuple(sorted({_to_int(value) for value in team_ids}))
+    leagues = tuple(sorted({str(value) for value in league_keys if value}))
+    cache_key = (str(scenario), players, teams, leagues, int(season), str(competition).upper())
+    now = time.monotonic()
+    ttl = max(0, int(os.getenv("SCENARIO_FEED_CACHE_TTL_SECONDS", "300")))
+    with _scenario_cache_lock:
+        cached = _scenario_cache.get(cache_key)
+        if cached and now - cached[0] <= ttl:
+            return {**empty, **{key: frame.copy() for key, frame in cached[1].items()}}
+
+    def read(feed: str) -> pd.DataFrame:
+        # The governed causal panel currently has no context keys. Do not ever
+        # issue an unbounded read; the engine safely falls back to core history.
+        if feed == "causal_panel":
+            return pd.DataFrame(columns=_OPTIONAL_COLUMNS[feed])
+        params: dict[str, Any] = {
+            "season_min": int(season) - 3,
+            "season_max": int(season),
+            "competition": str(competition).upper(),
+        }
+        predicates = [
+            "season BETWEEN :season_min AND :season_max",
+            "upper(competition) = :competition",
+        ]
+        if leagues:
+            names = []
+            for index, value in enumerate(leagues):
+                name = f"league_{index}"
+                params[name] = value
+                names.append(f":{name}")
+            predicates.append(f"league_key IN ({', '.join(names)})")
+
+        entity_terms: list[str] = []
+        player_columns = {
+            "pbp_events": ("offensive_player_id", "defender_id"),
+            "lineup_stints": ("offense_player_id", "defense_player_id"),
+            "play_type_stats": ("player_id",),
+            "shot_profiles": ("player_id",),
+        }.get(feed, ())
+        team_columns = {
+            "pbp_events": ("team_id", "opponent_team_id"),
+            "lineup_stints": ("team_id", "opponent_team_id"),
+            "play_type_stats": ("team_id", "opponent_team_id"),
+            "shot_profiles": ("team_id",),
+        }.get(feed, ())
+        for index, value in enumerate(players):
+            name = f"player_{index}"
+            params[name] = value
+            entity_terms.extend(f"{column} = :{name}" for column in player_columns)
+            if feed == "lineup_stints":
+                params[f"player_token_{index}"] = f"%,{value},%"
+                entity_terms.append(
+                    f"(',' || player_ids || ',') LIKE :player_token_{index}"
+                )
+        for index, value in enumerate(teams):
+            name = f"team_{index}"
+            params[name] = value
+            entity_terms.extend(f"{column} = :{name}" for column in team_columns)
+        if entity_terms:
+            predicates.append("(" + " OR ".join(entity_terms) + ")")
+
+        columns = ", ".join(f'"{column}"' for column in _OPTIONAL_COLUMNS[feed])
+        view = _OPTIONAL_SOURCE_VIEWS[feed]
+        statement = text(
+            f'SELECT {columns} FROM "{schema}"."{view}" WHERE '
+            + " AND ".join(predicates)
+        )
+        return pd.read_sql(statement, engine, params=params)
+
+    engine = get_engine(url)
+    try:
+        loaded = {feed: read(feed) for feed in feeds}
+    finally:
+        engine.dispose()
+    scoped = {**empty, **loaded}
+    _normalise_ids(scoped)
+    with _scenario_cache_lock:
+        _scenario_cache[cache_key] = (now, {key: frame.copy() for key, frame in loaded.items()})
+    return scoped
 
 
 def load_all_data(
@@ -308,11 +453,10 @@ def load_all_data(
 ) -> dict[str, Any]:
     """Load canonical PostgreSQL data.
 
-    The admin/training container can set ``POSTGRES_INCLUDE_OPTIONAL=false`` to
-    skip possession-level simulation feeds. The public API keeps the default
-    full loader unless explicitly configured otherwise.
+    Possession-level simulation feeds are excluded by default. They are loaded
+    per scenario through :func:`load_scenario_feeds`, never at API bootstrap.
     """
-    schema = source_schema or os.getenv("POSTGRES_SOURCE_SCHEMA", "ai_source")
+    schema = source_schema or os.getenv("POSTGRES_SOURCE_SCHEMA", "AI_Source")
     if not _SCHEMA_RE.fullmatch(schema):
         raise ValueError("Invalid PostgreSQL source schema")
     if include_optional is None:
@@ -321,7 +465,7 @@ def load_all_data(
     engine = get_engine(url)
     try:
         data: dict[str, Any] = _load_views(
-            engine, schema, _SOURCE_VIEWS, optional=False
+            engine, schema, _core_source_views(), optional=False
         )
         if include_optional:
             data.update(

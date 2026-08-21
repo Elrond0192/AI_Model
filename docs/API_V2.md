@@ -66,7 +66,7 @@ The pooled model can learn shared basketball patterns, but `RS -> PO`, domestic 
 
 Production Docker loads only explicitly promoted artifacts from `models_saved/production`. `production_state.joblib` includes run-owned style calibration, competition vocabulary and per-competition conformal state. Backtests report `by_competition`; promotion can reject a candidate that regresses substantially in a competition with enough OOT samples.
 
-Precomputed forecasts are stored in `ai.player_forecasts`, whose key already includes `competition`.
+Precomputed forecasts are stored in `"AI"."PlayerForecasts"`, whose key already includes `competition`.
 
 ## Authentication and network
 
