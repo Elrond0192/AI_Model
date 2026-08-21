@@ -382,7 +382,7 @@ class WhatIfEngine:
         candidate = teams_df if league_id is None else teams_df[teams_df["league_id"] == league_id]
 
         results: List[TeamFitResult] = []
-        for _, row in candidate.iterrows():
+        for row in candidate.to_dict("records"):
             tid = _normalize_id(row["id"])
             try:
                 pred   = self.ensemble.predict(player_id, tid, self.data, season)
@@ -428,7 +428,7 @@ class WhatIfEngine:
         sample = candidates.sample(min(500, len(candidates)), random_state=42)
 
         results: List[PlayerFitResult] = []
-        for _, row in sample.iterrows():
+        for row in sample.to_dict("records"):
             pid = _normalize_id(row["id"])
             try:
                 pred     = self.ensemble.predict(pid, team_id, self.data, season)
@@ -994,7 +994,7 @@ class WhatIfEngine:
         # Sample players (cap for performance)
         sample = players_df.sample(min(700, len(players_df)), random_state=42)
         all_scored: List[Dict[str, Any]] = []
-        for _, row in sample.iterrows():
+        for row in sample.to_dict("records"):
             pid = _normalize_id(row["id"])
             if pid == _normalize_id(target_player_id):
                 continue

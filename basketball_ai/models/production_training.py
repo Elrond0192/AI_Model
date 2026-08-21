@@ -34,6 +34,8 @@ from basketball_ai.data.loader import _to_int
 from basketball_ai.models.compatibility_model import (
     CompatibilityModel,
     _POSITION_BUCKET,
+    _style_vector_from_prior,
+    _with_prior_player_means,
 )
 from basketball_ai.models.ensemble import EnsembleModel
 from basketball_ai.models.performance_model import (
@@ -204,6 +206,13 @@ class SeasonAheadPerformanceModel(PerformanceModel):
                 continue
             position = position_map.get(pid, "PG")
             group = group.sort_values("_season_year").reset_index(drop=True)
+            clean_group = group.drop(columns=["_season_year"])
+            cumulative_history = self._precompute_history_features(
+                clean_group,
+                extra_metrics=extra_metrics,
+                league_max_games=league_max_games,
+            )
+            empty_history = clean_group.iloc[:0]
             years = [int(value) for value in group["_season_year"].tolist()]
             year_to_index = {year: index for index, year in enumerate(years)}
             max_year = years[-1]
@@ -219,16 +228,16 @@ class SeasonAheadPerformanceModel(PerformanceModel):
                 source_age = source_year - birth_year
                 if source_age < 14 or source_age > 44:
                     continue
-                history = group.iloc[: source_index + 1].drop(columns=["_season_year"])
                 source_clean = source.drop(labels=["_season_year"])
                 rows.append(
                     self._build_row(
                         source_clean,
                         source_age,
                         position,
-                        history,
+                        empty_history,
                         extra_metrics=extra_metrics,
                         league_max_games=league_max_games,
+                        precomputed_history=cumulative_history[source_index],
                     )
                 )
                 targets.append(float(target["rating"]))
@@ -431,30 +440,60 @@ class TemporalCompatibilityModel(CompatibilityModel):
             )
         stats = data["player_stats"].copy()
         stats["_season_year"] = _numeric_seasons(stats)
+        stats = stats.dropna(subset=["_season_year"])
+        stats["_season_year"] = stats["_season_year"].astype(int)
+        stats = _with_prior_player_means(stats, "_season_year")
+
+        team_history = history.copy()
+        team_history["_team_year"] = _numeric_seasons(team_history)
+        team_history["_tid_int"] = team_history["team_id"].map(_to_int)
+        team_history = team_history.dropna(subset=["_team_year"])
+        team_history["_team_year"] = team_history["_team_year"].astype(int)
+        requests = (
+            stats.loc[stats["team_id"].notna(), ["team_id", "_season_year"]]
+            .assign(_tid_int=lambda frame: frame["team_id"].map(_to_int))
+            .rename(columns={"_season_year": "_target_year"})
+            [["_tid_int", "_target_year"]]
+            .drop_duplicates()
+            .sort_values(["_target_year", "_tid_int"], kind="stable")
+        )
+        available_teams = team_history.sort_values(
+            ["_team_year", "_tid_int"], kind="stable"
+        )
+        if requests.empty or available_teams.empty:
+            team_lookup: Dict[tuple[int, int], Dict[str, Any]] = {}
+        else:
+            matched_teams = pd.merge_asof(
+                requests,
+                available_teams,
+                left_on="_target_year",
+                right_on="_team_year",
+                by="_tid_int",
+                direction="backward",
+                allow_exact_matches=False,
+            )
+            team_lookup = {
+                (int(row["_tid_int"]), int(row["_target_year"])): row
+                for row in matched_teams.to_dict("records")
+                if not pd.isna(row.get("_team_year"))
+            }
+
         X_rows: List[np.ndarray] = []
         y_values: List[float] = []
-        for _, stat in stats.iterrows():
+        for stat in stats.to_dict("records"):
             if pd.isna(stat.get("team_id")) or pd.isna(stat.get("player_id")):
                 continue
             target_season = int(stat["_season_year"])
             pid = _to_int(stat["player_id"])
             tid = _to_int(stat["team_id"])
-            prior = stats[
-                (stats["player_id"].map(_to_int) == pid)
-                & (stats["_season_year"] < target_season)
-            ]
-            if prior.empty:
+            if int(stat.get("_prior_rows", 0)) == 0:
                 continue
-            team = self._team_row_as_of(
-                tid, data, target_season, strict_before=True
-            )
+            team = team_lookup.get((tid, target_season))
             if team is None:
                 continue
-            player_vector = self._player_style_through(
-                pid, data, target_season - 1
-            )
+            player_vector = _style_vector_from_prior(stat, data["player_dict"])
             vector = np.concatenate([player_vector, self._team_style_vector(team)])
-            prior_mean = float(pd.to_numeric(prior["rating"], errors="coerce").mean())
+            prior_mean = float(stat["_prior_mean_rating"])
             compatibility = float(
                 np.clip((float(stat["rating"]) - prior_mean + 1.5) / 3.0, 0.0, 1.0)
             )
@@ -525,7 +564,14 @@ def _adjust_players_for_snapshot(
             for row in latest_rel.to_dict("records")
         }
 
-    for index, row in players.iterrows():
+    ages: List[int] = []
+    current_team_ids = players.get(
+        "current_team_id", pd.Series([None] * len(players), index=players.index)
+    ).tolist()
+    current_league_ids = players.get(
+        "current_league_id", pd.Series([None] * len(players), index=players.index)
+    ).tolist()
+    for position, row in enumerate(players.to_dict("records")):
         pid = _to_int(row["id"])
         birth_date = row.get("birth_date", row.get("date_of_birth"))
         try:
@@ -537,12 +583,15 @@ def _adjust_players_for_snapshot(
                 if raw_age is not None and not pd.isna(raw_age)
                 else 26
             )
-        players.at[index, "age"] = max(14, min(45, int(age)))
+        ages.append(max(14, min(45, int(age))))
         team_id = relation_latest.get(pid)
         if team_id is not None:
-            players.at[index, "current_team_id"] = team_id
+            current_team_ids[position] = team_id
             team = teams_by_id.get(team_id, {})
-            players.at[index, "current_league_id"] = team.get("league_id")
+            current_league_ids[position] = team.get("league_id")
+    players["age"] = ages
+    players["current_team_id"] = current_team_ids
+    players["current_league_id"] = current_league_ids
     return players
 
 
@@ -662,7 +711,7 @@ def evaluate_target_season(
     records: List[Dict[str, Any]] = []
     ensemble.clear_cache()
 
-    for _, target in _target_rows(data, target_season).iterrows():
+    for target in _target_rows(data, target_season).to_dict("records"):
         if pd.isna(target.get("player_id")) or pd.isna(target.get("team_id")):
             continue
         pid = _to_int(target["player_id"])

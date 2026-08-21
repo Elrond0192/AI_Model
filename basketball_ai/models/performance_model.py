@@ -914,7 +914,7 @@ class PerformanceModel:
             default=_dt.now(timezone.utc).year,
         )
         birth_year_map: Dict[int, int] = {}
-        for _, player in players.iterrows():
+        for player in players.to_dict("records"):
             pid = _to_int(player["id"])
             birth_date = player.get("birth_date", player.get("date_of_birth"))
             try:
@@ -927,7 +927,7 @@ class PerformanceModel:
                 birth_year_map[pid] = latest_data_year - int(age)
         position_map: Dict[int, str] = {
             _to_int(row["id"]): str(row["position"])
-            for _, row in players.iterrows()
+            for row in players.to_dict("records")
         }
 
         rows:    List[Dict[str, float]] = []
@@ -943,7 +943,7 @@ class PerformanceModel:
             if "max_games" in leagues_df.columns:
                 league_max_games = {
                     int(_to_int(r["id"])): int(r["max_games"])
-                    for _, r in leagues_df.iterrows()
+                    for r in leagues_df.to_dict("records")
                     if r.get("max_games") and not (isinstance(r["max_games"], float) and np.isnan(r["max_games"]))
                 }
             elif "name" in leagues_df.columns:
@@ -951,7 +951,7 @@ class PerformanceModel:
                     int(_to_int(r["id"])): LEAGUE_MAX_GAMES_BY_NAME.get(
                         str(r["name"]).strip(), LEAGUE_MAX_GAMES_DEFAULT
                     )
-                    for _, r in leagues_df.iterrows()
+                    for r in leagues_df.to_dict("records")
                 }
 
         for pid, grp in player_stats.groupby("player_id"):

@@ -36,6 +36,107 @@ _POSITION_BUCKET: Dict[str, float] = {
     "C": 1.0,
 }
 
+_PLAYER_STYLE_DEFAULTS: Dict[str, float] = {
+    "usg_pct": 18.0,
+    "ts_pct": 0.52,
+    "points": 12.0,
+    "three_par": 0.30,
+    "dbpm": 0.0,
+}
+
+
+def _with_prior_player_means(
+    stats: pd.DataFrame,
+    season_column: str,
+) -> pd.DataFrame:
+    """Attach strict-prior player means without per-row history filters.
+
+    All rows in the same season receive aggregates from strictly earlier
+    seasons, matching ``stats[season < current_season]`` even when duplicate
+    player-season rows exist.
+    """
+    work = stats.copy()
+    work["_row_order"] = np.arange(len(work), dtype=int)
+    work["_pid_int"] = work["player_id"].map(_to_int)
+    group_keys = ["_pid_int", season_column]
+
+    aggregate_spec: Dict[str, tuple[str, str]] = {
+        "_season_rows": ("_row_order", "size"),
+    }
+    numeric_columns: List[str] = []
+    for column in _PLAYER_STYLE_DEFAULTS:
+        if column not in work.columns:
+            continue
+        numeric_column = f"_numeric_{column}"
+        work[numeric_column] = pd.to_numeric(work[column], errors="coerce")
+        numeric_columns.append(column)
+        aggregate_spec[f"_sum_{column}"] = (numeric_column, "sum")
+        aggregate_spec[f"_count_{column}"] = (numeric_column, "count")
+    if "rating" in work.columns:
+        work["_numeric_rating"] = pd.to_numeric(work["rating"], errors="coerce")
+        aggregate_spec["_sum_rating"] = ("_numeric_rating", "sum")
+        aggregate_spec["_count_rating"] = ("_numeric_rating", "count")
+        numeric_columns.append("rating")
+
+    annual = work.groupby(group_keys, sort=False, dropna=False).agg(**aggregate_spec)
+    annual = annual.reset_index().sort_values(group_keys, kind="stable")
+    player_groups = annual.groupby("_pid_int", sort=False)
+    annual["_prior_rows"] = player_groups["_season_rows"].cumsum().groupby(
+        annual["_pid_int"], sort=False
+    ).shift(fill_value=0)
+    for column in numeric_columns:
+        sums = f"_sum_{column}"
+        counts = f"_count_{column}"
+        prior_sum = player_groups[sums].cumsum().groupby(
+            annual["_pid_int"], sort=False
+        ).shift(fill_value=0)
+        prior_count = player_groups[counts].cumsum().groupby(
+            annual["_pid_int"], sort=False
+        ).shift(fill_value=0)
+        annual[f"_prior_mean_{column}"] = prior_sum.div(
+            prior_count.where(prior_count > 0)
+        )
+
+    prior_columns = group_keys + [
+        column for column in annual.columns if column.startswith("_prior_")
+    ]
+    result = work.merge(
+        annual[prior_columns],
+        on=group_keys,
+        how="left",
+        sort=False,
+        validate="many_to_one",
+    ).sort_values("_row_order", kind="stable")
+    return result
+
+
+def _style_vector_from_prior(
+    row: Dict[str, Any],
+    player_dict: Dict[int, Dict[str, Any]],
+) -> np.ndarray:
+    """Build the legacy six-value player vector from cached prior means."""
+    pid = _to_int(row["_pid_int"])
+    position = str(player_dict.get(pid, {}).get("position", "PG"))
+    bucket = _POSITION_BUCKET.get(
+        position, _POSITION_BUCKET.get(position.split("/")[0], 0.5)
+    )
+
+    def mean(column: str) -> float:
+        value = row.get(f"_prior_mean_{column}")
+        return _PLAYER_STYLE_DEFAULTS[column] if pd.isna(value) else float(value)
+
+    return np.asarray(
+        [
+            bucket,
+            np.clip(mean("usg_pct") / 40.0, 0.0, 1.0),
+            np.clip(mean("ts_pct"), 0.0, 1.0),
+            np.clip(mean("points") / 40.0, 0.0, 1.0),
+            np.clip(mean("three_par"), 0.0, 1.0),
+            np.clip((mean("dbpm") + 5.0) / 10.0, 0.0, 1.0),
+        ],
+        dtype=float,
+    )
+
 
 class CompatibilityModel:
     """KNN-based player–team style compatibility scorer (0–1).
@@ -134,13 +235,13 @@ class CompatibilityModel:
     def train(self, data: Dict[str, Any]) -> None:
         """Train KNN on (player_style ∥ team_style, compatibility_score) pairs."""
         logger.info("[CompatibilityModel] Building player-specific compatibility training data …")
-        player_stats = data["player_stats"]
+        player_stats = _with_prior_player_means(data["player_stats"], "season")
         team_dict    = data["team_dict"]
 
         X_rows: List[np.ndarray] = []
         y_vals: List[float]      = []
 
-        for _, stat in player_stats.iterrows():
+        for stat in player_stats.to_dict("records"):
             if pd.isna(stat["team_id"]) or pd.isna(stat["player_id"]):
                 continue
             tid  = _to_int(stat["team_id"])
@@ -149,11 +250,11 @@ class CompatibilityModel:
                 continue
             pid    = _to_int(stat["player_id"])
             season = stat["season"]
-            prior = player_stats[(player_stats["player_id"] == stat["player_id"]) & (player_stats["season"] < season)]
-            if prior.empty:
+            if int(stat.get("_prior_rows", 0)) == 0:
                 continue
-            cv     = self._combined_vector(pid, team, data, before_season=season)
-            p_mean = float(prior["rating"].mean())
+            player_vector = _style_vector_from_prior(stat, data["player_dict"])
+            cv = np.concatenate([player_vector, self._team_style_vector(team)])
+            p_mean = float(stat["_prior_mean_rating"])
             compat = float(np.clip((float(stat["rating"]) - p_mean + 1.5) / 3.0, 0.0, 1.0))
             X_rows.append(cv)
             y_vals.append(compat)

@@ -372,9 +372,9 @@ def compute_player_features(
     p_stats_df = stats_df[mask].sort_values("season")
 
     stat_objects: List[PlayerStats] = []
-    for _, row in p_stats_df.iterrows():
+    for row in p_stats_df.to_dict("records"):
         try:
-            stat_objects.append(PlayerStats(**row.to_dict()))
+            stat_objects.append(PlayerStats(**row))
         except Exception:
             pass
 
@@ -386,7 +386,7 @@ def compute_player_features(
             try:
                 league_max_games = {
                     int(_lid_to_int(r["id"])): int(r["max_games"])
-                    for _, r in leagues_df.iterrows()
+                    for r in leagues_df.to_dict("records")
                     if r.get("max_games") and not (isinstance(r["max_games"], float) and np.isnan(r["max_games"]))
                 }
             except Exception:
@@ -401,7 +401,7 @@ def compute_player_features(
                         int(_lid_to_int(r[id_col])): LEAGUE_MAX_GAMES_BY_NAME.get(
                             str(r[name_col]).strip(), LEAGUE_MAX_GAMES_DEFAULT
                         )
-                        for _, r in leagues_df.iterrows()
+                        for r in leagues_df.to_dict("records")
                     }
                 except Exception:
                     pass

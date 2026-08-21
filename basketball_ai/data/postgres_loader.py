@@ -217,7 +217,7 @@ def _normalise_ids(data: dict[str, pd.DataFrame]) -> None:
         for column in columns:
             if column not in frame.columns:
                 continue
-            frame[column] = frame[column].apply(
+            frame[column] = frame[column].map(
                 lambda value: None if pd.isna(value) else _to_int(value)
             )
 
@@ -245,7 +245,7 @@ def _normalise_ids(data: dict[str, pd.DataFrame]) -> None:
             continue
         for column in columns:
             if column in frame.columns:
-                frame[column] = frame[column].apply(
+                frame[column] = frame[column].map(
                     lambda value: None if pd.isna(value) else _to_int(value)
                 )
         if "competition" in frame.columns:
@@ -259,10 +259,10 @@ def _build_lookups(data: dict[str, pd.DataFrame]) -> None:
         if id_column not in frame.columns:
             return {}
         out: dict[int, dict[str, Any]] = {}
-        for _, row in frame.iterrows():
+        for row in frame.to_dict("records"):
             if pd.isna(row[id_column]):
                 continue
-            out[_to_int(row[id_column])] = row.to_dict()
+            out[_to_int(row[id_column])] = row
         return out
 
     data["league_dict"] = indexed(data["leagues"])
@@ -270,7 +270,7 @@ def _build_lookups(data: dict[str, pd.DataFrame]) -> None:
     data["player_dict"] = indexed(data["players"])
 
     team_context_dict: dict[tuple[int, int, int, str], dict[str, Any]] = {}
-    for _, row in data["team_season_stats"].iterrows():
+    for row in data["team_season_stats"].to_dict("records"):
         if (
             pd.isna(row.get("team_id"))
             or pd.isna(row.get("league_id"))
@@ -283,7 +283,7 @@ def _build_lookups(data: dict[str, pd.DataFrame]) -> None:
             int(row["season"]),
             str(row.get("competition", "RS") or "RS").upper(),
         )
-        team_context_dict[key] = row.to_dict()
+        team_context_dict[key] = row
     data["team_season_dict"] = team_context_dict
 
     league_teams: dict[int, list[int]] = {}

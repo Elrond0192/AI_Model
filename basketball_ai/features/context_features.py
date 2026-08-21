@@ -1,6 +1,7 @@
 """Leakage-safe basketball player/team context feature engineering."""
 from __future__ import annotations
 
+import re
 from typing import Any, Dict
 
 import numpy as np
@@ -46,7 +47,7 @@ def _style_for_team(team_id: int, team_row: Dict[str, Any], data: Dict[str, Any]
         _derive_playing_style(teams)
         style_map = {
             _normalize_id(row["id"]): str(row.get("playing_style", "motion_offense") or "motion_offense")
-            for _, row in teams.iterrows()
+            for row in teams.to_dict("records")
             if pd.notna(row.get("id"))
         }
         data["_historical_style_map"] = style_map
@@ -89,18 +90,21 @@ def _same_position_competition(
     if roster.empty:
         return 0
 
-    same_position = 0
     players = data.get("player_dict", {})
-    for _, relation in roster.iterrows():
-        relation_role = str(relation.get("role", "") or "").upper()
-        if relation_role and primary_position in relation_role.split("/"):
-            same_position += 1
-            continue
-        teammate = players.get(_normalize_id(relation.get("player_id")), {})
-        teammate_position = str(teammate.get("position", "") or "").upper()
-        if primary_position in teammate_position.split("/"):
-            same_position += 1
-    return same_position
+    pattern = rf"(?:^|/){re.escape(primary_position)}(?:$|/)"
+    if "role" in roster.columns:
+        role_matches = (
+            roster["role"].fillna("").astype(str).str.upper().str.contains(pattern, regex=True)
+        )
+    else:
+        role_matches = pd.Series(False, index=roster.index)
+    teammate_positions = roster["player_id"].map(
+        lambda value: str(
+            players.get(_normalize_id(value), {}).get("position", "") or ""
+        ).upper()
+    )
+    position_matches = teammate_positions.str.contains(pattern, regex=True)
+    return int((role_matches | position_matches).sum())
 
 
 def compute_context_features(
