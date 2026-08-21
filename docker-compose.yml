@@ -42,6 +42,9 @@ services:
       BASKETBALL_AI_ADMIN_CREDENTIALS_FILE: /app/runtime/auth/.admin_credentials
       BASKETBALL_AI_AUDIT_LOG: /app/runtime/audit/admin-audit.log
       ADMIN_API_BASE_URL: http://api:8000
+      POSTGRES_INCLUDE_OPTIONAL: "false"
+      POSTGRES_LOAD_WORKERS: "4"
+      MODEL_CPU_THREADS: "8"
     ports:
       - "127.0.0.1:8501:8501"
     volumes:
