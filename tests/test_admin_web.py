@@ -110,6 +110,8 @@ def test_helpers_and_static_assets(monkeypatch, tmp_path):
     css = (admin.STATIC_ROOT / "app.css").read_text(encoding="utf-8")
     js = (admin.STATIC_ROOT / "app.js").read_text(encoding="utf-8")
     assert "Operational readiness" in html
+    assert "Come funziona" in html
+    assert "Prepara storico modello" in html
     assert "Model Registry" in html
     assert "--sidebar" in css
     assert "renderOverview" in js
