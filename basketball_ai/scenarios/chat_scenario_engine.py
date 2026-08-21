@@ -382,6 +382,15 @@ class ChatScenarioEngine:
             players[0], teams[0], target_league, int(spec["season"]), normalize_competition(spec.get("target_competition") or spec["competition"])
         )
         support = dict(scoped.get("_competition_support", {}))
+        player_history = self._player_rows(
+            players[0], source_league, spec["competition"], int(spec["season"])
+        )
+        team_history = self._team_rows(
+            teams[0], target_league, normalize_competition(spec.get("target_competition") or spec["competition"]), int(spec["season"])
+        )
+        player_latest = _serialise(self._latest(player_history), _PLAYER_METRICS) if not player_history.empty else {}
+        team_latest = _serialise(self._latest(team_history), _TEAM_METRICS) if not team_history.empty else {}
+        player_ratings = pd.to_numeric(player_history.get("rating"), errors="coerce").dropna() if "rating" in player_history else pd.Series(dtype=float)
         return {
             "result": {
                 "player": self._player_name(players[0]),
@@ -398,7 +407,29 @@ class ChatScenarioEngine:
                 "context_adjustment": result.context_adjustment,
                 "drivers": result.shap_values,
             },
-            "evidence": [{"type": "competition_support", **support}],
+            "evidence": [
+                {"type": "competition_support", **support},
+                {
+                    "type": "player_historical_profile",
+                    "player": self._player_name(players[0]),
+                    "seasons_considered": int(len(player_history)),
+                    "through_season": int(spec["season"]),
+                    "latest": player_latest,
+                    "rating_history": [
+                        {"season": int(row["_year"]), "rating": round(float(row["rating"]), 3)}
+                        for row in player_history.tail(8).to_dict("records")
+                        if pd.notna(row.get("rating"))
+                    ],
+                    "rating_average": round(float(player_ratings.mean()), 3) if not player_ratings.empty else None,
+                },
+                {
+                    "type": "target_team_profile",
+                    "team": self._team_name(teams[0]),
+                    "seasons_considered": int(len(team_history)),
+                    "through_season": int(spec["season"]),
+                    "latest": team_latest,
+                },
+            ],
             "support": {"method": "strict_supervised_ensemble", **support},
             "limitations": [],
         }
