@@ -20,6 +20,7 @@ from basketball_ai.models.performance_model import FEATURE_COLS, METRIC_CATALOG
 from basketball_ai.models.production_training import (
     SeasonAheadPerformanceModel,
     TemporalCompatibilityModel,
+    _model_threads,
     _numeric_seasons,
     season_year,
 )
@@ -82,7 +83,7 @@ def resolve_league_id(data: Dict[str, Any], league: str | int) -> int:
     leagues = data.get("leagues", pd.DataFrame())
     if leagues is None or leagues.empty:
         raise ValueError(f"League {league!r} is unavailable")
-    for _, row in leagues.iterrows():
+    for row in leagues.to_dict("records"):
         candidates = {
             str(row.get("name", "") or "").strip().upper(),
             str(row.get("league_key", "") or "").strip().upper(),
@@ -171,7 +172,7 @@ class CompetitionSeasonAheadPerformanceModel(SeasonAheadPerformanceModel):
         latest_data_year = int(player_stats["_season_year"].max())
         birth_year_map: Dict[int, int] = {}
         position_map: Dict[int, str] = {}
-        for _, player in players.iterrows():
+        for player in players.to_dict("records"):
             pid = _to_int(player["id"])
             position_map[pid] = str(player.get("position", "PG") or "PG")
             birth_date = player.get("birth_date", player.get("date_of_birth"))
@@ -190,7 +191,7 @@ class CompetitionSeasonAheadPerformanceModel(SeasonAheadPerformanceModel):
             if "max_games" in leagues.columns:
                 league_max_games = {
                     int(_to_int(row["id"])): int(row["max_games"])
-                    for _, row in leagues.iterrows()
+                    for row in leagues.to_dict("records")
                     if row.get("max_games") and not pd.isna(row.get("max_games"))
                 }
             elif "name" in leagues.columns:
@@ -198,7 +199,7 @@ class CompetitionSeasonAheadPerformanceModel(SeasonAheadPerformanceModel):
                     int(_to_int(row["id"])): LEAGUE_MAX_GAMES_BY_NAME.get(
                         str(row["name"]).strip(), LEAGUE_MAX_GAMES_DEFAULT
                     )
-                    for _, row in leagues.iterrows()
+                    for row in leagues.to_dict("records")
                 }
 
         rows: List[Dict[str, float]] = []
@@ -211,7 +212,7 @@ class CompetitionSeasonAheadPerformanceModel(SeasonAheadPerformanceModel):
 
         grouping = ["player_id", "league_id", "_competition"]
         for (raw_pid, raw_league_id, competition), group in player_stats.groupby(
-            grouping, dropna=False
+            grouping, dropna=False, sort=False
         ):
             pid = _to_int(raw_pid)
             league_id = _to_int(raw_league_id)
@@ -220,24 +221,23 @@ class CompetitionSeasonAheadPerformanceModel(SeasonAheadPerformanceModel):
                 continue
             position = position_map.get(pid, "PG")
             group = group.sort_values("_season_year").reset_index(drop=True)
-            by_year = {
-                int(row["_season_year"]): row
-                for _, row in group.iterrows()
-            }
-            years = sorted(by_year)
-            for source_year in years:
+            years = [int(value) for value in group["_season_year"].tolist()]
+            year_to_index = {year: index for index, year in enumerate(years)}
+            max_year = years[-1]
+            for source_index, source_year in enumerate(years):
                 target_year = source_year + 1
-                if target_year not in by_year:
-                    if any(year > source_year for year in years):
+                target_index = year_to_index.get(target_year)
+                if target_index is None:
+                    if source_year < max_year:
                         skipped_gaps += 1
                     continue
-                source = by_year[source_year].copy()
-                target = by_year[target_year]
+                source = group.iloc[source_index].copy()
+                target = group.iloc[target_index]
                 source_age = source_year - birth_year
                 if source_age < 14 or source_age > 44:
                     continue
 
-                history = group[group["_season_year"] <= source_year].drop(
+                history = group.iloc[: source_index + 1].drop(
                     columns=["_season_year", "_competition"]
                 )
                 source_clean = source.drop(labels=["_season_year", "_competition"])
@@ -367,66 +367,127 @@ class CompetitionTemporalCompatibilityModel(TemporalCompatibilityModel):
             return None
         return rows.sort_values("_season_year").iloc[-1].to_dict()
 
+    @staticmethod
+    def _prefix_mean(values: pd.Series, fallback: float) -> tuple[np.ndarray, np.ndarray, float]:
+        numeric = pd.to_numeric(values, errors="coerce").to_numpy(dtype=float)
+        valid = np.isfinite(numeric)
+        sums = np.cumsum(np.where(valid, numeric, 0.0))
+        counts = np.cumsum(valid.astype(np.int64))
+        return sums, counts, fallback
+
+    @staticmethod
+    def _mean_before(prefix: tuple[np.ndarray, np.ndarray, float], index: int) -> float:
+        sums, counts, fallback = prefix
+        if index <= 0:
+            return fallback
+        count = int(counts[index - 1])
+        return float(sums[index - 1] / count) if count else fallback
+
     def train(self, data: Dict[str, Any]) -> None:
         history = data.get("team_season_stats")
         if history is None or history.empty:
             raise RuntimeError(
                 "team competition history is required for compatibility training"
             )
+
         stats = data["player_stats"].copy()
         stats["_season_year"] = _numeric_seasons(stats)
         stats["_competition"] = stats["competition"].map(normalize_competition)
+        stats = stats.dropna(
+            subset=["_season_year", "team_id", "player_id", "league_id"]
+        )
+        stats["_pid_int"] = stats["player_id"].map(_to_int)
+        stats["_tid_int"] = stats["team_id"].map(_to_int)
+        stats["_lid_int"] = stats["league_id"].map(_to_int)
+
+        team_history = history.copy()
+        team_history["_season_year"] = _numeric_seasons(team_history)
+        team_history["_competition"] = team_history["competition"].map(
+            normalize_competition
+        )
+        team_history = team_history.dropna(
+            subset=["_season_year", "team_id", "league_id"]
+        )
+        team_history["_tid_int"] = team_history["team_id"].map(_to_int)
+        team_history["_lid_int"] = team_history["league_id"].map(_to_int)
+
+        team_context: Dict[tuple[int, int, str], tuple[np.ndarray, List[np.ndarray]]] = {}
+        for key, group in team_history.groupby(
+            ["_tid_int", "_lid_int", "_competition"], sort=False
+        ):
+            ordered = group.sort_values("_season_year")
+            years = ordered["_season_year"].astype(int).to_numpy()
+            vectors = [
+                self._team_style_vector(row)
+                for row in ordered.to_dict("records")
+            ]
+            team_context[(int(key[0]), int(key[1]), str(key[2]))] = (
+                years,
+                vectors,
+            )
+
         X_rows: List[np.ndarray] = []
         y_values: List[float] = []
         samples_by_competition: Dict[str, int] = {}
+        grouping = ["_pid_int", "_lid_int", "_competition"]
 
-        for _, stat in stats.iterrows():
-            if (
-                pd.isna(stat.get("team_id"))
-                or pd.isna(stat.get("player_id"))
-                or pd.isna(stat.get("league_id"))
-            ):
+        for (pid, league_id, competition), group in stats.groupby(
+            grouping, sort=False
+        ):
+            ordered = group.sort_values("_season_year").reset_index(drop=True)
+            if len(ordered) < 2:
                 continue
-            target_season = int(stat["_season_year"])
-            pid = _to_int(stat["player_id"])
-            tid = _to_int(stat["team_id"])
-            league_id = _to_int(stat["league_id"])
-            competition = str(stat["_competition"])
-            prior = stats[
-                (stats["player_id"].map(_to_int) == pid)
-                & (stats["league_id"].map(_to_int) == league_id)
-                & (stats["_competition"] == competition)
-                & (stats["_season_year"] < target_season)
-            ]
-            if prior.empty:
-                continue
-            team = self._team_row_context(
-                tid,
-                data,
-                target_season,
-                league_id,
-                competition,
-                strict_before=True,
+            player = data["player_dict"].get(int(pid), {})
+            position = str(player.get("position", "PG"))
+            bucket = _POSITION_BUCKET.get(
+                position, _POSITION_BUCKET.get(position.split("/")[0], 0.5)
             )
-            if team is None:
-                continue
-            player_vector = self._player_style_through_context(
-                pid,
-                data,
-                target_season - 1,
-                league_id,
-                competition,
-            )
-            vector = np.concatenate([player_vector, self._team_style_vector(team)])
-            prior_mean = float(pd.to_numeric(prior["rating"], errors="coerce").mean())
-            compatibility = float(
-                np.clip((float(stat["rating"]) - prior_mean + 1.5) / 3.0, 0.0, 1.0)
-            )
-            X_rows.append(vector)
-            y_values.append(compatibility)
-            samples_by_competition[competition] = (
-                samples_by_competition.get(competition, 0) + 1
-            )
+            prefixes = {
+                "usg_pct": self._prefix_mean(ordered.get("usg_pct", pd.Series(dtype=float)), 18.0),
+                "ts_pct": self._prefix_mean(ordered.get("ts_pct", pd.Series(dtype=float)), 0.52),
+                "points": self._prefix_mean(ordered.get("points", pd.Series(dtype=float)), 12.0),
+                "three_par": self._prefix_mean(ordered.get("three_par", pd.Series(dtype=float)), 0.30),
+                "dbpm": self._prefix_mean(ordered.get("dbpm", pd.Series(dtype=float)), 0.0),
+                "rating": self._prefix_mean(ordered["rating"], 0.0),
+            }
+
+            for index in range(1, len(ordered)):
+                stat = ordered.iloc[index]
+                target_season = int(stat["_season_year"])
+                tid = int(stat["_tid_int"])
+                team_data = team_context.get((tid, int(league_id), str(competition)))
+                if team_data is None:
+                    continue
+                team_years, team_vectors = team_data
+                team_index = int(np.searchsorted(team_years, target_season, side="left")) - 1
+                if team_index < 0:
+                    continue
+
+                player_vector = np.asarray(
+                    [
+                        bucket,
+                        np.clip(self._mean_before(prefixes["usg_pct"], index) / 40.0, 0.0, 1.0),
+                        np.clip(self._mean_before(prefixes["ts_pct"], index), 0.0, 1.0),
+                        np.clip(self._mean_before(prefixes["points"], index) / 40.0, 0.0, 1.0),
+                        np.clip(self._mean_before(prefixes["three_par"], index), 0.0, 1.0),
+                        np.clip((self._mean_before(prefixes["dbpm"], index) + 5.0) / 10.0, 0.0, 1.0),
+                    ],
+                    dtype=float,
+                )
+                vector = np.concatenate([player_vector, team_vectors[team_index]])
+                prior_mean = self._mean_before(prefixes["rating"], index)
+                compatibility = float(
+                    np.clip(
+                        (float(stat["rating"]) - prior_mean + 1.5) / 3.0,
+                        0.0,
+                        1.0,
+                    )
+                )
+                X_rows.append(vector)
+                y_values.append(compatibility)
+                samples_by_competition[str(competition)] = (
+                    samples_by_competition.get(str(competition), 0) + 1
+                )
 
         if not X_rows:
             raise RuntimeError(
@@ -436,7 +497,9 @@ class CompetitionTemporalCompatibilityModel(TemporalCompatibilityModel):
         y = np.asarray(y_values, dtype=float)
         effective_neighbors = max(1, min(self.n_neighbors, len(X)))
         self.knn = KNeighborsRegressor(
-            n_neighbors=effective_neighbors, metric="euclidean"
+            n_neighbors=effective_neighbors,
+            metric="euclidean",
+            n_jobs=_model_threads(),
         )
         scaled = self.scaler.fit_transform(X)
         self.knn.fit(scaled, y)
@@ -576,12 +639,12 @@ def scope_prediction_context(
         .tail(1)
     )
     current_meta = {
-        _to_int(row["id"]): row.to_dict()
-        for _, row in data.get("teams", pd.DataFrame()).iterrows()
+        _to_int(row["id"]): row
+        for row in data.get("teams", pd.DataFrame()).to_dict("records")
         if not pd.isna(row.get("id"))
     }
     team_rows: List[Dict[str, Any]] = []
-    for _, row in latest.iterrows():
+    for row in latest.to_dict("records"):
         tid = _to_int(row["team_id"])
         base = dict(current_meta.get(tid, {}))
         base.update(
@@ -608,7 +671,7 @@ def scope_prediction_context(
     teams = pd.DataFrame(team_rows)
     scoped["teams"] = teams
     scoped["team_dict"] = {
-        _to_int(row["id"]): row.to_dict() for _, row in teams.iterrows()
+        _to_int(row["id"]): row for row in teams.to_dict("records")
     }
     scoped["league_teams"] = {league_id: sorted(scoped["team_dict"])}
 
@@ -622,8 +685,8 @@ def scope_prediction_context(
                 players.loc[mask, "current_team_id"] = _to_int(source_row["team_id"])
     scoped["players"] = players
     scoped["player_dict"] = {
-        _to_int(row["id"]): row.to_dict()
-        for _, row in players.iterrows()
+        _to_int(row["id"]): row
+        for row in players.to_dict("records")
         if not pd.isna(row.get("id"))
     }
 
