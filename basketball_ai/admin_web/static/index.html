@@ -35,8 +35,8 @@
 
       <nav class="nav-list" aria-label="Navigazione principale">
         <button class="nav-item active" data-page="overview"><span class="nav-icon">⌂</span><span>Overview</span></button>
-        <button class="nav-item" data-page="data"><span class="nav-icon">▤</span><span>Data Sources</span></button>
-        <button class="nav-item" data-page="training"><span class="nav-icon">↗</span><span>Training Runs</span></button>
+        <button class="nav-item" data-page="data"><span class="nav-icon">▤</span><span>Dati e snapshot</span></button>
+        <button class="nav-item" data-page="training"><span class="nav-icon">↗</span><span>Training</span></button>
         <button class="nav-item" data-page="backtests"><span class="nav-icon">⌁</span><span>Backtests</span></button>
         <button class="nav-item" data-page="scenarios"><span class="nav-icon">◈</span><span>Scenario Lab</span></button>
         <button class="nav-item" data-page="registry"><span class="nav-icon">⬡</span><span>Model Registry</span></button>
@@ -120,7 +120,7 @@
 
   <template id="page-training">
     <section class="page">
-      <div class="page-heading action-heading"><div><h1>Training Runs</h1><p>Training leakage-safe, calibration e walk-forward validation</p></div><button id="start-training" class="btn btn-primary">Avvia training</button></div>
+      <div class="page-heading action-heading"><div><h1>Training</h1><p>Usa esclusivamente uno snapshot già preparato: niente caricamenti automatici o letture PBP.</p></div><button id="start-training" class="btn btn-primary">Avvia training</button></div>
       <div id="training-kpis" class="kpi-grid four"></div>
       <section id="training-job" class="panel job-panel"></section>
       <section class="panel"><div class="panel-heading"><h2>Leakage-safe training contract</h2></div><div class="table-shell"><table><thead><tr><th>Stage</th><th>Seasons</th><th>Purpose</th></tr></thead><tbody id="training-contract"></tbody></table></div></section>
