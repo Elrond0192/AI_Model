@@ -24,6 +24,7 @@ SCENARIO_TYPES = {
     "style_change",
     "player_role_change",
     "role_minutes_projection",
+    "clutch_analysis",
     "team_add_player",
     "team_replace_player",
     "best_team_fit",
