@@ -26,7 +26,6 @@ from basketball_ai.data.loader import (
 
 _SCHEMA_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
-# Internal application key -> PostgreSQL view.
 _SOURCE_VIEWS = {
     "leagues": "leagues",
     "teams": "teams",
@@ -36,8 +35,6 @@ _SOURCE_VIEWS = {
     "team_season_stats": "team_competition_stats",
 }
 
-# Possession-level feeds are additive. Deployments can expose any subset while
-# the strict season model continues to start from the required contract above.
 _OPTIONAL_SOURCE_VIEWS = {
     "pbp_events": "simulation_pbp_events",
     "lineup_stints": "simulation_lineup_stints",
@@ -130,12 +127,7 @@ def _load_views(
     *,
     optional: bool = False,
 ) -> dict[str, pd.DataFrame]:
-    """Load independent canonical views concurrently.
-
-    PostgreSQL views are independent and SQLAlchemy engines are thread-safe.
-    A small worker pool lets the database use multiple host cores while keeping
-    memory pressure bounded on the admin container.
-    """
+    """Load independent canonical views concurrently with bounded workers."""
     if not views:
         return {}
     try:
@@ -145,10 +137,7 @@ def _load_views(
     workers = max(1, min(configured, len(views)))
     loader = _load_optional_view if optional else _load_view
     if workers == 1:
-        return {
-            key: loader(engine, schema, view)
-            for key, view in views.items()
-        }
+        return {key: loader(engine, schema, view) for key, view in views.items()}
 
     loaded: dict[str, pd.DataFrame] = {}
     with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="ai-pg-load") as pool:
@@ -306,22 +295,28 @@ def _build_lookups(data: dict[str, pd.DataFrame]) -> None:
     data["league_teams"] = league_teams
 
 
+def _env_optional_default() -> bool:
+    value = os.getenv("POSTGRES_INCLUDE_OPTIONAL", "true").strip().lower()
+    return value not in {"0", "false", "no", "off"}
+
+
 def load_all_data(
     url: str | None = None,
     source_schema: str | None = None,
     *,
-    include_optional: bool = True,
+    include_optional: bool | None = None,
 ) -> dict[str, Any]:
     """Load canonical PostgreSQL data.
 
-    ``include_optional=False`` is the fast path for model training: possession-
-    level simulation feeds are intentionally skipped because the season-ahead
-    model does not consume them. This avoids transferring large PBP/lineup
-    tables into Pandas before every training run.
+    The admin/training container can set ``POSTGRES_INCLUDE_OPTIONAL=false`` to
+    skip possession-level simulation feeds. The public API keeps the default
+    full loader unless explicitly configured otherwise.
     """
     schema = source_schema or os.getenv("POSTGRES_SOURCE_SCHEMA", "ai_source")
     if not _SCHEMA_RE.fullmatch(schema):
         raise ValueError("Invalid PostgreSQL source schema")
+    if include_optional is None:
+        include_optional = _env_optional_default()
 
     engine = get_engine(url)
     try:
