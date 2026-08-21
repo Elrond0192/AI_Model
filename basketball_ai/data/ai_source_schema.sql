@@ -985,7 +985,7 @@ clutch_ranked AS (
     SELECT
         c.*,
         row_number() OVER (
-            PARTITION BY c.league_key, c.season, c.source_player_id
+            PARTITION BY c.league_key, c.season, c.source_player_id, c.competition
             ORDER BY CASE upper(c.competition) WHEN 'TOT' THEN 0 WHEN 'RS' THEN 1 ELSE 2 END,
                      c.competition
         ) AS rn
@@ -1113,9 +1113,10 @@ LEFT JOIN onoff_ranked oo
  AND oo.source_player_id = s.source_player_id
  AND oo.rn = 1
 LEFT JOIN clutch_ranked cr
-  ON cr.league_key = s.league_key
+ ON cr.league_key = s.league_key
  AND cr.season = s.season
  AND cr.source_player_id = s.source_player_id
+ AND upper(cr.competition) = upper(s.competition)
  AND cr.rn = 1
 LEFT JOIN starts st
   ON st.league_key = s.league_key
