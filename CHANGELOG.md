@@ -8,6 +8,26 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
+- Basketball Simulation & Causal Engine for Chat V3 scenarios:
+  probabilistic joint boxscore distributions, quantiles, and threshold
+  probabilities with seeded or system-entropy Monte Carlo runs.
+- Opponent-conditioned matchup projections using pace, defensive profile, and
+  possession-level play-type context.
+- Dedicated player-vs-player defensive exposure inference from PBP and lineup
+  stints. Inferred assignments are explicitly labelled as inferred rather than
+  observed.
+- Play-type matchup estimates, shot-profile counterfactuals with
+  destination-efficiency shrinkage, and composable multi-condition scenarios.
+- Partial-pooled lineup synergy, exhaustive five-player lineup optimization,
+  and constrained roster optimization.
+- AIPW causal-effect estimates with propensity-overlap and identification
+  gates; unsupported causal questions return an unavailable identification
+  result instead of a causal claim.
+- Optional PostgreSQL simulation source adapter for canonical PBP, lineup,
+  play-type, shot-profile, and causal-panel frames, with empty-view fallbacks
+  when physical feeds are unavailable.
+- `docs/SIMULATION_ENGINE.md` documenting simulation, data, and causal
+  contracts.
 - `has_po_history` feature to distinguish players with no playoff history from those
   with equal RS/PO performance.
 - League-aware `durability_score` using per-league `max_games` (no longer hardcoded to 82).
