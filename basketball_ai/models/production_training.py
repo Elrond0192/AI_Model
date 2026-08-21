@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import logging
+import os
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import numpy as np
@@ -55,7 +56,27 @@ def season_year(value: Any) -> int:
 
 
 def _numeric_seasons(frame: pd.DataFrame) -> pd.Series:
-    return frame["season"].map(lambda value: season_year(value) if pd.notna(value) else np.nan)
+    """Vectorised season-to-year conversion used by every hot training path."""
+    raw = frame["season"]
+    numeric = pd.to_numeric(raw, errors="coerce")
+    missing = numeric.isna() & raw.notna()
+    if missing.any():
+        numeric = numeric.copy()
+        numeric.loc[missing] = pd.to_numeric(
+            raw.loc[missing].astype(str).str.split("-", n=1).str[0],
+            errors="coerce",
+        )
+    return numeric
+
+
+def _model_threads() -> int:
+    """Bound CPU parallelism to the container/host capacity."""
+    detected = max(1, os.cpu_count() or 1)
+    try:
+        configured = int(os.getenv("MODEL_CPU_THREADS", str(detected)))
+    except ValueError:
+        configured = detected
+    return max(1, min(configured, detected))
 
 
 def _xgb(n_estimators: int = 300, *, early_stopping: bool = False) -> XGBRegressor:
@@ -71,6 +92,7 @@ def _xgb(n_estimators: int = 300, *, early_stopping: bool = False) -> XGBRegress
         "random_state": 42,
         "verbosity": 0,
         "device": _XGB_DEVICE,
+        "n_jobs": _model_threads(),
     }
     if early_stopping:
         kwargs["early_stopping_rounds"] = 50
@@ -139,7 +161,7 @@ class SeasonAheadPerformanceModel(PerformanceModel):
         latest_data_year = int(player_stats["_season_year"].max())
         birth_year_map: Dict[int, int] = {}
         position_map: Dict[int, str] = {}
-        for _, player in players.iterrows():
+        for player in players.to_dict("records"):
             pid = _to_int(player["id"])
             position_map[pid] = str(player.get("position", "PG") or "PG")
             birth_date = player.get("birth_date", player.get("date_of_birth"))
@@ -158,7 +180,7 @@ class SeasonAheadPerformanceModel(PerformanceModel):
             if "max_games" in leagues.columns:
                 league_max_games = {
                     int(_to_int(row["id"])): int(row["max_games"])
-                    for _, row in leagues.iterrows()
+                    for row in leagues.to_dict("records")
                     if row.get("max_games") and not pd.isna(row.get("max_games"))
                 }
             elif "name" in leagues.columns:
@@ -166,7 +188,7 @@ class SeasonAheadPerformanceModel(PerformanceModel):
                     int(_to_int(row["id"])): LEAGUE_MAX_GAMES_BY_NAME.get(
                         str(row["name"]).strip(), LEAGUE_MAX_GAMES_DEFAULT
                     )
-                    for _, row in leagues.iterrows()
+                    for row in leagues.to_dict("records")
                 }
 
         rows: List[Dict[str, float]] = []
@@ -175,32 +197,29 @@ class SeasonAheadPerformanceModel(PerformanceModel):
         source_years: List[int] = []
         skipped_gaps = 0
 
-        for raw_pid, group in player_stats.groupby("player_id"):
+        for raw_pid, group in player_stats.groupby("player_id", sort=False):
             pid = _to_int(raw_pid)
             birth_year = birth_year_map.get(pid)
             if birth_year is None:
                 continue
             position = position_map.get(pid, "PG")
             group = group.sort_values("_season_year").reset_index(drop=True)
-            by_year = {
-                int(row["_season_year"]): row
-                for _, row in group.iterrows()
-            }
-            years = sorted(by_year)
-            for source_year in years:
+            years = [int(value) for value in group["_season_year"].tolist()]
+            year_to_index = {year: index for index, year in enumerate(years)}
+            max_year = years[-1]
+            for source_index, source_year in enumerate(years):
                 target_year = source_year + 1
-                if target_year not in by_year:
-                    if any(year > source_year for year in years):
+                target_index = year_to_index.get(target_year)
+                if target_index is None:
+                    if source_year < max_year:
                         skipped_gaps += 1
                     continue
-                source = by_year[source_year]
-                target = by_year[target_year]
+                source = group.iloc[source_index]
+                target = group.iloc[target_index]
                 source_age = source_year - birth_year
                 if source_age < 14 or source_age > 44:
                     continue
-                history = group[group["_season_year"] <= source_year].drop(
-                    columns=["_season_year"]
-                )
+                history = group.iloc[: source_index + 1].drop(columns=["_season_year"])
                 source_clean = source.drop(labels=["_season_year"])
                 rows.append(
                     self._build_row(
@@ -448,7 +467,9 @@ class TemporalCompatibilityModel(CompatibilityModel):
         y = np.asarray(y_values, dtype=float)
         effective_neighbors = max(1, min(self.n_neighbors, len(X)))
         self.knn = KNeighborsRegressor(
-            n_neighbors=effective_neighbors, metric="euclidean"
+            n_neighbors=effective_neighbors,
+            metric="euclidean",
+            n_jobs=_model_threads(),
         )
         scaled = self.scaler.fit_transform(X)
         self.knn.fit(scaled, y)
@@ -487,18 +508,22 @@ def _adjust_players_for_snapshot(
     source_season: int,
 ) -> pd.DataFrame:
     players = players.copy()
-    latest_data_year = max(
-        (season_year(value) for value in full_stats["season"].dropna()),
-        default=source_season,
-    )
+    full_years = _numeric_seasons(full_stats).dropna()
+    latest_data_year = int(full_years.max()) if not full_years.empty else source_season
     relation_latest: Dict[int, int] = {}
     if not relations.empty:
         rel = relations.copy()
         rel["_season_year"] = _numeric_seasons(rel)
         rel = rel[rel["_season_year"] <= source_season]
-        for pid, group in rel.groupby("player_id"):
-            last = group.sort_values("_season_year").iloc[-1]
-            relation_latest[_to_int(pid)] = _to_int(last["team_id"])
+        latest_rel = (
+            rel.sort_values(["player_id", "_season_year"])
+            .groupby("player_id", sort=False)
+            .tail(1)
+        )
+        relation_latest = {
+            _to_int(row["player_id"]): _to_int(row["team_id"])
+            for row in latest_rel.to_dict("records")
+        }
 
     for index, row in players.iterrows():
         pid = _to_int(row["id"])
@@ -552,12 +577,12 @@ def build_historical_snapshot(data: Dict[str, Any], source_season: int) -> Dict[
         .tail(1)
     )
     current_team_meta = {
-        _to_int(row["id"]): row.to_dict()
-        for _, row in data["teams"].iterrows()
+        _to_int(row["id"]): row
+        for row in data["teams"].to_dict("records")
         if not pd.isna(row.get("id"))
     }
     team_rows: List[Dict[str, Any]] = []
-    for _, row in latest.iterrows():
+    for row in latest.to_dict("records"):
         team_id = _to_int(row["team_id"])
         base = dict(current_team_meta.get(team_id, {}))
         base.update(
@@ -585,16 +610,19 @@ def build_historical_snapshot(data: Dict[str, Any], source_season: int) -> Dict[
     teams = pd.DataFrame(team_rows)
     snapshot["teams"] = teams
     snapshot["team_dict"] = {
-        _to_int(row["id"]): row.to_dict() for _, row in teams.iterrows()
+        _to_int(row["id"]): row for row in teams.to_dict("records")
     }
 
     players = _adjust_players_for_snapshot(
-        data["players"], data["player_stats"], relations,
-        snapshot["team_dict"], source_season,
+        data["players"],
+        data["player_stats"],
+        relations,
+        snapshot["team_dict"],
+        source_season,
     )
     snapshot["players"] = players
     snapshot["player_dict"] = {
-        _to_int(row["id"]): row.to_dict() for _, row in players.iterrows()
+        _to_int(row["id"]): row for row in players.to_dict("records")
     }
     league_teams: Dict[int, List[int]] = {}
     for team_id, team in snapshot["team_dict"].items():
@@ -625,6 +653,12 @@ def evaluate_target_season(
     snapshot = build_historical_snapshot(data, source_season)
     source_stats = snapshot["player_stats"].copy()
     source_stats["_season_year"] = _numeric_seasons(source_stats)
+    source_rows = source_stats[source_stats["_season_year"] == source_season].copy()
+    source_rows["_pid_int"] = source_rows["player_id"].map(_to_int)
+    prior_rating: Dict[int, Any] = {}
+    for pid, rating in zip(source_rows["_pid_int"], source_rows["rating"]):
+        prior_rating[int(pid)] = rating
+
     records: List[Dict[str, Any]] = []
     ensemble.clear_cache()
 
@@ -633,13 +667,11 @@ def evaluate_target_season(
             continue
         pid = _to_int(target["player_id"])
         tid = _to_int(target["team_id"])
-        if pid not in snapshot["player_dict"] or tid not in snapshot["team_dict"]:
-            continue
-        prior = source_stats[
-            (source_stats["player_id"].map(_to_int) == pid)
-            & (source_stats["_season_year"] == source_season)
-        ]
-        if prior.empty:
+        if (
+            pid not in snapshot["player_dict"]
+            or tid not in snapshot["team_dict"]
+            or pid not in prior_rating
+        ):
             continue
         competition = str(target.get("competition", "RS") or "RS").upper()
         try:
@@ -664,7 +696,7 @@ def evaluate_target_season(
                 "base_prediction": float(result.base_rating),
                 "confidence_low": float(result.confidence_low),
                 "confidence_high": float(result.confidence_high),
-                "persistence_prediction": float(prior.iloc[-1]["rating"]),
+                "persistence_prediction": float(prior_rating[pid]),
                 "position": str(snapshot["player_dict"][pid].get("position", "")),
                 "age": int(snapshot["player_dict"][pid].get("age", 0) or 0) + 1,
             }
