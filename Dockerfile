@@ -50,8 +50,10 @@ RUN mkdir -p /app/data/sample /app/models_saved \
 
 USER appuser
 
-EXPOSE 8000
+EXPOSE 8000 8501
 
+# The API service uses this image-level healthcheck. The admin service overrides
+# it in docker-compose.yml with /healthz on port 8501.
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/live')" || exit 1
 
