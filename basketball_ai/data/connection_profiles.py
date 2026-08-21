@@ -16,12 +16,25 @@ from urllib.parse import quote_plus
 _NAME = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
 PROFILE_FILE = Path(os.getenv("DATABASE_PROFILES_FILE", "/app/config/database_profiles.json"))
 
+
 def load_profiles() -> dict[str, dict[str, Any]]:
     injected = os.getenv("DATABASE_PROFILES_JSON", "").strip()
     raw = json.loads(injected) if injected else (json.loads(PROFILE_FILE.read_text(encoding="utf-8")) if PROFILE_FILE.exists() else {})
     if not isinstance(raw, dict):
         raise ValueError("Database profiles must be an object")
     return {name: profile for name, profile in raw.items() if _NAME.fullmatch(name) and isinstance(profile, dict)}
+
+
+def _write_profiles(profiles: dict[str, dict[str, Any]]) -> None:
+    PROFILE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    temp_file = PROFILE_FILE.with_name(f".{PROFILE_FILE.name}.tmp")
+    temp_file.write_text(json.dumps(profiles, indent=2), encoding="utf-8")
+    if os.name != "nt":
+        temp_file.chmod(0o600)
+    temp_file.replace(PROFILE_FILE)
+    if os.name != "nt":
+        PROFILE_FILE.chmod(0o600)
+
 
 def save_profile(name: str, profile: dict[str, Any]) -> None:
     if os.getenv("DATABASE_PROFILES_JSON"):
@@ -30,10 +43,26 @@ def save_profile(name: str, profile: dict[str, Any]) -> None:
         raise ValueError("Invalid profile name")
     profiles = load_profiles()
     profiles[name] = profile
-    PROFILE_FILE.parent.mkdir(parents=True, exist_ok=True)
-    PROFILE_FILE.write_text(json.dumps(profiles, indent=2), encoding="utf-8")
-    if os.name != "nt":
-        PROFILE_FILE.chmod(0o600)
+    _write_profiles(profiles)
+
+
+def delete_profile(name: str) -> bool:
+    """Delete a persisted database profile.
+
+    Returns ``True`` when the profile existed and was removed, ``False`` when
+    it was already absent. Injected profiles stay read-only, just like saves.
+    """
+    if os.getenv("DATABASE_PROFILES_JSON"):
+        raise RuntimeError("Injected database profiles are read-only")
+    if not _NAME.fullmatch(name):
+        raise ValueError("Invalid profile name")
+    profiles = load_profiles()
+    if name not in profiles:
+        return False
+    del profiles[name]
+    _write_profiles(profiles)
+    return True
+
 
 def profile_url(name: str) -> str:
     profile = load_profiles().get(name)
@@ -48,6 +77,7 @@ def profile_url(name: str) -> str:
     password = quote_plus(str(profile["password"]))
     port = int(profile.get("port", 5432))
     return f"postgresql+psycopg://{user}:{password}@{host}:{port}/{database}"
+
 
 def active_profile_name() -> str:
     name = os.getenv("DATABASE_PROFILE", "").strip()
