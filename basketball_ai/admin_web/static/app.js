@@ -45,7 +45,7 @@ async function renderOverview(){
     kpi('⬡','Modello attivo',shortId(o.production?.run_id),o.production?'<span class="dot green"></span>Production':'<span class="dot red"></span>Not promoted','orange'),
     kpi('⌘','Stato API',o.api?.online?'Online':'Offline',`<span class="dot ${o.api?.online?'green':'red'}"></span>V2`,'green')
   ].join('');
-  $('#readiness-body').innerHTML=o.readiness.map(r=>`<tr><td><strong>${esc(r.component)}</strong></td><td><span class="status ${r.status}"><span class="status-dot">${r.status==='ok'?'✓':r.status==='danger'?'×':'△'}</span>${esc(r.label)}</span></td><td>${esc(r.detail)}</td><td class="right"><button class="btn btn-small btn-secondary readiness-action" data-page="${esc(r.action==='data'?'data':r.action)}">${r.action==='registry'?'Promuovi':r.action==='training'?'Dettagli':'Verifica'}</button></td></tr>`).join('');
+  $('#readiness-body').innerHTML=o.readiness.map(r=>`<tr><td><strong>${esc(r.component)}</strong></td><td><span class="status ${r.status}"><span class="status-dot">${r.status==='ok'?'✓':r.status==='danger'?'×':'△'}</span>${esc(r.label)}</span></td><td>${esc(r.detail)}</td><td class="right"><button class="btn btn-small btn-secondary readiness-action" data-page="${esc(r.action==='data'?'data':r.action)}">${r.action==='registry'?'Apri registry':r.action==='training'?'Apri training':'Apri dati'}</button></td></tr>`).join('');
   $$('.readiness-action').forEach(b=>b.addEventListener('click',()=>navigate(b.dataset.page)));
   const prod=o.production||{},cand=o.candidate||{};
   $('#overview-registry').innerHTML=(prod.run_id||cand.run_id)?summaryRows([['Production',prod.run_id?shortId(prod.run_id):'—'],['Candidate',cand.run_id?shortId(cand.run_id):'—'],['Candidate RMSE',cand.overall_rmse!==undefined?fmt(cand.overall_rmse):'—']]):empty('⬡','Nessun modello registrato','Esegui un training per generare il primo candidate.','Avvia training','training');
@@ -70,7 +70,7 @@ async function renderTraining(){
   const d=await api('/admin-api/training'),s=d.summary||{},j=d.job||{};
   const datasetLoaded=s.player_rows!==undefined&&s.player_rows!==null;
   $('#training-kpis').innerHTML=[
-    kpi('▤','Training snapshot',d.snapshot?.snapshot_id?shortId(d.snapshot.snapshot_id):'—',`<span class="dot ${datasetLoaded?'green':'yellow'}"></span>${datasetLoaded?'Immutable snapshot ready':'Snapshot not prepared'}`),
+    kpi('▤','Snapshot training',d.snapshot?.snapshot_id?shortId(d.snapshot.snapshot_id):'—',`<span class="dot ${datasetLoaded?'green':'yellow'}"></span>${datasetLoaded?'Storico pronto':'Prepara lo storico in Dati e snapshot'}`),
     kpi('◫','Season range',s.season_min?`${s.season_min}–${s.season_max}`:'—','<span>training history</span>','green'),
     kpi('◉','Competitions',String((s.competitions||[]).length||'—'),'<span>observed</span>','violet'),
     kpi('▥','Observations',fmtInt(s.player_rows),'<span>player rows</span>','orange')
@@ -78,17 +78,17 @@ async function renderTraining(){
   $('#training-contract').innerHTML=(d.contract||[]).map(r=>`<tr><td><strong>${esc(r.stage)}</strong></td><td>${esc(r.seasons)}</td><td>${esc(r.purpose)}</td></tr>`).join('');
   $('#training-config').innerHTML=Object.entries(d.configuration||{}).map(([a,b])=>`<div class="config-item"><span>${esc(a.replaceAll('_',' '))}</span><strong>${esc(Array.isArray(b)?b.join(', '):b)}</strong></div>`).join('');
   const job=$('#training-job');
-  const idleMessage=!datasetLoaded&&d.profile&&j.status==='idle'?`Il dataset verrà caricato automaticamente dal profilo ${d.profile} quando avvii il training.`:(j.error||j.message||'');
+  const idleMessage=!datasetLoaded&&j.status==='idle'?'Prima prepara e attiva uno snapshot nella pagina Dati e snapshot. Il training non carica dati automaticamente.':(j.error||j.message||'');
   job.innerHTML=`<div class="job-head"><div><div class="job-status">${esc(j.stage||'Ready')}</div><div class="job-message">${esc(idleMessage)}</div></div><span class="registry-badge ${j.status==='running'?'candidate':''}">${esc(j.status||'idle')}</span></div><div class="progress-track"><div class="progress-bar" style="width:${Math.max(0,Math.min(100,Number(j.progress)||0))}%"></div></div>${j.run_id?`<div class="job-message">Run ID: ${esc(j.run_id)}</div>`:''}`;
   const start=$('#start-training');
-  start.disabled=!d.profile||j.status==='running';
+  start.disabled=!datasetLoaded||!d.snapshot?.snapshot_id||j.status==='running';
   start.addEventListener('click',async()=>{
     const originalText=start.textContent;
     start.disabled=true;
     try{
-      if(!d.profile)throw new Error('Seleziona prima un profilo database');
-      start.textContent=datasetLoaded?'Snapshot pronto':'Preparazione snapshot…';
-      const loaded=datasetLoaded?{summary:s,snapshot:d.snapshot}:await api(`/admin-api/profiles/${encodeURIComponent(d.profile)}/load`,{method:'POST',body:{}});
+      if(!datasetLoaded||!d.snapshot?.snapshot_id)throw new Error('Prepara e attiva prima uno snapshot in Dati e snapshot');
+      start.textContent='Controllo snapshot…';
+      const loaded={summary:s,snapshot:d.snapshot};
       const seasons=loaded.summary?.seasons||[];
       if(seasons.length<5)throw new Error(`Servono almeno cinque stagioni per il training. Disponibili: ${seasons.length}.`);
       start.textContent='Avvio training…';
