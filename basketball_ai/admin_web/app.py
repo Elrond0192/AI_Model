@@ -15,6 +15,7 @@ from pathlib import Path
 import secrets
 import threading
 from typing import Any
+from urllib.error import HTTPError, URLError
 from urllib.request import Request as URLRequest, urlopen
 import uuid
 
@@ -319,6 +320,32 @@ def _probe(path: str) -> dict[str, Any]:
         return {"ok": False, "status": None, "body": None, "error": str(exc)[:300]}
 
 
+def _evaluate_scenario(payload: dict[str, Any]) -> dict[str, Any]:
+    """Forward an authenticated admin request to the API scenario engine."""
+    api_key = os.environ.get("API_KEY", "").strip()
+    headers = {"Accept": "application/json", "Content-Type": "application/json"}
+    if api_key:
+        headers["X-API-Key"] = api_key
+    request = URLRequest(
+        f"{API_BASE_URL}/api/v2/scenarios/evaluate",
+        data=json.dumps(payload).encode("utf-8"),
+        headers=headers,
+        method="POST",
+    )
+    try:
+        with urlopen(request, timeout=45.0) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")
+        try:
+            detail = json.loads(body).get("detail", body)
+        except json.JSONDecodeError:
+            detail = body
+        raise RuntimeError(f"Scenario API: {detail}") from exc
+    except URLError as exc:
+        raise RuntimeError("Scenario API non raggiungibile") from exc
+
+
 @app.middleware("http")
 async def security_headers(request: Request, call_next):
     response = await call_next(request)
@@ -578,6 +605,16 @@ def backtests(user: dict[str, str] = Depends(_operator)) -> dict[str, Any]:
     candidate = _registry().get("candidate") or {}
     report = candidate.get("backtest") or {}
     return {"candidate": candidate, "report": report, "quality": _candidate_quality(candidate)}
+
+
+@app.post("/admin-api/scenarios/evaluate")
+async def evaluate_scenario(payload: dict[str, Any], user: dict[str, str] = Depends(_csrf)) -> dict[str, Any]:
+    """Expose the production scenario engine in the authenticated admin UI."""
+    del user
+    try:
+        return await asyncio.to_thread(_evaluate_scenario, payload)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=_safe_error(exc)) from exc
 
 
 @app.get("/admin-api/registry")
