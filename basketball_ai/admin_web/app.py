@@ -15,7 +15,7 @@ from pathlib import Path
 import secrets
 import threading
 from typing import Any
-from urllib.request import Request, urlopen
+from urllib.request import Request as URLRequest, urlopen
 import uuid
 
 import pandas as pd
@@ -155,7 +155,11 @@ def _summary(data: dict[str, Any] | None) -> dict[str, Any]:
 
 def _safe_error(exc: Exception) -> str:
     message = str(exc).strip() or exc.__class__.__name__
-    for profile in load_profiles().values():
+    try:
+        profiles = load_profiles().values()
+    except Exception:
+        profiles = []
+    for profile in profiles:
         password = str(profile.get("password", ""))
         if password:
             message = message.replace(password, "********")
@@ -303,7 +307,7 @@ def _training_worker(data: dict[str, Any], active_profile: str | None) -> None:
 
 def _probe(path: str) -> dict[str, Any]:
     try:
-        req = Request(f"{API_BASE_URL}{path}", headers={"Accept": "application/json"})
+        req = URLRequest(f"{API_BASE_URL}{path}", headers={"Accept": "application/json"})
         with urlopen(req, timeout=2.0) as response:
             body = response.read().decode("utf-8", errors="replace")
             try:
