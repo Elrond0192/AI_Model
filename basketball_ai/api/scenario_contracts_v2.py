@@ -29,6 +29,16 @@ SCENARIO_TYPES = {
     "best_player_fit",
     "player_similarity",
     "age_trajectory",
+    "probabilistic_boxscore",
+    "opponent_matchup",
+    "defensive_matchup",
+    "play_type_matchup",
+    "shot_profile_counterfactual",
+    "lineup_synergy",
+    "lineup_optimizer",
+    "roster_optimizer",
+    "composite_scenario",
+    "causal_effect",
 }
 
 _STYLE_KEYS = {
@@ -44,7 +54,7 @@ _PLAYER_OVERRIDE_KEYS = {"minutes_per_game", "usg_pct", "role"}
 
 class ScenarioRequestV2(BaseModel):
     scenario: str = Field(min_length=1, max_length=64)
-    player_global_ids: list[str] = Field(default_factory=list, max_length=8)
+    player_global_ids: list[str] = Field(default_factory=list, max_length=30)
     team_global_ids: list[str] = Field(default_factory=list, max_length=8)
     source_league: str | None = Field(default=None, max_length=32)
     target_league: str | None = Field(default=None, max_length=32)
@@ -56,6 +66,14 @@ class ScenarioRequestV2(BaseModel):
     player_overrides: dict[str, float | str] = Field(default_factory=dict)
     top_n: int = Field(default=5, ge=1, le=20)
     parameters: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("player_global_ids", "team_global_ids")
+    @classmethod
+    def unique_global_ids(cls, value: list[str]) -> list[str]:
+        cleaned = [str(item).strip() for item in value if str(item).strip()]
+        if len(cleaned) != len(set(cleaned)):
+            raise ValueError("entity identifiers must be unique")
+        return cleaned
 
     @field_validator("scenario")
     @classmethod
@@ -95,6 +113,22 @@ class ScenarioRequestV2(BaseModel):
         unknown = set(value) - _PLAYER_OVERRIDE_KEYS
         if unknown:
             raise ValueError(f"unsupported player overrides: {sorted(unknown)}")
+        return value
+
+    @field_validator("parameters")
+    @classmethod
+    def validate_parameters(cls, value: dict[str, Any]) -> dict[str, Any]:
+        # The planner contract remains bounded even though scenario-specific
+        # parameters are extensible.
+        if len(value) > 24:
+            raise ValueError("too many scenario parameters")
+        encoded = str(value)
+        if len(encoded) > 12000:
+            raise ValueError("scenario parameters are too large")
+        if "simulations" in value and not 500 <= int(value["simulations"]) <= 50000:
+            raise ValueError("simulations must be between 500 and 50000")
+        if "seed" in value and not -(2**63) < int(value["seed"]) < 2**63:
+            raise ValueError("seed is out of range")
         return value
 
 

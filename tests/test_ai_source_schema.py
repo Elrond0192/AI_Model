@@ -9,6 +9,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE_SQL = ROOT / "basketball_ai" / "data" / "ai_source_schema.sql"
 COMPETITION_SQL = ROOT / "basketball_ai" / "data" / "ai_source_competition.sql"
+SIMULATION_SQL = ROOT / "basketball_ai" / "data" / "ai_source_simulation.sql"
 
 
 def test_ai_source_schema_defines_entity_contract():
@@ -49,10 +50,26 @@ def test_competition_schema_is_independent_of_base_internal_views():
     assert "from ai_source._team_stats_raw" not in sql
 
 
+def test_simulation_schema_adapts_pbp_lineups_play_types_and_shots():
+    sql = SIMULATION_SQL.read_text(encoding="utf-8").lower()
+    for view in (
+        "ai_source.simulation_pbp_events",
+        "ai_source.simulation_lineup_stints",
+        "ai_source.simulation_play_type_stats",
+        "ai_source.simulation_shot_profiles",
+        "ai_source.simulation_causal_panel",
+    ):
+        assert f"create view {view}" in sql
+    assert "advancedstats_lineups_quarter_" in sql
+    assert "inferred_not_observed" not in sql  # inference labels belong to API output
+    assert "assignment_probability" in sql
+
+
 def test_ai_source_schemas_have_no_sql_server_ddl():
     sql = (
         SOURCE_SQL.read_text(encoding="utf-8")
         + COMPETITION_SQL.read_text(encoding="utf-8")
+        + SIMULATION_SQL.read_text(encoding="utf-8")
     ).lower()
     forbidden = (
         "set ansi_nulls", "set quoted_identifier", "nvarchar(", "datetime2",

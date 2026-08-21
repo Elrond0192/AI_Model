@@ -19,6 +19,7 @@ import logging
 import os
 import sqlite3
 import time
+from contextlib import closing
 from pathlib import Path
 from typing import Dict, Optional
 
@@ -53,7 +54,7 @@ class TenantManager:
 
     def _init_usage_db(self) -> None:
         self.audit_db.parent.mkdir(parents=True, exist_ok=True)
-        with self._conn() as conn:
+        with closing(self._conn()) as conn, conn:
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS usage_counters (
                     tenant_id TEXT    NOT NULL,
@@ -98,7 +99,7 @@ class TenantManager:
         """Return number of requests made by *tenant_id* on *route* for *day*."""
         day = day or self._today()
         try:
-            with self._conn() as conn:
+            with closing(self._conn()) as conn, conn:
                 row = conn.execute(
                     "SELECT count FROM usage_counters WHERE tenant_id=? AND route=? AND day=?",
                     (tenant_id, route, day),
@@ -111,7 +112,7 @@ class TenantManager:
         """Increment usage counter for *tenant_id* on *route* (today)."""
         day = self._today()
         try:
-            with self._conn() as conn:
+            with closing(self._conn()) as conn, conn:
                 conn.execute("""
                     INSERT INTO usage_counters (tenant_id, route, day, count)
                     VALUES (?, ?, ?, 1)
@@ -147,7 +148,7 @@ class TenantManager:
         """Export usage as CSV string, optionally filtered by tenant."""
         lines = ["tenant_id,route,day,count"]
         try:
-            with self._conn() as conn:
+            with closing(self._conn()) as conn, conn:
                 if tenant_id:
                     rows = conn.execute(
                         "SELECT * FROM usage_counters WHERE tenant_id=? ORDER BY day DESC, count DESC",

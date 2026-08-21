@@ -16,6 +16,7 @@ import logging
 import os
 import sqlite3
 import time
+from contextlib import closing
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -38,7 +39,7 @@ class AuditDB:
         return conn
 
     def _init_db(self) -> None:
-        with self._conn() as conn:
+        with closing(self._conn()) as conn, conn:
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS audit_log (
                     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -68,7 +69,7 @@ class AuditDB:
     ) -> None:
         """Insert one audit record."""
         try:
-            with self._conn() as conn:
+            with closing(self._conn()) as conn, conn:
                 conn.execute(
                     "INSERT INTO audit_log "
                     "(ts, request_id, user, tenant, method, path, status, latency_ms) "
@@ -110,7 +111,7 @@ class AuditDB:
         params.append(limit)
         sql = f"SELECT * FROM audit_log {where_clause} ORDER BY ts DESC LIMIT ?"
         try:
-            with self._conn() as conn:
+            with closing(self._conn()) as conn, conn:
                 rows = conn.execute(sql, params).fetchall()
             return [dict(r) for r in rows]
         except Exception as exc:
