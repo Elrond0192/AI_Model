@@ -1,7 +1,7 @@
 services:
   api:
     build: .
-    image: basketball-ai:latest
+    image: basketball-ai-api:latest
     restart: unless-stopped
     env_file: [.env]
     environment:
@@ -29,7 +29,7 @@ services:
 
   admin:
     build: .
-    image: basketball-ai:latest
+    image: basketball-ai-admin:latest
     restart: unless-stopped
     env_file: [.env]
     environment:
@@ -41,6 +41,7 @@ services:
       BASKETBALL_AI_SESSIONS_FILE: /app/runtime/auth/sessions.json
       BASKETBALL_AI_ADMIN_CREDENTIALS_FILE: /app/runtime/auth/.admin_credentials
       BASKETBALL_AI_AUDIT_LOG: /app/runtime/audit/admin-audit.log
+      ADMIN_API_BASE_URL: http://api:8000
     ports:
       - "127.0.0.1:8501:8501"
     volumes:
@@ -50,4 +51,10 @@ services:
       - ./runtime/audit:/app/runtime/audit:rw
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    command: ["streamlit", "run", "gui/app.py", "--server.port=8501", "--server.address=0.0.0.0", "--server.headless=true"]
+    command: ["uvicorn", "basketball_ai.admin_web.app:app", "--host", "0.0.0.0", "--port", "8501", "--workers", "1"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8501/healthz')"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3

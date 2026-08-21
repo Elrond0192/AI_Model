@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>AI Model Control Center</title>
+  <link rel="stylesheet" href="/assets/app.css">
+</head>
+<body>
+  <div id="toast" class="toast" aria-live="polite"></div>
+
+  <section id="login-screen" class="login-screen">
+    <div class="login-glow login-glow-a"></div>
+    <div class="login-glow login-glow-b"></div>
+    <form id="login-form" class="login-card" autocomplete="on">
+      <div class="brand-mark large"><span class="brand-diamond">◆</span></div>
+      <div class="login-brand">AI Model</div>
+      <div class="login-kicker">CONTROL CENTER</div>
+      <h1>Operations Console</h1>
+      <p>Accesso riservato agli operatori del modello.</p>
+      <label>Utente<input id="login-username" name="username" type="text" autocomplete="username" required></label>
+      <label>Password<input id="login-password" name="password" type="password" autocomplete="current-password" required></label>
+      <button class="btn btn-primary btn-wide" type="submit"><span>Accedi</span><span>→</span></button>
+      <div id="login-error" class="form-error"></div>
+    </form>
+  </section>
+
+  <div id="app-shell" class="app-shell hidden">
+    <aside class="sidebar">
+      <div class="brand-block">
+        <div class="brand-mark"><span class="brand-diamond">◆</span></div>
+        <div><div class="brand-title">AI Model</div><div class="brand-subtitle">Control Center</div></div>
+      </div>
+
+      <nav class="nav-list" aria-label="Navigazione principale">
+        <button class="nav-item active" data-page="overview"><span class="nav-icon">⌂</span><span>Overview</span></button>
+        <button class="nav-item" data-page="data"><span class="nav-icon">▤</span><span>Data Sources</span></button>
+        <button class="nav-item" data-page="training"><span class="nav-icon">↗</span><span>Training Runs</span></button>
+        <button class="nav-item" data-page="backtests"><span class="nav-icon">⌁</span><span>Backtests</span></button>
+        <button class="nav-item" data-page="registry"><span class="nav-icon">⬡</span><span>Model Registry</span></button>
+        <button class="nav-item" data-page="health"><span class="nav-icon">◇</span><span>API &amp; Health</span></button>
+        <button class="nav-item admin-only" data-page="audit"><span class="nav-icon">▣</span><span>Audit Logs</span></button>
+        <button class="nav-item" data-page="settings"><span class="nav-icon">⚙</span><span>Settings</span></button>
+      </nav>
+
+      <div class="sidebar-spacer"></div>
+      <div class="user-card">
+        <div id="user-avatar" class="avatar">A</div>
+        <div class="user-copy"><strong id="user-name">admin</strong><span id="user-role">Administrator</span></div>
+        <span class="chevron">›</span>
+      </div>
+      <button id="logout-btn" class="btn btn-ghost btn-wide"><span>⇥</span><span>Esci</span></button>
+    </aside>
+
+    <main class="main-area">
+      <header class="topbar">
+        <div class="topbar-spacer"></div>
+        <div class="top-meta"><span>ACTIVE API</span><strong id="top-api" class="meta-ok">● V2</strong></div>
+        <div class="top-meta"><span>DATABASE</span><strong id="top-db">not selected</strong></div>
+        <div class="top-meta"><span>ACTIVE MODEL</span><strong id="top-model">not promoted</strong></div>
+        <div class="top-meta utc"><span>UTC</span><strong id="top-utc">—</strong></div>
+      </header>
+
+      <div id="page-root" class="page-root"></div>
+      <footer>© AI Model Control Center v2.2.0</footer>
+    </main>
+  </div>
+
+  <template id="page-overview">
+    <section class="page" data-title="Overview">
+      <div class="page-heading"><div><h1>Overview</h1><p>Panoramica dello stato del sistema AI Model</p></div></div>
+      <div id="overview-kpis" class="kpi-grid five"></div>
+      <section class="section-block">
+        <div class="section-heading"><h2>Operational readiness</h2></div>
+        <div class="table-shell"><table><thead><tr><th>Componente</th><th>Stato</th><th>Dettagli</th><th class="right">Azione</th></tr></thead><tbody id="readiness-body"></tbody></table></div>
+      </section>
+      <div class="split-grid">
+        <section class="panel"><div class="panel-heading"><h2>Model registry</h2><button class="btn btn-small btn-secondary jump" data-page="registry">Vai al registry</button></div><div id="overview-registry"></div></section>
+        <section class="panel"><div class="panel-heading"><h2>Ultimo backtest</h2><button class="btn btn-small btn-secondary jump" data-page="backtests">Vai ai backtest</button></div><div id="overview-backtest"></div></section>
+      </div>
+      <section class="panel candidate-panel"><div class="panel-heading"><h2>Candidate quality <span class="muted-inline">(ultimo run)</span></h2></div><div id="candidate-quality" class="quality-grid"></div></section>
+    </section>
+  </template>
+
+  <template id="page-data">
+    <section class="page">
+      <div class="page-heading"><div><h1>Data Sources</h1><p>Profili PostgreSQL protetti e contratto dati canonico AI_Model</p></div></div>
+      <div class="split-grid data-grid">
+        <section class="panel"><div class="panel-heading"><h2>Configured profiles</h2><button id="refresh-profiles" class="btn btn-small btn-secondary">Aggiorna</button></div><div id="profiles-list" class="profile-list"></div></section>
+        <section class="panel"><div class="panel-heading"><h2>Create or replace a profile</h2></div>
+          <form id="profile-form" class="form-grid">
+            <label class="span-2">Profile name<input name="name" placeholder="production" required></label>
+            <label class="span-2">Host<input name="host" value="host.docker.internal" required></label>
+            <label>Port<input name="port" type="number" value="5432" min="1" max="65535" required></label>
+            <label>Database<input name="database" required></label>
+            <label>PostgreSQL user<input name="user" required></label>
+            <label>Password<input name="password" type="password" placeholder="Lascia vuoto per mantenere quella esistente"></label>
+            <label>Source schema<input name="source_schema" value="ai_source" required></label>
+            <label>Output schema<input name="ai_schema" value="ai" required></label>
+            <button class="btn btn-primary span-2" type="submit">Salva profilo</button>
+          </form>
+        </section>
+      </div>
+      <section class="panel contract-panel"><div class="panel-heading"><h2>Canonical data contract</h2></div><div class="contract-tags"><span>ai_source.leagues</span><span>ai_source.teams</span><span>ai_source.players</span><span>player_competition_stats</span><span>team_competition_stats</span><span>simulation_* optional</span></div></section>
+    </section>
+  </template>
+
+  <template id="page-training">
+    <section class="page">
+      <div class="page-heading action-heading"><div><h1>Training Runs</h1><p>Training leakage-safe, calibration e walk-forward validation</p></div><button id="start-training" class="btn btn-primary">Avvia training</button></div>
+      <div id="training-kpis" class="kpi-grid four"></div>
+      <section id="training-job" class="panel job-panel"></section>
+      <section class="panel"><div class="panel-heading"><h2>Leakage-safe training contract</h2></div><div class="table-shell"><table><thead><tr><th>Stage</th><th>Seasons</th><th>Purpose</th></tr></thead><tbody id="training-contract"></tbody></table></div></section>
+      <section class="panel"><div class="panel-heading"><h2>Immutable run configuration</h2></div><div id="training-config" class="config-grid"></div></section>
+    </section>
+  </template>
+
+  <template id="page-backtests">
+    <section class="page">
+      <div class="page-heading"><div><h1>Backtests</h1><p>Walk-forward out-of-time dell'ensemble esatto di produzione</p></div></div>
+      <div id="backtest-kpis" class="kpi-grid four"></div>
+      <div class="split-grid"><section class="panel"><div class="panel-heading"><h2>RMSE by target season</h2></div><div id="backtest-chart" class="chart-box"></div></section><section class="panel"><div class="panel-heading"><h2>Candidate summary</h2></div><div id="backtest-summary"></div></section></div>
+      <section class="panel"><div class="panel-heading"><h2>By competition</h2></div><div class="table-shell"><table><thead><tr><th>Competition</th><th>N</th><th>RMSE</th><th>MAE</th><th>Bias</th><th>Coverage</th></tr></thead><tbody id="competition-body"></tbody></table></div></section>
+    </section>
+  </template>
+
+  <template id="page-registry">
+    <section class="page">
+      <div class="page-heading"><div><h1>Model Registry</h1><p>Candidate immutabili, promotion gates e rollback controllato</p></div></div>
+      <div id="registry-cards" class="split-grid"></div>
+      <section class="panel"><div class="panel-heading"><h2>Promotion controls</h2></div><div class="control-row"><label class="confirm"><input id="registry-confirm" type="checkbox"><span>Ho verificato il walk-forward report e i promotion gates</span></label><div class="button-row"><button id="promote-btn" class="btn btn-primary" disabled>Promuovi candidate</button><button id="rollback-btn" class="btn btn-danger" disabled>Rollback previous</button></div></div></section>
+      <section class="panel"><div class="panel-heading"><h2>Registry history</h2></div><div class="table-shell"><table><thead><tr><th>UTC</th><th>Event</th><th>Run ID</th></tr></thead><tbody id="registry-history"></tbody></table></div></section>
+    </section>
+  </template>
+
+  <template id="page-health">
+    <section class="page">
+      <div class="page-heading action-heading"><div><h1>API &amp; Health</h1><p>Stato dell'inference service e modello production attivo</p></div><button id="refresh-health" class="btn btn-secondary">Aggiorna</button></div>
+      <div id="health-kpis" class="kpi-grid four"></div>
+      <div class="split-grid"><section class="panel"><div class="panel-heading"><h2>Runtime checks</h2></div><div id="health-checks" class="health-list"></div></section><section class="panel"><div class="panel-heading"><h2>Served endpoints</h2></div><div id="health-endpoints" class="endpoint-list"></div></section></div>
+    </section>
+  </template>
+
+  <template id="page-audit">
+    <section class="page">
+      <div class="page-heading action-heading"><div><h1>Audit Logs</h1><p>Eventi di autenticazione e operazioni amministrative</p></div><button id="refresh-audit" class="btn btn-secondary">Aggiorna</button></div>
+      <section class="panel"><div class="table-shell"><table><thead><tr><th>UTC</th><th>Action</th><th>Actor</th><th>Target</th><th>Details</th></tr></thead><tbody id="audit-body"></tbody></table></div></section>
+    </section>
+  </template>
+
+  <template id="page-settings">
+    <section class="page">
+      <div class="page-heading"><div><h1>Settings</h1><p>Runtime, promotion gates e sicurezza dell'account</p></div></div>
+      <div class="split-grid"><section class="panel"><div class="panel-heading"><h2>Runtime</h2></div><div id="runtime-settings" class="settings-list"></div></section><section class="panel"><div class="panel-heading"><h2>Promotion gates</h2></div><div id="promotion-settings" class="settings-list"></div></section></div>
+      <section class="panel password-panel"><div class="panel-heading"><h2>Cambia password</h2></div><form id="password-form" class="password-form"><label>Password attuale<input name="old_password" type="password" required></label><label>Nuova password<input name="new_password" type="password" required></label><button class="btn btn-primary" type="submit">Aggiorna password</button></form><p class="microcopy">Dopo il cambio password tutte le sessioni attive vengono revocate.</p></section>
+    </section>
+  </template>
+
+  <script src="/assets/app.js" defer></script>
+</body>
+</html>
