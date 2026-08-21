@@ -25,6 +25,7 @@ from basketball_ai.models.competition_training import (
 )
 from basketball_ai.models.production_training import (
     ProductionEnsembleModel,
+    _numeric_seasons,
     build_historical_snapshot as _build_historical_snapshot,
     metric_summary,
     season_year,
@@ -37,11 +38,47 @@ _VALID_POSITIONS = {
 }
 _STATE_FILE = "production_state.joblib"
 _ROLE_COLUMNS = ("ruolo_combinato", "ruolo_offensivo", "ruolo_difensivo")
+_POSITION_INDEX_ATTR = "_ai_model_position_index"
 
 
 def _normalise_position(value: Any) -> Optional[str]:
     text = str(value or "").strip().upper().replace(" ", "")
     return text if text in _VALID_POSITIONS else None
+
+
+def _position_index(
+    relations: pd.DataFrame,
+) -> Dict[int, Tuple[np.ndarray, List[str]]]:
+    """Build/cache player roster-position timelines for O(log n) lookups."""
+    if (
+        relations is None
+        or relations.empty
+        or "player_id" not in relations.columns
+        or "season" not in relations.columns
+        or "role" not in relations.columns
+    ):
+        return {}
+    cached = relations.attrs.get(_POSITION_INDEX_ATTR)
+    if isinstance(cached, dict):
+        return cached
+
+    rows = relations[["player_id", "season", "role"]].copy()
+    rows["_pid_int"] = rows["player_id"].map(
+        lambda value: _to_int(value) if pd.notna(value) else np.nan
+    )
+    rows["_season_year"] = _numeric_seasons(rows)
+    rows["_position"] = rows["role"].map(_normalise_position)
+    rows = rows.dropna(subset=["_pid_int", "_season_year", "_position"])
+
+    index: Dict[int, Tuple[np.ndarray, List[str]]] = {}
+    for pid, group in rows.groupby("_pid_int", sort=False):
+        ordered = group.sort_values("_season_year", kind="stable")
+        index[int(pid)] = (
+            ordered["_season_year"].astype(int).to_numpy(),
+            ordered["_position"].astype(str).tolist(),
+        )
+    relations.attrs[_POSITION_INDEX_ATTR] = index
+    return index
 
 
 def position_as_of(
@@ -51,25 +88,12 @@ def position_as_of(
     fallback: str = "PG",
 ) -> str:
     """Return the latest valid roster position known at/before ``season``."""
-    if relations is None or relations.empty or "player_id" not in relations.columns:
+    timeline = _position_index(relations).get(_to_int(player_id))
+    if timeline is None:
         return fallback
-    rows = relations[relations["player_id"].map(_to_int) == _to_int(player_id)].copy()
-    if rows.empty or "season" not in rows.columns:
-        return fallback
-    rows["_season_year"] = rows["season"].map(
-        lambda value: season_year(value) if pd.notna(value) else np.nan
-    )
-    rows = rows[
-        rows["_season_year"].notna()
-        & (rows["_season_year"] <= int(season))
-    ]
-    if rows.empty:
-        return fallback
-    for _, row in rows.sort_values("_season_year", ascending=False).iterrows():
-        position = _normalise_position(row.get("role"))
-        if position:
-            return position
-    return fallback
+    years, positions = timeline
+    index = int(np.searchsorted(years, int(season), side="right")) - 1
+    return positions[index] if index >= 0 else fallback
 
 
 def build_historical_snapshot(data: Dict[str, Any], source_season: int) -> Dict[str, Any]:
@@ -80,9 +104,7 @@ def build_historical_snapshot(data: Dict[str, Any], source_season: int) -> Dict[
     team_history = snapshot.get("team_season_stats")
     if team_history is not None and not team_history.empty:
         bounded = team_history.copy()
-        bounded["_season_year"] = bounded["season"].map(
-            lambda value: season_year(value) if pd.notna(value) else np.nan
-        )
+        bounded["_season_year"] = _numeric_seasons(bounded)
         bounded = bounded[
             bounded["_season_year"].notna()
             & (bounded["_season_year"] <= source_season)
@@ -90,21 +112,28 @@ def build_historical_snapshot(data: Dict[str, Any], source_season: int) -> Dict[
         snapshot["team_season_stats"] = bounded.reset_index(drop=True)
 
     relations = snapshot.get("team_player_relations", pd.DataFrame())
+    # Warm the index once. Every player lookup below and every strict prediction
+    # then becomes a binary search instead of a full roster-table scan.
+    _position_index(relations)
     players = snapshot.get("players")
     if players is not None and not players.empty:
         players = players.copy()
-        for index, row in players.iterrows():
+        positions = []
+        for row in players.to_dict("records"):
             pid = _to_int(row["id"])
-            players.at[index, "position"] = position_as_of(
-                pid,
-                relations,
-                source_season,
-                str(row.get("position", "PG") or "PG"),
+            positions.append(
+                position_as_of(
+                    pid,
+                    relations,
+                    source_season,
+                    str(row.get("position", "PG") or "PG"),
+                )
             )
+        players["position"] = positions
         snapshot["players"] = players
         snapshot["player_dict"] = {
-            _to_int(row["id"]): row.to_dict()
-            for _, row in players.iterrows()
+            _to_int(row["id"]): row
+            for row in players.to_dict("records")
         }
 
     teams = snapshot.get("teams")
@@ -116,8 +145,8 @@ def build_historical_snapshot(data: Dict[str, Any], source_season: int) -> Dict[
             teams["formation"] = ""
         snapshot["teams"] = teams
         snapshot["team_dict"] = {
-            _to_int(row["id"]): row.to_dict()
-            for _, row in teams.iterrows()
+            _to_int(row["id"]): row
+            for row in teams.to_dict("records")
         }
 
     snapshot["_as_of_season"] = source_season
@@ -134,16 +163,16 @@ class AsOfPositionPerformanceModel(CompetitionSeasonAheadPerformanceModel):
     def _allowed_role_vocabulary_data(data: Dict[str, Any]) -> Dict[str, Any]:
         """Hide role labels that first appear after the allowed source horizon."""
         stats = data["player_stats"].copy()
-        stats["_season_year"] = stats["season"].map(
-            lambda value: season_year(value) if pd.notna(value) else np.nan
-        )
+        stats["_season_year"] = _numeric_seasons(stats)
         target_years: set[int] = set()
         grouping = ["player_id"]
         if "league_id" in stats.columns:
             grouping.append("league_id")
         if "competition" in stats.columns:
             grouping.append("competition")
-        for _, group in stats.dropna(subset=["_season_year"]).groupby(grouping):
+        for _, group in stats.dropna(subset=["_season_year"]).groupby(
+            grouping, sort=False
+        ):
             years = {int(value) for value in group["_season_year"].tolist()}
             target_years.update(year + 1 for year in years if year + 1 in years)
         ordered_targets = sorted(target_years)
@@ -169,6 +198,8 @@ class AsOfPositionPerformanceModel(CompetitionSeasonAheadPerformanceModel):
         split_season: Optional[str] = None,
     ) -> Tuple[pd.DataFrame, np.ndarray]:
         self._position_relations = data.get("team_player_relations")
+        if self._position_relations is not None:
+            _position_index(self._position_relations)
         safe_data = self._allowed_role_vocabulary_data(data)
         self._role_vocabulary_cutoff = safe_data.get("_role_vocabulary_cutoff")
         return super().prepare_features(
@@ -536,19 +567,30 @@ def evaluate_target_season(
     target_season = int(target_season)
     source_season = target_season - 1
     snapshot = build_historical_snapshot(data, source_season)
+
     source_stats = snapshot["player_stats"].copy()
-    source_stats["_season_year"] = source_stats["season"].map(
-        lambda value: season_year(value) if pd.notna(value) else np.nan
+    source_stats["_season_year"] = _numeric_seasons(source_stats)
+    source_stats = source_stats[source_stats["_season_year"] == source_season].copy()
+    source_stats["_pid_int"] = source_stats["player_id"].map(_to_int)
+    source_stats["_lid_int"] = source_stats["league_id"].map(_to_int)
+    source_stats["_competition"] = source_stats["competition"].map(
+        normalize_competition
     )
+    prior_map: Dict[Tuple[int, int, str], float] = {
+        (int(row["_pid_int"]), int(row["_lid_int"]), str(row["_competition"])): float(row["rating"])
+        for row in source_stats.to_dict("records")
+        if pd.notna(row.get("rating"))
+    }
+
     target_stats = data["player_stats"].copy()
-    target_stats["_season_year"] = target_stats["season"].map(
-        lambda value: season_year(value) if pd.notna(value) else np.nan
-    )
+    target_stats["_season_year"] = _numeric_seasons(target_stats)
     target_stats = target_stats[target_stats["_season_year"] == target_season]
 
+    relations = snapshot.get("team_player_relations", pd.DataFrame())
+    _position_index(relations)
     records: List[Dict[str, Any]] = []
     ensemble.clear_cache()
-    for _, target in target_stats.iterrows():
+    for target in target_stats.to_dict("records"):
         if (
             pd.isna(target.get("player_id"))
             or pd.isna(target.get("team_id"))
@@ -561,13 +603,8 @@ def evaluate_target_season(
         competition = normalize_competition(target.get("competition"))
         if competition not in ensemble._competition_encoding_state:
             continue
-        prior = source_stats[
-            (source_stats["player_id"].map(_to_int) == pid)
-            & (source_stats["league_id"].map(_to_int) == league_id)
-            & (source_stats["competition"].map(normalize_competition) == competition)
-            & (source_stats["_season_year"] == source_season)
-        ]
-        if prior.empty:
+        prior_rating = prior_map.get((pid, league_id, competition))
+        if prior_rating is None:
             continue
         try:
             scoped = scope_prediction_context(
@@ -599,10 +636,10 @@ def evaluate_target_season(
                 "base_prediction": float(result.base_rating),
                 "confidence_low": float(result.confidence_low),
                 "confidence_high": float(result.confidence_high),
-                "persistence_prediction": float(prior.iloc[-1]["rating"]),
+                "persistence_prediction": prior_rating,
                 "position": position_as_of(
                     pid,
-                    snapshot.get("team_player_relations", pd.DataFrame()),
+                    relations,
                     source_season,
                     str(snapshot["player_dict"][pid].get("position", "PG")),
                 ),
@@ -717,14 +754,3 @@ class StrictWhatIfEngine(_WhatIfEngine):
             )
         return points
 
-
-__all__ = [
-    "AsOfPositionPerformanceModel",
-    "StrictProductionEnsembleModel",
-    "StrictWhatIfEngine",
-    "build_historical_snapshot",
-    "evaluate_target_season",
-    "metric_summary",
-    "position_as_of",
-    "season_year",
-]
