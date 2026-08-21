@@ -263,10 +263,17 @@ async def test_profile_test_and_load(monkeypatch):
     assert tested["ok"] is True
 
     data = _data()
-    monkeypatch.setattr(admin, "load_all_data", lambda url, schema: data)
+    received = {}
+
+    def fake_load_all_data(url, schema, *, include_optional=None):
+        received.update(url=url, schema=schema, include_optional=include_optional)
+        return data
+
+    monkeypatch.setattr(admin, "load_all_data", fake_load_all_data)
     loaded = await admin.load_database_profile("production", {"username": "admin", "role": "admin", "token": "x"})
     assert loaded["summary"]["player_rows"] == 5
     assert admin.STATE.active_profile == "production"
+    assert received["include_optional"] is False
 
     with pytest.raises(HTTPException):
         await admin.test_database_profile("missing", {"username": "admin", "role": "admin", "token": "x"})
