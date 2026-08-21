@@ -357,6 +357,29 @@ class StrictProductionEnsembleModel(ProductionEnsembleModel):
             if quantile is not None:
                 self._conformal_by_competition[competition] = quantile
 
+    def _records_with_calibrated_intervals(
+        self,
+        records: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """Apply fitted conformal widths without rerunning model predictions."""
+        calibrated: List[Dict[str, Any]] = []
+        for row in records:
+            updated = dict(row)
+            competition = normalize_competition(updated.get("competition"))
+            half_width = self._conformal_by_competition.get(
+                competition, self._conformal_q_hi
+            )
+            if half_width is not None:
+                prediction = float(updated["prediction"])
+                updated["confidence_low"] = float(
+                    np.clip(prediction - float(half_width), 0.0, 10.0)
+                )
+                updated["confidence_high"] = float(
+                    np.clip(prediction + float(half_width), 0.0, 10.0)
+                )
+            calibrated.append(updated)
+        return calibrated
+
     def train(self, data: Dict[str, Any]) -> Dict[str, Any]:
         from basketball_ai.features.team_features import calibrate_style_bounds
         from basketball_ai.models.age_curve import reset_fitted_params
@@ -403,8 +426,8 @@ class StrictProductionEnsembleModel(ProductionEnsembleModel):
             raise RuntimeError("Final-ensemble conformal calibration failed")
         self._calibrate_competitions(calibration_records)
 
-        calibrated_records = evaluate_target_season(
-            self, data, calibration_season
+        calibrated_records = self._records_with_calibrated_intervals(
+            calibration_records
         )
         metrics["final_calibration"] = {
             "target_season": calibration_season,
