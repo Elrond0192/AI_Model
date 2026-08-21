@@ -58,7 +58,7 @@ curl -fsS http://127.0.0.1:8501/healthz
 
 Production access is through `https://admin-ai.bballstat.com`. The main flow is:
 
-1. **Data Sources** – select the `production` profile, test PostgreSQL, then **Select and load**. Loading fails closed if the canonical source contract cannot be read.
+1. **Data Sources** – select the `production` profile, test PostgreSQL, then **Select and load**. This loads only the core forecasting contract, so it remains fast even when possession-level simulation feeds are large. Loading fails closed if the canonical source contract cannot be read.
 2. **Training Runs** – inspect available seasons/competitions and start a leakage-safe candidate run. Training includes the exact production ensemble plus walk-forward backtest.
 3. **Backtests** – inspect OOT RMSE/MAE/coverage globally and by competition.
 4. **Model Registry** – review the candidate and explicitly confirm promotion gates before promoting. Rollback is available when a previous production run exists.
