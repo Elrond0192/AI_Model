@@ -494,7 +494,15 @@ async def load_database_profile(name: str, user: dict[str, str] = Depends(_csrf)
     if profile is None:
         raise HTTPException(status_code=404, detail="Profilo non trovato")
     try:
-        loaded = await asyncio.to_thread(load_all_data, profile_url(name), profile.get("source_schema", "ai_source"))
+        # The admin load step prepares the core forecasting dataset.  Simulation
+        # feeds contain possession-level data and can be orders of magnitude
+        # larger; they are deliberately loaded only by consumers that need them.
+        loaded = await asyncio.to_thread(
+            load_all_data,
+            profile_url(name),
+            profile.get("source_schema", "ai_source"),
+            include_optional=False,
+        )
     except Exception as exc:
         raise HTTPException(status_code=400, detail=_safe_error(exc)) from exc
     summary = _summary(loaded)
