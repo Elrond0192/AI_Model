@@ -366,10 +366,10 @@ def load_all_data(data_dir: str) -> Dict[str, Any]:
     # Convert hex ID columns in stats_df and rels_df
     for col in ["player_id", "team_id", "league_id"]:
         if col in stats_df.columns:
-            stats_df[col] = stats_df[col].apply(lambda v: None if pd.isna(v) else _to_int(v))
+            stats_df[col] = stats_df[col].map(lambda v: None if pd.isna(v) else _to_int(v))
     for col in ["team_id", "player_id"]:
         if col in rels_df.columns:
-            rels_df[col] = rels_df[col].apply(lambda v: None if pd.isna(v) else _to_int(v))
+            rels_df[col] = rels_df[col].map(lambda v: None if pd.isna(v) else _to_int(v))
 
     # Ensure competition column exists (default "RS" for legacy CSV files)
     if "competition" not in stats_df.columns:
@@ -382,12 +382,18 @@ def load_all_data(data_dir: str) -> Dict[str, Any]:
     # Fill missing current_team_id / current_league_id from most recent stats
     _fill_current_team_league(players_df, stats_df)
 
-    league_dict: Dict[int, dict] = {_to_int(r["id"]): r.to_dict() for _, r in leagues_df.iterrows()}
-    team_dict:   Dict[int, dict] = {_to_int(r["id"]): r.to_dict() for _, r in teams_df.iterrows()}
-    player_dict: Dict[int, dict] = {_to_int(r["id"]): r.to_dict() for _, r in players_df.iterrows()}
+    league_dict: Dict[int, dict] = {
+        _to_int(row["id"]): row for row in leagues_df.to_dict("records")
+    }
+    team_dict: Dict[int, dict] = {
+        _to_int(row["id"]): row for row in teams_df.to_dict("records")
+    }
+    player_dict: Dict[int, dict] = {
+        _to_int(row["id"]): row for row in players_df.to_dict("records")
+    }
 
     league_teams: Dict[int, List[int]] = {}
-    for _, t in teams_df.iterrows():
+    for t in teams_df.to_dict("records"):
         league_teams.setdefault(_to_int(t["league_id"]), []).append(_to_int(t["id"]))
 
     data = {

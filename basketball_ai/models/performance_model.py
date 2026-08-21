@@ -419,6 +419,7 @@ class PerformanceModel:
         player_stats_history: pd.DataFrame,
         extra_metrics: Optional[List[str]] = None,
         league_max_games: Optional[Dict[int, int]] = None,
+        precomputed_history: Optional[Dict[str, float]] = None,
     ) -> Dict[str, float]:
         """Build a feature row from a player-stats row.
 
@@ -435,6 +436,10 @@ class PerformanceModel:
             extra_metrics:        Additional METRIC_CATALOG columns to include.
             league_max_games:     Optional ``{league_id: max_games}`` lookup for
                                   league-aware ``durability_score`` normalisation.
+            precomputed_history:  Optional cumulative history values produced by
+                                  :meth:`_precompute_history_features`.  Training
+                                  uses this O(1) lookup while inference keeps the
+                                  original DataFrame-based path.
         """
         if extra_metrics is None:
             extra_metrics = []
@@ -447,6 +452,12 @@ class PerformanceModel:
 
         def hist_avg(col: str, fallback: float = 0.0) -> float:
             """Historical average of *col* from career so far; fall back to current row."""
+            if precomputed_history is not None:
+                key = f"mean:{col}"
+                if key in precomputed_history:
+                    return precomputed_history[key]
+                v = stat_row.get(col, fallback)
+                return fallback if pd.isna(v) else float(v)
             if not player_stats_history.empty and col in player_stats_history.columns:
                 vals = player_stats_history[col].dropna().tolist()
                 if vals:
@@ -455,21 +466,28 @@ class PerformanceModel:
             return fallback if pd.isna(v) else float(v)
 
         # Career stats up to this season
-        ratings = player_stats_history["rating"].tolist()
-        last3 = ratings[-3:]
-        weights = ([0.2, 0.3, 0.5] if len(last3) == 3
-                   else ([0.4, 0.6] if len(last3) == 2 else [1.0]))
-        form_score = sum(r * w for r, w in zip(last3, weights))
-        mean_r = float(np.mean(ratings)) if ratings else 6.5
-        std_r  = float(np.std(ratings))  if len(ratings) > 1 else 0.0
-        consistency = float(np.clip(1.0 - (std_r / mean_r) if mean_r > 0 else 0.0, 0, 1))
-        trajectory = (
-            float(np.polyfit(np.arange(len(ratings), dtype=float), ratings, 1)[0])
-            if len(ratings) >= 2 else 0.0
-        )
+        if precomputed_history is not None:
+            form_score = precomputed_history["form_score"]
+            consistency = precomputed_history["consistency_score"]
+            trajectory = precomputed_history["career_trajectory"]
+        else:
+            ratings = player_stats_history["rating"].tolist()
+            last3 = ratings[-3:]
+            weights = ([0.2, 0.3, 0.5] if len(last3) == 3
+                       else ([0.4, 0.6] if len(last3) == 2 else [1.0]))
+            form_score = sum(r * w for r, w in zip(last3, weights))
+            mean_r = float(np.mean(ratings)) if ratings else 6.5
+            std_r  = float(np.std(ratings))  if len(ratings) > 1 else 0.0
+            consistency = float(np.clip(1.0 - (std_r / mean_r) if mean_r > 0 else 0.0, 0, 1))
+            trajectory = (
+                float(np.polyfit(np.arange(len(ratings), dtype=float), ratings, 1)[0])
+                if len(ratings) >= 2 else 0.0
+            )
 
         # TS% efficiency trend over career (slope of ts_pct per season)
-        if (
+        if precomputed_history is not None:
+            ts_trend = precomputed_history["ts_efficiency_trend"]
+        elif (
             not player_stats_history.empty
             and "ts_pct" in player_stats_history.columns
             and len(player_stats_history) >= 2
@@ -480,7 +498,9 @@ class PerformanceModel:
             ts_trend = 0.0
 
         # Durability: average fraction of league max games played (league-aware)
-        if not player_stats_history.empty and "games_played" in player_stats_history.columns:
+        if precomputed_history is not None:
+            durability = precomputed_history["durability_score"]
+        elif not player_stats_history.empty and "games_played" in player_stats_history.columns:
             gp_vals = player_stats_history["games_played"].dropna()
             if league_max_games and "league_id" in player_stats_history.columns:
                 dur_list = [
@@ -612,10 +632,15 @@ class PerformanceModel:
         }
 
         # PO vs RS delta and PO games played from historical data
-        po_feats = compute_po_features(player_stats_history)
-        row["po_vs_rs_delta"]  = po_feats["po_vs_rs_delta"]
-        row["po_games_played"] = po_feats["po_games_played"]
-        row["has_po_history"]  = po_feats["has_po_history"]
+        if precomputed_history is not None:
+            row["po_vs_rs_delta"] = precomputed_history["po_vs_rs_delta"]
+            row["po_games_played"] = precomputed_history["po_games_played"]
+            row["has_po_history"] = precomputed_history["has_po_history"]
+        else:
+            po_feats = compute_po_features(player_stats_history)
+            row["po_vs_rs_delta"]  = po_feats["po_vs_rs_delta"]
+            row["po_games_played"] = po_feats["po_games_played"]
+            row["has_po_history"]  = po_feats["has_po_history"]
 
         # Extra metrics requested by the caller
         for col in extra_metrics:
@@ -628,13 +653,197 @@ class PerformanceModel:
             if info.use_per36:
                 row[f"{col}_per_36"] = per36(col)
             else:
-                if col in player_stats_history.columns:
+                history_key = f"mean:{col}"
+                if precomputed_history is not None and history_key in precomputed_history:
+                    row[f"avg_{col}"] = precomputed_history[history_key]
+                elif precomputed_history is not None:
+                    row[f"avg_{col}"] = float(stat_row.get(col, 0))
+                elif col in player_stats_history.columns:
                     vals = player_stats_history[col].dropna().tolist()
                     row[f"avg_{col}"] = float(np.mean(vals)) if vals else float(stat_row.get(col, 0))
                 else:
                     row[f"avg_{col}"] = float(stat_row.get(col, 0))
 
         return row
+
+    @staticmethod
+    def _precompute_history_features(
+        grp: pd.DataFrame,
+        extra_metrics: Optional[List[str]] = None,
+        league_max_games: Optional[Dict[int, int]] = None,
+    ) -> List[Dict[str, float]]:
+        """Compute every career-to-date aggregate in one linear pass.
+
+        The returned item at position ``i`` represents the exact history
+        ``grp.iloc[:i + 1]``.  ``prepare_features`` remaps each source row to
+        the last row of its season, preserving the previous ``season <=``
+        semantics when a player has multiple competition rows in one season.
+        """
+        if extra_metrics is None:
+            extra_metrics = []
+        size = len(grp)
+        if size == 0:
+            return []
+
+        def cumulative_mean(col: str) -> Optional[np.ndarray]:
+            if col not in grp.columns:
+                return None
+            values = pd.to_numeric(grp[col], errors="coerce").to_numpy(dtype=float)
+            valid = ~np.isnan(values)
+            counts = np.cumsum(valid)
+            sums = np.cumsum(np.where(valid, values, 0.0))
+            return np.divide(
+                sums,
+                counts,
+                out=np.full(size, np.nan, dtype=float),
+                where=counts > 0,
+            )
+
+        def cumulative_slope(values: np.ndarray, dropna: bool) -> np.ndarray:
+            """OLS slope for every prefix using sufficient statistics."""
+            valid = ~np.isnan(values) if dropna else np.ones(size, dtype=bool)
+            counts = np.cumsum(valid).astype(float)
+            x = np.where(valid, counts - 1.0, 0.0)
+            y = np.where(valid, values, 0.0) if dropna else values
+            sum_x = np.cumsum(x)
+            sum_x2 = np.cumsum(x * x)
+            sum_y = np.cumsum(y)
+            sum_xy = np.cumsum(x * y)
+            denominator = counts * sum_x2 - sum_x * sum_x
+            slope = np.zeros(size, dtype=float)
+            np.divide(
+                counts * sum_xy - sum_x * sum_y,
+                denominator,
+                out=slope,
+                where=counts >= 2,
+            )
+            return slope
+
+        mean_cols = {
+            "per", "ts_pct", "usg_pct", "obpm", "dbpm", "reb_pct",
+            "spm", "raptor_off", "raptor_def", "lebron_off", "lebron_def",
+            "gm_sc", "fic", "ows", "dws", "scoring_efficiency",
+            "hustle_index", "foul_drawing_rate", "tov_pct", "ast_pct",
+            "orb_pct", "drb_pct", "clutch_ts_pct", "clutch_net_rtg",
+            "net_rtg_diff", "ortg_diff", "pts_per_40", "ast_per_40",
+            "starter_pct",
+        }
+        mean_cols.update(
+            col for col in extra_metrics
+            if col in METRIC_CATALOG and not METRIC_CATALOG[col].use_per36
+        )
+        cumulative_means = {
+            col: values
+            for col in mean_cols
+            if (values := cumulative_mean(col)) is not None
+        }
+
+        ratings = pd.to_numeric(grp["rating"], errors="coerce").to_numpy(dtype=float)
+        n = np.arange(1, size + 1, dtype=float)
+        rating_sum = np.cumsum(ratings)
+        rating_sum_sq = np.cumsum(ratings * ratings)
+        rating_mean = rating_sum / n
+        rating_variance = np.maximum(rating_sum_sq / n - rating_mean * rating_mean, 0.0)
+        rating_std = np.sqrt(rating_variance)
+        consistency = np.where(
+            rating_mean > 0,
+            np.clip(1.0 - rating_std / rating_mean, 0.0, 1.0),
+            0.0,
+        )
+        consistency[0] = np.clip(1.0 if rating_mean[0] > 0 else 0.0, 0.0, 1.0)
+
+        form = ratings.copy()
+        if size >= 2:
+            form[1] = 0.4 * ratings[0] + 0.6 * ratings[1]
+        if size >= 3:
+            form[2:] = 0.2 * ratings[:-2] + 0.3 * ratings[1:-1] + 0.5 * ratings[2:]
+        trajectory = cumulative_slope(ratings, dropna=False)
+
+        if "ts_pct" in grp.columns:
+            ts_values = pd.to_numeric(grp["ts_pct"], errors="coerce").to_numpy(dtype=float)
+            ts_trend = cumulative_slope(ts_values, dropna=True)
+        else:
+            ts_trend = np.zeros(size, dtype=float)
+
+        if "games_played" in grp.columns:
+            games = pd.to_numeric(grp["games_played"], errors="coerce").to_numpy(dtype=float)
+            valid_games = ~np.isnan(games)
+            game_counts = np.cumsum(valid_games)
+            if league_max_games and "league_id" in grp.columns:
+                league_ids = grp["league_id"].to_numpy()
+                denominators = np.fromiter(
+                    (
+                        max(1, league_max_games.get(
+                            _safe_league_id(lid), LEAGUE_MAX_GAMES_DEFAULT,
+                        ))
+                        for lid in league_ids
+                    ),
+                    dtype=float,
+                    count=size,
+                )
+                game_values = games / denominators
+            else:
+                game_values = games / LEAGUE_MAX_GAMES_DEFAULT
+            game_sums = np.cumsum(np.where(valid_games, game_values, 0.0))
+            durability = np.divide(
+                game_sums,
+                game_counts,
+                out=np.full(size, 0.5, dtype=float),
+                where=game_counts > 0,
+            )
+            durability = np.clip(durability, 0.0, 1.0)
+        else:
+            current_games = pd.to_numeric(
+                grp.get("games_played", pd.Series(40, index=grp.index)), errors="coerce"
+            ).fillna(40).to_numpy(dtype=float)
+            if league_max_games and "league_id" in grp.columns:
+                league_ids = grp["league_id"].to_numpy()
+                denominators = np.fromiter(
+                    (max(1, league_max_games.get(_safe_league_id(lid), LEAGUE_MAX_GAMES_DEFAULT)) for lid in league_ids),
+                    dtype=float,
+                    count=size,
+                )
+            else:
+                denominators = np.full(size, LEAGUE_MAX_GAMES_DEFAULT, dtype=float)
+            durability = np.clip(current_games / denominators, 0.0, 1.0)
+
+        if "competition" in grp.columns:
+            competitions = grp["competition"].astype(str).to_numpy()
+            valid_rating = ~np.isnan(ratings)
+            rs = competitions == "RS"
+            po = competitions == "PO"
+            rs_count = np.cumsum(rs & valid_rating)
+            po_count = np.cumsum(po & valid_rating)
+            rs_sum = np.cumsum(np.where(rs & valid_rating, ratings, 0.0))
+            po_sum = np.cumsum(np.where(po & valid_rating, ratings, 0.0))
+            rs_mean = np.divide(rs_sum, rs_count, out=np.full(size, np.nan), where=rs_count > 0)
+            po_mean = np.divide(po_sum, po_count, out=np.full(size, np.nan), where=po_count > 0)
+            po_vs_rs = np.where(np.isnan(rs_mean) | np.isnan(po_mean), 0.0, po_mean - rs_mean)
+            if "games_played" in grp.columns:
+                po_games = np.cumsum(np.where(po & valid_games, games, 0.0))
+            else:
+                po_games = np.zeros(size, dtype=float)
+        else:
+            po_vs_rs = np.zeros(size, dtype=float)
+            po_games = np.zeros(size, dtype=float)
+
+        result: List[Dict[str, float]] = []
+        for index in range(size):
+            item = {
+                "form_score": float(form[index]),
+                "consistency_score": float(consistency[index]),
+                "career_trajectory": float(trajectory[index]),
+                "ts_efficiency_trend": float(ts_trend[index]),
+                "durability_score": float(durability[index]),
+                "po_vs_rs_delta": float(po_vs_rs[index]),
+                "po_games_played": float(po_games[index]),
+                "has_po_history": 1.0 if po_games[index] > 0 else 0.0,
+            }
+            for col, values in cumulative_means.items():
+                if not np.isnan(values[index]):
+                    item[f"mean:{col}"] = float(values[index])
+            result.append(item)
+        return result
 
     def prepare_features(
         self,
@@ -705,7 +914,7 @@ class PerformanceModel:
             default=_dt.now(timezone.utc).year,
         )
         birth_year_map: Dict[int, int] = {}
-        for _, player in players.iterrows():
+        for player in players.to_dict("records"):
             pid = _to_int(player["id"])
             birth_date = player.get("birth_date", player.get("date_of_birth"))
             try:
@@ -718,7 +927,7 @@ class PerformanceModel:
                 birth_year_map[pid] = latest_data_year - int(age)
         position_map: Dict[int, str] = {
             _to_int(row["id"]): str(row["position"])
-            for _, row in players.iterrows()
+            for row in players.to_dict("records")
         }
 
         rows:    List[Dict[str, float]] = []
@@ -734,7 +943,7 @@ class PerformanceModel:
             if "max_games" in leagues_df.columns:
                 league_max_games = {
                     int(_to_int(r["id"])): int(r["max_games"])
-                    for _, r in leagues_df.iterrows()
+                    for r in leagues_df.to_dict("records")
                     if r.get("max_games") and not (isinstance(r["max_games"], float) and np.isnan(r["max_games"]))
                 }
             elif "name" in leagues_df.columns:
@@ -742,7 +951,7 @@ class PerformanceModel:
                     int(_to_int(r["id"])): LEAGUE_MAX_GAMES_BY_NAME.get(
                         str(r["name"]).strip(), LEAGUE_MAX_GAMES_DEFAULT
                     )
-                    for _, r in leagues_df.iterrows()
+                    for r in leagues_df.to_dict("records")
                 }
 
         for pid, grp in player_stats.groupby("player_id"):
@@ -754,10 +963,23 @@ class PerformanceModel:
                 continue
             # A sample uses information available at season t to forecast the
             # observed rating at t+1.  The first season has no prior state.
-            season_rows = list(grp.iterrows())
-            for row_index in range(1, len(season_rows)):
-                _, source = season_rows[row_index - 1]
-                _, target = season_rows[row_index]
+            cumulative_history = self._precompute_history_features(
+                grp,
+                extra_metrics=extra_metrics,
+                league_max_games=league_max_games,
+            )
+            # The former filter included every row whose season equalled the
+            # source season, including later PO/RS rows.  Map each position to
+            # the final position of that season to keep that behaviour exactly.
+            positions = pd.Series(np.arange(len(grp), dtype=int))
+            season_keys = pd.Series(grp["season"].to_numpy())
+            history_end_positions = positions.groupby(
+                season_keys, dropna=False,
+            ).transform("max").to_numpy(dtype=int)
+            empty_history = grp.iloc[:0]
+            for row_index in range(1, len(grp)):
+                source = grp.iloc[row_index - 1]
+                target = grp.iloc[row_index]
                 season_str = str(target["season"])
                 try:
                     year = int(season_str.split("-")[0])
@@ -766,8 +988,16 @@ class PerformanceModel:
                 age = year - by
                 if age < 14 or age > 45:
                     continue
-                history_so_far = grp[grp["season"] <= source["season"]]
-                rows.append(self._build_row(source, age - 1, pos, history_so_far, extra_metrics=extra_metrics, league_max_games=league_max_games))
+                history_features = cumulative_history[history_end_positions[row_index - 1]]
+                rows.append(self._build_row(
+                    source,
+                    age - 1,
+                    pos,
+                    empty_history,
+                    extra_metrics=extra_metrics,
+                    league_max_games=league_max_games,
+                    precomputed_history=history_features,
+                ))
                 targets.append(float(target["rating"]))
                 season_years.append(year)
 
@@ -1011,4 +1241,3 @@ class PerformanceModel:
         self.is_trained         = True
         self._shap_explainer    = None
         logger.info("[PerformanceModel] Loaded from %s", path)
-

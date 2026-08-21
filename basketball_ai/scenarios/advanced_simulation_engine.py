@@ -196,7 +196,9 @@ class AdvancedSimulationEngine:
                 mean[metric] += _finite(delta)
 
         peers = self._peer_rows(league_id, competition, season)
-        peer_boxes = pd.DataFrame([self._derive_box(r) for _, r in peers.iterrows()])
+        peer_boxes = pd.DataFrame([
+            self._derive_box(row) for row in peers.to_dict("records")
+        ])
         metrics = [m for m in BOX_METRICS if m in mean]
         if len(peer_boxes) >= 8:
             scales = peer_boxes[metrics].apply(pd.to_numeric, errors="coerce").std().fillna(0.0)
@@ -354,7 +356,7 @@ class AdvancedSimulationEngine:
                 & (stints["defense_player_id"].map(_to_int) == _to_int(defender_id))
             )
             pair = stints[mask]
-            for _, row in pair.iterrows():
+            for row in pair.to_dict("records"):
                 exposures.append({"possessions": _finite(row.get("possessions")), "assignment_probability": _finite(row.get("assignment_probability"), 0.5), "points_allowed": _finite(row.get("points_allowed")), "turnovers_forced": _finite(row.get("turnovers_forced"))})
         if not pbp.empty and {"offensive_player_id", "defender_id"}.issubset(pbp.columns):
             pair = pbp[(pbp["offensive_player_id"].map(_to_int) == _to_int(offense_id)) & (pbp["defender_id"].map(_to_int) == _to_int(defender_id))]
@@ -411,8 +413,15 @@ class AdvancedSimulationEngine:
             method = "observed_shot_zone_counterfactual"
         if profiles.empty:
             raise ValueError("No shot profile is available")
-        attempts = {str(r["zone"]).lower(): _finite(r.get("attempts")) for _, r in profiles.iterrows()}
-        accuracy = {str(r["zone"]).lower(): _ratio(r.get("fg_pct"), .35) for _, r in profiles.iterrows()}
+        profile_records = profiles.to_dict("records")
+        attempts = {
+            str(row["zone"]).lower(): _finite(row.get("attempts"))
+            for row in profile_records
+        }
+        accuracy = {
+            str(row["zone"]).lower(): _ratio(row.get("fg_pct"), .35)
+            for row in profile_records
+        }
         total = max(sum(attempts.values()), 1.0)
         baseline_points = sum(attempts[z] * accuracy[z] * (3 if "three" in z else 2) for z in attempts)
         applied: list[dict[str, Any]] = []

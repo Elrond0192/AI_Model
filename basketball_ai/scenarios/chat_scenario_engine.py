@@ -308,9 +308,10 @@ class ChatScenarioEngine:
         rows = self._player_rows(players[0], source_league, spec["competition"], int(spec["season"]))
         if rows.empty:
             raise ValueError("No player history is available")
-        series = []
-        for _, row in rows.iterrows():
-            series.append({"season": int(row["_year"]), **_serialise(row, _PLAYER_METRICS)})
+        series = [
+            {"season": int(row["_year"]), **_serialise(row, _PLAYER_METRICS)}
+            for row in rows.to_dict("records")
+        ]
         first, last = rows.iloc[0], rows.iloc[-1]
         return {
             "result": {
@@ -332,7 +333,10 @@ class ChatScenarioEngine:
         rows = self._team_rows(teams[0], source_league, spec["competition"], int(spec["season"]))
         if rows.empty:
             raise ValueError("No team history is available")
-        series = [{"season": int(row["_year"]), **_serialise(row, _TEAM_METRICS)} for _, row in rows.iterrows()]
+        series = [
+            {"season": int(row["_year"]), **_serialise(row, _TEAM_METRICS)}
+            for row in rows.to_dict("records")
+        ]
         return {
             "result": {"team": self._team_name(teams[0]), "competition": normalize_competition(spec["competition"]), "series": series},
             "evidence": [{"type": "seasons", "count": len(series)}],
@@ -426,25 +430,39 @@ class ChatScenarioEngine:
         stats["_year"] = stats["season"].map(_year)
         stats["_comp"] = stats["competition"].map(normalize_competition)
         stats = stats[stats["_year"] <= int(through_season) + 1]
-        deltas: list[float] = []
-        for _, group in stats.groupby("player_id"):
-            source_rows = group[
-                (group["league_id"].map(_to_int) == _to_int(source_league))
-                & (group["_comp"] == source_comp)
-            ]
-            target_rows = group[
-                (group["league_id"].map(_to_int) == _to_int(target_league))
-                & (group["_comp"] == target_comp)
-            ]
-            if source_rows.empty or target_rows.empty:
-                continue
-            targets_by_year = {int(row["_year"]): row for _, row in target_rows.iterrows()}
-            for _, source in source_rows.iterrows():
-                target = targets_by_year.get(int(source["_year"]) + 1)
-                if target is None or pd.isna(source.get("rating")) or pd.isna(target.get("rating")):
-                    continue
-                deltas.append(_finite(target["rating"]) - _finite(source["rating"]))
-        return deltas
+        stats["_pid_int"] = stats["player_id"].map(_to_int)
+        stats["_league_int"] = stats["league_id"].map(_to_int)
+        stats["_row_order"] = np.arange(len(stats), dtype=int)
+        source_rows = stats[
+            (stats["_league_int"] == _to_int(source_league))
+            & (stats["_comp"] == source_comp)
+        ][["_pid_int", "_year", "rating", "_row_order"]].copy()
+        target_rows = stats[
+            (stats["_league_int"] == _to_int(target_league))
+            & (stats["_comp"] == target_comp)
+        ][["_pid_int", "_year", "rating", "_row_order"]].copy()
+        if source_rows.empty or target_rows.empty:
+            return []
+
+        # The legacy per-player dict retained the last target row for a year.
+        target_rows = target_rows.drop_duplicates(
+            ["_pid_int", "_year"], keep="last"
+        ).rename(columns={"_year": "_target_year", "rating": "_target_rating"})
+        source_rows["_target_year"] = source_rows["_year"] + 1
+        paired = source_rows.merge(
+            target_rows[["_pid_int", "_target_year", "_target_rating"]],
+            on=["_pid_int", "_target_year"],
+            how="inner",
+            sort=False,
+            validate="many_to_one",
+        )
+        paired["_source_rating"] = pd.to_numeric(paired["rating"], errors="coerce")
+        paired["_target_rating"] = pd.to_numeric(
+            paired["_target_rating"], errors="coerce"
+        )
+        paired = paired.dropna(subset=["_source_rating", "_target_rating"])
+        paired = paired.sort_values(["_pid_int", "_row_order"], kind="stable")
+        return (paired["_target_rating"] - paired["_source_rating"]).astype(float).tolist()
 
     def _target_context_score(self, player_id: int, team_id: int, target_league: int, competition: str, season: int) -> tuple[float, dict[str, float]]:
         snapshot = build_historical_snapshot(self.data, season)
@@ -811,7 +829,11 @@ class ChatScenarioEngine:
             & (frame["competition"].map(normalize_competition) == competition)
             & (frame["_year"] == season)
         ]
-        result = [(_to_int(row["player_id"]), _finite(row.get("rating"))) for _, row in rows.iterrows() if pd.notna(row.get("rating"))]
+        valid = rows.loc[rows["rating"].notna(), ["player_id", "rating"]]
+        result = [
+            (_to_int(player_id), _finite(rating))
+            for player_id, rating in valid.itertuples(index=False, name=None)
+        ]
         return sorted(result, key=lambda item: item[1], reverse=True)
 
     def _team_impact_slope(self, league_id: int, competition: str, through_season: int) -> tuple[float | None, int]:
@@ -824,7 +846,7 @@ class ChatScenarioEngine:
         teams = teams[(teams["league_id"].map(_to_int) == _to_int(league_id)) & (teams["competition"].map(normalize_competition) == competition) & (teams["_year"] <= through_season)]
         stats = stats[(stats["league_id"].map(_to_int) == _to_int(league_id)) & (stats["competition"].map(normalize_competition) == competition) & (stats["_year"] <= through_season)]
         samples: list[tuple[float, float]] = []
-        for _, team in teams.iterrows():
+        for team in teams.to_dict("records"):
             if pd.isna(team.get("net_rtg")):
                 continue
             roster = stats[(stats["team_id"].map(_to_int) == _to_int(team["team_id"])) & (stats["_year"] == int(team["_year"]))]
@@ -928,7 +950,7 @@ class ChatScenarioEngine:
         candidates = self.data.get("teams", pd.DataFrame())
         candidates = candidates[candidates["league_id"].map(_to_int) == _to_int(target_league)]
         results = []
-        for _, row in candidates.head(80).iterrows():
+        for row in candidates.head(80).to_dict("records"):
             tid = _to_int(row["id"])
             try:
                 analysis = self._player_team(spec, players, [tid], source_league, target_league)
@@ -985,7 +1007,14 @@ class ChatScenarioEngine:
         distances = np.linalg.norm(z.to_numpy(dtype=float) - target, axis=1)
         rows = rows.assign(_distance=distances)
         rows = rows[rows["player_id"].map(_to_int) != _to_int(players[0])].sort_values("_distance")
-        similar = [{"player": self._player_name(_to_int(row["player_id"])), "distance": round(float(row["_distance"]), 3), "rating": round(_finite(row.get("rating")), 3)} for _, row in rows.head(int(spec.get("top_n", 5))).iterrows()]
+        similar = [
+            {
+                "player": self._player_name(_to_int(row["player_id"])),
+                "distance": round(float(row["_distance"]), 3),
+                "rating": round(_finite(row.get("rating")), 3),
+            }
+            for row in rows.head(int(spec.get("top_n", 5))).to_dict("records")
+        ]
         return {"result": {"player": self._player_name(players[0]), "competition": competition, "similar_players": similar}, "evidence": [{"type": "comparison_pool", "count": len(rows)}], "support": {"method": "standardised_player_profile_distance", "samples": len(rows), "confidence": _confidence(len(rows))}, "limitations": []}
 
     def _age_trajectory(self, spec, players, teams, source_league, target_league):
