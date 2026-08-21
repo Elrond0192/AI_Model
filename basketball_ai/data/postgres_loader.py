@@ -7,6 +7,7 @@ competition instead of collapsing PO/CUP/TOT into a single season row.
 """
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import os
 import re
 from typing import Any
@@ -120,6 +121,44 @@ def _load_optional_view(engine: Engine, schema: str, name: str) -> pd.DataFrame:
         return pd.read_sql(text(f'SELECT * FROM "{schema}"."{name}"'), engine)
     except Exception:
         return pd.DataFrame()
+
+
+def _load_views(
+    engine: Engine,
+    schema: str,
+    views: dict[str, str],
+    *,
+    optional: bool = False,
+) -> dict[str, pd.DataFrame]:
+    """Load independent canonical views concurrently.
+
+    PostgreSQL views are independent and SQLAlchemy engines are thread-safe.
+    A small worker pool lets the database use multiple host cores while keeping
+    memory pressure bounded on the admin container.
+    """
+    if not views:
+        return {}
+    try:
+        configured = int(os.getenv("POSTGRES_LOAD_WORKERS", "4"))
+    except ValueError:
+        configured = 4
+    workers = max(1, min(configured, len(views)))
+    loader = _load_optional_view if optional else _load_view
+    if workers == 1:
+        return {
+            key: loader(engine, schema, view)
+            for key, view in views.items()
+        }
+
+    loaded: dict[str, pd.DataFrame] = {}
+    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="ai-pg-load") as pool:
+        futures = {
+            pool.submit(loader, engine, schema, view): key
+            for key, view in views.items()
+        }
+        for future in as_completed(futures):
+            loaded[futures[future]] = future.result()
+    return {key: loaded[key] for key in views}
 
 
 def _validate_contract(data: dict[str, pd.DataFrame], schema: str) -> None:
@@ -270,20 +309,33 @@ def _build_lookups(data: dict[str, pd.DataFrame]) -> None:
 def load_all_data(
     url: str | None = None,
     source_schema: str | None = None,
+    *,
+    include_optional: bool = True,
 ) -> dict[str, Any]:
+    """Load canonical PostgreSQL data.
+
+    ``include_optional=False`` is the fast path for model training: possession-
+    level simulation feeds are intentionally skipped because the season-ahead
+    model does not consume them. This avoids transferring large PBP/lineup
+    tables into Pandas before every training run.
+    """
     schema = source_schema or os.getenv("POSTGRES_SOURCE_SCHEMA", "ai_source")
     if not _SCHEMA_RE.fullmatch(schema):
         raise ValueError("Invalid PostgreSQL source schema")
 
     engine = get_engine(url)
-    data: dict[str, Any] = {
-        key: _load_view(engine, schema, view)
-        for key, view in _SOURCE_VIEWS.items()
-    }
-    data.update({
-        key: _load_optional_view(engine, schema, view)
-        for key, view in _OPTIONAL_SOURCE_VIEWS.items()
-    })
+    try:
+        data: dict[str, Any] = _load_views(
+            engine, schema, _SOURCE_VIEWS, optional=False
+        )
+        if include_optional:
+            data.update(
+                _load_views(engine, schema, _OPTIONAL_SOURCE_VIEWS, optional=True)
+            )
+        else:
+            data.update({key: pd.DataFrame() for key in _OPTIONAL_SOURCE_VIEWS})
+    finally:
+        engine.dispose()
 
     _validate_contract(data, schema)
     _normalise_ids(data)
@@ -314,5 +366,7 @@ def load_all_data(
     _build_lookups(data)
     available = sorted(key for key in _OPTIONAL_SOURCE_VIEWS if not data[key].empty)
     data["simulation_feeds"] = available
-    data["source_contract"] = "competition-v1+simulation-v1"
+    data["source_contract"] = (
+        "competition-v1+simulation-v1" if include_optional else "competition-v1"
+    )
     return data
