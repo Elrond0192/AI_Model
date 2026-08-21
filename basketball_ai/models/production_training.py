@@ -484,7 +484,6 @@ class TemporalCompatibilityModel(CompatibilityModel):
             if pd.isna(stat.get("team_id")) or pd.isna(stat.get("player_id")):
                 continue
             target_season = int(stat["_season_year"])
-            pid = _to_int(stat["player_id"])
             tid = _to_int(stat["team_id"])
             if int(stat.get("_prior_rows", 0)) == 0:
                 continue

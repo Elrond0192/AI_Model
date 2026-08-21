@@ -248,8 +248,6 @@ class CompatibilityModel:
             team = team_dict.get(tid)
             if team is None:
                 continue
-            pid    = _to_int(stat["player_id"])
-            season = stat["season"]
             if int(stat.get("_prior_rows", 0)) == 0:
                 continue
             player_vector = _style_vector_from_prior(stat, data["player_dict"])
