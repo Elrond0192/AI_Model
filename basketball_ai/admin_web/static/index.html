@@ -38,6 +38,7 @@
         <button class="nav-item" data-page="data"><span class="nav-icon">▤</span><span>Data Sources</span></button>
         <button class="nav-item" data-page="training"><span class="nav-icon">↗</span><span>Training Runs</span></button>
         <button class="nav-item" data-page="backtests"><span class="nav-icon">⌁</span><span>Backtests</span></button>
+        <button class="nav-item" data-page="scenarios"><span class="nav-icon">◈</span><span>Scenario Lab</span></button>
         <button class="nav-item" data-page="registry"><span class="nav-icon">⬡</span><span>Model Registry</span></button>
         <button class="nav-item" data-page="health"><span class="nav-icon">◇</span><span>API &amp; Health</span></button>
         <button class="nav-item admin-only" data-page="audit"><span class="nav-icon">▣</span><span>Audit Logs</span></button>
@@ -131,6 +132,28 @@
       <div id="registry-cards" class="split-grid"></div>
       <section class="panel"><div class="panel-heading"><h2>Promotion controls</h2></div><div class="control-row"><label class="confirm"><input id="registry-confirm" type="checkbox"><span>Ho verificato il walk-forward report e i promotion gates</span></label><div class="button-row"><button id="promote-btn" class="btn btn-primary" disabled>Promuovi candidate</button><button id="rollback-btn" class="btn btn-danger" disabled>Rollback previous</button></div></div></section>
       <section class="panel"><div class="panel-heading"><h2>Registry history</h2></div><div class="table-shell"><table><thead><tr><th>UTC</th><th>Event</th><th>Run ID</th></tr></thead><tbody id="registry-history"></tbody></table></div></section>
+    </section>
+  </template>
+
+  <template id="page-scenarios">
+    <section class="page">
+      <div class="page-heading"><div><h1>Scenario Lab</h1><p>Valuta scenari con il motore production: ensemble XGBoost e, quando disponibili, feed play-by-play.</p></div></div>
+      <div class="split-grid scenario-grid">
+        <section class="panel"><div class="panel-heading"><h2>Scenario request</h2></div>
+          <form id="scenario-form" class="form-grid">
+            <label class="span-2">Scenario<select name="scenario"><option value="player_team">Player in team</option><option value="style_change">Style change</option><option value="player_role_change">Player role change</option><option value="league_transfer">League transfer</option><option value="probabilistic_boxscore">Probabilistic boxscore</option><option value="opponent_matchup">Opponent matchup</option><option value="defensive_matchup">Defensive matchup</option><option value="play_type_matchup">Play type matchup</option><option value="shot_profile_counterfactual">Shot profile counterfactual</option><option value="lineup_synergy">Lineup synergy</option><option value="lineup_optimizer">Lineup optimizer</option><option value="roster_optimizer">Roster optimizer</option><option value="causal_effect">Causal effect</option></select></label>
+            <label class="span-2">Player global ID(s)<input name="player_global_ids" placeholder="Uno o più ID separati da virgola"></label>
+            <label class="span-2">Team global ID(s)<input name="team_global_ids" placeholder="Uno o più ID separati da virgola"></label>
+            <label>Source league<input name="source_league" placeholder="ITA1"></label><label>Target league<input name="target_league" placeholder="ITA1"></label>
+            <label>Season<input name="season" type="number" min="2000" max="2100" required></label><label>Competition<input name="competition" value="RS" required></label>
+            <label>Top N<input name="top_n" type="number" min="1" max="20" value="5"></label><label>Simulations<input name="simulations" type="number" min="500" max="50000" value="5000"></label>
+            <label class="span-2">Parameters JSON <textarea name="parameters" rows="4" placeholder='{"seed": 42}'></textarea></label>
+            <button id="scenario-submit" class="btn btn-primary span-2" type="submit">Valuta scenario</button>
+          </form>
+        </section>
+        <section class="panel"><div class="panel-heading"><h2>Result</h2></div><pre id="scenario-result" class="scenario-result">Compila il contesto e avvia una valutazione.</pre></section>
+      </div>
+      <p class="microcopy">Gli scenari avanzati usano automaticamente le evidenze possesso/lineup caricate dall’API; se non disponibili, la risposta dichiara il fallback e le limitazioni.</p>
     </section>
   </template>
 
