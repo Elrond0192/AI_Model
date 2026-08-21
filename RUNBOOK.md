@@ -146,7 +146,37 @@ curl -fsS http://127.0.0.1:8000/health/live
 curl -fsS http://127.0.0.1:8000/health/ready
 ```
 
-PostgreSQL 5432 and admin 8501 must stay private.
+PostgreSQL 5432 and Docker port 8501 must stay private.
+
+## Public operations GUI
+
+The GUI is available at `https://admin-ai.bballstat.com` through Nginx, while
+the API is available at `https://ai.bballstat.com`. Point both DNS records at
+the server, but proxy them only to their loopback Docker ports (`8501` and
+`8000` respectively). Never publish either Docker port in the firewall.
+
+Protect `admin-ai.bballstat.com` with both the Streamlit application login and
+Nginx basic authentication:
+
+```bash
+sudo apt install -y apache2-utils
+sudo htpasswd -c /etc/nginx/.htpasswd-ai YOUR_OPERATIONS_USER
+```
+
+The GUI Nginx `location /` requires:
+
+```nginx
+auth_basic "AI_Model Operations";
+auth_basic_user_file /etc/nginx/.htpasswd-ai;
+proxy_pass http://127.0.0.1:8501;
+```
+
+Issue certificates separately for both hosts:
+
+```bash
+sudo certbot --nginx -d ai.bballstat.com
+sudo certbot --nginx -d admin-ai.bballstat.com
+```
 
 ## First admin credentials
 

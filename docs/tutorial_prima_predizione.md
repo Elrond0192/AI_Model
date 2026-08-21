@@ -26,6 +26,10 @@ mkdir -p runtime/config runtime/models runtime/auth runtime/audit
 docker compose up -d --build admin
 ```
 
+La GUI resta in ascolto solo su `127.0.0.1:8501`. In produzione pubblicala
+dietro Nginx su `https://admin-ai.bballstat.com`, con certificato TLS e HTTP
+basic authentication aggiuntiva; non aprire la porta 8501 nel firewall.
+
 Crea il profilo PostgreSQL con:
 
 ```text
