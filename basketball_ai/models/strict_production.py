@@ -10,6 +10,7 @@ import math
 import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+import weakref
 
 import joblib
 import numpy as np
@@ -38,7 +39,13 @@ _VALID_POSITIONS = {
 }
 _STATE_FILE = "production_state.joblib"
 _ROLE_COLUMNS = ("ruolo_combinato", "ruolo_offensivo", "ruolo_difensivo")
-_POSITION_INDEX_ATTR = "_ai_model_position_index"
+_POSITION_INDEX_CACHE: Dict[
+    int,
+    Tuple[
+        weakref.ReferenceType[pd.DataFrame],
+        Dict[int, Tuple[np.ndarray, List[str]]],
+    ],
+] = {}
 
 
 def _normalise_position(value: Any) -> Optional[str]:
@@ -49,7 +56,11 @@ def _normalise_position(value: Any) -> Optional[str]:
 def _position_index(
     relations: pd.DataFrame,
 ) -> Dict[int, Tuple[np.ndarray, List[str]]]:
-    """Build/cache player roster-position timelines for O(log n) lookups."""
+    """Build/cache player roster-position timelines for O(log n) lookups.
+
+    The cache is keyed by DataFrame object identity rather than ``attrs`` so a
+    filtered historical copy can never inherit an index containing future rows.
+    """
     if (
         relations is None
         or relations.empty
@@ -58,9 +69,11 @@ def _position_index(
         or "role" not in relations.columns
     ):
         return {}
-    cached = relations.attrs.get(_POSITION_INDEX_ATTR)
-    if isinstance(cached, dict):
-        return cached
+
+    cache_key = id(relations)
+    cached = _POSITION_INDEX_CACHE.get(cache_key)
+    if cached is not None and cached[0]() is relations:
+        return cached[1]
 
     rows = relations[["player_id", "season", "role"]].copy()
     rows["_pid_int"] = rows["player_id"].map(
@@ -77,7 +90,11 @@ def _position_index(
             ordered["_season_year"].astype(int).to_numpy(),
             ordered["_position"].astype(str).tolist(),
         )
-    relations.attrs[_POSITION_INDEX_ATTR] = index
+
+    def cleanup(_reference: object, key: int = cache_key) -> None:
+        _POSITION_INDEX_CACHE.pop(key, None)
+
+    _POSITION_INDEX_CACHE[cache_key] = (weakref.ref(relations, cleanup), index)
     return index
 
 
@@ -112,8 +129,6 @@ def build_historical_snapshot(data: Dict[str, Any], source_season: int) -> Dict[
         snapshot["team_season_stats"] = bounded.reset_index(drop=True)
 
     relations = snapshot.get("team_player_relations", pd.DataFrame())
-    # Warm the index once. Every player lookup below and every strict prediction
-    # then becomes a binary search instead of a full roster-table scan.
     _position_index(relations)
     players = snapshot.get("players")
     if players is not None and not players.empty:
@@ -577,7 +592,11 @@ def evaluate_target_season(
         normalize_competition
     )
     prior_map: Dict[Tuple[int, int, str], float] = {
-        (int(row["_pid_int"]), int(row["_lid_int"]), str(row["_competition"])): float(row["rating"])
+        (
+            int(row["_pid_int"]),
+            int(row["_lid_int"]),
+            str(row["_competition"]),
+        ): float(row["rating"])
         for row in source_stats.to_dict("records")
         if pd.notna(row.get("rating"))
     }
