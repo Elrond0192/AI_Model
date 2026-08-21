@@ -14,7 +14,7 @@ import pandas as pd
 from sklearn.neighbors import KNeighborsRegressor
 
 from basketball_ai.constants import LEAGUE_MAX_GAMES_BY_NAME, LEAGUE_MAX_GAMES_DEFAULT
-from basketball_ai.data.loader import _to_int
+from basketball_ai.data.loader import _derive_playing_style, _to_int
 from basketball_ai.models.compatibility_model import _POSITION_BUCKET
 from basketball_ai.models.performance_model import FEATURE_COLS, METRIC_CATALOG
 from basketball_ai.models.production_training import (
@@ -43,6 +43,7 @@ _COMP_ALIASES = {
     "CUP": "CUP",
 }
 _PREFERRED_COMPETITION_ORDER = ("RS", "PO", "CUP", "SUPERCUP", "TOT")
+_SCOPE_CACHE_KEY = "_competition_scope_cache"
 
 
 def normalize_competition(value: Any) -> str:
@@ -580,6 +581,154 @@ def competition_support(
     }
 
 
+def _scope_base(
+    data: Dict[str, Any],
+    league_id: int,
+    competition: str,
+    source_season: int,
+) -> Dict[str, Any]:
+    """Cache immutable league/competition/source-season prediction context."""
+    cache = data.get(_SCOPE_CACHE_KEY)
+    if not isinstance(cache, dict):
+        cache = {}
+        data[_SCOPE_CACHE_KEY] = cache
+    key = (int(league_id), str(competition), int(source_season))
+    cached = cache.get(key)
+    if isinstance(cached, dict):
+        return cached
+
+    raw_stats = data["player_stats"]
+    stats_year = _numeric_seasons(raw_stats)
+    stats_lid = raw_stats["league_id"].map(_to_int)
+    stats_comp = raw_stats["competition"].map(normalize_competition)
+    mask = (
+        (stats_lid == int(league_id))
+        & (stats_comp == competition)
+        & (stats_year <= int(source_season))
+    )
+    stats = raw_stats.loc[mask].copy()
+    stats["_season_year"] = stats_year.loc[mask].astype(int)
+    stats["_pid_int"] = stats["player_id"].map(_to_int)
+
+    player_stats_by_id: Dict[int, pd.DataFrame] = {}
+    source_row_by_id: Dict[int, Dict[str, Any]] = {}
+    support_by_id: Dict[int, Dict[str, Any]] = {}
+    for pid, group in stats.groupby("_pid_int", sort=False):
+        pid_int = int(pid)
+        ordered = group.sort_values("_season_year").copy()
+        years = sorted({int(value) for value in ordered["_season_year"]})
+        games_series = pd.to_numeric(
+            ordered.get("games_played", 0), errors="coerce"
+        )
+        games = int(games_series.fillna(0).sum())
+        exact = ordered[ordered["_season_year"] == int(source_season)]
+        exact_games = int(
+            pd.to_numeric(exact.get("games_played", 0), errors="coerce")
+            .fillna(0)
+            .sum()
+        )
+        if not exact.empty:
+            source_row_by_id[pid_int] = exact.iloc[-1].to_dict()
+        support_by_id[pid_int] = {
+            "mode": "isolated",
+            "competition": competition,
+            "source_seasons": len(years),
+            "source_games": games,
+            "exact_source_games": exact_games,
+        }
+        ordered["season"] = ordered["_season_year"].astype(str)
+        player_stats_by_id[pid_int] = ordered.drop(
+            columns=["_season_year", "_pid_int"]
+        ).reset_index(drop=True)
+
+    raw_history = data["team_season_stats"]
+    history_year = _numeric_seasons(raw_history)
+    history_lid = raw_history["league_id"].map(_to_int)
+    history_comp = raw_history["competition"].map(normalize_competition)
+    history_mask = (
+        (history_lid == int(league_id))
+        & (history_comp == competition)
+        & (history_year <= int(source_season))
+    )
+    history = raw_history.loc[history_mask].copy()
+    history["_season_year"] = history_year.loc[history_mask].astype(int)
+    history["_tid_int"] = history["team_id"].map(_to_int)
+
+    team_history_by_id: Dict[int, pd.DataFrame] = {}
+    for tid, group in history.groupby("_tid_int", sort=False):
+        ordered = group.sort_values("_season_year").copy()
+        ordered["season"] = ordered["_season_year"].astype(str)
+        team_history_by_id[int(tid)] = ordered.drop(
+            columns=["_season_year", "_tid_int"]
+        ).reset_index(drop=True)
+
+    latest = (
+        history.sort_values(["_tid_int", "_season_year"])
+        .groupby("_tid_int", as_index=False)
+        .tail(1)
+    )
+    current_meta = {
+        _to_int(row["id"]): row
+        for row in data.get("teams", pd.DataFrame()).to_dict("records")
+        if not pd.isna(row.get("id"))
+    }
+    team_rows: List[Dict[str, Any]] = []
+    for row in latest.to_dict("records"):
+        tid = int(row["_tid_int"])
+        base = dict(current_meta.get(tid, {}))
+        base.update(
+            {
+                "id": tid,
+                "global_id": row.get("global_id", base.get("global_id")),
+                "name": row.get("name", base.get("name", f"Team {tid}")),
+                "league_id": int(league_id),
+                "league_key": row.get("league_key", base.get("league_key", "")),
+                "pace": float(row.get("pace", 75.0)),
+                "offensive_rating": float(row.get("offensive_rating", 110.0)),
+                "defensive_rating": float(row.get("defensive_rating", 110.0)),
+                "three_point_attempt_rate": float(
+                    row.get("three_point_attempt_rate", 0.35)
+                ),
+                "assists_per_game": float(row.get("assists_per_game", 20.0)),
+                "star_player_usage": float(row.get("star_player_usage", 0.25)),
+                "net_rtg": float(row.get("net_rtg", 0.0)),
+                "short_name": row.get("short_name", base.get("short_name", "")),
+                "playing_style": "",
+                "formation": "",
+                "league_tier": int(base.get("league_tier", 1) or 1),
+            }
+        )
+        team_rows.append(base)
+    teams = pd.DataFrame(team_rows)
+    team_dict = {
+        _to_int(row["id"]): row for row in teams.to_dict("records")
+    }
+
+    styled_teams = teams.copy()
+    if not styled_teams.empty:
+        _derive_playing_style(styled_teams)
+    historical_style_map = {
+        _to_int(row["id"]): str(
+            row.get("playing_style", "motion_offense") or "motion_offense"
+        )
+        for row in styled_teams.to_dict("records")
+        if not pd.isna(row.get("id"))
+    }
+
+    cached = {
+        "player_stats_by_id": player_stats_by_id,
+        "source_row_by_id": source_row_by_id,
+        "support_by_id": support_by_id,
+        "team_history_by_id": team_history_by_id,
+        "teams": teams,
+        "team_dict": team_dict,
+        "league_teams": {int(league_id): sorted(team_dict)},
+        "historical_style_map": historical_style_map,
+    }
+    cache[key] = cached
+    return cached
+
+
 def scope_prediction_context(
     data: Dict[str, Any],
     player_id: int,
@@ -597,104 +746,55 @@ def scope_prediction_context(
     player_id = _to_int(player_id)
     team_id = _to_int(team_id)
 
-    scoped = dict(data)
-    stats = data["player_stats"].copy()
-    stats["_season_year"] = _numeric_seasons(stats)
-    stats = stats[
-        (stats["league_id"].map(_to_int) == league_id)
-        & (stats["competition"].map(normalize_competition) == competition)
-        & (stats["_season_year"] <= source_season)
-    ].copy()
-    player_source = stats[
-        (stats["player_id"].map(_to_int) == player_id)
-        & (stats["_season_year"] == source_season)
-    ]
-    if require_exact_player_source and player_source.empty:
+    base = _scope_base(data, league_id, competition, source_season)
+    player_stats = base["player_stats_by_id"].get(player_id)
+    source_row = base["source_row_by_id"].get(player_id)
+    if require_exact_player_source and source_row is None:
         raise ValueError(
             f"Player has no isolated {competition} data in the requested league "
             f"for source season {source_season}"
         )
-    stats["season"] = stats["_season_year"].astype(int).astype(str)
-    scoped["player_stats"] = stats.drop(columns=["_season_year"]).reset_index(drop=True)
+    if player_stats is None:
+        player_stats = data["player_stats"].iloc[0:0].copy()
 
-    history = data["team_season_stats"].copy()
-    history["_season_year"] = _numeric_seasons(history)
-    history = history[
-        (history["league_id"].map(_to_int) == league_id)
-        & (history["competition"].map(normalize_competition) == competition)
-        & (history["_season_year"] <= source_season)
-    ].copy()
-    target_team_history = history[history["team_id"].map(_to_int) == team_id]
-    if target_team_history.empty:
+    team_history = base["team_history_by_id"].get(team_id)
+    if team_history is None or team_history.empty:
         raise ValueError(
             f"Target team has no {competition} context in the requested league "
             f"through source season {source_season}"
         )
-    history["season"] = history["_season_year"].astype(int).astype(str)
-    scoped["team_season_stats"] = history.drop(columns=["_season_year"]).reset_index(drop=True)
 
-    latest = (
-        history.sort_values(["team_id", "_season_year"])
-        .groupby("team_id", as_index=False)
-        .tail(1)
-    )
-    current_meta = {
-        _to_int(row["id"]): row
-        for row in data.get("teams", pd.DataFrame()).to_dict("records")
-        if not pd.isna(row.get("id"))
-    }
-    team_rows: List[Dict[str, Any]] = []
-    for row in latest.to_dict("records"):
-        tid = _to_int(row["team_id"])
-        base = dict(current_meta.get(tid, {}))
-        base.update(
-            {
-                "id": tid,
-                "global_id": row.get("global_id", base.get("global_id")),
-                "name": row.get("name", base.get("name", f"Team {tid}")),
-                "league_id": league_id,
-                "league_key": row.get("league_key", base.get("league_key", "")),
-                "pace": float(row.get("pace", 75.0)),
-                "offensive_rating": float(row.get("offensive_rating", 110.0)),
-                "defensive_rating": float(row.get("defensive_rating", 110.0)),
-                "three_point_attempt_rate": float(row.get("three_point_attempt_rate", 0.35)),
-                "assists_per_game": float(row.get("assists_per_game", 20.0)),
-                "star_player_usage": float(row.get("star_player_usage", 0.25)),
-                "net_rtg": float(row.get("net_rtg", 0.0)),
-                "short_name": row.get("short_name", base.get("short_name", "")),
-                "playing_style": "",
-                "formation": "",
-                "league_tier": int(base.get("league_tier", 1) or 1),
-            }
-        )
-        team_rows.append(base)
-    teams = pd.DataFrame(team_rows)
-    scoped["teams"] = teams
-    scoped["team_dict"] = {
-        _to_int(row["id"]): row for row in teams.to_dict("records")
-    }
-    scoped["league_teams"] = {league_id: sorted(scoped["team_dict"])}
+    scoped = dict(data)
+    scoped.pop(_SCOPE_CACHE_KEY, None)
+    scoped["player_stats"] = player_stats
+    scoped["team_season_stats"] = team_history
+    scoped["teams"] = base["teams"]
+    scoped["team_dict"] = base["team_dict"]
+    scoped["league_teams"] = base["league_teams"]
+    scoped["_historical_style_map"] = base["historical_style_map"]
 
-    players = data.get("players", pd.DataFrame()).copy()
-    if not players.empty and not player_source.empty:
-        source_row = player_source.sort_values("_season_year").iloc[-1]
-        mask = players["id"].map(_to_int) == player_id
-        if mask.any():
-            players.loc[mask, "current_league_id"] = league_id
-            if not pd.isna(source_row.get("team_id")):
-                players.loc[mask, "current_team_id"] = _to_int(source_row["team_id"])
-    scoped["players"] = players
-    scoped["player_dict"] = {
-        _to_int(row["id"]): row
-        for row in players.to_dict("records")
-        if not pd.isna(row.get("id"))
-    }
+    # Prediction code reads current team/league from player_dict. Patch only the
+    # target player instead of copying and rebuilding the entire players table.
+    patched_players = dict(data.get("player_dict", {}))
+    patched_player = dict(patched_players.get(player_id, {}))
+    patched_player["current_league_id"] = league_id
+    if source_row is not None and not pd.isna(source_row.get("team_id")):
+        patched_player["current_team_id"] = _to_int(source_row["team_id"])
+    patched_players[player_id] = patched_player
+    scoped["player_dict"] = patched_players
 
     scoped["_as_of_season"] = source_season
     scoped["_prediction_league_id"] = league_id
     scoped["_prediction_competition"] = competition
-    scoped["_competition_support"] = competition_support(
-        data, player_id, league_id, competition, source_season
+    scoped["_competition_support"] = base["support_by_id"].get(
+        player_id,
+        {
+            "mode": "isolated",
+            "competition": competition,
+            "source_seasons": 0,
+            "source_games": 0,
+            "exact_source_games": 0,
+        },
     )
     return scoped
 
