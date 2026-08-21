@@ -181,10 +181,10 @@ jobs:
               RAISE EXCEPTION 'Duplicate team competition keys detected';
             END IF;
 
-            IF ai_source._competition('Regular Season') <> 'RS'
-               OR ai_source._competition('playoffs') <> 'PO'
-               OR ai_source._competition('TOTAL') <> 'TOT'
-               OR ai_source._competition('Final Four') <> 'FINAL_FOUR' THEN
+            IF "AI_Source"."CompetitionCode"('Regular Season') <> 'RS'
+               OR "AI_Source"."CompetitionCode"('playoffs') <> 'PO'
+               OR "AI_Source"."CompetitionCode"('TOTAL') <> 'TOT'
+               OR "AI_Source"."CompetitionCode"('Final Four') <> 'FINAL_FOUR' THEN
               RAISE EXCEPTION 'Competition normalization contract failed';
             END IF;
           END
