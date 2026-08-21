@@ -97,14 +97,14 @@
             <label>Database<input name="database" required></label>
             <label>PostgreSQL user<input name="user" required></label>
             <label>Password<input name="password" type="password" placeholder="Lascia vuoto per mantenere quella esistente"></label>
-            <label>Source schema<input name="source_schema" value="ai_source" required></label>
-            <label>Output schema<input name="ai_schema" value="ai" required></label>
+            <label>Source schema<input name="source_schema" value="AI_Source" required></label>
+            <label>Output schema<input name="ai_schema" value="AI" required></label>
             <button class="btn btn-primary span-2" type="submit">Salva profilo</button>
           </form>
         </section>
       </div>
       <section class="panel"><div class="panel-heading"><h2>Training snapshots</h2><button id="refresh-snapshots" class="btn btn-small btn-secondary">Aggiorna</button></div><div id="snapshots-list" class="profile-list"></div></section>
-      <section class="panel contract-panel"><div class="panel-heading"><h2>Canonical data contract</h2></div><div class="contract-tags"><span>ai_source.leagues</span><span>ai_source.teams</span><span>ai_source.players</span><span>player_competition_stats</span><span>team_competition_stats</span><span>immutable training snapshot</span><span>scenario_* serving</span></div></section>
+      <section class="panel contract-panel"><div class="panel-heading"><h2>Canonical data contract</h2></div><div class="contract-tags"><span>"AI_Source"."Leagues"</span><span>"AI_Source"."Teams"</span><span>"AI_Source"."Players"</span><span>player_competition_stats</span><span>team_competition_stats</span><span>immutable training snapshot</span><span>scenario_* serving</span></div></section>
     </section>
   </template>
 

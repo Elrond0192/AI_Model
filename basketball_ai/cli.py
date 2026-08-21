@@ -20,7 +20,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--mode",
         choices=(
             "train", "backtest", "validate-data", "publish-batch",
-            "promote", "rollback", "prepare-snapshot", "api",
+            "promote", "rollback", "prepare-snapshot", "refresh-serving", "api",
         ),
         required=True,
     )
@@ -28,6 +28,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--model-dir", default="models_saved")
     parser.add_argument("--snapshot-id", default=None)
     parser.add_argument("--snapshot-dir", default=None)
+    parser.add_argument("--league-key", default=None)
+    parser.add_argument("--season", type=int, default=None)
+    parser.add_argument("--competition", default=None)
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8000)
     return parser.parse_args(argv)
@@ -55,6 +58,31 @@ def mode_prepare_snapshot(args: argparse.Namespace) -> None:
         root=args.snapshot_dir,
     )
     print(json.dumps(manifest, indent=2))
+
+
+def mode_refresh_serving(args: argparse.Namespace) -> None:
+    if not args.league_key or args.season is None or not args.competition:
+        raise SystemExit("--league-key, --season and --competition are required")
+    if args.database_profile:
+        os.environ["DATABASE_PROFILE"] = args.database_profile
+    from sqlalchemy import text
+
+    from basketball_ai.data.postgres_loader import get_engine
+
+    engine = get_engine()
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                text('CALL "AI_Source"."RefreshContext"(:league, :season, :competition)'),
+                {
+                    "league": args.league_key,
+                    "season": args.season,
+                    "competition": args.competition,
+                },
+            )
+    finally:
+        engine.dispose()
+    print(json.dumps({"refreshed": True, "league_key": args.league_key, "season": args.season, "competition": args.competition.upper()}))
 
 
 def _latest_season(data: dict[str, Any]) -> int:
@@ -250,6 +278,7 @@ def main(argv: list[str] | None = None) -> None:
         "promote": mode_promote,
         "rollback": mode_rollback,
         "prepare-snapshot": mode_prepare_snapshot,
+        "refresh-serving": mode_refresh_serving,
         "api": mode_api,
     }[args.mode](args)
 

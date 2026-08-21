@@ -8,7 +8,7 @@ estimates.
 ## Optional possession contract
 
 The strict forecasting service still starts when only the competition-aware
-core views exist. The following `ai_source` views are additive and loaded when
+core views exist. The following `"AI_Source"` views are additive and loaded when
 available:
 
 | View | Required fields | Purpose |

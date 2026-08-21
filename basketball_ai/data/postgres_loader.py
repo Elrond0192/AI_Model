@@ -1,6 +1,6 @@
 """Canonical PostgreSQL data access for AI_Model.
 
-Production reads entity/roster views from ``ai_source`` and the competition-
+Production reads entity/roster views from ``"AI_Source"`` and the competition-
 preserving statistical contract created by ``ai_source_competition.sql``.
 Training therefore sees one observation per entity + league + season +
 competition instead of collapsing PO/CUP/TOT into a single season row.
@@ -29,28 +29,28 @@ from basketball_ai.data.loader import (
 _SCHEMA_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 _SOURCE_VIEWS = {
-    "leagues": "leagues",
-    "teams": "teams",
-    "players": "players",
-    "player_stats": "player_competition_stats",
-    "team_player_relations": "team_player_relations",
-    "team_season_stats": "team_competition_stats",
+    "leagues": "Leagues",
+    "teams": "Teams",
+    "players": "Players",
+    "player_stats": "PlayerCompetitionStats",
+    "team_player_relations": "TeamPlayerRelations",
+    "team_season_stats": "TeamCompetitionStats",
 }
 
 
 def _core_source_views() -> dict[str, str]:
     views = dict(_SOURCE_VIEWS)
     if os.getenv("POSTGRES_TRAINING_SOURCE", "canonical").strip().lower() == "serving":
-        views["player_stats"] = "training_player_competition_stats"
-        views["team_season_stats"] = "training_team_competition_stats"
+        views["player_stats"] = "TrainingPlayerCompetitionStats"
+        views["team_season_stats"] = "TrainingTeamCompetitionStats"
     return views
 
 _OPTIONAL_SOURCE_VIEWS = {
-    "pbp_events": "scenario_defender_matchups",
-    "lineup_stints": "scenario_lineup_stats",
-    "play_type_stats": "scenario_play_type_stats",
-    "shot_profiles": "scenario_shot_profiles",
-    "causal_panel": "simulation_causal_panel",
+    "pbp_events": "ScenarioDefenderMatchups",
+    "lineup_stints": "ScenarioLineupStats",
+    "play_type_stats": "ScenarioPlayTypeStats",
+    "shot_profiles": "ScenarioShotProfiles",
+    "causal_panel": "SimulationCausalPanel",
 }
 
 _OPTIONAL_COLUMNS = {
@@ -137,7 +137,7 @@ def _load_view(engine: Engine, schema: str, name: str) -> pd.DataFrame:
     except Exception as exc:
         competition_hint = (
             " Then run basketball_ai/data/ai_source_competition.sql."
-            if name in {"player_competition_stats", "team_competition_stats"}
+            if name in {"PlayerCompetitionStats", "TeamCompetitionStats"}
             else ""
         )
         raise RuntimeError(
@@ -233,7 +233,7 @@ def _validate_contract(data: dict[str, pd.DataFrame], schema: str) -> None:
             errors.append(f"{table}.competition contains null/empty values")
 
     if errors:
-        raise RuntimeError("Invalid ai_source contract: " + " | ".join(errors))
+        raise RuntimeError('Invalid "AI_Source" contract: ' + " | ".join(errors))
     for required_non_empty in ("players", "teams", "player_stats", "team_season_stats"):
         if data[required_non_empty].empty:
             raise RuntimeError(f"{schema}.{required_non_empty} is empty")
@@ -355,7 +355,7 @@ def load_scenario_feeds(
     view supports them, by the requested players or teams. Results are cached
     briefly; the API never materialises all simulation views at startup.
     """
-    schema = source_schema or os.getenv("POSTGRES_SOURCE_SCHEMA", "ai_source")
+    schema = source_schema or os.getenv("POSTGRES_SOURCE_SCHEMA", "AI_Source")
     if not _SCHEMA_RE.fullmatch(schema):
         raise ValueError("Invalid PostgreSQL source schema")
     feeds = _SCENARIO_FEEDS.get(str(scenario), ())
@@ -456,7 +456,7 @@ def load_all_data(
     Possession-level simulation feeds are excluded by default. They are loaded
     per scenario through :func:`load_scenario_feeds`, never at API bootstrap.
     """
-    schema = source_schema or os.getenv("POSTGRES_SOURCE_SCHEMA", "ai_source")
+    schema = source_schema or os.getenv("POSTGRES_SOURCE_SCHEMA", "AI_Source")
     if not _SCHEMA_RE.fullmatch(schema):
         raise ValueError("Invalid PostgreSQL source schema")
     if include_optional is None:

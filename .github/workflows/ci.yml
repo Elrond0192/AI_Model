@@ -79,6 +79,7 @@ jobs:
         run: |
           set -euo pipefail
           PSQL="psql -h 127.0.0.1 -U postgres -d ai_model_test -v ON_ERROR_STOP=1"
+          $PSQL -f basketball_ai/data/ai_pascalcase_migration.sql
           $PSQL -f basketball_ai/data/ai_source_schema.sql
           $PSQL -f basketball_ai/data/ai_source_competition.sql
           $PSQL -f basketball_ai/data/ai_source_simulation.sql
@@ -101,56 +102,62 @@ jobs:
             rs_pace double precision;
             po_pace double precision;
           BEGIN
-            IF to_regclass('ai_source.leagues') IS NULL
-               OR to_regclass('ai_source.teams') IS NULL
-               OR to_regclass('ai_source.players') IS NULL
-               OR to_regclass('ai_source.team_player_relations') IS NULL
-               OR to_regclass('ai_source.player_competition_stats') IS NULL
-               OR to_regclass('ai_source.team_competition_stats') IS NULL
-               OR to_regclass('ai_source.simulation_pbp_events') IS NULL
-               OR to_regclass('ai_source.simulation_lineup_stints') IS NULL
-               OR to_regclass('ai_source.simulation_play_type_stats') IS NULL
-               OR to_regclass('ai_source.simulation_shot_profiles') IS NULL
-               OR to_regclass('ai.model_runs') IS NULL
-               OR to_regclass('ai.player_forecasts') IS NULL THEN
+            IF to_regnamespace('ai_source') IS NOT NULL
+               OR to_regnamespace('ai') IS NOT NULL
+               OR to_regnamespace('"AI_Source"') IS NULL
+               OR to_regnamespace('"AI"') IS NULL THEN
+              RAISE EXCEPTION 'AI schemas are not exclusively PascalCase';
+            END IF;
+            IF to_regclass('"AI_Source"."Leagues"') IS NULL
+               OR to_regclass('"AI_Source"."Teams"') IS NULL
+               OR to_regclass('"AI_Source"."Players"') IS NULL
+               OR to_regclass('"AI_Source"."TeamPlayerRelations"') IS NULL
+               OR to_regclass('"AI_Source"."PlayerCompetitionStats"') IS NULL
+               OR to_regclass('"AI_Source"."TeamCompetitionStats"') IS NULL
+               OR to_regclass('"AI_Source"."SimulationPbpEvents"') IS NULL
+               OR to_regclass('"AI_Source"."SimulationLineupStints"') IS NULL
+               OR to_regclass('"AI_Source"."SimulationPlayTypeStats"') IS NULL
+               OR to_regclass('"AI_Source"."SimulationShotProfiles"') IS NULL
+               OR to_regclass('"AI"."ModelRuns"') IS NULL
+               OR to_regclass('"AI"."PlayerForecasts"') IS NULL THEN
               RAISE EXCEPTION 'Required AI_Model PostgreSQL contract object is missing';
             END IF;
 
             SELECT count(*) INTO player_rows
-            FROM ai_source.player_competition_stats
+            FROM "AI_Source"."PlayerCompetitionStats"
             WHERE league_key = 'ITA1';
             IF player_rows <> 4 THEN
               RAISE EXCEPTION 'Expected 4 player competition rows, got %', player_rows;
             END IF;
 
             SELECT count(*) INTO team_rows
-            FROM ai_source.team_competition_stats
+            FROM "AI_Source"."TeamCompetitionStats"
             WHERE league_key = 'ITA1';
             IF team_rows <> 4 THEN
               RAISE EXCEPTION 'Expected 4 team competition rows, got %', team_rows;
             END IF;
 
             SELECT count(*) INTO relation_rows
-            FROM ai_source.team_player_relations;
+            FROM "AI_Source"."TeamPlayerRelations";
             IF relation_rows <> 2 THEN
               RAISE EXCEPTION 'Expected 2 season roster relations, got %', relation_rows;
             END IF;
 
             SELECT rating INTO rs_rating
-            FROM ai_source.player_competition_stats
+            FROM "AI_Source"."PlayerCompetitionStats"
             WHERE league_key = 'ITA1' AND season = 2025 AND competition = 'RS';
             SELECT rating INTO po_rating
-            FROM ai_source.player_competition_stats
+            FROM "AI_Source"."PlayerCompetitionStats"
             WHERE league_key = 'ITA1' AND season = 2025 AND competition = 'PO';
             IF rs_rating <> 6.70 OR po_rating <> 7.20 THEN
               RAISE EXCEPTION 'RS/PO player ratings were not isolated: RS %, PO %', rs_rating, po_rating;
             END IF;
 
             SELECT pace INTO rs_pace
-            FROM ai_source.team_competition_stats
+            FROM "AI_Source"."TeamCompetitionStats"
             WHERE league_key = 'ITA1' AND season = 2025 AND competition = 'RS';
             SELECT pace INTO po_pace
-            FROM ai_source.team_competition_stats
+            FROM "AI_Source"."TeamCompetitionStats"
             WHERE league_key = 'ITA1' AND season = 2025 AND competition = 'PO';
             IF rs_pace <> 75.0 OR po_pace <> 70.0 THEN
               RAISE EXCEPTION 'RS/PO team contexts were not isolated: RS %, PO %', rs_pace, po_pace;
@@ -158,7 +165,7 @@ jobs:
 
             IF EXISTS (
               SELECT 1
-              FROM ai_source.player_competition_stats
+              FROM "AI_Source"."PlayerCompetitionStats"
               GROUP BY player_id, league_id, season, competition
               HAVING count(*) > 1
             ) THEN
@@ -167,7 +174,7 @@ jobs:
 
             IF EXISTS (
               SELECT 1
-              FROM ai_source.team_competition_stats
+              FROM "AI_Source"."TeamCompetitionStats"
               GROUP BY team_id, league_id, season, competition
               HAVING count(*) > 1
             ) THEN
@@ -207,13 +214,13 @@ jobs:
             po_pace double precision;
           BEGIN
             SELECT count(*) INTO player_rows
-            FROM ai_source.player_competition_stats
+            FROM "AI_Source"."PlayerCompetitionStats"
             WHERE league_key = 'ITA1';
             SELECT count(*) INTO team_rows
-            FROM ai_source.team_competition_stats
+            FROM "AI_Source"."TeamCompetitionStats"
             WHERE league_key = 'ITA1';
             SELECT count(*) INTO relation_rows
-            FROM ai_source.team_player_relations;
+            FROM "AI_Source"."TeamPlayerRelations";
 
             IF player_rows <> 4 OR team_rows <> 4 OR relation_rows <> 2 THEN
               RAISE EXCEPTION 'Contract changed after reinstall: players %, teams %, relations %',
@@ -221,16 +228,16 @@ jobs:
             END IF;
 
             SELECT rating INTO rs_rating
-            FROM ai_source.player_competition_stats
+            FROM "AI_Source"."PlayerCompetitionStats"
             WHERE league_key = 'ITA1' AND season = 2025 AND competition = 'RS';
             SELECT rating INTO po_rating
-            FROM ai_source.player_competition_stats
+            FROM "AI_Source"."PlayerCompetitionStats"
             WHERE league_key = 'ITA1' AND season = 2025 AND competition = 'PO';
             SELECT pace INTO rs_pace
-            FROM ai_source.team_competition_stats
+            FROM "AI_Source"."TeamCompetitionStats"
             WHERE league_key = 'ITA1' AND season = 2025 AND competition = 'RS';
             SELECT pace INTO po_pace
-            FROM ai_source.team_competition_stats
+            FROM "AI_Source"."TeamCompetitionStats"
             WHERE league_key = 'ITA1' AND season = 2025 AND competition = 'PO';
 
             IF rs_rating <> 6.70 OR po_rating <> 7.20 OR rs_pace <> 75.0 OR po_pace <> 70.0 THEN

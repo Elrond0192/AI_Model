@@ -13,8 +13,8 @@ class _Engine:
 def test_training_loader_can_use_physical_feature_store(monkeypatch):
     monkeypatch.setenv("POSTGRES_TRAINING_SOURCE", "serving")
     views = loader._core_source_views()
-    assert views["player_stats"] == "training_player_competition_stats"
-    assert views["team_season_stats"] == "training_team_competition_stats"
+    assert views["player_stats"] == "TrainingPlayerCompetitionStats"
+    assert views["team_season_stats"] == "TrainingTeamCompetitionStats"
 
 
 def test_predictive_scenario_does_not_open_database(monkeypatch):

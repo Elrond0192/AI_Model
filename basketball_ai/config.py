@@ -33,7 +33,7 @@ try:
         # PostgreSQL on the Docker host.  Do not put SSH credentials here.
         database_url: str = ""
         postgres_connect_timeout: int = 10
-        ai_schema: str = "ai"
+        ai_schema: str = "AI"
 
         # Auth
         login_max_attempts: int = 5

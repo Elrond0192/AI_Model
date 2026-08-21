@@ -3,10 +3,10 @@
 ```text
 PostgreSQL host
   ├─ raw PBP / boxscore (source of truth, never loaded by the API)
-  ├─ ai_source.* canonical competition views
-  ├─ ai_source.training_* physical feature tables
-  ├─ ai_source.scenario_* physical indexed serving tables
-  └─ ai.* versioned prediction snapshots
+  ├─ "AI_Source".* canonical competition views
+  ├─ "AI_Source"."Training*" physical feature tables
+  ├─ "AI_Source"."Scenario*" physical indexed serving tables
+  └─ "AI".* versioned prediction snapshots
           ▲
           │ psycopg / SQLAlchemy via host.docker.internal
 AI_Model Docker
@@ -23,7 +23,7 @@ explicit active profile. Chat and entity resolution are owned by WordPress;
 AI_Model has no mounted conversational endpoint.
 
 Scenario serving tables are refreshed incrementally after ETL with
-`CALL ai_source.refresh_scenario_serving(league_key, season, competition)`.
+`CALL "AI_Source"."RefreshContext"(league_key, season, competition)`.
 Chat V3 reads only these bounded aggregates. Raw possession rows are reserved
 for ETL/rebuild operations and are never materialized in API memory.
 

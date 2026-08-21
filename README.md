@@ -60,6 +60,8 @@ Generate secrets with `openssl rand -hex 32`.
 Apply the entity adapter, competition-preserving statistical adapter and model-owned output schema in this order:
 
 ```bash
+# Existing lowercase installations only:
+psql -d YOUR_DATABASE -f basketball_ai/data/ai_pascalcase_migration.sql
 psql -d YOUR_DATABASE -f basketball_ai/data/ai_source_schema.sql
 psql -d YOUR_DATABASE -f basketball_ai/data/ai_source_competition.sql
 psql -d YOUR_DATABASE -f basketball_ai/data/ai_source_simulation.sql
@@ -69,31 +71,39 @@ psql -d YOUR_DATABASE -f basketball_ai/data/ai_schema.sql
 
 Production reads these canonical read-only views:
 
-- `ai_source.leagues`
-- `ai_source.teams`
-- `ai_source.players`
-- `ai_source.team_player_relations`
-- `ai_source.player_competition_stats`
-- `ai_source.team_competition_stats`
+- `"AI_Source"."Leagues"`
+- `"AI_Source"."Teams"`
+- `"AI_Source"."Players"`
+- `"AI_Source"."TeamPlayerRelations"`
+- `"AI_Source"."PlayerCompetitionStats"`
+- `"AI_Source"."TeamCompetitionStats"`
 
 The statistical identity is **entity + league + season + competition**. `TOT`, `RS`, `PO`, cups and any newly observed competition are not collapsed together. Known aliases are normalized (`PLAYOFFS -> PO`, `REGULAR SEASON -> RS`); new competition labels are preserved in normalized form and become serveable after they have real consecutive training history and the model is retrained.
 
-The adapters never write to `Anagrafiche`, `Analisi` or `Boxscore`. `ai_schema.sql` creates model-owned outputs such as `ai.model_runs` and `ai.player_forecasts`.
+HoopmetricsEngine/AdvanceStats tables in `Analisi.AdvancedStats_Player_*` and
+`Analisi.AdvancedStatsTeam_*` are the authoritative model-feature source. Their
+already calculated BPM, ratings, efficiency, role, on/off and related metrics
+are adapted, not recomputed from raw possessions. `Boxscore` is consulted only
+for missing starter counts; when AdvancedStats exposes `GamesStarted` or
+`StarterPct`, those values take precedence. PBP is used only to build the
+physical scenario aggregates and is never a direct XGBoost training input.
+
+The adapters never write to `Anagrafiche`, `Analisi` or `Boxscore`. `ai_schema.sql` creates model-owned outputs such as `"AI"."ModelRuns"` and `"AI"."PlayerForecasts"`.
 
 ### Database permissions
 
 ```sql
 GRANT CONNECT ON DATABASE your_database TO ai_model;
-GRANT USAGE ON SCHEMA ai_source, ai TO ai_model;
-GRANT SELECT ON ALL TABLES IN SCHEMA ai_source TO ai_model;
-GRANT SELECT, INSERT, UPDATE ON ALL TABLES IN SCHEMA ai TO ai_model;
+GRANT USAGE ON SCHEMA "AI_Source", "AI" TO ai_model;
+GRANT SELECT ON ALL TABLES IN SCHEMA "AI_Source" TO ai_model;
+GRANT SELECT, INSERT, UPDATE ON ALL TABLES IN SCHEMA "AI" TO ai_model;
 ```
 
 Do not grant write access to source schemas and do not expose PostgreSQL 5432 publicly.
 
 ## 3. Docker -> PostgreSQL host
 
-`docker-compose.yml` maps `host.docker.internal` through `host-gateway`. Create the runtime profile with PostgreSQL host `host.docker.internal`, port `5432`, source schema `ai_source` and output schema `ai`. Restrict `pg_hba.conf` to the intended Docker bridge/user/database.
+`docker-compose.yml` maps `host.docker.internal` through `host-gateway`. Create the runtime profile with PostgreSQL host `host.docker.internal`, port `5432`, source schema `AI_Source` and output schema `AI`. Restrict `pg_hba.conf` to the intended Docker bridge/user/database.
 
 ## 4. Admin console
 
@@ -199,9 +209,20 @@ docker compose run --rm admin \
 After each ETL context completes, refresh only its serving partition:
 
 ```sql
-CALL ai_source.refresh_scenario_serving('ITA1', 2025, 'RS');
-CALL ai_source.refresh_training_serving('ITA1', 2025, 'RS');
+CALL "AI_Source"."RefreshContext"('ITA1', 2025, 'RS');
 ```
+
+The same hook is available to n8n/systemd/cron without embedding SQL:
+
+```bash
+python main.py --mode refresh-serving --database-profile production \
+  --league-key ITA1 --season 2025 --competition RS
+```
+
+Run it after HoopmetricsEngine/AdvanceStats commits each changed context. Entity
+views reflect Anagrafiche changes immediately; create a new immutable snapshot
+after the daily ETL completes, and reload/restart the API so newly added
+players, teams and competitions enter the in-memory identity dictionaries.
 
 After the initial serving backfill, set `POSTGRES_TRAINING_SOURCE=serving` for
 the admin/training container. Snapshot preparation then reads the indexed

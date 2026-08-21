@@ -102,8 +102,8 @@ class ProfilePayload(BaseModel):
     database: str = Field(min_length=1, max_length=128)
     user: str = Field(min_length=1, max_length=128)
     password: str = Field(default="", max_length=1024)
-    source_schema: str = Field(default="ai_source", min_length=1, max_length=128)
-    ai_schema: str = Field(default="ai", min_length=1, max_length=128)
+    source_schema: str = Field(default="AI_Source", min_length=1, max_length=128)
+    ai_schema: str = Field(default="AI", min_length=1, max_length=128)
 
 
 class ConfirmPayload(BaseModel):
@@ -443,7 +443,7 @@ async def overview(user: dict[str, str] = Depends(_operator)) -> dict[str, Any]:
             "component": "Competition context",
             "status": "ok" if data_loaded and summary.get("team_rows", 0) > 0 else "warning",
             "label": "OK" if data_loaded and summary.get("team_rows", 0) > 0 else "Da verificare",
-            "detail": "ai_source.player_competition_stats + team_competition_stats",
+            "detail": '"AI_Source"."PlayerCompetitionStats" + "TeamCompetitionStats"',
             "action": "data",
         },
         {
@@ -539,7 +539,7 @@ async def load_database_profile(name: str, user: dict[str, str] = Depends(_csrf)
         loaded = await asyncio.to_thread(
             load_all_data,
             profile_url(name),
-            profile.get("source_schema", "ai_source"),
+            profile.get("source_schema", "AI_Source"),
             include_optional=False,
         )
     except Exception as exc:

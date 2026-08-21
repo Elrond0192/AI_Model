@@ -1,25 +1,30 @@
 # Data Card — AI_Model PostgreSQL Contract
 
-**Contract:** `ai_source competition-v1`  
+**Contract:** `"AI_Source" competition-v1`
+
+The forecasting feature contract consumes the already calculated
+HoopmetricsEngine/AdvanceStats player and team tables. It does not recompute
+advanced metrics from Boxscore or PBP. Boxscore supplies only missing starter
+information; PBP feeds the separate scenario-serving aggregates.
 **Model target:** same-league, same-competition next-season player rating (`t -> t+1`)
 
 AI_Model never queries BBallstat physical tables directly. PostgreSQL adapters expose stable read-only views; source schemas remain untouched.
 
 ## Canonical production views
 
-### `ai_source.leagues`
+### `"AI_Source"."Leagues"`
 One row per discovered league with stable internal ID and league key.
 
-### `ai_source.teams`
+### `"AI_Source"."Teams"`
 One row per team `IdGlobal`, latest registry state. Used for entity lookup only.
 
-### `ai_source.players`
+### `"AI_Source"."Players"`
 One row per player `IdGlobal`, latest identity state. `IdGlobal` remains server-side.
 
-### `ai_source.team_player_relations`
+### `"AI_Source"."TeamPlayerRelations"`
 Roster membership by season, resolved through global identities. Used to reconstruct position/team state as of the source season.
 
-### `ai_source.player_competition_stats`
+### `"AI_Source"."PlayerCompetitionStats"`
 One row per:
 
 ```text
@@ -30,7 +35,7 @@ This is the supervised production source. It preserves `RS`, `PO`, `CUP`, `SUPER
 
 Rows without a non-null `ValLegaPerGame` / `rating` target are excluded. Team-specific duplicates inside the same league/season/competition are resolved by preferring all-team aggregates and then the row with most games.
 
-### `ai_source.team_competition_stats`
+### `"AI_Source"."TeamCompetitionStats"`
 One row per:
 
 ```text
@@ -118,6 +123,6 @@ The application does **not** normalize ratings across leagues automatically; cro
 ## Identity and ownership
 
 - `global_id`: server-side model/database identity, never a browser identifier;
-- `ai_source`: read-only adapter views;
+- `"AI_Source"`: read-only adapter views;
 - `ai`: model-owned outputs (`model_runs`, `player_forecasts`);
 - `Anagrafiche`, `Analisi`, `Boxscore`: source schemas, never written by AI_Model.

@@ -26,20 +26,20 @@ Verify the production contract:
 
 ```sql
 SELECT competition, count(*)
-FROM ai_source.player_competition_stats
+FROM "AI_Source"."PlayerCompetitionStats"
 GROUP BY competition ORDER BY competition;
 
 SELECT competition, count(*)
-FROM ai_source.team_competition_stats
+FROM "AI_Source"."TeamCompetitionStats"
 GROUP BY competition ORDER BY competition;
 
 SELECT player_id, league_id, season, competition, count(*)
-FROM ai_source.player_competition_stats
+FROM "AI_Source"."PlayerCompetitionStats"
 GROUP BY player_id, league_id, season, competition
 HAVING count(*) > 1;
 
 SELECT team_id, league_id, season, competition, count(*)
-FROM ai_source.team_competition_stats
+FROM "AI_Source"."TeamCompetitionStats"
 GROUP BY team_id, league_id, season, competition
 HAVING count(*) > 1;
 ```
@@ -157,7 +157,7 @@ Verify forecasts by competition:
 
 ```sql
 SELECT model_run_id, league, competition, count(*)
-FROM ai.player_forecasts
+FROM "AI"."PlayerForecasts"
 GROUP BY model_run_id, league, competition
 ORDER BY model_run_id DESC, league, competition;
 ```
