@@ -138,6 +138,30 @@ def test_authentication_helpers_and_csrf(monkeypatch):
     assert exc.value.status_code == 403
 
 
+def test_scenario_proxy_passes_api_key(monkeypatch):
+    monkeypatch.setenv("API_KEY", "internal-key")
+    captured = {}
+
+    class Response:
+        def __enter__(self): return self
+        def __exit__(self, *args): return False
+        def read(self): return b'{"scenario":"player_team","result":{"rating":7.1}}'
+
+    def fake_urlopen(request, timeout):
+        captured["url"] = request.full_url
+        captured["api_key"] = request.get_header("X-api-key")
+        captured["payload"] = json.loads(request.data)
+        assert timeout == 45.0
+        return Response()
+
+    monkeypatch.setattr(admin, "urlopen", fake_urlopen)
+    response = admin._evaluate_scenario({"scenario": "player_team"})
+    assert response["scenario"] == "player_team"
+    assert captured["url"].endswith("/api/v2/scenarios/evaluate")
+    assert captured["api_key"] == "internal-key"
+    assert captured["payload"] == {"scenario": "player_team"}
+
+
 def test_login_session_logout(monkeypatch):
     monkeypatch.setattr(admin, "check_credentials", lambda u, p: (True, {"role": "admin"}))
     monkeypatch.setattr(admin, "create_session_token", lambda u, r, ttl_days: "raw-token")
