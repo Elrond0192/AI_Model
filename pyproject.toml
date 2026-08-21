@@ -47,6 +47,9 @@ py-modules = ["main"]
 where = ["."]
 include = ["basketball_ai*"]
 
+[tool.setuptools.package-data]
+"basketball_ai.admin_web" = ["static/*.html", "static/*.css", "static/*.js"]
+
 [tool.pytest.ini_options]
 markers = [
     "smoke: optional browser/UI smoke tests",
