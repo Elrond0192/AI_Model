@@ -338,6 +338,10 @@ def test_training_view_and_start(monkeypatch):
         admin.STATE.data = data
         admin.STATE.active_profile = "production"
         admin.STATE.summary = admin._summary(data)
+    lifecycle = {str(season): {"status": "complete"} for season in admin._seasons(data)}
+    lifecycle_path = Path("/tmp/test-season-lifecycle.json")
+    lifecycle_path.write_text(json.dumps(lifecycle), encoding="utf-8")
+    monkeypatch.setattr(admin, "SEASON_LIFECYCLE_FILE", lifecycle_path)
     view = admin.training({"username": "admin", "role": "admin", "token": "x"})
     assert view["can_start"] is True
     assert len(view["contract"]) == 4
