@@ -112,6 +112,7 @@ def test_helpers_and_static_assets(monkeypatch, tmp_path):
     assert "Operational readiness" in html
     assert "Come funziona" in html
     assert "Prepara storico modello" in html
+    assert "Dati e snapshot" in html
     assert "Model Registry" in html
     assert "--sidebar" in css
     assert "renderOverview" in js
