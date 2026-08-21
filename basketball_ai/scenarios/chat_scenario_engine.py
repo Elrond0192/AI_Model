@@ -123,6 +123,7 @@ class ChatScenarioEngine:
             "style_change": self._style_change,
             "player_role_change": self._player_role_change,
             "role_minutes_projection": self._player_role_change,
+            "clutch_analysis": self._clutch_analysis,
             "team_add_player": self._team_add_player,
             "team_replace_player": self._team_replace_player,
             "best_team_fit": self._best_team_fit,
@@ -370,6 +371,28 @@ class ChatScenarioEngine:
     # ------------------------------------------------------------------
     # Supervised/direct prediction and cross-league transfer
     # ------------------------------------------------------------------
+    def _clutch_analysis(self, spec, players, teams, source_league, target_league):
+        if not players:
+            raise ValueError("player is required")
+        season = int(spec["season"])
+        competition = normalize_competition(spec["competition"])
+        rows = self._player_rows(players[0], source_league, competition, season)
+        if rows.empty:
+            raise ValueError("No player history is available for the requested clutch context")
+        metrics = ("clutch_games", "clutch_pts", "clutch_ts_pct", "clutch_net_rtg", "clutch_ast_to_tov")
+        latest = _serialise(self._latest(rows), metrics)
+        history = [
+            {"season": int(row["_year"]), **_serialise(row, metrics)}
+            for row in rows.tail(8).to_dict("records")
+        ]
+        samples = int(pd.to_numeric(rows.get("clutch_games"), errors="coerce").fillna(0).sum()) if "clutch_games" in rows else 0
+        return {
+            "result": {"player": self._player_name(players[0]), "competition": competition, "through_season": season, "latest_clutch": latest, "clutch_history": history},
+            "evidence": [{"type": "observed_clutch_advanced_stats", "seasons_considered": len(rows), "clutch_games": samples}],
+            "support": {"method": "observed_clutch_advanced_stats", "samples": samples, "confidence": _confidence(samples)},
+            "limitations": ["This reports observed clutch aggregates. Possession-level last-five-minute simulations require PBP clock and score fields for the requested competition."],
+        }
+
     def _player_team(self, spec, players, teams, source_league, target_league):
         if not players or not teams:
             raise ValueError("player and team are required")
