@@ -125,6 +125,62 @@ def test_training_pairs_are_same_league_and_same_competition():
     assert model.competition_encoding["RS"] != model.competition_encoding["PO"]
 
 
+def test_descriptive_splits_stay_observed_but_never_train(monkeypatch):
+    from basketball_ai.models.strict_production import AsOfPositionPerformanceModel
+
+    data = _competition_training_data()
+    descriptive = []
+    for year in (2022, 2023, 2024):
+        for competition in ("Home", "Away"):
+            descriptive.append(
+                {
+                    "player_id": 1,
+                    "team_id": 10,
+                    "league_id": 1,
+                    "season": year,
+                    "competition": competition,
+                    "games_played": 12,
+                    "minutes_per_game": 25.0,
+                    "points": 12.0,
+                    "rating": 7.0,
+                }
+            )
+    data["player_stats"] = pd.concat(
+        [data["player_stats"], pd.DataFrame(descriptive)], ignore_index=True
+    )
+    observed_rows = len(data["player_stats"])
+
+    model = AsOfPositionPerformanceModel()
+    X, _ = model.prepare_features(data)
+
+    assert len(data["player_stats"]) == observed_rows
+    assert len(X) == 4
+    assert set(model._last_competitions) == {"RS", "PO"}
+    assert model._excluded_descriptive_rows == 6
+    assert "HOME" not in model.competition_encoding
+    assert "AWAY" not in model.competition_encoding
+
+
+def test_forecast_pairs_use_minimum_games_and_reliability_weights(monkeypatch):
+    from basketball_ai.models.strict_production import AsOfPositionPerformanceModel
+
+    monkeypatch.setenv("MODEL_MIN_TRAIN_GAMES", "7")
+    data = _competition_training_data()
+    data["player_stats"].loc[
+        (data["player_stats"]["competition"] == "PO")
+        & (data["player_stats"]["season"] == 2023),
+        "games_played",
+    ] = 2
+
+    model = AsOfPositionPerformanceModel()
+    X, _ = model.prepare_features(data)
+
+    assert len(X) == 2
+    assert model._last_competitions == ["RS", "RS"]
+    assert model._skipped_low_sample_pairs == 2
+    assert all(0.25 <= weight <= 1.0 for weight in model._last_sample_weights)
+
+
 def test_competition_aliases_are_open_and_normalized():
     from basketball_ai.models.competition_training import normalize_competition
 

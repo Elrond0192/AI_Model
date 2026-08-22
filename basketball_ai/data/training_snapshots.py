@@ -50,7 +50,7 @@ def create_training_snapshot(
         "snapshot_id": snapshot_id,
         "created_at": created.isoformat(),
         "profile": profile,
-        "source_contract": data.get("source_contract", "competition-v1"),
+        "source_contract": data.get("source_contract", "competition-v2:canonical"),
         "sha256": digest,
         "player_rows": int(len(stats)) if stats is not None else 0,
         "seasons": seasons,

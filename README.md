@@ -224,10 +224,20 @@ views reflect Anagrafiche changes immediately; create a new immutable snapshot
 after the daily ETL completes, and reload/restart the API so newly added
 players, teams and competitions enter the in-memory identity dictionaries.
 
-After the initial serving backfill, set `POSTGRES_TRAINING_SOURCE=serving` for
-the admin/training container. Snapshot preparation then reads the indexed
+After the initial serving backfill, `POSTGRES_TRAINING_SOURCE=auto` lets the
+training/admin path select physical serving tables when both contain data and
+safely falls back to canonical views otherwise. The API analysis path stays on
+canonical views so generic questions retain every observed split. Set
+`POSTGRES_TRAINING_SOURCE=serving` only to make
+the indexed store mandatory. Snapshot preparation then reads the indexed
 physical feature store instead of rebuilding features from the growing raw
 boxscore history.
+
+Generic chat analysis continues to query every observed context, including
+`Home` and `Away`. Forecast training is deliberately narrower: by default only
+`RS`, `PO` and `TOT` form supervised season-ahead pairs, and both source and
+target must have at least three games. Configure these gates with
+`MODEL_TRAINING_COMPETITIONS` and `MODEL_MIN_TRAIN_GAMES`.
 
 Training writes immutable artifacts under `models_saved/runs/<model_run_id>/` and registers the run as **candidate**. It does not replace production. `production_state.joblib` stores data-derived runtime state, including the exact competition vocabulary and competition-specific conformal calibration.
 

@@ -293,7 +293,8 @@ async def test_profile_test_and_load(monkeypatch):
     data = _data()
     received = {}
 
-    def fake_load_all_data(url, schema, *, include_optional=None):
+    def fake_load_all_data(url, schema, *, include_optional=None, purpose="analysis"):
+        assert purpose == "training"
         received.update(url=url, schema=schema, include_optional=include_optional)
         return data
 

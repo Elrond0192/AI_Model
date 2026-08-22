@@ -6,6 +6,7 @@ consecutive seasons and scopes online inference to that exact context.
 """
 from __future__ import annotations
 
+import os
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -44,6 +45,28 @@ _COMP_ALIASES = {
 }
 _PREFERRED_COMPETITION_ORDER = ("RS", "PO", "CUP", "SUPERCUP", "TOT")
 _SCOPE_CACHE_KEY = "_competition_scope_cache"
+
+
+def forecast_competitions() -> set[str]:
+    """Return contexts that are statistically valid forecast identities.
+
+    Home/Away are descriptive splits of RS in the source database.  They stay
+    available to chat analysis, but must never become independent t -> t+1
+    targets.  The allow-list is explicit and configurable for future cups.
+    """
+    configured = os.getenv("MODEL_TRAINING_COMPETITIONS", "RS,PO,TOT")
+    return {
+        normalize_competition(value)
+        for value in configured.split(",")
+        if str(value).strip()
+    }
+
+
+def minimum_training_games() -> int:
+    try:
+        return max(1, int(os.getenv("MODEL_MIN_TRAIN_GAMES", "3")))
+    except ValueError:
+        return 3
 
 
 def normalize_competition(value: Any) -> str:
@@ -117,6 +140,16 @@ class CompetitionSeasonAheadPerformanceModel(SeasonAheadPerformanceModel):
         player_stats["_competition"] = player_stats["competition"].map(
             normalize_competition
         )
+        observed_rows = len(player_stats)
+        allowed_competitions = forecast_competitions()
+        player_stats = player_stats[
+            player_stats["_competition"].isin(allowed_competitions)
+        ].copy()
+        if player_stats.empty:
+            raise ValueError(
+                "No player rows match MODEL_TRAINING_COMPETITIONS="
+                + ",".join(sorted(allowed_competitions))
+            )
 
         if split_season is not None:
             cutoff = season_year(split_season)
@@ -209,7 +242,10 @@ class CompetitionSeasonAheadPerformanceModel(SeasonAheadPerformanceModel):
         source_years: List[int] = []
         competitions: List[str] = []
         league_ids: List[int] = []
+        sample_weights: List[float] = []
         skipped_gaps = 0
+        skipped_low_sample_pairs = 0
+        min_games = minimum_training_games()
 
         grouping = ["player_id", "league_id", "_competition"]
         for (raw_pid, raw_league_id, competition), group in player_stats.groupby(
@@ -234,6 +270,13 @@ class CompetitionSeasonAheadPerformanceModel(SeasonAheadPerformanceModel):
                     continue
                 source = group.iloc[source_index].copy()
                 target = group.iloc[target_index]
+                source_games = pd.to_numeric(source.get("games_played"), errors="coerce")
+                target_games = pd.to_numeric(target.get("games_played"), errors="coerce")
+                source_games = 0.0 if pd.isna(source_games) else float(source_games)
+                target_games = 0.0 if pd.isna(target_games) else float(target_games)
+                if source_games < min_games or target_games < min_games:
+                    skipped_low_sample_pairs += 1
+                    continue
                 source_age = source_year - birth_year
                 if source_age < 14 or source_age > 44:
                     continue
@@ -258,6 +301,13 @@ class CompetitionSeasonAheadPerformanceModel(SeasonAheadPerformanceModel):
                 target_years.append(target_year)
                 competitions.append(str(competition))
                 league_ids.append(league_id)
+                max_games = float(
+                    (league_max_games or {}).get(league_id, LEAGUE_MAX_GAMES_DEFAULT)
+                )
+                reliability = np.sqrt(
+                    min(source_games, target_games) / max(1.0, max_games)
+                )
+                sample_weights.append(float(np.clip(reliability, 0.25, 1.0)))
 
         if not rows:
             raise ValueError(
@@ -270,7 +320,11 @@ class CompetitionSeasonAheadPerformanceModel(SeasonAheadPerformanceModel):
         self._last_season_years = target_years
         self._last_competitions = competitions
         self._last_league_ids = league_ids
+        self._last_sample_weights = sample_weights
         self._skipped_gap_pairs = skipped_gaps
+        self._skipped_low_sample_pairs = skipped_low_sample_pairs
+        self._excluded_descriptive_rows = observed_rows - len(player_stats)
+        self._forecast_competitions = sorted(allowed_competitions)
         return X, y
 
 
@@ -394,6 +448,7 @@ class CompetitionTemporalCompatibilityModel(TemporalCompatibilityModel):
         stats = data["player_stats"].copy()
         stats["_season_year"] = _numeric_seasons(stats)
         stats["_competition"] = stats["competition"].map(normalize_competition)
+        stats = stats[stats["_competition"].isin(forecast_competitions())].copy()
         stats = stats.dropna(
             subset=["_season_year", "team_id", "player_id", "league_id"]
         )
@@ -406,6 +461,9 @@ class CompetitionTemporalCompatibilityModel(TemporalCompatibilityModel):
         team_history["_competition"] = team_history["competition"].map(
             normalize_competition
         )
+        team_history = team_history[
+            team_history["_competition"].isin(forecast_competitions())
+        ].copy()
         team_history = team_history.dropna(
             subset=["_season_year", "team_id", "league_id"]
         )

@@ -4,10 +4,10 @@
 
 | Field | Value |
 |---|---|
-| Version | 2.2.0 |
-| Feature contract | `forecast-t-plus-1-competition-v1` |
+| Version | 2.3.0 |
+| Feature contract | `forecast-t-plus-1-quality-v2` |
 | Primary target | same-league, same-competition next-season rating (`t -> t+1`) |
-| Competition support | data-driven; any normalized competition with supervised consecutive history |
+| Competition support | explicit allow-list; `RS,PO,TOT` by default |
 | Base estimator | pooled XGBoost regressor with explicit competition feature |
 | Team/context layer | temporally trained competition-aware k-NN + bounded context adjustments |
 | Output | predicted rating 0–10 + calibrated interval + competition support metadata |
@@ -27,7 +27,11 @@ player P / league L / competition C / season t+1
 
 Missing intermediate seasons, league switches and competition switches do not form training pairs. `RS -> PO` and domestic-league -> EuroLeague pairs are invalid. The model is pooled across valid contexts so it can learn shared basketball relationships, while `competition` remains an explicit learned feature and every row's historical features are isolated to its own league/competition.
 
-Known labels are normalized (`PLAYOFFS -> PO`, `REGULAR SEASON -> RS`). New labels are retained in normalized form. A competition is not serveable merely because its label exists: it must have produced supervised consecutive pairs in the promoted training run.
+Known labels are normalized (`PLAYOFFS -> PO`, `REGULAR SEASON -> RS`). `Home`
+and `Away` remain available to observed-data chat answers but are excluded from
+forecast training because they duplicate partial regular-season evidence. A
+competition is not serveable merely because its label exists: it must be in
+`MODEL_TRAINING_COMPETITIONS` and produce supervised consecutive pairs.
 
 ## Temporal split and estimator selection
 
@@ -56,6 +60,7 @@ Team-style normalization bounds and the trained competition vocabulary are run-o
 - career form/trajectory **inside the requested league/competition**;
 - temporally bounded role labels;
 - on/off, clutch and starter context when available for that competition;
+- clutch points per clutch game plus an explicit clutch-sample reliability signal;
 - competition-specific team style/context;
 - bounded interactions.
 
@@ -108,7 +113,10 @@ The model never claims an unseen competition is trained. A newly ingested compet
 
 ## Target comparability
 
-`ValLegaPerGame` / `rating` is the supervised target. The validator reports rating distributions by league and competition. Cross-league normalization is not applied automatically; it must be justified by OOT evidence.
+`ValLegaPerGame` is retained as the source score and converted by the SQL
+contract to a stable 1–10 percentile rating inside each
+league/season/competition cohort. This makes the documented target scale true
+without mixing leagues. Ties receive the same percentile score.
 
 ## Limitations
 
