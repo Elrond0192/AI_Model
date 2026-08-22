@@ -268,6 +268,19 @@ def _validate_contract(data: dict[str, pd.DataFrame], schema: str) -> None:
             raise RuntimeError(f"{schema}.{required_non_empty} is empty")
 
 
+def _nullable_int_series(values: pd.Series) -> pd.Series:
+    """Normalize identifiers to pandas nullable Int64 without float coercion."""
+    normalized = [
+        pd.NA if pd.isna(value) else _to_int(value)
+        for value in values.tolist()
+    ]
+    return pd.Series(
+        pd.array(normalized, dtype="Int64"),
+        index=values.index,
+        name=values.name,
+    )
+
+
 def _normalise_ids(data: dict[str, pd.DataFrame]) -> None:
     id_columns = {
         "leagues": ("id",),
@@ -284,9 +297,7 @@ def _normalise_ids(data: dict[str, pd.DataFrame]) -> None:
         for column in columns:
             if column not in frame.columns:
                 continue
-            frame[column] = frame[column].map(
-                lambda value: None if pd.isna(value) else _to_int(value)
-            )
+            frame[column] = _nullable_int_series(frame[column])
 
     for table in ("player_stats", "team_player_relations", "team_season_stats"):
         if table in data and "season" in data[table].columns:
@@ -312,9 +323,7 @@ def _normalise_ids(data: dict[str, pd.DataFrame]) -> None:
             continue
         for column in columns:
             if column in frame.columns:
-                frame[column] = frame[column].map(
-                    lambda value: None if pd.isna(value) else _to_int(value)
-                )
+                frame[column] = _nullable_int_series(frame[column])
         if "competition" in frame.columns:
             frame["competition"] = frame["competition"].fillna("RS").astype(str).str.strip().str.upper()
         if "season" in frame.columns:
