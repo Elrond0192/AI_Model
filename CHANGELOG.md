@@ -8,6 +8,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
+- Quality-v2 forecast contract: explicit `RS/PO/TOT` training allow-list,
+  minimum-games gate, reliability sample weights, and training diagnostics.
+- Automatic fast-source selection: indexed serving tables are used when
+  populated, with a safe canonical-view fallback.
 - Basketball Simulation & Causal Engine for Chat V3 scenarios:
   probabilistic joint boxscore distributions, quantiles, and threshold
   probabilities with seeded or system-entropy Monte Carlo runs.
@@ -68,6 +72,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - `docs/architecture/` directory with C4 overview.
 
 ### Fixed
+- `Home`/`Away` descriptive splits no longer create duplicated season-ahead
+  forecast samples; they remain available to generic observed-data analysis.
+- `ValLegaPerGame` is mapped to the documented 1–10 target scale within each
+  league/season/competition cohort.
+- Clutch scoring now uses points per clutch game plus sample reliability,
+  instead of dividing clutch totals by ordinary minutes per game.
 - `datetime.utcnow()` deprecated call replaced with `datetime.now(timezone.utc)`.
 - Module-level `random.seed(42)` / `np.random.seed(42)` removed from `generator.py`.
 - `_safe_model_dir` now uses `Path.resolve().is_relative_to()` to prevent path traversal.

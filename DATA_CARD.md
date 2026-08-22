@@ -1,6 +1,6 @@
 # Data Card — AI_Model PostgreSQL Contract
 
-**Contract:** `"AI_Source" competition-v1`
+**Contract:** `"AI_Source" competition-v2`
 
 The forecasting feature contract consumes the already calculated
 HoopmetricsEngine/AdvanceStats player and team tables. It does not recompute
@@ -31,9 +31,11 @@ One row per:
 player_id + league_id + season + competition
 ```
 
-This is the supervised production source. It preserves `RS`, `PO`, `CUP`, `SUPERCUP`, `TOT` and normalized future competition labels instead of collapsing them into one season row. Known aliases are normalized (`PLAYOFFS -> PO`, `REGULAR SEASON -> RS`), while unknown labels are retained as normalized uppercase identifiers.
+This source preserves all observed contexts, including `Home` and `Away`, for
+generic analysis. The forecast allow-list defaults to `RS`, `PO` and `TOT`;
+descriptive splits never become independent forecast targets.
 
-Rows without a non-null `ValLegaPerGame` / `rating` target are excluded. Team-specific duplicates inside the same league/season/competition are resolved by preferring all-team aggregates and then the row with most games.
+Rows without a non-null `ValLegaPerGame` source score are excluded. Team-specific duplicates inside the same league/season/competition are resolved by preferring all-team aggregates and then the row with most games. The final `rating` is a tie-preserving 1–10 percentile score inside each league/season/competition cohort; a singleton cohort receives 5.5.
 
 ### `"AI_Source"."TeamCompetitionStats"`
 One row per:
@@ -105,6 +107,8 @@ Production training/backtesting enforces:
 - exact consecutive pairs only;
 - player history and team context clipped to the source season;
 - same league and same competition for source/target pairs;
+- configured forecast competition and minimum-games gates;
+- sample weights derived from the smaller source/target games sample;
 - calibration target season never used for estimator fitting;
 - walk-forward target seasons excluded from each fold's training snapshot.
 
@@ -118,7 +122,9 @@ The validator reports available seasons, consecutive pairs globally and by compe
 
 PostgreSQL loading fails closed on missing views/columns, empty mandatory views, null competition labels and duplicate canonical keys.
 
-The application does **not** normalize ratings across leagues automatically; cross-league target comparability must be demonstrated using real out-of-time evidence.
+The adapter normalizes the source score only within a
+league/season/competition cohort. It never uses one league's distribution to
+score another league.
 
 ## Identity and ownership
 

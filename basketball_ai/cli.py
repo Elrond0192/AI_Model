@@ -45,7 +45,7 @@ def _load_data(args: argparse.Namespace) -> dict[str, Any]:
     if args.database_profile:
         os.environ["DATABASE_PROFILE"] = args.database_profile
     from basketball_ai.data.postgres_loader import load_all_data
-    return load_all_data()
+    return load_all_data(purpose="training")
 
 
 def mode_prepare_snapshot(args: argparse.Namespace) -> None:
@@ -108,14 +108,14 @@ def mode_train(args: argparse.Namespace) -> None:
     metadata = {
         **(metrics or {}),
         "model_run_id": run_id,
-        "model_version": os.getenv("MODEL_VERSION", "2.2.0"),
-        "feature_version": "forecast-t-plus-1-competition-v1",
+        "model_version": os.getenv("MODEL_VERSION", "2.3.0"),
+        "feature_version": "forecast-t-plus-1-quality-v2",
         "data_cutoff": datetime.now(timezone.utc).date().isoformat(),
         "latest_observed_season": _latest_season(data),
         "database_profile": args.database_profile or os.getenv("DATABASE_PROFILE", ""),
         "training_snapshot_id": data.get("training_snapshot_manifest", {}).get("snapshot_id"),
         "training_snapshot_sha256": data.get("training_snapshot_manifest", {}).get("sha256"),
-        "source_contract": data.get("source_contract", "competition-v1"),
+        "source_contract": data.get("source_contract", "competition-v2:canonical"),
         "backtest": report,
     }
     ensemble.save(str(run_dir), metadata)

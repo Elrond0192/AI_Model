@@ -38,9 +38,38 @@ _SOURCE_VIEWS = {
 }
 
 
-def _core_source_views() -> dict[str, str]:
+def _serving_tables_ready(engine: Engine, schema: str) -> bool:
+    """Return true only when both materialized training stores have data."""
+    try:
+        query = text(
+            f'SELECT EXISTS (SELECT 1 FROM "{schema}"."TrainingPlayerCompetitionStats" LIMIT 1) '
+            f'AND EXISTS (SELECT 1 FROM "{schema}"."TrainingTeamCompetitionStats" LIMIT 1)'
+        )
+        with engine.connect() as connection:
+            return bool(connection.execute(query).scalar())
+    except Exception:
+        return False
+
+
+def _core_source_views(
+    engine: Engine | None = None,
+    schema: str = "AI_Source",
+    *,
+    prefer_serving: bool = False,
+) -> dict[str, str]:
     views = dict(_SOURCE_VIEWS)
-    if os.getenv("POSTGRES_TRAINING_SOURCE", "canonical").strip().lower() == "serving":
+    mode = os.getenv("POSTGRES_TRAINING_SOURCE", "auto").strip().lower()
+    if mode not in {"auto", "canonical", "serving"}:
+        raise ValueError(
+            "POSTGRES_TRAINING_SOURCE must be auto, canonical or serving"
+        )
+    use_serving = mode == "serving" or (
+        mode == "auto"
+        and prefer_serving
+        and engine is not None
+        and _serving_tables_ready(engine, schema)
+    )
+    if use_serving:
         views["player_stats"] = "TrainingPlayerCompetitionStats"
         views["team_season_stats"] = "TrainingTeamCompetitionStats"
     return views
@@ -450,6 +479,7 @@ def load_all_data(
     source_schema: str | None = None,
     *,
     include_optional: bool | None = None,
+    purpose: str = "analysis",
 ) -> dict[str, Any]:
     """Load canonical PostgreSQL data.
 
@@ -461,12 +491,17 @@ def load_all_data(
         raise ValueError("Invalid PostgreSQL source schema")
     if include_optional is None:
         include_optional = _env_optional_default()
+    if purpose not in {"analysis", "training"}:
+        raise ValueError("purpose must be analysis or training")
 
     engine = get_engine(url)
     try:
-        data: dict[str, Any] = _load_views(
-            engine, schema, _core_source_views(), optional=False
+        core_views = _core_source_views(
+            engine,
+            schema,
+            prefer_serving=purpose == "training",
         )
+        data: dict[str, Any] = _load_views(engine, schema, core_views, optional=False)
         if include_optional:
             data.update(
                 _load_views(engine, schema, _OPTIONAL_SOURCE_VIEWS, optional=True)
@@ -505,7 +540,13 @@ def load_all_data(
     _build_lookups(data)
     available = sorted(key for key in _OPTIONAL_SOURCE_VIEWS if not data[key].empty)
     data["simulation_feeds"] = available
+    source_mode = (
+        "serving"
+        if core_views["player_stats"] == "TrainingPlayerCompetitionStats"
+        else "canonical"
+    )
+    base_contract = f"competition-v2:{source_mode}"
     data["source_contract"] = (
-        "competition-v1+simulation-v1" if include_optional else "competition-v1"
+        base_contract + "+simulation-v1" if include_optional else base_contract
     )
     return data

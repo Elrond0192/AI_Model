@@ -229,7 +229,7 @@ def test_training_loader_skips_optional_simulation_views(monkeypatch):
     )
     assert calls == [False]
     assert engine.disposed is True
-    assert result["source_contract"] == "competition-v1"
+    assert result["source_contract"] == "competition-v2:canonical"
     assert all(
         result[key].empty
         for key in (

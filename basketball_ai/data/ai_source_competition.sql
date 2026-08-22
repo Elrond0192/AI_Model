@@ -487,6 +487,20 @@ WITH resolved AS (
      AND direct_team.source_team_id = s.source_team_id
     WHERE s.rating IS NOT NULL
 ),
+scored AS (
+    SELECT r.*,
+           CASE
+             WHEN count(*) OVER (
+                    PARTITION BY r.league_key, r.season, r.competition
+                  ) = 1 THEN 5.5
+             ELSE 1.0 + 9.0 * percent_rank() OVER (
+                    PARTITION BY r.league_key, r.season, r.competition
+                    ORDER BY r.rating
+                  )
+           END AS rating_0_10
+    FROM resolved r
+    WHERE r.rn = 1
+),
 role_ranked AS (
     SELECT r.*, row_number() OVER (
         PARTITION BY r.league_key, r.season, r.source_player_id, r.competition
@@ -556,7 +570,7 @@ SELECT
     COALESCE(s.win_shares, 0) AS win_shares,
     COALESCE(s.ast_ratio, 0) AS ast_ratio,
     COALESCE(s.reb_pct, 0) AS reb_pct,
-    s.rating,
+    s.rating_0_10 AS rating,
     COALESCE(s.ortg, 0) AS ortg,
     COALESCE(s.drtg, 0) AS drtg,
     COALESCE(s.net_rtg, 0) AS net_rtg,
@@ -616,7 +630,7 @@ SELECT
              ELSE 0 END
     ) AS starter_pct,
     s.league_key
-FROM resolved s
+FROM scored s
 LEFT JOIN roster_fallback rf
   ON rf.player_global_id = s.player_global_id
  AND rf.league_key = s.league_key
@@ -633,7 +647,7 @@ LEFT JOIN clutch_ranked cr
 LEFT JOIN boxscore_starts bs
   ON bs.league_key = s.league_key AND bs.season = s.season
  AND bs.source_player_id = s.source_player_id AND bs.competition = s.competition
-WHERE s.rn = 1;
+;
 
 CREATE VIEW "AI_Source"."TeamCompetitionStats" AS
 WITH resolved AS (
