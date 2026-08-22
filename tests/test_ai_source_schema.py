@@ -38,6 +38,8 @@ def test_competition_schema_preserves_player_and_team_contexts():
     assert "information_schema.columns" in sql
     assert "'gamesstarted', 'games_started'" in sql
     assert "coalesce(s.games_started, bs.games_started, 0)" in sql
+    assert "percent_rank() over" in sql
+    assert "s.rating_0_10 as rating" in sql
 
 
 def test_competition_schema_keeps_tot_separate_from_rs():

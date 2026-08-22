@@ -17,6 +17,31 @@ def test_training_loader_can_use_physical_feature_store(monkeypatch):
     assert views["team_season_stats"] == "TrainingTeamCompetitionStats"
 
 
+def test_training_loader_auto_selects_ready_feature_store(monkeypatch):
+    monkeypatch.setenv("POSTGRES_TRAINING_SOURCE", "auto")
+    monkeypatch.setattr(loader, "_serving_tables_ready", lambda engine, schema: True)
+    views = loader._core_source_views(
+        _Engine(), "AI_Source", prefer_serving=True
+    )
+    assert views["player_stats"] == "TrainingPlayerCompetitionStats"
+
+
+def test_training_loader_auto_falls_back_to_canonical(monkeypatch):
+    monkeypatch.setenv("POSTGRES_TRAINING_SOURCE", "auto")
+    monkeypatch.setattr(loader, "_serving_tables_ready", lambda engine, schema: False)
+    views = loader._core_source_views(
+        _Engine(), "AI_Source", prefer_serving=True
+    )
+    assert views["player_stats"] == "PlayerCompetitionStats"
+
+
+def test_analysis_loader_keeps_canonical_contexts_in_auto_mode(monkeypatch):
+    monkeypatch.setenv("POSTGRES_TRAINING_SOURCE", "auto")
+    monkeypatch.setattr(loader, "_serving_tables_ready", lambda engine, schema: True)
+    views = loader._core_source_views(_Engine(), "AI_Source")
+    assert views["player_stats"] == "PlayerCompetitionStats"
+
+
 def test_predictive_scenario_does_not_open_database(monkeypatch):
     monkeypatch.setattr(loader, "get_engine", lambda url=None: (_ for _ in ()).throw(AssertionError("database opened")))
     result = loader.load_scenario_feeds(

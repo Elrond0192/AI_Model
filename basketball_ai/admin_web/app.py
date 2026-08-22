@@ -189,7 +189,7 @@ def _summary(data: dict[str, Any] | None) -> dict[str, Any]:
         "seasons": seasons,
         "season_min": min(seasons) if seasons else None,
         "season_max": max(seasons) if seasons else None,
-        "source_contract": data.get("source_contract", "competition-v1"),
+        "source_contract": data.get("source_contract", "competition-v2:canonical"),
     }
 
 
@@ -319,14 +319,14 @@ def _training_worker(
         metadata = {
             **(metrics or {}),
             "model_run_id": run_id,
-            "model_version": "2.2.0",
-            "feature_version": "forecast-t-plus-1-competition-v1",
+            "model_version": "2.3.0",
+            "feature_version": "forecast-t-plus-1-quality-v2",
             "data_cutoff": datetime.now(timezone.utc).date().isoformat(),
             "latest_observed_season": max(seasons),
             "database_profile": active_profile,
             "training_snapshot_id": (snapshot or {}).get("snapshot_id"),
             "training_snapshot_sha256": (snapshot or {}).get("sha256"),
-            "source_contract": data.get("source_contract", "competition-v1"),
+            "source_contract": data.get("source_contract", "competition-v2:canonical"),
             "backtest": report,
         }
         model.save(str(run_dir), metadata)
@@ -574,6 +574,7 @@ async def load_database_profile(name: str, user: dict[str, str] = Depends(_csrf)
             profile_url(name),
             profile.get("source_schema", "AI_Source"),
             include_optional=False,
+            purpose="training",
         )
     except Exception as exc:
         raise HTTPException(status_code=400, detail=_safe_error(exc)) from exc
@@ -666,7 +667,7 @@ def training(user: dict[str, str] = Depends(_operator)) -> dict[str, Any]:
         ],
         "configuration": {
             "forecast_horizon": "exactly t+1 season",
-            "feature_version": "forecast-t-plus-1-competition-v1",
+            "feature_version": "forecast-t-plus-1-quality-v2",
             "pairing": "same player + league + competition",
             "split": "whole target seasons",
             "calibration": "global + competition split-conformal",

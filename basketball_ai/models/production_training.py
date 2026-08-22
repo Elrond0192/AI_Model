@@ -270,6 +270,12 @@ class SeasonAheadPerformanceModel(PerformanceModel):
         X = X.iloc[sort_idx].reset_index(drop=True)
         y = y[sort_idx]
         target_years = target_years[sort_idx]
+        raw_weights = getattr(self, "_last_sample_weights", None)
+        sample_weights = (
+            np.asarray(raw_weights, dtype=float)[sort_idx]
+            if raw_weights is not None and len(raw_weights) == len(sort_idx)
+            else np.ones(len(sort_idx), dtype=float)
+        )
 
         unique_targets = sorted(set(target_years.tolist()))
         if len(unique_targets) < 3:
@@ -284,11 +290,20 @@ class SeasonAheadPerformanceModel(PerformanceModel):
         X_train, y_train = X.loc[train_mask], y[train_mask]
         X_val, y_val = X.loc[val_mask], y[val_mask]
         X_cal = X.loc[cal_mask]
+        w_train = sample_weights[train_mask]
+        w_val = sample_weights[val_mask]
         if X_train.empty or X_val.empty or X_cal.empty:
             raise ValueError("Season-blocked split produced an empty partition")
 
         selector = _xgb(300, early_stopping=True)
-        selector.fit(X_train, y_train, eval_set=[(X_val, y_val)], verbose=False)
+        selector.fit(
+            X_train,
+            y_train,
+            sample_weight=w_train,
+            eval_set=[(X_val, y_val)],
+            sample_weight_eval_set=[w_val],
+            verbose=False,
+        )
         train_pred = selector.predict(X_train)
         val_pred = selector.predict(X_val)
         best_iteration = getattr(selector, "best_iteration", None)
@@ -298,9 +313,9 @@ class SeasonAheadPerformanceModel(PerformanceModel):
             else 300
         )
 
-        train_rmse = float(np.sqrt(np.mean((train_pred - y_train) ** 2)))
-        val_rmse = float(np.sqrt(np.mean((val_pred - y_val) ** 2)))
-        val_mae = float(np.mean(np.abs(val_pred - y_val)))
+        train_rmse = float(np.sqrt(np.average((train_pred - y_train) ** 2, weights=w_train)))
+        val_rmse = float(np.sqrt(np.average((val_pred - y_val) ** 2, weights=w_val)))
+        val_mae = float(np.average(np.abs(val_pred - y_val), weights=w_val))
         ss_res = float(np.sum((val_pred - y_val) ** 2))
         ss_tot = float(np.sum((y_val - np.mean(y_val)) ** 2))
         val_r2 = 1.0 - ss_res / ss_tot if ss_tot > 0 else 0.0
@@ -308,7 +323,7 @@ class SeasonAheadPerformanceModel(PerformanceModel):
         fit_mask = target_years <= validation_season
         X_fit, y_fit = X.loc[fit_mask], y[fit_mask]
         self.model = _xgb(selected_trees, early_stopping=False)
-        self.model.fit(X_fit, y_fit, verbose=False)
+        self.model.fit(X_fit, y_fit, sample_weight=sample_weights[fit_mask], verbose=False)
         self.is_trained = True
 
         baselines = compute_baselines(X_train, y_train, X_val, y_val)
@@ -328,6 +343,16 @@ class SeasonAheadPerformanceModel(PerformanceModel):
             "selected_n_estimators": selected_trees,
             "consecutive_pairs": int(len(X)),
             "skipped_non_consecutive_gaps": int(self._skipped_gap_pairs),
+            "skipped_low_sample_pairs": int(
+                getattr(self, "_skipped_low_sample_pairs", 0)
+            ),
+            "excluded_descriptive_rows": int(
+                getattr(self, "_excluded_descriptive_rows", 0)
+            ),
+            "forecast_competitions": list(
+                getattr(self, "_forecast_competitions", [])
+            ),
+            "sample_weight_mean": float(np.mean(sample_weights)),
             "data_signature": signature,
             **baselines,
         }
@@ -345,9 +370,23 @@ class SeasonAheadPerformanceModel(PerformanceModel):
                 if not tr.any() or not va.any():
                     continue
                 model = _xgb(selected_trees, early_stopping=False)
-                model.fit(X.loc[tr], y[tr], verbose=False)
+                model.fit(
+                    X.loc[tr],
+                    y[tr],
+                    sample_weight=sample_weights[tr],
+                    verbose=False,
+                )
                 pred = model.predict(X.loc[va])
-                cv_scores.append(float(np.sqrt(np.mean((pred - y[va]) ** 2))))
+                cv_scores.append(
+                    float(
+                        np.sqrt(
+                            np.average(
+                                (pred - y[va]) ** 2,
+                                weights=sample_weights[va],
+                            )
+                        )
+                    )
+                )
             if cv_scores:
                 metrics["cv_mean_rmse"] = float(np.mean(cv_scores))
                 metrics["cv_std_rmse"] = float(np.std(cv_scores))

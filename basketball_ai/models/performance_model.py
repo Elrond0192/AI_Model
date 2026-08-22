@@ -222,7 +222,8 @@ FEATURE_COLS: List[str] = [
     "avg_orb_pct",
     "avg_drb_pct",
     # --- Clutch performance ---------------------------------------------------
-    "clutch_pts_per_36",
+    "clutch_pts_per_game",
+    "clutch_sample_reliability",
     "avg_clutch_ts_pct",
     "avg_clutch_net_rtg",
     # --- On/Off impact --------------------------------------------------------
@@ -542,6 +543,31 @@ class PerformanceModel:
         # Two-way score: offensive value + magnitude of defensive contribution
         two_way_score = avg_raptor_off + abs(avg_raptor_def)
 
+        clutch_history = player_stats_history
+        if (
+            clutch_history.empty
+            or "clutch_pts" not in clutch_history.columns
+            or "clutch_games" not in clutch_history.columns
+        ):
+            clutch_history = pd.DataFrame([stat_row])
+        clutch_points = pd.to_numeric(
+            clutch_history.get("clutch_pts", pd.Series(dtype=float)),
+            errors="coerce",
+        ).fillna(0.0)
+        clutch_games = pd.to_numeric(
+            clutch_history.get("clutch_games", pd.Series(dtype=float)),
+            errors="coerce",
+        ).fillna(0.0)
+        clutch_game_total = float(clutch_games.sum())
+        clutch_pts_per_game = (
+            float(clutch_points.sum() / clutch_game_total)
+            if clutch_game_total > 0
+            else 0.0
+        )
+        clutch_sample_reliability = float(
+            np.clip(clutch_game_total / 20.0, 0.0, 1.0)
+        )
+
         peak_age = _peak_age(position)
         # One-hot position encoding
         _prim = _primary_pos(position)
@@ -612,7 +638,8 @@ class PerformanceModel:
             "avg_orb_pct":          hist_avg("orb_pct", 3.0),
             "avg_drb_pct":          hist_avg("drb_pct", 12.0),
             # --- Clutch performance ------------------------------------------
-            "clutch_pts_per_36":    per36("clutch_pts"),
+            "clutch_pts_per_game":  clutch_pts_per_game,
+            "clutch_sample_reliability": clutch_sample_reliability,
             "avg_clutch_ts_pct":    hist_avg("clutch_ts_pct", 0.0),
             "avg_clutch_net_rtg":   hist_avg("clutch_net_rtg", 0.0),
             # --- On/Off impact -----------------------------------------------
