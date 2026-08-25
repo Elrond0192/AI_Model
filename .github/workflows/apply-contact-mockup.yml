@@ -1,0 +1,116 @@
+name: Apply Contact Page Mockup
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Apply contact page mockup
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("basketball_ai/admin_web/static/index.html")
+          text = path.read_text(encoding="utf-8")
+
+          nav_anchor = '''        <button class="nav-item" data-page="settings"><span class="nav-icon">⚙</span><span>Settings</span></button>'''
+          nav_insert = '''        <button class="nav-item" data-page="contact"><span class="nav-icon">✉</span><span>Contatti</span></button>\n'''
+          if 'data-page="contact"' not in text:
+              if nav_anchor not in text:
+                  raise SystemExit("Menu anchor not found")
+              text = text.replace(nav_anchor, nav_insert + nav_anchor, 1)
+
+          template_anchor = '''  <template id="page-settings">'''
+          contact_template = r'''  <template id="page-contact">
+    <section class="page">
+      <style>
+        .contact-hero{margin-bottom:20px;display:flex;justify-content:space-between;gap:24px;align-items:flex-end}
+        .contact-hero-copy{max-width:720px}
+        .contact-kicker{display:inline-flex;align-items:center;gap:8px;margin-bottom:10px;font-size:11px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+        .contact-kicker-dot{width:7px;height:7px;border-radius:50%;background:var(--orange);box-shadow:0 0 0 4px rgba(255,140,0,.12)}
+        .contact-layout{grid-template-columns:minmax(0,1.35fr) minmax(280px,.65fr)}
+        .contact-form{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+        .contact-form .span-2{grid-column:1 / -1}
+        .contact-form textarea{min-height:190px;resize:vertical}
+        .contact-submit-row{display:flex;align-items:center;justify-content:space-between;gap:16px;grid-column:1 / -1;margin-top:2px}
+        .contact-note{font-size:12px;line-height:1.5;color:var(--muted)}
+        .contact-note strong{color:var(--text)}
+        .contact-info{display:flex;flex-direction:column;gap:12px}
+        .contact-info-card{padding:16px;border:1px solid var(--border);border-radius:14px;background:rgba(255,255,255,.02)}
+        .contact-info-card span{display:block;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin-bottom:6px}
+        .contact-info-card strong{display:block;font-size:14px;color:var(--text)}
+        .contact-info-card p{margin:6px 0 0;font-size:12px;line-height:1.5;color:var(--muted)}
+        .contact-success{display:none}
+        @media (max-width: 900px){.contact-layout{grid-template-columns:1fr}.contact-form{grid-template-columns:1fr}.contact-form .span-2,.contact-submit-row{grid-column:auto}.contact-hero{align-items:flex-start;flex-direction:column}}
+      </style>
+
+      <div class="contact-hero">
+        <div class="contact-hero-copy">
+          <div class="contact-kicker"><span class="contact-kicker-dot"></span>Supporto AI Model</div>
+          <h1>Contatti</h1>
+          <p>Hai una domanda, vuoi segnalare un problema o proporre un miglioramento? Invia un messaggio direttamente al team.</p>
+        </div>
+      </div>
+
+      <div class="split-grid contact-layout">
+        <section class="panel">
+          <div class="panel-heading">
+            <div><h2>Invia un messaggio</h2><p class="microcopy">Compila il form e descrivi la tua richiesta nel modo più dettagliato possibile.</p></div>
+          </div>
+          <form class="contact-form" onsubmit="event.preventDefault(); const form=this; const button=form.querySelector('button[type=submit]'); button.disabled=true; button.textContent='Messaggio inviato ✓'; form.querySelector('.contact-success').style.display='block'; setTimeout(()=>{form.reset();button.disabled=false;button.textContent='Invia messaggio';},1200);">
+            <label>Nome<input name="name" type="text" autocomplete="name" placeholder="Il tuo nome" required></label>
+            <label>Email<input name="email" type="email" autocomplete="email" placeholder="nome@azienda.it" required></label>
+            <label class="span-2">Oggetto<input name="subject" type="text" placeholder="Come possiamo aiutarti?" required></label>
+            <label class="span-2">Messaggio<textarea name="message" placeholder="Scrivi qui il tuo messaggio..." required></textarea></label>
+            <div class="contact-submit-row">
+              <div>
+                <div class="contact-note"><strong>Privacy:</strong> i dati inseriti saranno utilizzati esclusivamente per rispondere alla richiesta.</div>
+                <div class="contact-success contact-note">Messaggio inviato correttamente. In questo mockup l'invio è simulato.</div>
+              </div>
+              <button class="btn btn-primary" type="submit">Invia messaggio</button>
+            </div>
+          </form>
+        </section>
+
+        <aside class="panel">
+          <div class="panel-heading"><h2>Prima di scriverci</h2></div>
+          <div class="contact-info">
+            <div class="contact-info-card"><span>Problemi tecnici</span><strong>Descrivi cosa stavi facendo</strong><p>Indica pagina, operazione, eventuale messaggio di errore e quando si è verificato.</p></div>
+            <div class="contact-info-card"><span>Funzionalità</span><strong>Raccontaci la tua idea</strong><p>Spiega cosa vorresti ottenere e quale risultato ti aspetti.</p></div>
+            <div class="contact-info-card"><span>Risposta</span><strong>Una richiesta alla volta</strong><p>Usa un oggetto chiaro: ci aiuta a classificare e gestire più velocemente il messaggio.</p></div>
+          </div>
+        </aside>
+      </div>
+    </section>
+  </template>
+
+'''
+          if 'id="page-contact"' not in text:
+              if template_anchor not in text:
+                  raise SystemExit("Template anchor not found")
+              text = text.replace(template_anchor, contact_template + template_anchor, 1)
+
+          path.write_text(text, encoding="utf-8")
+          PY
+
+      - name: Commit changes and remove one-shot workflow
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm -f .github/workflows/apply-contact-mockup.yml
+          git add basketball_ai/admin_web/static/index.html
+          git diff --cached --quiet && exit 0
+          git commit -m "feat(admin-web): add contact page mockup"
+          git push
