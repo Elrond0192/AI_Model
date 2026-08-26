@@ -68,6 +68,54 @@ Production Docker loads only explicitly promoted artifacts from `models_saved/pr
 
 Precomputed forecasts are stored in `"AI"."PlayerForecasts"`, whose key already includes `competition`.
 
+## Metric Rating Engine endpoints (FASE I)
+
+WordPress / Chat consume the **precomputed, versioned** distributions
+(`AI.MetricDistribution`) — percentile/tier are never recomputed per request
+and no rating logic lives in WordPress.
+
+### `POST /api/v2/metric-rating/rate`
+
+Rate a raw advanced-metric value against the stored population:
+
+```json
+{
+  "metric": "RAPTOR",
+  "value": 5.82,
+  "league": "ITA1",
+  "season": "2025-26",
+  "phase": "RS"
+}
+```
+
+Response (same shape as the engine): `metric, value, percentile, zscore,
+tier, label, sample_size, quality, population_source, fallback_used,
+population_type, distribution_version, rating_version, above_reference,
+below_reference, warnings`. `season` accepts an integer year or `"2025-26"`;
+`phase` is the competition code (`RS`, `PO`, `TOT`, …). Errors: `422` for an
+unknown metric, a non-finite value or a context without a stored distribution
+(the fallback used by the engine is always reported, never hidden); `503`
+when the distributions are not loaded (run the FASE G backfill first).
+
+### `POST /api/v2/metric-rating/player-snapshot`
+
+Per-metric rating snapshot for a player in a context (Chat use):
+
+```json
+{
+  "player_global_id": "46238",
+  "league": "ITA1",
+  "season": 2025,
+  "phase": "RS",
+  "metrics": ["RAPTOR", "LEBRON", "VORP"]
+}
+```
+
+Response: `{..., "ratings": {"RAPTOR": {value, percentile, zscore, tier,
+label, quality, population_source, fallback_used, distribution_version},
+"LEBRON": {...}, "VORP": {...}}}`. `404` when the player is not resolved,
+`503` when distributions/data are not loaded.
+
 ## Authentication and network
 
 WordPress calls server-to-server using `X-API-Key` or an externally provisioned Bearer token. Global database IDs must not be returned to the browser. PostgreSQL on the Docker host is reached through `host.docker.internal`; port 5432 must remain private.
