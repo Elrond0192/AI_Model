@@ -116,6 +116,24 @@ def _load_app_state() -> None:
     app_state["data"] = data
     app_state["engine"] = None
 
+    # FASE I — precomputed Metric Rating distributions (AI.MetricDistribution).
+    # Missing/empty only disables the rating endpoints; forecasts keep working.
+    metric_distributions: list = []
+    if data_source == "postgres":
+        try:
+            from basketball_ai.metric_rating.store import load_metric_distributions
+
+            metric_distributions = load_metric_distributions()
+            logger.info(
+                "[API] Loaded %d metric distributions", len(metric_distributions)
+            )
+        except Exception as exc:
+            logger.warning(
+                "[API] Metric distributions unavailable (rating endpoints disabled): %s",
+                exc,
+            )
+    app_state["metric_distributions"] = metric_distributions
+
     perf_path = Path(model_dir) / "performance_model.joblib"
     compat_path = Path(model_dir) / "compatibility_model.joblib"
     if not perf_path.exists() or not compat_path.exists():
@@ -185,6 +203,7 @@ async def lifespan(app: FastAPI):
     _load_app_state()
     app.state.data = app_state.get("data", {})
     app.state.engine = app_state.get("engine")
+    app.state.metric_distributions = app_state.get("metric_distributions", [])
     app.state.model_metadata = _model_metadata(os.environ.get("MODEL_DIR", "models_saved"))
 
     yield
@@ -387,9 +406,11 @@ def create_app() -> FastAPI:
 
     from basketball_ai.api.routes.predictions_v2 import router as predictions_v2_router
     from basketball_ai.api.routes.scenarios_v2 import router as scenarios_v2_router
+    from basketball_ai.api.routes.metric_rating_v2 import router as metric_rating_v2_router
 
     app.include_router(predictions_v2_router)
     app.include_router(scenarios_v2_router)
+    app.include_router(metric_rating_v2_router)
 
     @app.get("/health")
     def health(request: Request):
