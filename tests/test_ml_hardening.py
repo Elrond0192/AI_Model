@@ -58,7 +58,8 @@ def test_train_reorders_target_seasons_with_feature_rows(monkeypatch):
 
     model = production.SeasonAheadPerformanceModel()
 
-    def fake_prepare(self, data, extra_metrics=None, split_season=None):
+    def fake_prepare(self, data, extra_metrics=None, split_season=None,
+                     rating_distributions=None):
         self._last_season_years = [2024, 2022, 2023]
         self._last_source_years = [2023, 2021, 2022]
         self._skipped_gap_pairs = 0
