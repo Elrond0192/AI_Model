@@ -31,7 +31,7 @@ _PLAYER_METRICS = (
     "rating", "games_played", "minutes_per_game", "points", "rebounds", "assists",
     "steals", "blocks", "ts_pct", "usg_pct", "bpm", "obpm", "dbpm", "net_rtg",
     "ortg", "drtg", "three_point_pct", "three_par", "ast_pct", "tov_pct",
-    "raptor_total", "lebron_total",
+    "raptor_total", "lebron_total", "vorp",
 )
 _TEAM_METRICS = (
     "pace", "offensive_rating", "defensive_rating", "net_rtg",
