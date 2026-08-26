@@ -109,11 +109,22 @@ class SeasonAheadPerformanceModel(PerformanceModel):
         data: Dict[str, Any],
         extra_metrics: Optional[List[str]] = None,
         split_season: Optional[str] = None,
+        rating_distributions: Optional[Any] = None,
     ) -> Tuple[pd.DataFrame, np.ndarray]:
         if extra_metrics is None:
             extra_metrics = []
         player_stats = data["player_stats"].copy()
         players = data["players"]
+        # FASE H — Metric Rating Engine features (optional, additive).
+        # Without rating_distributions the behaviour is exactly as before.
+        rating_feature_names: List[str] = []
+        if rating_distributions is not None:
+            from basketball_ai.metric_rating.features import add_rating_features
+
+            player_stats, rating_feature_names = add_rating_features(
+                player_stats, rating_distributions
+            )
+        self.rating_feature_columns = rating_feature_names
         player_stats["_season_year"] = _numeric_seasons(player_stats)
         player_stats = player_stats.dropna(subset=["_season_year"])
         player_stats["_season_year"] = player_stats["_season_year"].astype(int)
@@ -158,7 +169,7 @@ class SeasonAheadPerformanceModel(PerformanceModel):
             name = f"{column}_per_36" if info.use_per36 else f"avg_{column}"
             if name not in extra_feature_names:
                 extra_feature_names.append(name)
-        feature_names = FEATURE_COLS + extra_feature_names
+        feature_names = FEATURE_COLS + extra_feature_names + rating_feature_names
 
         latest_data_year = int(player_stats["_season_year"].max())
         birth_year_map: Dict[int, int] = {}
@@ -259,10 +270,15 @@ class SeasonAheadPerformanceModel(PerformanceModel):
         data: Dict[str, Any],
         extra_metrics: Optional[List[str]] = None,
         cv_folds: int = 0,
+        rating_distributions: Optional[Any] = None,
     ) -> Dict[str, Any]:
         if extra_metrics is None:
             extra_metrics = []
-        X, y = self.prepare_features(data, extra_metrics=extra_metrics)
+        X, y = self.prepare_features(
+            data,
+            extra_metrics=extra_metrics,
+            rating_distributions=rating_distributions,
+        )
         self.feature_names = list(X.columns)
 
         target_years = np.asarray(self._last_season_years, dtype=int)

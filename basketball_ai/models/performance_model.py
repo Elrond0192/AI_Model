@@ -11,6 +11,7 @@ import json as _json
 from datetime import datetime as _dt, timezone
 import hashlib
 import logging
+import os
 from pathlib import Path
 from typing import Any, Dict, List, NamedTuple, Optional, Tuple
 
@@ -35,7 +36,15 @@ logger = logging.getLogger(__name__)
 
 
 def _xgb_device() -> str:
-    """Return 'cuda' when an NVIDIA GPU with CUDA is available, else 'cpu'."""
+    """Return 'cuda' when an NVIDIA GPU with CUDA is available, else 'cpu'.
+
+    ``XGB_DEVICE`` (cpu|cuda) overrides auto-detection — useful on hosts whose
+    xgboost build cannot run the detected GPU (e.g. "not compiled for SM 52").
+    Prediction-neutral: default behaviour is unchanged.
+    """
+    override = os.getenv("XGB_DEVICE", "").strip().lower()
+    if override in {"cpu", "cuda", "gpu"}:
+        return "cuda" if override == "gpu" else override
     try:
         import subprocess
         result = subprocess.run(
@@ -690,6 +699,12 @@ class PerformanceModel:
                     row[f"avg_{col}"] = float(np.mean(vals)) if vals else float(stat_row.get(col, 0))
                 else:
                     row[f"avg_{col}"] = float(stat_row.get(col, 0))
+
+        # Metric Rating Engine features (FASE H) — per-context, copied from the
+        # source row; 0.0 when absent so missing ratings behave like other gaps.
+        for col in getattr(self, "rating_feature_columns", ()) or ():
+            value = stat_row.get(col, np.nan)
+            row[col] = float(value) if not pd.isna(value) else 0.0
 
         return row
 
