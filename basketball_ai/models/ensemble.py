@@ -343,6 +343,26 @@ class EnsembleModel:
         player_feats["role_off_enc"] = float(self.perf_model.role_off_encoding.get(latest_role_off, 0))
         player_feats["role_def_enc"] = float(self.perf_model.role_def_encoding.get(latest_role_def, 0))
 
+        # Competition-aware production models treat nominal labels as one-hot.
+        role_values = {
+            "ruolo_combinato": latest_role,
+            "ruolo_offensivo": latest_role_off,
+            "ruolo_difensivo": latest_role_def,
+        }
+        for column, mapping in (
+            getattr(self.perf_model, "role_feature_encodings", {}) or {}
+        ).items():
+            current = role_values.get(column, "")
+            for value, feature_name in mapping.items():
+                player_feats[feature_name] = 1.0 if current == value else 0.0
+
+        for value, feature_name in (
+            getattr(self.perf_model, "competition_feature_encodings", {}) or {}
+        ).items():
+            player_feats[feature_name] = (
+                1.0 if str(value).strip().upper() == competition else 0.0
+            )
+
         po_feats = compute_po_features(p_stats)
         player_feats.update(po_feats)
 
