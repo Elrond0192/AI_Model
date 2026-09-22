@@ -283,7 +283,17 @@ BEGIN
     RETURN format(
         '(CASE
             WHEN NULLIF(btrim(%1$s::text), '''') IS NULL THEN NULL::text
-            WHEN btrim(%1$s::text) ~ ''^[+-]?[0-9]+[.]0+    namespace text,
+            WHEN btrim(%1$s::text) ~ ''^[+-]?[0-9]+[.]0+$''
+                THEN regexp_replace(btrim(%1$s::text), ''[.]0+$'', '''')
+            ELSE lower(btrim(%1$s::text))
+          END)',
+        value_expr
+    );
+END;
+$fn$;
+
+CREATE OR REPLACE FUNCTION pg_temp.ai_stable_id(
+    namespace text,
     value_expr text
 )
 RETURNS text
