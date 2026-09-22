@@ -333,3 +333,79 @@ def test_competition_model_uses_one_hot_nominal_features():
     assert "role_combo_1" in X.columns
     assert "role_off_1" in X.columns
     assert "role_def_1" in X.columns
+
+
+def test_base_oof_predictions_are_batched_per_source_year(monkeypatch):
+    import basketball_ai.models.strict_production as strict
+
+    years = [2020, 2021, 2022, 2023]
+    data = {
+        "player_stats": pd.DataFrame(
+            [
+                {
+                    "player_id": 1,
+                    "team_id": 10,
+                    "league_id": 1,
+                    "season": year,
+                    "games_played": 20,
+                    "rating": 6.0 + (year - 2020) * 0.1,
+                    "competition": "RS",
+                }
+                for year in years
+            ]
+        ),
+    }
+
+    def fake_snapshot(source_data, source_year):
+        stats = source_data["player_stats"]
+        stats = stats[stats["season"] <= source_year].copy()
+        return {
+            "player_stats": stats,
+            "player_dict": {1: {"id": 1, "position": "PG"}},
+        }
+
+    class FakePredictor:
+        def __init__(self):
+            self.calls = 0
+
+        def predict(self, values):
+            self.calls += 1
+            return values[:, 0] + 10.0
+
+    class FakeBaseModel:
+        instances = []
+
+        def __init__(self):
+            self.feature_names = ["marker"]
+            self.model = FakePredictor()
+            self.__class__.instances.append(self)
+
+        def train(self, snapshot):
+            return None
+
+        @staticmethod
+        def _precompute_history_features(history, **kwargs):
+            return [{"marker": float(row["rating"])} for _, row in history.iterrows()]
+
+        @staticmethod
+        def _build_row(source, age, position, history, **kwargs):
+            return {"marker": float(source["rating"])}
+
+        def predict_from_features(self, row):
+            raise AssertionError("OOF should use batched model.predict")
+
+    monkeypatch.setattr(strict, "build_historical_snapshot", fake_snapshot)
+    monkeypatch.setattr(strict, "CompetitionSeasonAheadPerformanceModel", FakeBaseModel)
+
+    result = strict.build_base_oof_predictions(data)
+
+    assert set(result) == {
+        (1, 1, "RS", 2021),
+        (1, 1, "RS", 2022),
+        (1, 1, "RS", 2023),
+    }
+    assert len(FakeBaseModel.instances) == 3
+    assert all(instance.model.calls == 1 for instance in FakeBaseModel.instances)
+    assert np.isclose(result[(1, 1, "RS", 2021)], 16.0)
+    assert np.isclose(result[(1, 1, "RS", 2022)], 16.1)
+    assert np.isclose(result[(1, 1, "RS", 2023)], 16.2)
