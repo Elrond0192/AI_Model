@@ -45,6 +45,7 @@ _COMP_ALIASES = {
 }
 _PREFERRED_COMPETITION_ORDER = ("RS", "PO", "CUP", "SUPERCUP", "TOT")
 _SCOPE_CACHE_KEY = "_competition_scope_cache"
+_COMPATIBILITY_RESIDUAL_SCALE = 2.0
 
 
 def forecast_competitions() -> set[str]:
@@ -329,7 +330,13 @@ class CompetitionSeasonAheadPerformanceModel(SeasonAheadPerformanceModel):
 
 
 class CompetitionTemporalCompatibilityModel(TemporalCompatibilityModel):
-    """Compatibility model whose historical vectors use one league/competition."""
+    """Competition-aware compatibility model with an OOF residual target.
+
+    When ``base_predictions`` are supplied, the KNN target is a centred,
+    bounded transform of ``future_rating - out_of_fold_base_prediction``.
+    A neutral residual therefore maps to 0.5, which becomes a 1.00 ensemble
+    multiplier and allows both positive and negative compatibility effects.
+    """
 
     @staticmethod
     def _context(data: Dict[str, Any]) -> tuple[Optional[int], Optional[str]]:
@@ -438,7 +445,11 @@ class CompetitionTemporalCompatibilityModel(TemporalCompatibilityModel):
         count = int(counts[index - 1])
         return float(sums[index - 1] / count) if count else fallback
 
-    def train(self, data: Dict[str, Any]) -> None:
+    def train(
+        self,
+        data: Dict[str, Any],
+        base_predictions: Optional[Dict[Tuple[int, int, str, int], float]] = None,
+    ) -> None:
         history = data.get("team_season_stats")
         if history is None or history.empty:
             raise RuntimeError(
@@ -535,13 +546,39 @@ class CompetitionTemporalCompatibilityModel(TemporalCompatibilityModel):
                 )
                 vector = np.concatenate([player_vector, team_vectors[team_index]])
                 prior_mean = self._mean_before(prefixes["rating"], index)
-                compatibility = float(
-                    np.clip(
-                        (float(stat["rating"]) - prior_mean + 1.5) / 3.0,
-                        0.0,
-                        1.0,
+                if base_predictions is not None:
+                    key = (
+                        int(pid),
+                        int(league_id),
+                        str(competition),
+                        int(target_season),
                     )
-                )
+                    base_prediction = base_predictions.get(key)
+                    try:
+                        base_prediction = float(base_prediction)
+                    except (TypeError, ValueError):
+                        base_prediction = float("nan")
+                    if not np.isfinite(base_prediction):
+                        continue
+                    residual = float(stat["rating"]) - base_prediction
+                    # Neutral residual (0.0) -> 0.5. Values outside +/-4.0
+                    # are clipped before mapping so noisy targets remain bounded.
+                    compatibility = float(
+                        np.clip(
+                            0.5 + residual / (2.0 * _COMPATIBILITY_RESIDUAL_SCALE),
+                            0.0,
+                            1.0,
+                        )
+                    )
+                else:
+                    # Backwards-compatible fallback for standalone callers/tests.
+                    compatibility = float(
+                        np.clip(
+                            (float(stat["rating"]) - prior_mean + 1.5) / 3.0,
+                            0.0,
+                            1.0,
+                        )
+                    )
                 X_rows.append(vector)
                 y_values.append(compatibility)
                 samples_by_competition[str(competition)] = (
@@ -565,6 +602,12 @@ class CompetitionTemporalCompatibilityModel(TemporalCompatibilityModel):
         self.is_trained = True
         self.training_samples = len(X)
         self.training_samples_by_competition = samples_by_competition
+        self.residual_mode = base_predictions is not None
+        self.training_target_mode = (
+            "future_rating_minus_oof_base"
+            if self.residual_mode
+            else "future_rating_vs_prior_mean_legacy"
+        )
 
     def score(self, player_id: int, team_id: int, data: Dict[str, Any]) -> float:
         if not self.is_trained:
@@ -592,7 +635,7 @@ class CompetitionTemporalCompatibilityModel(TemporalCompatibilityModel):
         )
         vector = np.concatenate([player_vector, self._team_style_vector(team)])
         scaled = self.scaler.transform(vector.reshape(1, -1))
-        return float(np.clip(self.knn.predict(scaled)[0], 0.50, 1.0))
+        return float(np.clip(self.knn.predict(scaled)[0], 0.0, 1.0))
 
 
 def competition_support(
