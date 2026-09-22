@@ -113,7 +113,6 @@ END;
 $cleanup_legacy$;
 
 DROP FUNCTION IF EXISTS "AI_Source"."DropRawObject"(text);
-DROP FUNCTION IF EXISTS "AI_Source"."LowerKeys"(jsonb);
 DROP FUNCTION IF EXISTS "AI_Source"."TextValue"(jsonb, text[]);
 DROP FUNCTION IF EXISTS "AI_Source"."NumericValue"(jsonb, text[]);
 DROP FUNCTION IF EXISTS "AI_Source"."IntValue"(jsonb, text[]);
