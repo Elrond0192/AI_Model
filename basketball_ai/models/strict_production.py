@@ -6,11 +6,14 @@ competition-aware path.
 """
 from __future__ import annotations
 
+import logging
 import math
 import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 import weakref
+
+logger = logging.getLogger(__name__)
 
 import joblib
 import numpy as np
@@ -384,7 +387,6 @@ def build_base_oof_predictions(
             source_row = history.iloc[-1].copy()
             source_clean = source_row.drop(labels=["_season_year", "_competition"])
             source_clean["competition"] = str(competition)
-            empty_history = history.drop(columns=["_season_year", "_competition"]).iloc[:0]
             history_clean = history.drop(columns=["_season_year", "_competition"]).reset_index(drop=True)
             precomputed = base_model._precompute_history_features(
                 history_clean,
