@@ -426,6 +426,9 @@ BEGIN
             league_key,
             pg_temp.ai_expr('Anagrafiche', player_table, 'p', 'text', ARRAY['id'])
         );
+        p_team_name_expr := pg_temp.ai_expr(
+            'Anagrafiche', player_table, 'p', 'text', ARRAY['teamname']
+        );
 
         IF EXISTS (
             SELECT 1
