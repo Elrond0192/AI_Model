@@ -7,12 +7,9 @@ import pandas as pd
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-SOURCE_SQL = ROOT / "basketball_ai" / "data" / "ai_source_schema.sql"
-COMPETITION_SQL = ROOT / "basketball_ai" / "data" / "ai_source_competition.sql"
-SIMULATION_SQL = ROOT / "basketball_ai" / "data" / "ai_source_simulation.sql"
+SOURCE_SQL = ROOT / "basketball_ai" / "data" / "ai_source_full.sql"
 SERVING_SQL = ROOT / "basketball_ai" / "data" / "ai_scenario_serving.sql"
 OUTPUT_SQL = ROOT / "basketball_ai" / "data" / "ai_schema.sql"
-MIGRATION_SQL = ROOT / "basketball_ai" / "data" / "ai_pascalcase_migration.sql"
 
 
 def test_ai_source_schema_defines_entity_contract():
@@ -27,7 +24,7 @@ def test_ai_source_schema_defines_entity_contract():
 
 
 def test_competition_schema_preserves_player_and_team_contexts():
-    sql = COMPETITION_SQL.read_text(encoding="utf-8").lower()
+    sql = SOURCE_SQL.read_text(encoding="utf-8").lower()
     assert 'create view "ai_source"."playercompetitionstats"' in sql
     assert 'create view "ai_source"."teamcompetitionstats"' in sql
     assert "partition by pr.global_id, s.league_key, s.season, s.competition" in sql
@@ -58,7 +55,7 @@ def test_competition_schema_is_independent_of_base_internal_views():
 
 
 def test_simulation_schema_adapts_pbp_lineups_play_types_and_shots():
-    sql = SIMULATION_SQL.read_text(encoding="utf-8").lower()
+    sql = SOURCE_SQL.read_text(encoding="utf-8").lower()
     for view in (
         '"ai_source"."simulationpbpevents"',
         '"ai_source"."simulationlineupstints"',
@@ -75,8 +72,6 @@ def test_simulation_schema_adapts_pbp_lineups_play_types_and_shots():
 def test_ai_source_schemas_have_no_sql_server_ddl():
     sql = (
         SOURCE_SQL.read_text(encoding="utf-8")
-        + COMPETITION_SQL.read_text(encoding="utf-8")
-        + SIMULATION_SQL.read_text(encoding="utf-8")
         + SERVING_SQL.read_text(encoding="utf-8")
     ).lower()
     forbidden = (
@@ -120,8 +115,7 @@ def test_ai_owned_schemas_and_relations_use_pascal_case():
     assert '"AI"."PlayerForecasts"' in output
     assert "CREATE SCHEMA IF NOT EXISTS ai_source" not in source
     assert "CREATE TABLE IF NOT EXISTS ai." not in output
-    migration = MIGRATION_SQL.read_text(encoding="utf-8")
-    assert "DROP SCHEMA IF EXISTS ai_source CASCADE" in migration
+    assert 'CREATE SCHEMA IF NOT EXISTS "AI_Source"' in source
 
 
 def test_stable_id_keeps_null_relations_null():
