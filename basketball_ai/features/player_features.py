@@ -207,7 +207,7 @@ def compute_player_features_from_objects(
     avg_reb_pct_val = float(np.mean([s.reb_pct for s in stats_history]))
     obpm_x_usg  = avg_obpm * avg_usg_pct / 100.0
     dbpm_x_reb  = avg_dbpm * avg_reb_pct_val / 100.0
-    two_way_score = avg_raptor_off + abs(avg_raptor_def)
+    two_way_score = avg_raptor_off + avg_raptor_def
 
     # One-hot position encoding (must match performance_model.py FEATURE_COLS)
     _prim_pos = _primary_pos(player.position)
