@@ -216,6 +216,7 @@ class AsOfPositionPerformanceModel(CompetitionSeasonAheadPerformanceModel):
         data: Dict[str, Any],
         extra_metrics: Optional[List[str]] = None,
         split_season: Optional[str] = None,
+        rating_distributions: Optional[Any] = None,
     ) -> Tuple[pd.DataFrame, np.ndarray]:
         self._position_relations = data.get("team_player_relations")
         if self._position_relations is not None:
@@ -226,6 +227,7 @@ class AsOfPositionPerformanceModel(CompetitionSeasonAheadPerformanceModel):
             safe_data,
             extra_metrics=extra_metrics,
             split_season=split_season,
+            rating_distributions=rating_distributions,
         )
 
     def _build_row(
