@@ -9,7 +9,7 @@ self-contained and can be persisted and versioned.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Iterable, Optional, Sequence, Tuple
 
 import numpy as np
