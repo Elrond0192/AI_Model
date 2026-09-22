@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta name="color-scheme" content="dark">
+  <meta name="color-scheme" content="dark"><meta name="theme-color" content="#07131f">
   <title>AI Model Control Center</title>
   <link rel="stylesheet" href="/assets/app.css">
 </head>
@@ -87,7 +87,7 @@
 
   <template id="page-data">
     <section class="page">
-      <div class="page-heading"><div><h1>Data &amp; preparation</h1><p>Flusso guidato: connetti PostgreSQL, prepara lo storico del modello, poi avvia training.</p></div></div>
+      <div class="page-heading"><div><h1>Dati e snapshot</h1><p>Configura PostgreSQL, prepara lo storico immutabile e porta i dati al training senza passare dal terminale.</p></div></div>
       <section class="panel lifecycle-panel">
         <div class="panel-heading"><h2>Come funziona</h2><span class="registry-badge">Nessun terminale per l’operatività ordinaria</span></div>
         <div class="quality-grid lifecycle-grid">
@@ -99,8 +99,8 @@
         <p class="microcopy">La migrazione iniziale degli schemi PostgreSQL resta un’operazione tecnica una tantum. Dopo l’installazione, usa questa pagina per il normale ciclo dati.</p>
       </section>
       <div class="split-grid data-grid">
-        <section class="panel"><div class="panel-heading"><h2>Configured profiles</h2><button id="refresh-profiles" class="btn btn-small btn-secondary">Aggiorna</button></div><div id="profiles-list" class="profile-list"></div></section>
-        <section class="panel"><div class="panel-heading"><h2>Create or replace a profile</h2></div>
+        <section class="panel"><div class="panel-heading"><h2>Profili PostgreSQL</h2><button id="refresh-profiles" class="btn btn-small btn-secondary">Aggiorna</button></div><div id="profiles-list" class="profile-list"></div></section>
+        <section class="panel"><div class="panel-heading"><h2>Configurazione database</h2></div>
           <form id="profile-form" class="form-grid">
             <label class="span-2">Profile name<input name="name" placeholder="production" required></label>
             <label class="span-2">Host<input name="host" value="host.docker.internal" required></label>
@@ -115,8 +115,8 @@
         </section>
       </div>
       <section class="panel"><div class="panel-heading"><h2>Storico pronto per il modello</h2><button id="refresh-snapshots" class="btn btn-small btn-secondary">Aggiorna</button></div><p class="microcopy">Uno snapshot è una copia immutabile dei dati core storici. Prepararlo non allena il modello e non legge play-by-play.</p><div id="snapshots-list" class="profile-list"></div></section>
-      <section class="panel"><div class="panel-heading"><h2>Stato stagioni</h2><button id="refresh-lifecycle" class="btn btn-small btn-secondary">Aggiorna</button></div><p class="microcopy">Segna una stagione <strong>Completa</strong> solo quando AdvancedStats e risultati finali sono definitivi. Il training viene bloccato finché lo snapshot contiene stagioni In corso o non classificate.</p><div id="season-lifecycle-list" class="profile-list"></div></section>
-      <section class="panel contract-panel"><div class="panel-heading"><h2>Canonical data contract</h2></div><div class="contract-tags"><span>"AI_Source"."Leagues"</span><span>"AI_Source"."Teams"</span><span>"AI_Source"."Players"</span><span>player_competition_stats</span><span>team_competition_stats</span><span>immutable training snapshot</span><span>scenario_* serving</span></div></section>
+      <section class="panel"><div class="panel-heading"><h2>Stato delle stagioni</h2><button id="refresh-lifecycle" class="btn btn-small btn-secondary">Aggiorna</button></div><p class="microcopy">Segna una stagione <strong>Completa</strong> solo quando AdvancedStats e risultati finali sono definitivi. Il training viene bloccato finché lo snapshot contiene stagioni In corso o non classificate.</p><div id="season-lifecycle-list" class="profile-list"></div></section>
+      <section class="panel contract-panel"><div class="panel-heading"><h2>Contratto dati canonical</h2></div><div class="contract-tags"><span>"AI_Source"."Leagues"</span><span>"AI_Source"."Teams"</span><span>"AI_Source"."Players"</span><span>player_competition_stats</span><span>team_competition_stats</span><span>immutable training snapshot</span><span>scenario_* serving</span></div></section>
     </section>
   </template>
 
