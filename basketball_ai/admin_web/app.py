@@ -298,7 +298,6 @@ def _training_worker(
     from basketball_ai.models.promote import register_candidate
     from basketball_ai.models.strict_production import StrictProductionEnsembleModel
 
-    seasons = _seasons(data)
     try:
         if snapshot and snapshot.get("snapshot_id"):
             snapshot_data = load_training_snapshot(str(snapshot["snapshot_id"]))
@@ -306,11 +305,13 @@ def _training_worker(
             if manifest.get("sha256") != snapshot.get("sha256"):
                 raise RuntimeError("Training snapshot checksum/manifest mismatch")
             data = snapshot_data
+            seasons = _seasons(data)
             _set_training(
                 stage="Training snapshot activated",
                 progress=8,
                 message=f"Training from immutable snapshot {snapshot['snapshot_id']}…",
             )
+        seasons = _seasons(data)
         _set_training(status="running", stage="Training ensemble", progress=12, message="Training the strict competition-aware ensemble…")
         model = StrictProductionEnsembleModel()
         metrics = model.train(data)
