@@ -1355,6 +1355,8 @@ class PerformanceModel:
             "role_encoding":      self.role_encoding,
             "role_off_encoding":  self.role_off_encoding,
             "role_def_encoding":  self.role_def_encoding,
+            "role_feature_encodings": self.role_feature_encodings,
+            "competition_feature_encodings": self.competition_feature_encodings,
             "data_signature":     self.data_signature,
         }, path)
         logger.info("[PerformanceModel] Saved to %s", path)
@@ -1367,6 +1369,12 @@ class PerformanceModel:
         self.role_encoding      = payload.get("role_encoding", {})
         self.role_off_encoding  = payload.get("role_off_encoding", {})
         self.role_def_encoding  = payload.get("role_def_encoding", {})
+        self.role_feature_encodings = payload.get(
+            "role_feature_encodings", {}
+        )
+        self.competition_feature_encodings = payload.get(
+            "competition_feature_encodings", {}
+        )
         self.data_signature     = payload.get("data_signature", "")
         self.is_trained         = True
         self._shap_explainer    = None
