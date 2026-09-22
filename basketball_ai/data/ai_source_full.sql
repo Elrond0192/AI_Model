@@ -1483,6 +1483,43 @@ BEGIN
 END;
 $grant_ai_source$;
 
+
+-- ---------------------------------------------------------------------------
+-- Runtime read access
+--
+-- The canonical tables are recreated by this script. Re-apply the read-only
+-- runtime grant after every rebuild so the BO/API user does not lose SELECT.
+-- Override the default role with:
+--   SET app.ai_source_read_role = 'your_runtime_role';
+-- ---------------------------------------------------------------------------
+
+DO $grant_ai_source$
+DECLARE
+    read_role text := coalesce(
+        NULLIF(btrim(current_setting('app.ai_source_read_role', true)), ''),
+        'ai_model'
+    );
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = read_role) THEN
+        EXECUTE format('GRANT USAGE ON SCHEMA "AI_Source" TO %I', read_role);
+        EXECUTE format(
+            'GRANT SELECT ON TABLE
+                "AI_Source"."Leagues",
+                "AI_Source"."Teams",
+                "AI_Source"."Players",
+                "AI_Source"."TeamPlayerRelations",
+                "AI_Source"."PlayerCompetitionStats",
+                "AI_Source"."TeamCompetitionStats"
+             TO %I',
+            read_role
+        );
+        RAISE NOTICE 'AI_Source read access granted to role %', read_role;
+    ELSE
+        RAISE NOTICE 'AI_Source read role "%" does not exist; no grant applied', read_role;
+    END IF;
+END;
+$grant_ai_source$;
+
 -- Only final canonical indexes. The model mostly bulk-loads these tables, so
 -- indexes are limited to identity/time access paths actually used downstream.
 -- ---------------------------------------------------------------------------
