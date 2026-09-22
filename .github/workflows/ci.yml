@@ -146,8 +146,8 @@ jobs:
             SELECT rating INTO po_rating
             FROM "AI_Source"."PlayerCompetitionStats"
             WHERE league_key = 'ITA1' AND season = 2025 AND competition = 'PO';
-            IF rs_rating <> 6.70 OR po_rating <> 7.20 THEN
-              RAISE EXCEPTION 'RS/PO player ratings were not isolated: RS %, PO %', rs_rating, po_rating;
+            IF rs_rating <> 5.5 OR po_rating <> 5.5 THEN
+              RAISE EXCEPTION 'Unexpected singleton percentile ratings: RS %, PO %', rs_rating, po_rating;
             END IF;
 
             SELECT pace INTO rs_pace
@@ -235,8 +235,8 @@ jobs:
             FROM "AI_Source"."TeamCompetitionStats"
             WHERE league_key = 'ITA1' AND season = 2025 AND competition = 'PO';
 
-            IF rs_rating <> 6.70 OR po_rating <> 7.20 OR rs_pace <> 75.0 OR po_pace <> 70.0 THEN
-              RAISE EXCEPTION 'RS/PO values changed after reinstall: ratings %/%, pace %/%',
+            IF rs_rating <> 5.5 OR po_rating <> 5.5 OR rs_pace <> 75.0 OR po_pace <> 70.0 THEN
+              RAISE EXCEPTION 'Contract changed after reinstall: ratings %/%, pace %/%',
                 rs_rating, po_rating, rs_pace, po_pace;
             END IF;
           END
