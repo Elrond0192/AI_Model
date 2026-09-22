@@ -45,7 +45,7 @@ _COMP_ALIASES = {
 }
 _PREFERRED_COMPETITION_ORDER = ("RS", "PO", "CUP", "SUPERCUP", "TOT")
 _SCOPE_CACHE_KEY = "_competition_scope_cache"
-_COMPATIBILITY_RESIDUAL_SCALE = 2.0
+_COMPATIBILITY_RESIDUAL_SCALE = 4.0
 
 
 def forecast_competitions() -> set[str]:
