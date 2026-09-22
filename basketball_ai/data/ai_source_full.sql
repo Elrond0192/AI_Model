@@ -351,6 +351,7 @@ DECLARE
     team_local_expr text;
     comp_expr text;
     player_global_expr text;
+    p_team_name_expr text;
     direct_team_global_expr text := 'NULL::text';
     fallback_team_global_expr text := 'NULL::text';
 
