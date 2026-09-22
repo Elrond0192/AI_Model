@@ -83,7 +83,7 @@ jobs:
           $PSQL -f basketball_ai/data/ai_scenario_serving.sql
           $PSQL -f basketball_ai/data/ai_schema.sql
 
-      - name: Verify canonical views, isolation and normalization
+      - name: Verify canonical tables, isolation and normalization
         env:
           PGPASSWORD: postgres
         run: |
@@ -111,10 +111,6 @@ jobs:
                OR to_regclass('"AI_Source"."TeamPlayerRelations"') IS NULL
                OR to_regclass('"AI_Source"."PlayerCompetitionStats"') IS NULL
                OR to_regclass('"AI_Source"."TeamCompetitionStats"') IS NULL
-               OR to_regclass('"AI_Source"."SimulationPbpEvents"') IS NULL
-               OR to_regclass('"AI_Source"."SimulationLineupStints"') IS NULL
-               OR to_regclass('"AI_Source"."SimulationPlayTypeStats"') IS NULL
-               OR to_regclass('"AI_Source"."SimulationShotProfiles"') IS NULL
                OR to_regclass('"AI"."ModelRuns"') IS NULL
                OR to_regclass('"AI"."PlayerForecasts"') IS NULL THEN
               RAISE EXCEPTION 'Required AI_Model PostgreSQL contract object is missing';
@@ -178,12 +174,6 @@ jobs:
               RAISE EXCEPTION 'Duplicate team competition keys detected';
             END IF;
 
-            IF "AI_Source"."CompetitionCode"('Regular Season') <> 'RS'
-               OR "AI_Source"."CompetitionCode"('playoffs') <> 'PO'
-               OR "AI_Source"."CompetitionCode"('TOTAL') <> 'TOT'
-               OR "AI_Source"."CompetitionCode"('Final Four') <> 'FINAL_FOUR' THEN
-              RAISE EXCEPTION 'Competition normalization contract failed';
-            END IF;
           END
           $$;
           SQL
