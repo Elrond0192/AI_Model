@@ -247,6 +247,28 @@ FEATURE_COLS: List[str] = [
     "obpm_x_usg",           # Offensive production at high usage (OBPM × USG%)
     "dbpm_x_reb",           # Defensive impact via rebounding (DBPM × REB%)
     "two_way_score",        # RAPTOR_off + RAPTOR_def (signed two-way value)
+    # Availability flags distinguish a genuine zero from a missing advanced metric.
+    "per_available",
+    "ts_pct_available",
+    "usg_pct_available",
+    "vorp_available",
+    "spm_available",
+    "raptor_off_available",
+    "raptor_def_available",
+    "lebron_off_available",
+    "lebron_def_available",
+    "gm_sc_available",
+    "fic_available",
+    "ows_available",
+    "dws_available",
+    "scoring_efficiency_available",
+    "hustle_index_available",
+    "foul_drawing_rate_available",
+    "net_rtg_diff_available",
+    "ortg_diff_available",
+    "clutch_ts_pct_available",
+    "clutch_net_rtg_available",
+    "starter_pct_available",
 ]
 
 # Non-metric identity/target columns to exclude from METRIC_CATALOG selection
@@ -682,6 +704,30 @@ class PerformanceModel:
             row["po_vs_rs_delta"]  = po_feats["po_vs_rs_delta"]
             row["po_games_played"] = po_feats["po_games_played"]
             row["has_po_history"]  = po_feats["has_po_history"]
+
+        # Advanced-metric availability flags use the historical source rows
+        # available at prediction time. The flag is 1 when at least one real
+        # observation exists in the source history, otherwise 0.
+        availability_columns = (
+            "per", "ts_pct", "usg_pct", "vorp", "spm",
+            "raptor_off", "raptor_def", "lebron_off", "lebron_def",
+            "gm_sc", "fic", "ows", "dws", "scoring_efficiency",
+            "hustle_index", "foul_drawing_rate", "net_rtg_diff", "ortg_diff",
+            "clutch_ts_pct", "clutch_net_rtg", "starter_pct",
+        )
+        availability_source = player_stats_history
+        if availability_source is None or availability_source.empty:
+            availability_source = pd.DataFrame([stat_row])
+        for column in availability_columns:
+            if column not in availability_source.columns:
+                available = False
+            else:
+                available = bool(
+                    pd.to_numeric(
+                        availability_source[column], errors="coerce"
+                    ).notna().any()
+                )
+            row[f"{column}_available"] = 1.0 if available else 0.0
 
         # Extra metrics requested by the caller
         for col in extra_metrics:
