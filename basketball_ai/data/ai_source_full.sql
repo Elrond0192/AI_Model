@@ -1393,7 +1393,7 @@ WHERE r.rn=1;
 
 CREATE TABLE "AI_Source"."Leagues" AS
 WITH keys AS (
-    SELECT DISTINCT league_key FROM "AI_Source"."Players"
+    SELECT DISTINCT current_league_key AS league_key FROM "AI_Source"."Players"
     UNION
     SELECT DISTINCT league_key FROM "AI_Source"."Teams"
     UNION
