@@ -232,6 +232,12 @@ BEGIN
     ELSIF p_kind = 'bool' THEN
         IF typcategory = 'B' THEN
             RETURN format('%s::boolean', q);
+        ELSIF typcategory = 'N' THEN
+            RETURN format(
+                '(CASE WHEN %1$s IS NULL THEN NULL
+                       ELSE %1$s::double precision <> 0 END)',
+                q
+            );
         END IF;
         RETURN format(
             '(lower(btrim(coalesce(%1$s::text, ''''))) IN
