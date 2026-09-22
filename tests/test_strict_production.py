@@ -112,6 +112,16 @@ def _competition_training_data() -> dict:
     }
 
 
+
+def test_asof_prepare_features_accepts_rating_distributions():
+    model = AsOfPositionPerformanceModel()
+    data = _competition_training_data()
+    # The parent train() always forwards rating_distributions, even when None.
+    # The strict override must preserve that public signature.
+    X, y = model.prepare_features(data, rating_distributions=None)
+    assert len(X) == len(y)
+
+
 def test_training_pairs_are_same_league_and_same_competition():
     from basketball_ai.models.strict_production import AsOfPositionPerformanceModel
 
