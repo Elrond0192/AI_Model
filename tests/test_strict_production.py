@@ -114,6 +114,8 @@ def _competition_training_data() -> dict:
 
 
 def test_asof_prepare_features_accepts_rating_distributions():
+    from basketball_ai.models.strict_production import AsOfPositionPerformanceModel
+
     model = AsOfPositionPerformanceModel()
     data = _competition_training_data()
     # The parent train() always forwards rating_distributions, even when None.
