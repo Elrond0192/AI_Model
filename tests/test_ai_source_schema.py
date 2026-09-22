@@ -87,7 +87,7 @@ def test_ai_source_uses_native_typed_columns_for_row_transforms():
     sql = SOURCE_SQL.read_text(encoding="utf-8").lower()
     assert "pg_temp.ai_expr" in sql
     assert "pg_catalog.pg_attribute" in sql
-    assert "create table "ai_source"."playercompetitionstats" as" in sql
+    assert 'create table "ai_source"."playercompetitionstats" as' in sql
     assert "union all" in sql
     assert "hashtextextended" in sql
 
