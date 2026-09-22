@@ -63,7 +63,9 @@ def test_competition_schema_preserves_player_and_team_contexts():
 
 def test_competition_schema_keeps_tot_separate_from_rs():
     sql = SOURCE_SQL.read_text(encoding="utf-8").lower()
-    assert "when '' then ''" in sql or "when 'tot' then 'tot'" not in sql
+    assert "when 'total' then 'tot'" in sql
+    assert "when 'all' then 'tot'" in sql
+    assert "when 'tot' then 'tot'" in sql
     assert "when 'playoffs' then 'po'" in sql
     assert "when 'regular season' then 'rs'" in sql
 
