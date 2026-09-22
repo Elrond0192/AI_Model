@@ -415,6 +415,11 @@ class PerformanceModel:
         self.role_encoding:     Dict[str, int] = {}
         self.role_off_encoding: Dict[str, int] = {}
         self.role_def_encoding: Dict[str, int] = {}
+        # Competition-aware production models replace ordinal role/competition
+        # encodings with one-hot feature maps. Legacy PerformanceModel callers
+        # leave these maps empty and retain their existing feature contract.
+        self.role_feature_encodings: Dict[str, Dict[str, str]] = {}
+        self.competition_feature_encodings: Dict[str, str] = {}
         self._last_metrics: Optional[dict] = None
 
     # ------------------------------------------------------------------
@@ -705,6 +710,24 @@ class PerformanceModel:
         for col in getattr(self, "rating_feature_columns", ()) or ():
             value = stat_row.get(col, np.nan)
             row[col] = float(value) if not pd.isna(value) else 0.0
+
+        role_maps = getattr(self, "role_feature_encodings", {}) or {}
+        role_values = {
+            "ruolo_combinato": str(stat_row.get("ruolo_combinato", "") or "").strip(),
+            "ruolo_offensivo": str(stat_row.get("ruolo_offensivo", "") or "").strip(),
+            "ruolo_difensivo": str(stat_row.get("ruolo_difensivo", "") or "").strip(),
+        }
+        for column, mapping in role_maps.items():
+            current = role_values.get(column, "")
+            for value, feature_name in mapping.items():
+                row[feature_name] = 1.0 if current == value else 0.0
+
+        competition_map = getattr(self, "competition_feature_encodings", {}) or {}
+        current_competition = str(
+            stat_row.get("competition", "RS") or "RS"
+        ).strip().upper()
+        for value, feature_name in competition_map.items():
+            row[feature_name] = 1.0 if current_competition == value else 0.0
 
         return row
 
