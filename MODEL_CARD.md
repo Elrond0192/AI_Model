@@ -4,11 +4,11 @@
 
 | Field | Value |
 |---|---|
-| Version | 2.3.0 |
-| Feature contract | `forecast-t-plus-1-quality-v2` |
+| Version | 2.4.0 |
+| Feature contract | `forecast-t-plus-1-quality-v3` |
 | Primary target | same-league, same-competition next-season rating (`t -> t+1`) |
 | Competition support | explicit allow-list; `RS,PO,TOT` by default |
-| Base estimator | pooled XGBoost regressor with explicit competition feature |
+| Base estimator | pooled XGBoost regressor with nominal competition/role one-hot features |
 | Team/context layer | temporally trained competition-aware k-NN + bounded context adjustments |
 | Output | predicted rating 0–10 + calibrated interval + competition support metadata |
 | Production source | PostgreSQL `"AI_Source"` competition-preserving views |
