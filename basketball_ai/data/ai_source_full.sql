@@ -734,7 +734,7 @@ BEGIN
         END IF;
 
         body := body
-            || CASE WHEN body='' THEN '' ELSE E'\nUNION ALL\n' END
+            || CASE WHEN body='' THEN '' ELSE chr(10) || 'UNION ALL' || chr(10) END
             || 'SELECT '
             || quote_literal(league_key) || '::text AS league_key, '
             || season_expr || '::integer AS season, '
@@ -1001,7 +1001,7 @@ BEGIN
         comp_expr := pg_temp.ai_comp_expr(r.table_schema, r.table_name, 't', ARRAY['competition']);
 
         body := body
-            || CASE WHEN body='' THEN '' ELSE E'\nUNION ALL\n' END
+            || CASE WHEN body='' THEN '' ELSE chr(10) || 'UNION ALL' || chr(10) END
             || 'SELECT '
             || quote_literal(league_key) || '::text AS league_key, '
             || season_expr || '::integer AS season, '
@@ -1129,7 +1129,7 @@ BEGIN
     LOOP
         league_key := r.table_name;
         body := body
-            || CASE WHEN body='' THEN '' ELSE E'\nUNION ALL\n' END
+            || CASE WHEN body='' THEN '' ELSE chr(10) || 'UNION ALL' || chr(10) END
             || 'SELECT '
             || pg_temp.ai_stable_id('player',
                 format(
@@ -1203,7 +1203,7 @@ BEGIN
     LOOP
         league_key := regexp_replace(r.table_name,'^Team_','','i');
         body := body
-            || CASE WHEN body='' THEN '' ELSE E'\nUNION ALL\n' END
+            || CASE WHEN body='' THEN '' ELSE chr(10) || 'UNION ALL' || chr(10) END
             || 'SELECT '
             || pg_temp.ai_stable_id('team',
                 format(
@@ -2048,7 +2048,7 @@ BEGIN
         END IF;
 
         body := body
-            || CASE WHEN body='' THEN '' ELSE E'\nUNION ALL\n' END
+            || CASE WHEN body='' THEN '' ELSE chr(10) || 'UNION ALL' || chr(10) END
             || 'SELECT '
             || quote_literal(league_key) || '::text AS league_key, '
             || season_expr || '::integer AS season, '
@@ -2311,7 +2311,7 @@ BEGIN
         comp_expr := pg_temp.ai_comp_expr(r.table_schema, r.table_name, 't', ARRAY['competition']);
 
         body := body
-            || CASE WHEN body='' THEN '' ELSE E'\nUNION ALL\n' END
+            || CASE WHEN body='' THEN '' ELSE chr(10) || 'UNION ALL' || chr(10) END
             || 'SELECT '
             || quote_literal(league_key) || '::text AS league_key, '
             || season_expr || '::integer AS season, '
@@ -2437,7 +2437,7 @@ BEGIN
     LOOP
         league_key := r.table_name;
         body := body
-            || CASE WHEN body='' THEN '' ELSE E'\nUNION ALL\n' END
+            || CASE WHEN body='' THEN '' ELSE chr(10) || 'UNION ALL' || chr(10) END
             || 'SELECT '
             || pg_temp.ai_stable_id('player',
                 format(
@@ -2511,7 +2511,7 @@ BEGIN
     LOOP
         league_key := regexp_replace(r.table_name,'^Team_','','i');
         body := body
-            || CASE WHEN body='' THEN '' ELSE E'\nUNION ALL\n' END
+            || CASE WHEN body='' THEN '' ELSE chr(10) || 'UNION ALL' || chr(10) END
             || 'SELECT '
             || pg_temp.ai_stable_id('team',
                 format(
@@ -3364,7 +3364,7 @@ BEGIN
         END IF;
 
         body := body
-            || CASE WHEN body='' THEN '' ELSE E'\nUNION ALL\n' END
+            || CASE WHEN body='' THEN '' ELSE chr(10) || 'UNION ALL' || chr(10) END
             || 'SELECT '
             || quote_literal(league_key) || '::text AS league_key, '
             || season_expr || '::integer AS season, '
@@ -3627,7 +3627,7 @@ BEGIN
         comp_expr := pg_temp.ai_comp_expr(r.table_schema, r.table_name, 't', ARRAY['competition']);
 
         body := body
-            || CASE WHEN body='' THEN '' ELSE E'\nUNION ALL\n' END
+            || CASE WHEN body='' THEN '' ELSE chr(10) || 'UNION ALL' || chr(10) END
             || 'SELECT '
             || quote_literal(league_key) || '::text AS league_key, '
             || season_expr || '::integer AS season, '
@@ -3753,7 +3753,7 @@ BEGIN
     LOOP
         league_key := r.table_name;
         body := body
-            || CASE WHEN body='' THEN '' ELSE E'\nUNION ALL\n' END
+            || CASE WHEN body='' THEN '' ELSE chr(10) || 'UNION ALL' || chr(10) END
             || 'SELECT '
             || pg_temp.ai_stable_id('player',
                 format(
@@ -3827,7 +3827,7 @@ BEGIN
     LOOP
         league_key := regexp_replace(r.table_name,'^Team_','','i');
         body := body
-            || CASE WHEN body='' THEN '' ELSE E'\nUNION ALL\n' END
+            || CASE WHEN body='' THEN '' ELSE chr(10) || 'UNION ALL' || chr(10) END
             || 'SELECT '
             || pg_temp.ai_stable_id('team',
                 format(
