@@ -246,7 +246,7 @@ FEATURE_COLS: List[str] = [
     # --- Engineered interaction features (domain-specific) --------------------
     "obpm_x_usg",           # Offensive production at high usage (OBPM × USG%)
     "dbpm_x_reb",           # Defensive impact via rebounding (DBPM × REB%)
-    "two_way_score",        # RAPTOR_off + |RAPTOR_def| (balanced two-way value)
+    "two_way_score",        # RAPTOR_off + RAPTOR_def (signed two-way value)
 ]
 
 # Non-metric identity/target columns to exclude from METRIC_CATALOG selection
@@ -549,8 +549,8 @@ class PerformanceModel:
 
         avg_raptor_off = hist_avg("raptor_off", 0.0)
         avg_raptor_def = hist_avg("raptor_def", 0.0)
-        # Two-way score: offensive value + magnitude of defensive contribution
-        two_way_score = avg_raptor_off + abs(avg_raptor_def)
+        # Two-way score preserves the sign of defensive impact.
+        two_way_score = avg_raptor_off + avg_raptor_def
 
         clutch_history = player_stats_history
         if (
