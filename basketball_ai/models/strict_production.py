@@ -723,6 +723,9 @@ class StrictProductionEnsembleModel(ProductionEnsembleModel):
         metrics["compatibility_samples_by_competition"] = dict(
             getattr(self.compat_model, "training_samples_by_competition", {})
         )
+        metrics["compatibility_samples_by_context_mode"] = dict(
+            getattr(self.compat_model, "training_samples_by_context_mode", {})
+        )
         metrics["role_vocabulary_cutoff"] = getattr(
             self.perf_model, "_role_vocabulary_cutoff", None
         )
