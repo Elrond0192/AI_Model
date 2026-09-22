@@ -716,11 +716,32 @@ class CompetitionTemporalCompatibilityModel(TemporalCompatibilityModel):
                 )
 
         if not X_rows:
-            raise RuntimeError(
-                "No leakage-free compatibility samples are available after "
-                "requiring prior player history and prior team/league context "
-                "within the same league and competition"
+            # Compatibility is an additive adjustment to the base model. When
+            # no usable prior same-league/same-competition history exists, use
+            # a neutral multiplier rather than borrowing another competition,
+            # using the target season, or failing the complete model.
+            neutral_vector = np.zeros(12, dtype=float)
+            self.knn = KNeighborsRegressor(
+                n_neighbors=1,
+                metric="euclidean",
+                n_jobs=_model_threads(),
             )
+            self.scaler.fit(neutral_vector.reshape(1, -1))
+            self.knn.fit(
+                self.scaler.transform(neutral_vector.reshape(1, -1)),
+                np.asarray([0.5], dtype=float),
+            )
+            self.is_trained = True
+            self.training_samples = 0
+            self.training_samples_by_competition = {}
+            self.training_samples_by_context_mode = {"neutral_no_history": 1}
+            self.residual_mode = base_predictions is not None
+            self.training_target_mode = (
+                "neutral_no_history"
+                if base_predictions is None
+                else "neutral_no_history_oof_unavailable"
+            )
+            return
         X = np.asarray(X_rows, dtype=float)
         y = np.asarray(y_values, dtype=float)
         effective_neighbors = max(1, min(self.n_neighbors, len(X)))
