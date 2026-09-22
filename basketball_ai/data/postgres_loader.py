@@ -160,20 +160,86 @@ def get_engine(url: str | None = None) -> Engine:
     )
 
 
+def _source_object_diagnostics(engine: Engine, schema: str, names: list[str]) -> dict[str, Any]:
+    """Inspect canonical object existence and SELECT access for the current DB user."""
+    if not _SCHEMA_RE.fullmatch(schema):
+        raise ValueError("Invalid PostgreSQL source schema")
+    try:
+        with engine.connect() as connection:
+            current_user = str(connection.execute(text("SELECT current_user")).scalar() or "")
+            schema_exists = bool(
+                connection.execute(
+                    text(
+                        "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_namespace "
+                        "WHERE nspname = :schema)"
+                    ),
+                    {"schema": schema},
+                ).scalar()
+            )
+            objects: dict[str, dict[str, bool]] = {}
+            for name in names:
+                if not _SCHEMA_RE.fullmatch(name):
+                    continue
+                qualified = f'"{schema}"."{name}"'
+                exists = bool(
+                    connection.execute(
+                        text("SELECT to_regclass(:qualified) IS NOT NULL"),
+                        {"qualified": qualified},
+                    ).scalar()
+                )
+                select_allowed = bool(
+                    connection.execute(
+                        text(
+                            "SELECT has_table_privilege(current_user, :qualified, 'SELECT')"
+                        ),
+                        {"qualified": qualified},
+                    ).scalar()
+                ) if exists else False
+                objects[name] = {"exists": exists, "select": select_allowed}
+            return {
+                "current_user": current_user,
+                "schema_exists": schema_exists,
+                "objects": objects,
+            }
+    except Exception as exc:
+        return {"error": str(exc)[:500]}
+
+
 def _load_view(engine: Engine, schema: str, name: str) -> pd.DataFrame:
     try:
         return pd.read_sql(text(f'SELECT * FROM "{schema}"."{name}"'), engine)
     except Exception as exc:
-        competition_hint = (
-            " Then run basketball_ai/data/ai_source_full.sql."
-            if name in {"PlayerCompetitionStats", "TeamCompetitionStats"}
+        diagnostics = _source_object_diagnostics(engine, schema, [name])
+        current_user = diagnostics.get("current_user", "unknown")
+        object_info = diagnostics.get("objects", {}).get(name, {})
+        if not diagnostics.get("schema_exists"):
+            detail = f'Schema "{schema}" non esistente.'
+        elif not object_info.get("exists"):
+            detail = f'oggetto "{schema}"."{name}" non esistente.'
+        elif not object_info.get("select"):
+            detail = (
+                f'utente PostgreSQL "{current_user}" non ha SELECT su '
+                f'"{schema}"."{name}".'
+            )
+        else:
+            detail = (
+                f'lettura fallita: {str(exc).strip() or exc.__class__.__name__}'
+            )
+        hint = (
+            ' Esegui ai_source_full.sql come owner e assicurati che il ruolo runtime '
+            'abbia SELECT sulle sei tabelle canonical.'
+            if name in {
+                "Leagues",
+                "Teams",
+                "Players",
+                "TeamPlayerRelations",
+                "PlayerCompetitionStats",
+                "TeamCompetitionStats",
+            }
             else ""
         )
         raise RuntimeError(
-            f'Cannot read canonical object "{schema}"."{name}". '
-            "Run basketball_ai/data/ai_source_full.sql against BBallstat PostgreSQL."
-            + competition_hint
-            + " Verify the AI read role has SELECT access."
+            f'Impossibile leggere "{schema}"."{name}": {detail}.{hint}'
         ) from exc
 
 
