@@ -2266,35 +2266,52 @@ WHERE false;
 COMMIT;
 
 -- =========================================================================
--- SEZIONE 5 — Materializzazione del livello *RawInternal (performance)
+-- SEZIONE 5 — Materializzazione selettiva del livello *RawInternal
 --
--- A questo punto tutte le viste *RawInternal (base + competition +
--- simulation) sono state RIGENERATE come VIEW normali dalla discovery
--- dinamica sopra (leghe nuove incluse). Le trasformiamo in MATERIALIZED
--- VIEW indicizzate cosi' il parsing JSONB/regex si fa una volta sola qui,
--- non ad ogni query su Players/PlayerStats/PlayerCompetitionStats/
--- SimulationPbpEvents ecc.
+-- Il layer RawInternal contiene trasformazioni costose (JSONB/regex/UNION ALL),
+-- ma non tutti i dataset hanno lo stesso profilo di utilizzo. Materializziamo
+-- solo i dataset core riutilizzati dal training/serving. I dataset opzionali e
+-- soprattutto PBP/lineup restano VIEW per evitare bootstrap enormi e duplicazione
+-- di dati ad alto volume.
+--
+-- Core materialized:
+--   PlayerRegistryInternal
+--   TeamRegistryInternal
+--   StatsRawInternal
+--   TeamStatsRawInternal
+--   CompetitionPlayerRegistryInternal
+--   CompetitionTeamRegistryInternal
+--   CompetitionStatsRawInternal
+--   CompetitionTeamStatsRawInternal
+--
+-- Secondary views:
+--   Roles/OnOff/Clutch/Boxscore + Competition variants
+--   SimulationPbpRawInternal / SimulationLineupRawInternal
+--
+-- Il contratto pubblico AI_Source non cambia.
 -- =========================================================================
 
 DO $$
 DECLARE
     v text;
     names text[] := ARRAY[
-        'PlayerRegistryInternal', 'TeamRegistryInternal', 'StatsRawInternal',
-        'TeamStatsRawInternal', 'RolesRawInternal', 'OnOffRawInternal',
-        'ClutchRawInternal', 'BoxscoreRawInternal',
-        'CompetitionPlayerRegistryInternal', 'CompetitionTeamRegistryInternal',
-        'CompetitionStatsRawInternal', 'CompetitionTeamStatsRawInternal',
-        'CompetitionRolesRawInternal', 'CompetitionOnOffRawInternal',
-        'CompetitionClutchRawInternal', 'CompetitionBoxscoreRawInternal',
-        'SimulationPbpRawInternal', 'SimulationLineupRawInternal'
+        'PlayerRegistryInternal',
+        'TeamRegistryInternal',
+        'StatsRawInternal',
+        'TeamStatsRawInternal',
+        'CompetitionPlayerRegistryInternal',
+        'CompetitionTeamRegistryInternal',
+        'CompetitionStatsRawInternal',
+        'CompetitionTeamStatsRawInternal'
     ];
 BEGIN
     FOREACH v IN ARRAY names LOOP
-        -- puo' non esistere se una tabella sorgente opzionale (es. Clutch)
-        -- non e' presente per nessuna lega: la discovery produce comunque
-        -- una vista vuota, quindi esiste sempre come VIEW a questo punto.
-        IF EXISTS (SELECT 1 FROM pg_views WHERE schemaname = 'AI_Source' AND viewname = v) THEN
+        IF EXISTS (
+            SELECT 1
+            FROM pg_views
+            WHERE schemaname = 'AI_Source'
+              AND viewname = v
+        ) THEN
             EXECUTE format('ALTER VIEW "AI_Source".%I RENAME TO %I', v, v || '_Def');
             EXECUTE format(
                 'CREATE MATERIALIZED VIEW "AI_Source".%I AS SELECT * FROM "AI_Source".%I',
@@ -2305,117 +2322,100 @@ BEGIN
 END;
 $$;
 
--- -------------------------------------------------------------------------
--- Indici mirati sulle chiavi usate nei JOIN/ROW_NUMBER/funzioni per-riga a
--- valle. CREATE INDEX IF NOT EXISTS: le matview sono nuove ad ogni run,
--- quindi in pratica vengono sempre create, ma la clausola le rende sicure
--- anche in caso di run parziali.
--- -------------------------------------------------------------------------
-
+-- Indici solo sulle materialized view core. Le chiavi sono quelle usate dal
+-- canonical layer per identity resolution, join e lookup di training data.
 DO $$
 BEGIN
     IF EXISTS (SELECT 1 FROM pg_matviews WHERE schemaname='AI_Source' AND matviewname='PlayerRegistryInternal') THEN
-        CREATE INDEX IF NOT EXISTS ix_playerreg_lookup ON "AI_Source"."PlayerRegistryInternal" (league_key, season, source_player_id);
-        CREATE INDEX IF NOT EXISTS ix_playerreg_global  ON "AI_Source"."PlayerRegistryInternal" (global_id);
+        CREATE INDEX IF NOT EXISTS ix_playerreg_lookup
+            ON "AI_Source"."PlayerRegistryInternal" (league_key, season, source_player_id);
+        CREATE INDEX IF NOT EXISTS ix_playerreg_global
+            ON "AI_Source"."PlayerRegistryInternal" (global_id);
     END IF;
+
     IF EXISTS (SELECT 1 FROM pg_matviews WHERE schemaname='AI_Source' AND matviewname='TeamRegistryInternal') THEN
-        CREATE INDEX IF NOT EXISTS ix_teamreg_lookup ON "AI_Source"."TeamRegistryInternal" (league_key, season, source_team_id);
-        CREATE INDEX IF NOT EXISTS ix_teamreg_global  ON "AI_Source"."TeamRegistryInternal" (global_id);
+        CREATE INDEX IF NOT EXISTS ix_teamreg_lookup
+            ON "AI_Source"."TeamRegistryInternal" (league_key, season, source_team_id);
+        CREATE INDEX IF NOT EXISTS ix_teamreg_global
+            ON "AI_Source"."TeamRegistryInternal" (global_id);
     END IF;
+
     IF EXISTS (SELECT 1 FROM pg_matviews WHERE schemaname='AI_Source' AND matviewname='StatsRawInternal') THEN
-        -- Tentativo di indice UNIQUE (abilita REFRESH CONCURRENTLY, piu' veloce
-        -- e non bloccante). Un giocatore trasferito a meta' stagione puo' avere
-        -- piu' righe per la stessa (league_key, season, source_player_id,
-        -- competition), una per squadra: in quel caso l'indice fallisce e si
-        -- ricade su un indice normale, senza bloccare lo script.
         BEGIN
-            CREATE UNIQUE INDEX IF NOT EXISTS ux_stats_refresh ON "AI_Source"."StatsRawInternal"
-                (league_key, season, source_player_id, competition);
+            CREATE UNIQUE INDEX IF NOT EXISTS ux_stats_refresh
+                ON "AI_Source"."StatsRawInternal"
+                   (league_key, season, source_player_id, competition);
         EXCEPTION WHEN OTHERS THEN
             DROP INDEX IF EXISTS "AI_Source".ux_stats_refresh;
-            CREATE INDEX IF NOT EXISTS ix_stats_dedupe ON "AI_Source"."StatsRawInternal"
-                (league_key, season, source_player_id, competition);
+            CREATE INDEX IF NOT EXISTS ix_stats_dedupe
+                ON "AI_Source"."StatsRawInternal"
+                   (league_key, season, source_player_id, competition);
         END;
-        CREATE INDEX IF NOT EXISTS ix_stats_team ON "AI_Source"."StatsRawInternal" (league_key, season, source_team_id);
+        CREATE INDEX IF NOT EXISTS ix_stats_team
+            ON "AI_Source"."StatsRawInternal" (league_key, season, source_team_id);
     END IF;
+
     IF EXISTS (SELECT 1 FROM pg_matviews WHERE schemaname='AI_Source' AND matviewname='TeamStatsRawInternal') THEN
-        CREATE INDEX IF NOT EXISTS ix_teamstats_lookup ON "AI_Source"."TeamStatsRawInternal" (league_key, season, source_team_id, competition);
-    END IF;
-    IF EXISTS (SELECT 1 FROM pg_matviews WHERE schemaname='AI_Source' AND matviewname='RolesRawInternal') THEN
-        CREATE INDEX IF NOT EXISTS ix_roles_lookup ON "AI_Source"."RolesRawInternal" (league_key, season, source_player_id, competition);
-    END IF;
-    IF EXISTS (SELECT 1 FROM pg_matviews WHERE schemaname='AI_Source' AND matviewname='OnOffRawInternal') THEN
-        CREATE INDEX IF NOT EXISTS ix_onoff_lookup ON "AI_Source"."OnOffRawInternal" (league_key, season, source_player_id, competition);
-    END IF;
-    IF EXISTS (SELECT 1 FROM pg_matviews WHERE schemaname='AI_Source' AND matviewname='ClutchRawInternal') THEN
-        CREATE INDEX IF NOT EXISTS ix_clutch_lookup ON "AI_Source"."ClutchRawInternal" (league_key, season, source_player_id, competition);
-    END IF;
-    IF EXISTS (SELECT 1 FROM pg_matviews WHERE schemaname='AI_Source' AND matviewname='BoxscoreRawInternal') THEN
-        BEGIN
-            CREATE UNIQUE INDEX IF NOT EXISTS ux_boxscore_refresh ON "AI_Source"."BoxscoreRawInternal"
-                (league_key, season, source_player_id, game_id, competition);
-        EXCEPTION WHEN OTHERS THEN
-            DROP INDEX IF EXISTS "AI_Source".ux_boxscore_refresh;
-            CREATE INDEX IF NOT EXISTS ix_boxscore_dedupe ON "AI_Source"."BoxscoreRawInternal"
-                (league_key, season, source_player_id, game_id, competition);
-        END;
-        CREATE INDEX IF NOT EXISTS ix_boxscore_team ON "AI_Source"."BoxscoreRawInternal" (league_key, season, source_team_id);
+        CREATE INDEX IF NOT EXISTS ix_teamstats_lookup
+            ON "AI_Source"."TeamStatsRawInternal"
+               (league_key, season, source_team_id, competition);
     END IF;
 
     IF EXISTS (SELECT 1 FROM pg_matviews WHERE schemaname='AI_Source' AND matviewname='CompetitionPlayerRegistryInternal') THEN
-        CREATE INDEX IF NOT EXISTS ix_cplayerreg_lookup ON "AI_Source"."CompetitionPlayerRegistryInternal" (league_key, season, source_player_id);
-        CREATE INDEX IF NOT EXISTS ix_cplayerreg_sim     ON "AI_Source"."CompetitionPlayerRegistryInternal" (lower(league_key), season, btrim(source_player_id));
-        CREATE INDEX IF NOT EXISTS ix_cplayerreg_global   ON "AI_Source"."CompetitionPlayerRegistryInternal" (global_id);
-    END IF;
-    IF EXISTS (SELECT 1 FROM pg_matviews WHERE schemaname='AI_Source' AND matviewname='CompetitionTeamRegistryInternal') THEN
-        CREATE INDEX IF NOT EXISTS ix_cteamreg_lookup ON "AI_Source"."CompetitionTeamRegistryInternal" (league_key, season, source_team_id);
-        CREATE INDEX IF NOT EXISTS ix_cteamreg_sim     ON "AI_Source"."CompetitionTeamRegistryInternal" (lower(league_key), season, btrim(source_team_id));
-        CREATE INDEX IF NOT EXISTS ix_cteamreg_global   ON "AI_Source"."CompetitionTeamRegistryInternal" (global_id);
-    END IF;
-    IF EXISTS (SELECT 1 FROM pg_matviews WHERE schemaname='AI_Source' AND matviewname='CompetitionStatsRawInternal') THEN
-        BEGIN
-            CREATE UNIQUE INDEX IF NOT EXISTS ux_cstats_refresh ON "AI_Source"."CompetitionStatsRawInternal"
-                (league_key, season, source_player_id, competition);
-        EXCEPTION WHEN OTHERS THEN
-            DROP INDEX IF EXISTS "AI_Source".ux_cstats_refresh;
-            CREATE INDEX IF NOT EXISTS ix_cstats_dedupe ON "AI_Source"."CompetitionStatsRawInternal"
-                (league_key, season, source_player_id, competition);
-        END;
-    END IF;
-    IF EXISTS (SELECT 1 FROM pg_matviews WHERE schemaname='AI_Source' AND matviewname='CompetitionTeamStatsRawInternal') THEN
-        CREATE INDEX IF NOT EXISTS ix_cteamstats_lookup ON "AI_Source"."CompetitionTeamStatsRawInternal" (league_key, season, source_team_id, competition);
-    END IF;
-    IF EXISTS (SELECT 1 FROM pg_matviews WHERE schemaname='AI_Source' AND matviewname='CompetitionRolesRawInternal') THEN
-        CREATE INDEX IF NOT EXISTS ix_croles_lookup ON "AI_Source"."CompetitionRolesRawInternal" (league_key, season, source_player_id, competition);
-    END IF;
-    IF EXISTS (SELECT 1 FROM pg_matviews WHERE schemaname='AI_Source' AND matviewname='CompetitionOnOffRawInternal') THEN
-        CREATE INDEX IF NOT EXISTS ix_conoff_lookup ON "AI_Source"."CompetitionOnOffRawInternal" (league_key, season, source_player_id, competition);
-    END IF;
-    IF EXISTS (SELECT 1 FROM pg_matviews WHERE schemaname='AI_Source' AND matviewname='CompetitionClutchRawInternal') THEN
-        CREATE INDEX IF NOT EXISTS ix_cclutch_lookup ON "AI_Source"."CompetitionClutchRawInternal" (league_key, season, source_player_id, competition);
-    END IF;
-    IF EXISTS (SELECT 1 FROM pg_matviews WHERE schemaname='AI_Source' AND matviewname='CompetitionBoxscoreRawInternal') THEN
-        CREATE INDEX IF NOT EXISTS ix_cboxscore_lookup ON "AI_Source"."CompetitionBoxscoreRawInternal" (league_key, season, source_player_id, competition);
+        CREATE INDEX IF NOT EXISTS ix_cplayerreg_lookup
+            ON "AI_Source"."CompetitionPlayerRegistryInternal"
+               (league_key, season, source_player_id);
+        CREATE INDEX IF NOT EXISTS ix_cplayerreg_sim
+            ON "AI_Source"."CompetitionPlayerRegistryInternal"
+               (lower(league_key), season, btrim(source_player_id));
+        CREATE INDEX IF NOT EXISTS ix_cplayerreg_global
+            ON "AI_Source"."CompetitionPlayerRegistryInternal" (global_id);
     END IF;
 
-    IF EXISTS (SELECT 1 FROM pg_matviews WHERE schemaname='AI_Source' AND matviewname='SimulationPbpRawInternal') THEN
-        CREATE INDEX IF NOT EXISTS ix_simpbp_lookup ON "AI_Source"."SimulationPbpRawInternal" (league_key, season, competition, game_id);
+    IF EXISTS (SELECT 1 FROM pg_matviews WHERE schemaname='AI_Source' AND matviewname='CompetitionTeamRegistryInternal') THEN
+        CREATE INDEX IF NOT EXISTS ix_cteamreg_lookup
+            ON "AI_Source"."CompetitionTeamRegistryInternal"
+               (league_key, season, source_team_id);
+        CREATE INDEX IF NOT EXISTS ix_cteamreg_sim
+            ON "AI_Source"."CompetitionTeamRegistryInternal"
+               (lower(league_key), season, btrim(source_team_id));
+        CREATE INDEX IF NOT EXISTS ix_cteamreg_global
+            ON "AI_Source"."CompetitionTeamRegistryInternal" (global_id);
     END IF;
-    IF EXISTS (SELECT 1 FROM pg_matviews WHERE schemaname='AI_Source' AND matviewname='SimulationLineupRawInternal') THEN
-        CREATE INDEX IF NOT EXISTS ix_simlineup_lookup ON "AI_Source"."SimulationLineupRawInternal" (league_key, season, competition);
+
+    IF EXISTS (SELECT 1 FROM pg_matviews WHERE schemaname='AI_Source' AND matviewname='CompetitionStatsRawInternal') THEN
+        BEGIN
+            CREATE UNIQUE INDEX IF NOT EXISTS ux_cstats_refresh
+                ON "AI_Source"."CompetitionStatsRawInternal"
+                   (league_key, season, source_player_id, competition);
+        EXCEPTION WHEN OTHERS THEN
+            DROP INDEX IF EXISTS "AI_Source".ux_cstats_refresh;
+            CREATE INDEX IF NOT EXISTS ix_cstats_dedupe
+                ON "AI_Source"."CompetitionStatsRawInternal"
+                   (league_key, season, source_player_id, competition);
+        END;
+    END IF;
+
+    IF EXISTS (SELECT 1 FROM pg_matviews WHERE schemaname='AI_Source' AND matviewname='CompetitionTeamStatsRawInternal') THEN
+        CREATE INDEX IF NOT EXISTS ix_cteamstats_lookup
+            ON "AI_Source"."CompetitionTeamStatsRawInternal"
+               (league_key, season, source_team_id, competition);
     END IF;
 END;
 $$;
 
-ANALYZE;
+-- Aggiorna le statistiche solo per le nuove materialized view.
+ANALYZE "AI_Source"."PlayerRegistryInternal";
+ANALYZE "AI_Source"."TeamRegistryInternal";
+ANALYZE "AI_Source"."StatsRawInternal";
+ANALYZE "AI_Source"."TeamStatsRawInternal";
+ANALYZE "AI_Source"."CompetitionPlayerRegistryInternal";
+ANALYZE "AI_Source"."CompetitionTeamRegistryInternal";
+ANALYZE "AI_Source"."CompetitionStatsRawInternal";
+ANALYZE "AI_Source"."CompetitionTeamStatsRawInternal";
 
 -- -------------------------------------------------------------------------
--- Funzione di refresh leggero: da usare quando cambiano SOLO i dati (nuovo
--- import di una lega gia' esistente, nuova giornata di boxscore) e NON la
--- struttura. In quel caso non serve rilanciare l'intero script: basta
--- SELECT "AI_Source"."RefreshRawLayer"();
--- Quando invece aggiungi una lega/tabella nuova, rilancia questo script
--- intero: la discovery dinamica la trova da sola.
+-- Refresh giornaliero selettivo.
 -- -------------------------------------------------------------------------
 
 CREATE OR REPLACE FUNCTION "AI_Source"."RefreshRawLayer"()
@@ -2425,35 +2425,47 @@ AS $$
 DECLARE
     v text;
     names text[] := ARRAY[
-        'PlayerRegistryInternal', 'TeamRegistryInternal', 'StatsRawInternal',
-        'TeamStatsRawInternal', 'RolesRawInternal', 'OnOffRawInternal',
-        'ClutchRawInternal', 'BoxscoreRawInternal',
-        'CompetitionPlayerRegistryInternal', 'CompetitionTeamRegistryInternal',
-        'CompetitionStatsRawInternal', 'CompetitionTeamStatsRawInternal',
-        'CompetitionRolesRawInternal', 'CompetitionOnOffRawInternal',
-        'CompetitionClutchRawInternal', 'CompetitionBoxscoreRawInternal',
-        'SimulationPbpRawInternal', 'SimulationLineupRawInternal'
+        'PlayerRegistryInternal',
+        'TeamRegistryInternal',
+        'StatsRawInternal',
+        'TeamStatsRawInternal',
+        'CompetitionPlayerRegistryInternal',
+        'CompetitionTeamRegistryInternal',
+        'CompetitionStatsRawInternal',
+        'CompetitionTeamStatsRawInternal'
     ];
 BEGIN
     FOREACH v IN ARRAY names LOOP
-        IF NOT EXISTS (SELECT 1 FROM pg_matviews WHERE schemaname='AI_Source' AND matviewname=v) THEN
+        IF NOT EXISTS (
+            SELECT 1
+            FROM pg_matviews
+            WHERE schemaname='AI_Source'
+              AND matviewname=v
+        ) THEN
             CONTINUE;
         END IF;
+
         BEGIN
-            EXECUTE format('REFRESH MATERIALIZED VIEW CONCURRENTLY "AI_Source".%I', v);
+            EXECUTE format(
+                'REFRESH MATERIALIZED VIEW CONCURRENTLY "AI_Source".%I',
+                v
+            );
         EXCEPTION WHEN OTHERS THEN
-            EXECUTE format('REFRESH MATERIALIZED VIEW "AI_Source".%I', v);
+            EXECUTE format(
+                'REFRESH MATERIALIZED VIEW "AI_Source".%I',
+                v
+            );
         END;
+
+        EXECUTE format('ANALYZE "AI_Source".%I', v);
     END LOOP;
-    RAISE NOTICE 'AI_Source raw layer refreshed at %', clock_timestamp();
+
+    RAISE NOTICE 'AI_Source core raw layer refreshed at %', clock_timestamp();
 END;
 $$;
 
--- Uso quotidiano dopo un caricamento dati (stessa lega, stessa struttura):
+-- Uso quotidiano dopo un caricamento dati (stessa struttura):
 --   SELECT "AI_Source"."RefreshRawLayer"();
--- Con pg_cron (se disponibile):
---   SELECT cron.schedule('ai_source_refresh', '*/15 * * * *',
---          $$SELECT "AI_Source"."RefreshRawLayer"()$$);
 --
--- Aggiunta di una nuova lega/tabella: rilancia semplicemente questo intero
--- file (ai_source_full.sql). Nessun passaggio manuale necessario.
+-- Quando aggiungi una nuova lega/tabella fisica:
+--   rilancia l'intero ai_source_full.sql per rieseguire la discovery.
