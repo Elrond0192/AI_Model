@@ -491,11 +491,17 @@ BEGIN
               AND c.relname = team_table
               AND c.relkind IN ('r', 'p')
         ) THEN
-            direct_team_global_expr := pg_temp.ai_expr(
-                'Anagrafiche', team_table, 'dt', 'text', ARRAY['idglobal', 'globalid']
+            direct_team_global_expr := format(
+                'coalesce(%1$s, %2$L || '':'' || %3$s)',
+                pg_temp.ai_expr('Anagrafiche', team_table, 'dt', 'text', ARRAY['idglobal', 'globalid']),
+                league_key,
+                pg_temp.ai_expr('Anagrafiche', team_table, 'dt', 'text', ARRAY['id'])
             );
-            fallback_team_global_expr := pg_temp.ai_expr(
-                'Anagrafiche', team_table, 'nt', 'text', ARRAY['idglobal', 'globalid']
+            fallback_team_global_expr := format(
+                'coalesce(%1$s, %2$L || '':'' || %3$s)',
+                pg_temp.ai_expr('Anagrafiche', team_table, 'nt', 'text', ARRAY['idglobal', 'globalid']),
+                league_key,
+                pg_temp.ai_expr('Anagrafiche', team_table, 'nt', 'text', ARRAY['id'])
             );
         ELSE
             CONTINUE;
