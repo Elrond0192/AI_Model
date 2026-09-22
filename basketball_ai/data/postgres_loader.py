@@ -1,7 +1,7 @@
 """Canonical PostgreSQL data access for AI_Model.
 
 Production reads entity/roster views from ``"AI_Source"`` and the competition-
-preserving statistical contract created by ``ai_source_competition.sql``.
+preserving statistical contract created by ``ai_source_full.sql``.
 Training therefore sees one observation per entity + league + season +
 competition instead of collapsing PO/CUP/TOT into a single season row.
 """
@@ -165,13 +165,13 @@ def _load_view(engine: Engine, schema: str, name: str) -> pd.DataFrame:
         return pd.read_sql(text(f'SELECT * FROM "{schema}"."{name}"'), engine)
     except Exception as exc:
         competition_hint = (
-            " Then run basketball_ai/data/ai_source_competition.sql."
+            " Then run basketball_ai/data/ai_source_full.sql."
             if name in {"PlayerCompetitionStats", "TeamCompetitionStats"}
             else ""
         )
         raise RuntimeError(
             f'Cannot read canonical view "{schema}"."{name}". '
-            "Run basketball_ai/data/ai_source_schema.sql against BBallstat PostgreSQL."
+            "Run basketball_ai/data/ai_source_full.sql against BBallstat PostgreSQL."
             + competition_hint
             + " Verify the AI read role has SELECT access."
         ) from exc
