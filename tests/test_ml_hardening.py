@@ -335,6 +335,65 @@ def test_competition_model_uses_one_hot_nominal_features():
     assert "role_def_1" in X.columns
 
 
+
+def test_competition_compatibility_uses_prior_league_context_for_new_team():
+    from basketball_ai.models.competition_training import (
+        CompetitionTemporalCompatibilityModel,
+    )
+
+    data = {
+        "player_dict": {
+            1: {"id": 1, "position": "PG"},
+        },
+        "player_stats": pd.DataFrame(
+            [
+                {
+                    "player_id": 1,
+                    "team_id": 11,
+                    "league_id": 1,
+                    "season": 2022,
+                    "competition": "PO",
+                    "rating": 6.0,
+                },
+                {
+                    "player_id": 1,
+                    "team_id": 11,
+                    "league_id": 1,
+                    "season": 2023,
+                    "competition": "PO",
+                    "rating": 6.5,
+                },
+            ]
+        ),
+        "team_season_stats": pd.DataFrame(
+            [
+                {
+                    "team_id": 10,
+                    "league_id": 1,
+                    "season": 2022,
+                    "competition": "PO",
+                    "pace": 70.0,
+                    "offensive_rating": 105.0,
+                    "defensive_rating": 108.0,
+                    "three_point_attempt_rate": 0.30,
+                    "assists_per_game": 18.0,
+                    "star_player_usage": 0.20,
+                    "net_rtg": -3.0,
+                },
+            ]
+        ),
+    }
+
+    model = CompetitionTemporalCompatibilityModel(n_neighbors=1)
+    model.train(data)
+
+    assert model.training_samples == 1
+    assert model.training_samples_by_competition == {"PO": 1}
+    assert model.training_samples_by_context_mode == {
+        "league_competition_prior": 1
+    }
+
+
 def test_base_oof_predictions_are_batched_per_source_year(monkeypatch):
     import basketball_ai.models.strict_production as strict
 
