@@ -294,6 +294,8 @@ BEGIN
 END;
 $fn$;
 
+-- Stable IDs are deliberately null-preserving. The format template below
+-- expands hashtextextended(%2$L || ':' || btrim(%1$s::text), 0).
 CREATE OR REPLACE FUNCTION pg_temp.ai_comp_expr(
     p_schema text,
     p_table text,
@@ -335,6 +337,8 @@ BEGIN
 END;
 $fn$;
 
+-- Competition normalization contract: 'total' -> 'tot', 'all' -> 'tot',
+-- 'tot' -> 'tot', 'playoffs' -> 'po', 'regular season' -> 'rs'.
 -- ---------------------------------------------------------------------------
 -- Canonical PlayerCompetitionStats
 -- ---------------------------------------------------------------------------
