@@ -1,6 +1,6 @@
 # Data Card — AI_Model PostgreSQL Contract
 
-**Contract:** `"AI_Source" competition-v2`
+**Contract:** `"AI_Source" unified-v3`
 
 The forecasting feature contract consumes the already calculated
 HoopmetricsEngine/AdvanceStats player and team tables. It does not recompute
@@ -49,8 +49,7 @@ Contains competition-specific pace, ORtg, DRtg, NetRtg, three-point rate, assist
 ## Installation order
 
 ```bash
-psql -d YOUR_DATABASE -f basketball_ai/data/ai_source_schema.sql
-psql -d YOUR_DATABASE -f basketball_ai/data/ai_source_competition.sql
+psql -d YOUR_DATABASE -f basketball_ai/data/ai_source_full.sql
 psql -d YOUR_DATABASE -f basketball_ai/data/ai_schema.sql
 ```
 
