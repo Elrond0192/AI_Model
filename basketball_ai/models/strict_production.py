@@ -455,7 +455,7 @@ def build_base_oof_predictions(
                         precomputed_history=precomputed[source_index],
                     )
                 )
-                prediction_keys.append((player_id, lid, comp, target_year))
+                prediction_keys.append((player_id, lid, comp, source_year + 1))
             except (TypeError, ValueError, KeyError):
                 continue
 
