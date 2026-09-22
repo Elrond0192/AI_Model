@@ -300,6 +300,17 @@ def _training_worker(
 
     seasons = _seasons(data)
     try:
+        if snapshot and snapshot.get("snapshot_id"):
+            snapshot_data = load_training_snapshot(str(snapshot["snapshot_id"]))
+            manifest = snapshot_data.get("training_snapshot_manifest", {})
+            if manifest.get("sha256") != snapshot.get("sha256"):
+                raise RuntimeError("Training snapshot checksum/manifest mismatch")
+            data = snapshot_data
+            _set_training(
+                stage="Training snapshot activated",
+                progress=8,
+                message=f"Training from immutable snapshot {snapshot['snapshot_id']}…",
+            )
         _set_training(status="running", stage="Training ensemble", progress=12, message="Training the strict competition-aware ensemble…")
         model = StrictProductionEnsembleModel()
         metrics = model.train(data)
