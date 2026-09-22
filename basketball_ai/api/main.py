@@ -246,7 +246,7 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title="BBallstat AI_Model",
         description="Typed basketball prediction and scenario service for Chat V3 and server-side clients.",
-        version="2.3.0",
+        version="2.4.0",
         lifespan=lifespan,
     )
 
