@@ -1450,6 +1450,39 @@ WHERE k.league_key IS NOT NULL
   AND btrim(k.league_key) <> '';
 
 -- ---------------------------------------------------------------------------
+
+-- ---------------------------------------------------------------------------
+-- Read access for the model runtime.
+--
+-- The canonical tables are recreated by this script, so grants made manually
+-- to a previous incarnation do not survive. By default the documented
+-- read-only runtime role is "ai_model". A different role can be selected by
+-- setting app.ai_source_read_role before executing this script.
+-- ---------------------------------------------------------------------------
+
+DO $grant_ai_source$
+DECLARE
+    read_role text := NULLIF(btrim(current_setting('app.ai_source_read_role', true)), '');
+BEGIN
+    read_role := coalesce(read_role, 'ai_model');
+
+    IF EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = read_role) THEN
+        EXECUTE format('GRANT USAGE ON SCHEMA "AI_Source" TO %I', read_role);
+        EXECUTE format('GRANT SELECT ON TABLE
+            "AI_Source"."Leagues",
+            "AI_Source"."Teams",
+            "AI_Source"."Players",
+            "AI_Source"."TeamPlayerRelations",
+            "AI_Source"."PlayerCompetitionStats",
+            "AI_Source"."TeamCompetitionStats"
+            TO %I', read_role);
+        RAISE NOTICE 'AI_Source canonical read access granted to role %', read_role;
+    ELSE
+        RAISE NOTICE 'AI_Source canonical read role "%" does not exist; no grant applied', read_role;
+    END IF;
+END;
+$grant_ai_source$;
+
 -- Only final canonical indexes. The model mostly bulk-loads these tables, so
 -- indexes are limited to identity/time access paths actually used downstream.
 -- ---------------------------------------------------------------------------
