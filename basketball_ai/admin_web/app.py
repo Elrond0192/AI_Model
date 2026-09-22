@@ -422,7 +422,11 @@ async def security_headers(request: Request, call_next):
         "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; "
         "script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
     )
-    if request.url.path == "/" or request.url.path.startswith("/admin-api/"):
+    if (
+        request.url.path == "/"
+        or request.url.path.startswith("/admin-api/")
+        or request.url.path.startswith("/assets/")
+    ):
         response.headers["Cache-Control"] = "no-store"
     return response
 
