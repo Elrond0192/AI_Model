@@ -234,3 +234,80 @@ def test_metric_summary_reports_error_bias_and_coverage():
     assert np.isclose(summary["mae"], 0.2)
     assert np.isclose(summary["bias"], 0.0)
     assert summary["interval_coverage"] == 1.0
+
+
+def test_compatibility_score_is_centred_and_can_penalise():
+    from basketball_ai.models.competition_training import CompetitionTemporalCompatibilityModel
+
+    model = CompetitionTemporalCompatibilityModel()
+    model.is_trained = True
+
+    class Scaler:
+        def transform(self, value):
+            return value
+
+    class KNN:
+        def predict(self, value):
+            return np.asarray([0.40])
+
+    model.scaler = Scaler()
+    model.knn = KNN()
+    data = _snapshot_data()
+    data["player_stats"] = pd.DataFrame(
+        [
+            {
+                "player_id": 1, "team_id": 10, "league_id": 1,
+                "season": 2024, "competition": "PO",
+                "games_played": 8, "rating": 7.0,
+            }
+        ]
+    )
+    data["team_season_stats"]["competition"] = "PO"
+    data["_prediction_league_id"] = 1
+    data["_prediction_competition"] = "PO"
+    data["_as_of_season"] = 2024
+
+    assert model.score(1, 10, data) == 0.40
+
+
+def test_two_way_score_preserves_defensive_sign():
+    from basketball_ai.models.performance_model import PerformanceModel
+
+    row = pd.Series(
+        {
+            "player_id": 1,
+            "season": 2024,
+            "rating": 7.0,
+            "minutes_per_game": 25.0,
+            "points": 15.0,
+            "raptor_off": 2.0,
+            "raptor_def": -3.0,
+            "competition": "RS",
+        }
+    )
+    model = PerformanceModel()
+    features = model._build_row(
+        row,
+        age=24,
+        position="PG",
+        player_stats_history=pd.DataFrame([row]),
+        league_max_games={1: 30},
+    )
+    assert np.isclose(features["two_way_score"], -1.0)
+
+
+def test_empirical_age_curve_state_round_trips():
+    from basketball_ai.models.age_curve import (
+        get_fitted_params,
+        reset_fitted_params,
+        set_fitted_params,
+    )
+
+    state = {
+        "peak_ages": {"PG": 27.0},
+        "sigma_before": {"PG": 4.2},
+        "sigma_after": {"PG": 3.8},
+    }
+    set_fitted_params(state)
+    assert get_fitted_params() == state
+    reset_fitted_params()
