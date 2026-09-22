@@ -1,6 +1,6 @@
 # Data Card — AI_Model PostgreSQL Contract
 
-**Contract:** `"AI_Source" unified-v3`
+**Contract:** `"AI_Source" competition-v2`
 
 The forecasting feature contract consumes the already calculated
 HoopmetricsEngine/AdvanceStats player and team tables. It does not recompute
@@ -124,6 +124,11 @@ PostgreSQL loading fails closed on missing views/columns, empty mandatory views,
 The adapter normalizes the source score only within a
 league/season/competition cohort. It never uses one league's distribution to
 score another league.
+
+The adapter preserves NULL for optional advanced metrics instead of
+converting an unavailable metric to a numerical zero. The forecasting model
+adds explicit availability flags for advanced metrics, so a measured zero and
+an unavailable source field remain distinguishable.
 
 ## Identity and ownership
 
