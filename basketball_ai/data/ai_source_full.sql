@@ -336,8 +336,8 @@ BEGIN
 END;
 $fn$;
 
--- Competition normalization contract: 'total' -> 'tot', 'all' -> 'tot',
--- 'tot' -> 'tot', 'playoffs' -> 'po', 'regular season' -> 'rs'.
+-- Competition normalization contract: when 'total' then 'tot', when 'all' then 'tot',
+-- when 'tot' then 'tot', when 'playoffs' then 'po', when 'regular season' then 'rs'.
 -- ---------------------------------------------------------------------------
 -- Canonical PlayerCompetitionStats
 -- ---------------------------------------------------------------------------
