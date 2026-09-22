@@ -343,7 +343,9 @@ def build_base_oof_predictions(
     target_keys_by_year: Dict[int, pd.DataFrame] = {}
     for target_year in source_years:
         target = all_stats.loc[
-            season_values.eq(target_year + 1),
+            season_values.eq(target_year + 1)
+            & all_stats["player_id"].notna()
+            & all_stats["league_id"].notna(),
             ["_pid_int", "_lid_int", "_competition"],
         ].drop_duplicates()
         if not target.empty:
