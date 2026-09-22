@@ -394,6 +394,45 @@ def test_competition_compatibility_uses_prior_league_context_for_new_team():
     }
 
 
+
+def test_competition_compatibility_neutral_when_history_is_unavailable():
+    from basketball_ai.models.competition_training import (
+        CompetitionTemporalCompatibilityModel,
+    )
+
+    data = {
+        "player_dict": {1: {"id": 1, "position": "PG"}},
+        "player_stats": pd.DataFrame(
+            [
+                {
+                    "player_id": 1,
+                    "team_id": 11,
+                    "league_id": 1,
+                    "season": 2024,
+                    "competition": "PO",
+                    "rating": 7.0,
+                }
+            ]
+        ),
+        "team_season_stats": pd.DataFrame(
+            columns=[
+                "team_id", "league_id", "season", "competition",
+                "pace", "offensive_rating", "defensive_rating",
+                "three_point_attempt_rate", "assists_per_game",
+                "star_player_usage", "net_rtg",
+            ]
+        ),
+    }
+
+    model = CompetitionTemporalCompatibilityModel()
+    model.train(data)
+
+    assert model.is_trained is True
+    assert model.training_samples == 0
+    assert model.training_target_mode == "neutral_no_history"
+    assert model.score(1, 11, data) == 0.5
+
+
 def test_base_oof_predictions_are_batched_per_source_year(monkeypatch):
     import basketball_ai.models.strict_production as strict
 
