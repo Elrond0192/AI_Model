@@ -397,7 +397,7 @@ def build_base_oof_predictions(
                     source_clean,
                     _player_age_as_of(player, source_year),
                     position,
-                    empty_history,
+                    history_clean,
                     extra_metrics=[],
                     league_max_games=league_max_games,
                     precomputed_history=precomputed[-1],
