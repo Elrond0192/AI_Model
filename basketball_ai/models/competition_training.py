@@ -529,7 +529,17 @@ class CompetitionTemporalCompatibilityModel(TemporalCompatibilityModel):
         team_history["_tid_int"] = team_history["team_id"].map(_to_int)
         team_history["_lid_int"] = team_history["league_id"].map(_to_int)
 
-        team_context: Dict[tuple[int, int, str], tuple[np.ndarray, List[np.ndarray]]] = {}
+        # Exact team history is the preferred context.  New teams, unstable
+        # source identifiers, and competition-specific contexts such as PO may
+        # legitimately have no prior row for the target team.  In that case use
+        # a leakage-free league+competition aggregate built strictly from seasons
+        # before the target season.  Never fall back across competitions.
+        team_context: Dict[
+            tuple[int, int, str], tuple[np.ndarray, List[np.ndarray]]
+        ] = {}
+        league_context: Dict[
+            tuple[int, str], tuple[np.ndarray, List[np.ndarray]]
+        ] = {}
         for key, group in team_history.groupby(
             ["_tid_int", "_lid_int", "_competition"], sort=False
         ):
@@ -544,9 +554,56 @@ class CompetitionTemporalCompatibilityModel(TemporalCompatibilityModel):
                 vectors,
             )
 
+        # A single historical vector per league/competition/season is used only
+        # when the target team's own historical context is unavailable. Median is
+        # robust to a small number of teams and keeps the aggregate fully numeric.
+        league_season_vectors: Dict[
+            tuple[int, str, int], List[np.ndarray]
+        ] = {}
+        for (league_id, competition, season), group in team_history.groupby(
+            ["_lid_int", "_competition", "_season_year"], sort=False
+        ):
+            vectors = [
+                self._team_style_vector(row)
+                for row in group.to_dict("records")
+            ]
+            if vectors:
+                league_season_vectors[
+                    (int(league_id), str(competition), int(season))
+                ] = vectors
+        for (league_id, competition), group in team_history.groupby(
+            ["_lid_int", "_competition"], sort=False
+        ):
+            seasons = np.array(
+                sorted(
+                    {
+                        int(value)
+                        for value in group["_season_year"].dropna().tolist()
+                    }
+                ),
+                dtype=int,
+            )
+            vectors = [
+                np.median(
+                    np.asarray(
+                        league_season_vectors[
+                            (int(league_id), str(competition), int(season))
+                        ],
+                        dtype=float,
+                    ),
+                    axis=0,
+                )
+                for season in seasons
+            ]
+            league_context[(int(league_id), str(competition))] = (
+                seasons,
+                vectors,
+            )
+
         X_rows: List[np.ndarray] = []
         y_values: List[float] = []
         samples_by_competition: Dict[str, int] = {}
+        samples_by_context_mode: Dict[str, int] = {}
         grouping = ["_pid_int", "_lid_int", "_competition"]
 
         for (pid, league_id, competition), group in stats.groupby(
@@ -574,12 +631,34 @@ class CompetitionTemporalCompatibilityModel(TemporalCompatibilityModel):
                 target_season = int(stat["_season_year"])
                 tid = int(stat["_tid_int"])
                 team_data = team_context.get((tid, int(league_id), str(competition)))
-                if team_data is None:
-                    continue
-                team_years, team_vectors = team_data
-                team_index = int(np.searchsorted(team_years, target_season, side="left")) - 1
-                if team_index < 0:
-                    continue
+                context_mode = "team_exact_prior"
+                team_vector: Optional[np.ndarray] = None
+                if team_data is not None:
+                    team_years, team_vectors = team_data
+                    team_index = int(
+                        np.searchsorted(
+                            team_years, target_season, side="left"
+                        )
+                    ) - 1
+                    if team_index >= 0:
+                        team_vector = team_vectors[team_index]
+
+                if team_vector is None:
+                    aggregate_data = league_context.get(
+                        (int(league_id), str(competition))
+                    )
+                    if aggregate_data is None:
+                        continue
+                    aggregate_years, aggregate_vectors = aggregate_data
+                    aggregate_index = int(
+                        np.searchsorted(
+                            aggregate_years, target_season, side="left"
+                        )
+                    ) - 1
+                    if aggregate_index < 0:
+                        continue
+                    team_vector = aggregate_vectors[aggregate_index]
+                    context_mode = "league_competition_prior"
 
                 player_vector = np.asarray(
                     [
@@ -592,7 +671,7 @@ class CompetitionTemporalCompatibilityModel(TemporalCompatibilityModel):
                     ],
                     dtype=float,
                 )
-                vector = np.concatenate([player_vector, team_vectors[team_index]])
+                vector = np.concatenate([player_vector, team_vector])
                 prior_mean = self._mean_before(prefixes["rating"], index)
                 if base_predictions is not None:
                     key = (
@@ -632,10 +711,15 @@ class CompetitionTemporalCompatibilityModel(TemporalCompatibilityModel):
                 samples_by_competition[str(competition)] = (
                     samples_by_competition.get(str(competition), 0) + 1
                 )
+                samples_by_context_mode[context_mode] = (
+                    samples_by_context_mode.get(context_mode, 0) + 1
+                )
 
         if not X_rows:
             raise RuntimeError(
-                "No leakage-free competition-specific compatibility samples are available"
+                "No leakage-free compatibility samples are available after "
+                "requiring prior player history and prior team/league context "
+                "within the same league and competition"
             )
         X = np.asarray(X_rows, dtype=float)
         y = np.asarray(y_values, dtype=float)
@@ -650,6 +734,7 @@ class CompetitionTemporalCompatibilityModel(TemporalCompatibilityModel):
         self.is_trained = True
         self.training_samples = len(X)
         self.training_samples_by_competition = samples_by_competition
+        self.training_samples_by_context_mode = samples_by_context_mode
         self.residual_mode = base_predictions is not None
         self.training_target_mode = (
             "future_rating_minus_oof_base"
