@@ -1,6 +1,6 @@
 """Canonical PostgreSQL data access for AI_Model.
 
-Production reads entity/roster views from ``"AI_Source"`` and the competition-
+Production reads entity/roster tables from ``"AI_Source"`` and the competition-
 preserving statistical contract created by ``ai_source_full.sql``.
 Training therefore sees one observation per entity + league + season +
 competition instead of collapsing PO/CUP/TOT into a single season row.
@@ -170,7 +170,7 @@ def _load_view(engine: Engine, schema: str, name: str) -> pd.DataFrame:
             else ""
         )
         raise RuntimeError(
-            f'Cannot read canonical view "{schema}"."{name}". '
+            f'Cannot read canonical object "{schema}"."{name}". '
             "Run basketball_ai/data/ai_source_full.sql against BBallstat PostgreSQL."
             + competition_hint
             + " Verify the AI read role has SELECT access."
@@ -192,7 +192,7 @@ def _load_views(
     *,
     optional: bool = False,
 ) -> dict[str, pd.DataFrame]:
-    """Load independent canonical views concurrently with bounded workers."""
+    """Load independent canonical objects concurrently with bounded workers."""
     if not views:
         return {}
     try:
