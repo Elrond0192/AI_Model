@@ -79,10 +79,7 @@ jobs:
         run: |
           set -euo pipefail
           PSQL="psql -h 127.0.0.1 -U postgres -d ai_model_test -v ON_ERROR_STOP=1"
-          $PSQL -f basketball_ai/data/ai_pascalcase_migration.sql
-          $PSQL -f basketball_ai/data/ai_source_schema.sql
-          $PSQL -f basketball_ai/data/ai_source_competition.sql
-          $PSQL -f basketball_ai/data/ai_source_simulation.sql
+          $PSQL -f basketball_ai/data/ai_source_full.sql
           $PSQL -f basketball_ai/data/ai_scenario_serving.sql
           $PSQL -f basketball_ai/data/ai_schema.sql
 
@@ -197,9 +194,7 @@ jobs:
         run: |
           set -euo pipefail
           PSQL="psql -h 127.0.0.1 -U postgres -d ai_model_test -v ON_ERROR_STOP=1"
-          $PSQL -f basketball_ai/data/ai_source_schema.sql
-          $PSQL -f basketball_ai/data/ai_source_competition.sql
-          $PSQL -f basketball_ai/data/ai_source_simulation.sql
+          $PSQL -f basketball_ai/data/ai_source_full.sql
           $PSQL -f basketball_ai/data/ai_scenario_serving.sql
           $PSQL -f basketball_ai/data/ai_schema.sql
           $PSQL <<'SQL'
