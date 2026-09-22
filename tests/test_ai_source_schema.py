@@ -40,7 +40,7 @@ def test_competition_schema_preserves_player_and_team_contexts():
 
 
 def test_competition_schema_keeps_tot_separate_from_rs():
-    sql = COMPETITION_SQL.read_text(encoding="utf-8").lower()
+    sql = SOURCE_SQL.read_text(encoding="utf-8").lower()
     assert "when 'tot' then 'tot'" in sql
     assert "when 'playoffs' then 'po'" in sql
     assert "when 'regular season' then 'rs'" in sql
@@ -48,7 +48,7 @@ def test_competition_schema_keeps_tot_separate_from_rs():
 
 
 def test_competition_schema_is_independent_of_base_internal_views():
-    sql = COMPETITION_SQL.read_text(encoding="utf-8").lower()
+    sql = SOURCE_SQL.read_text(encoding="utf-8").lower()
     assert "from ai_source._team_registry" not in sql
     assert "from ai_source._stats_raw" not in sql
     assert "from ai_source._team_stats_raw" not in sql
