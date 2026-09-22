@@ -34,26 +34,50 @@ CREATE SCHEMA IF NOT EXISTS "AI_Source";
 -- (Training*, Scenario*, ServingRefreshState, etc.) are intentionally kept.
 -- ---------------------------------------------------------------------------
 
-DROP TABLE IF EXISTS
-    "AI_Source"."PlayerCompetitionStats",
-    "AI_Source"."TeamCompetitionStats",
-    "AI_Source"."TeamPlayerRelations",
-    "AI_Source"."Players",
-    "AI_Source"."Teams",
-    "AI_Source"."Leagues"
-CASCADE;
-
-DROP VIEW IF EXISTS
-    "AI_Source"."PlayerCompetitionStats",
-    "AI_Source"."TeamCompetitionStats",
-    "AI_Source"."TeamPlayerRelations",
-    "AI_Source"."Players",
-    "AI_Source"."Teams",
-    "AI_Source"."Leagues",
-    "AI_Source"."PlayerStats"
-CASCADE;
-
 DO $cleanup$
+DECLARE
+    object_name text;
+    relkind "char";
+BEGIN
+    FOREACH object_name IN ARRAY ARRAY[
+        'PlayerCompetitionStats',
+        'TeamCompetitionStats',
+        'TeamPlayerRelations',
+        'Players',
+        'Teams',
+        'Leagues',
+        'PlayerStats'
+    ]
+    LOOP
+        SELECT c.relkind
+          INTO relkind
+        FROM pg_catalog.pg_class c
+        JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
+        WHERE n.nspname='AI_Source'
+          AND c.relname=object_name
+        LIMIT 1;
+
+        IF relkind = 'm' THEN
+            EXECUTE format(
+                'DROP MATERIALIZED VIEW "AI_Source".%I CASCADE',
+                object_name
+            );
+        ELSIF relkind = 'v' THEN
+            EXECUTE format(
+                'DROP VIEW "AI_Source".%I CASCADE',
+                object_name
+            );
+        ELSIF relkind IN ('r','p') THEN
+            EXECUTE format(
+                'DROP TABLE "AI_Source".%I CASCADE',
+                object_name
+            );
+        END IF;
+    END LOOP;
+END;
+$cleanup$;
+
+DO $cleanup_legacy$
 DECLARE
     r record;
 BEGIN
