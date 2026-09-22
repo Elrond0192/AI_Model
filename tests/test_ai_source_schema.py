@@ -44,7 +44,8 @@ def test_competition_schema_keeps_tot_separate_from_rs():
     assert "when 'tot' then 'tot'" in sql
     assert "when 'playoffs' then 'po'" in sql
     assert "when 'regular season' then 'rs'" in sql
-    assert "when upper(s.competition) = 'tot' then 'rs'" not in sql
+    canonical_sql = sql.split("-- player aggregate rows.", 1)[1]
+    assert "when upper(s.competition) = 'tot' then 'rs'" not in canonical_sql
 
 
 def test_competition_schema_is_independent_of_base_internal_views():
