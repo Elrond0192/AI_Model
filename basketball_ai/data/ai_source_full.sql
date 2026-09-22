@@ -350,6 +350,7 @@ DECLARE
     player_local_expr text;
     team_local_expr text;
     comp_expr text;
+    rating_expr text;
     player_global_expr text;
     p_team_name_expr text;
     direct_team_global_expr text := 'NULL::text';
@@ -444,6 +445,9 @@ BEGIN
         player_local_expr := pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'text', ARRAY['id', 'playerid', 'idplayer']);
         team_local_expr := pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'text', ARRAY['teamid', 'idteam']);
         comp_expr := pg_temp.ai_comp_expr(r.table_schema, r.table_name, 's', ARRAY['competition']);
+        rating_expr := pg_temp.ai_expr(
+            r.table_schema, r.table_name, 's', 'numeric', ARRAY['vallegapergame', 'rating']
+        );
 
         player_global_expr := format(
             'coalesce(%1$s, %2$L || '':'' || %3$s)',
@@ -741,7 +745,7 @@ BEGIN
             || pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['ws','winshares']) || ' AS win_shares, '
             || pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['astratio','ast_ratio']) || ' AS ast_ratio, '
             || pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['rebpct','reb_pct']) || ' AS reb_pct, '
-            || pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['vallegapergame','rating']) || ' AS rating_source, '
+            || rating_expr || ' AS rating_source, '
             || pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['ortg']) || ' AS ortg, '
             || pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['drtg']) || ' AS drtg, '
             || pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['netrtg','net_rating']) || ' AS net_rtg, '
