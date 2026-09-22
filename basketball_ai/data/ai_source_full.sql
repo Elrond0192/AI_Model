@@ -110,7 +110,7 @@ BEGIN
         END IF;
     END LOOP;
 END;
-$cleanup$;
+$cleanup_legacy$;
 
 DROP FUNCTION IF EXISTS "AI_Source"."DropRawObject"(text);
 DROP FUNCTION IF EXISTS "AI_Source"."LowerKeys"(jsonb);
