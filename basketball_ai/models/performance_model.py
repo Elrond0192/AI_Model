@@ -246,7 +246,29 @@ FEATURE_COLS: List[str] = [
     # --- Engineered interaction features (domain-specific) --------------------
     "obpm_x_usg",           # Offensive production at high usage (OBPM × USG%)
     "dbpm_x_reb",           # Defensive impact via rebounding (DBPM × REB%)
-    "two_way_score",        # RAPTOR_off + |RAPTOR_def| (balanced two-way value)
+    "two_way_score",        # RAPTOR_off + RAPTOR_def (signed two-way value)
+    # Availability flags distinguish a genuine zero from a missing advanced metric.
+    "per_available",
+    "ts_pct_available",
+    "usg_pct_available",
+    "vorp_available",
+    "spm_available",
+    "raptor_off_available",
+    "raptor_def_available",
+    "lebron_off_available",
+    "lebron_def_available",
+    "gm_sc_available",
+    "fic_available",
+    "ows_available",
+    "dws_available",
+    "scoring_efficiency_available",
+    "hustle_index_available",
+    "foul_drawing_rate_available",
+    "net_rtg_diff_available",
+    "ortg_diff_available",
+    "clutch_ts_pct_available",
+    "clutch_net_rtg_available",
+    "starter_pct_available",
 ]
 
 # Non-metric identity/target columns to exclude from METRIC_CATALOG selection
@@ -415,6 +437,11 @@ class PerformanceModel:
         self.role_encoding:     Dict[str, int] = {}
         self.role_off_encoding: Dict[str, int] = {}
         self.role_def_encoding: Dict[str, int] = {}
+        # Competition-aware production models replace ordinal role/competition
+        # encodings with one-hot feature maps. Legacy PerformanceModel callers
+        # leave these maps empty and retain their existing feature contract.
+        self.role_feature_encodings: Dict[str, Dict[str, str]] = {}
+        self.competition_feature_encodings: Dict[str, str] = {}
         self._last_metrics: Optional[dict] = None
 
     # ------------------------------------------------------------------
@@ -549,8 +576,8 @@ class PerformanceModel:
 
         avg_raptor_off = hist_avg("raptor_off", 0.0)
         avg_raptor_def = hist_avg("raptor_def", 0.0)
-        # Two-way score: offensive value + magnitude of defensive contribution
-        two_way_score = avg_raptor_off + abs(avg_raptor_def)
+        # Two-way score preserves the sign of defensive impact.
+        two_way_score = avg_raptor_off + avg_raptor_def
 
         clutch_history = player_stats_history
         if (
@@ -678,6 +705,35 @@ class PerformanceModel:
             row["po_games_played"] = po_feats["po_games_played"]
             row["has_po_history"]  = po_feats["has_po_history"]
 
+        # Advanced-metric availability flags use the historical source rows
+        # available at prediction time. The flag is 1 when at least one real
+        # observation exists in the source history, otherwise 0.
+        availability_columns = (
+            "per", "ts_pct", "usg_pct", "vorp", "spm",
+            "raptor_off", "raptor_def", "lebron_off", "lebron_def",
+            "gm_sc", "fic", "ows", "dws", "scoring_efficiency",
+            "hustle_index", "foul_drawing_rate", "net_rtg_diff", "ortg_diff",
+            "clutch_ts_pct", "clutch_net_rtg", "starter_pct",
+        )
+        availability_source = player_stats_history
+        if availability_source is None or availability_source.empty:
+            availability_source = pd.DataFrame([stat_row])
+        for column in availability_columns:
+            if precomputed_history is not None:
+                row[f"{column}_available"] = float(
+                    precomputed_history.get(f"available:{column}", 0.0)
+                )
+                continue
+            if column not in availability_source.columns:
+                available = False
+            else:
+                available = bool(
+                    pd.to_numeric(
+                        availability_source[column], errors="coerce"
+                    ).notna().any()
+                )
+            row[f"{column}_available"] = 1.0 if available else 0.0
+
         # Extra metrics requested by the caller
         for col in extra_metrics:
             info = METRIC_CATALOG.get(col)
@@ -705,6 +761,24 @@ class PerformanceModel:
         for col in getattr(self, "rating_feature_columns", ()) or ():
             value = stat_row.get(col, np.nan)
             row[col] = float(value) if not pd.isna(value) else 0.0
+
+        role_maps = getattr(self, "role_feature_encodings", {}) or {}
+        role_values = {
+            "ruolo_combinato": str(stat_row.get("ruolo_combinato", "") or "").strip(),
+            "ruolo_offensivo": str(stat_row.get("ruolo_offensivo", "") or "").strip(),
+            "ruolo_difensivo": str(stat_row.get("ruolo_difensivo", "") or "").strip(),
+        }
+        for column, mapping in role_maps.items():
+            current = role_values.get(column, "")
+            for value, feature_name in mapping.items():
+                row[feature_name] = 1.0 if current == value else 0.0
+
+        competition_map = getattr(self, "competition_feature_encodings", {}) or {}
+        current_competition = str(
+            stat_row.get("competition", "RS") or "RS"
+        ).strip().upper()
+        for value, feature_name in competition_map.items():
+            row[feature_name] = 1.0 if current_competition == value else 0.0
 
         return row
 
@@ -870,6 +944,13 @@ class PerformanceModel:
             po_games = np.zeros(size, dtype=float)
 
         result: List[Dict[str, float]] = []
+        availability_columns = (
+            "per", "ts_pct", "usg_pct", "vorp", "spm",
+            "raptor_off", "raptor_def", "lebron_off", "lebron_def",
+            "gm_sc", "fic", "ows", "dws", "scoring_efficiency",
+            "hustle_index", "foul_drawing_rate", "net_rtg_diff", "ortg_diff",
+            "clutch_ts_pct", "clutch_net_rtg", "starter_pct",
+        )
         for index in range(size):
             item = {
                 "form_score": float(form[index]),
@@ -884,6 +965,13 @@ class PerformanceModel:
             for col, values in cumulative_means.items():
                 if not np.isnan(values[index]):
                     item[f"mean:{col}"] = float(values[index])
+            for column in availability_columns:
+                if column not in grp.columns:
+                    available = False
+                else:
+                    values = pd.to_numeric(grp[column], errors="coerce").to_numpy(dtype=float)
+                    available = bool(np.isfinite(values[: index + 1]).any())
+                item[f"available:{column}"] = 1.0 if available else 0.0
             result.append(item)
         return result
 
@@ -1267,6 +1355,8 @@ class PerformanceModel:
             "role_encoding":      self.role_encoding,
             "role_off_encoding":  self.role_off_encoding,
             "role_def_encoding":  self.role_def_encoding,
+            "role_feature_encodings": self.role_feature_encodings,
+            "competition_feature_encodings": self.competition_feature_encodings,
             "data_signature":     self.data_signature,
         }, path)
         logger.info("[PerformanceModel] Saved to %s", path)
@@ -1279,6 +1369,12 @@ class PerformanceModel:
         self.role_encoding      = payload.get("role_encoding", {})
         self.role_off_encoding  = payload.get("role_off_encoding", {})
         self.role_def_encoding  = payload.get("role_def_encoding", {})
+        self.role_feature_encodings = payload.get(
+            "role_feature_encodings", {}
+        )
+        self.competition_feature_encodings = payload.get(
+            "competition_feature_encodings", {}
+        )
         self.data_signature     = payload.get("data_signature", "")
         self.is_trained         = True
         self._shap_explainer    = None

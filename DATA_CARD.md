@@ -49,8 +49,7 @@ Contains competition-specific pace, ORtg, DRtg, NetRtg, three-point rate, assist
 ## Installation order
 
 ```bash
-psql -d YOUR_DATABASE -f basketball_ai/data/ai_source_schema.sql
-psql -d YOUR_DATABASE -f basketball_ai/data/ai_source_competition.sql
+psql -d YOUR_DATABASE -f basketball_ai/data/ai_source_full.sql
 psql -d YOUR_DATABASE -f basketball_ai/data/ai_schema.sql
 ```
 
@@ -125,6 +124,11 @@ PostgreSQL loading fails closed on missing views/columns, empty mandatory views,
 The adapter normalizes the source score only within a
 league/season/competition cohort. It never uses one league's distribution to
 score another league.
+
+The adapter preserves NULL for optional advanced metrics instead of
+converting an unavailable metric to a numerical zero. The forecasting model
+adds explicit availability flags for advanced metrics, so a measured zero and
+an unavailable source field remain distinguishable.
 
 ## Identity and ownership
 

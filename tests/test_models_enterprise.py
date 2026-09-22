@@ -32,7 +32,13 @@ def _valid_backtest(
             "RS": {"n": 70, "rmse": rmse, "mae": rmse * 0.8, "bias": 0.0, "interval_coverage": 0.90},
             "PO": {"n": 30, "rmse": playoff_rmse, "mae": playoff_rmse * 0.8, "bias": 0.0, "interval_coverage": 0.90},
         },
-        "folds": [{"valid": True, "target_season": 2025, "rmse": rmse}],
+        "target_seasons": [2025],
+        "folds": [{
+            "valid": True,
+            "train_through_season": 2024,
+            "target_season": 2025,
+            "rmse": rmse,
+        }],
     }
 
 
@@ -204,3 +210,20 @@ def test_drift_segment():
     data = {"player_stats": df}
     ref = capture_reference(data)
     assert isinstance(compute_segment_drift(data, ref), dict)
+
+
+def test_promote_rejects_different_evaluation_windows(tmp_path):
+    from basketball_ai.models.promote import promote_if_better, register_candidate
+
+    _register(tmp_path, "run-v1", 0.60)
+    assert promote_if_better(str(tmp_path))["promoted"] is True
+
+    run_dir, metadata = _run(tmp_path, "run-v2", 0.50)
+    metadata["backtest"]["target_seasons"] = [2024]
+    metadata["backtest"]["folds"][0]["train_through_season"] = 2023
+    metadata["backtest"]["folds"][0]["target_season"] = 2024
+    register_candidate(str(tmp_path), "run-v2", run_dir, metadata)
+
+    result = promote_if_better(str(tmp_path), min_improvement_pct=0.0)
+    assert result["promoted"] is False
+    assert "different target seasons" in result["reason"]

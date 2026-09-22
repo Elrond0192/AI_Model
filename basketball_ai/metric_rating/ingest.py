@@ -24,7 +24,6 @@ canonical CSV and are dropped by the POC population builder).
 from __future__ import annotations
 
 import argparse
-import math
 import re
 from pathlib import Path
 from typing import Any, Iterable, Optional

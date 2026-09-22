@@ -188,6 +188,8 @@ class TestPerformanceModel:
         assert model.predict_from_features(feats) == pytest.approx(
             model2.predict_from_features(feats), abs=0.01
         )
+        assert model.role_feature_encodings == model2.role_feature_encodings
+        assert model.competition_feature_encodings == model2.competition_feature_encodings
 
 
 # ---------------------------------------------------------------------------

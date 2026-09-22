@@ -3,7 +3,7 @@
 ```text
 PostgreSQL host
   ├─ raw PBP / boxscore (source of truth, never loaded by the API)
-  ├─ "AI_Source".* canonical competition views
+  ├─ "AI_Source".* six canonical physical model tables
   ├─ "AI_Source"."Training*" physical feature tables
   ├─ "AI_Source"."Scenario*" physical indexed serving tables
   └─ "AI".* versioned prediction snapshots

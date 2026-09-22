@@ -298,16 +298,36 @@ def _training_worker(
     from basketball_ai.models.promote import register_candidate
     from basketball_ai.models.strict_production import StrictProductionEnsembleModel
 
-    seasons = _seasons(data)
     try:
+        if snapshot and snapshot.get("snapshot_id"):
+            snapshot_data = load_training_snapshot(str(snapshot["snapshot_id"]))
+            manifest = snapshot_data.get("training_snapshot_manifest", {})
+            if manifest.get("sha256") != snapshot.get("sha256"):
+                raise RuntimeError("Training snapshot checksum/manifest mismatch")
+            data = snapshot_data
+            seasons = _seasons(data)
+            _set_training(
+                stage="Training snapshot activated",
+                progress=8,
+                message=f"Training from immutable snapshot {snapshot['snapshot_id']}…",
+            )
+        seasons = _seasons(data)
         _set_training(status="running", stage="Training ensemble", progress=12, message="Training the strict competition-aware ensemble…")
         model = StrictProductionEnsembleModel()
         metrics = model.train(data)
 
         _set_training(stage="Walk-forward backtest", progress=58, message="Running leakage-safe out-of-time folds…")
+        # Use every eligible OOT target season by default. An explicit
+        # MODEL_BACKTEST_FOLDS value can cap runtime for large histories.
+        default_folds = max(1, len(seasons) - 4)
+        try:
+            configured_folds = int(os.getenv("MODEL_BACKTEST_FOLDS", str(default_folds)))
+        except ValueError:
+            configured_folds = default_folds
+        n_backtest_folds = min(max(1, configured_folds), default_folds)
         report = run_backtest(
             data,
-            n_folds=min(3, max(1, len(seasons) - 4)),
+            n_folds=n_backtest_folds,
             output_path=str(MODEL_ROOT / "backtest_report.json"),
         )
         if not report.get("valid") or not report.get("folds"):
@@ -319,8 +339,8 @@ def _training_worker(
         metadata = {
             **(metrics or {}),
             "model_run_id": run_id,
-            "model_version": "2.3.0",
-            "feature_version": "forecast-t-plus-1-quality-v2",
+            "model_version": "2.4.0",
+            "feature_version": "forecast-t-plus-1-quality-v3",
             "data_cutoff": datetime.now(timezone.utc).date().isoformat(),
             "latest_observed_season": max(seasons),
             "database_profile": active_profile,
@@ -667,7 +687,7 @@ def training(user: dict[str, str] = Depends(_operator)) -> dict[str, Any]:
         ],
         "configuration": {
             "forecast_horizon": "exactly t+1 season",
-            "feature_version": "forecast-t-plus-1-quality-v2",
+            "feature_version": "forecast-t-plus-1-quality-v3",
             "pairing": "same player + league + competition",
             "split": "whole target seasons",
             "calibration": "global + competition split-conformal",

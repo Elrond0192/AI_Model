@@ -80,7 +80,7 @@ Adding a new metric (BPM, EPM, PER, WS, WS/48, …) requires:
 
 1. register a `MetricDefinition` (metric, direction, source column);
 2. make sure the column exists in the `"AI_Source"` contract
-   (`ai_source_competition.sql` maps it if HoopmetricsEngine exposes it);
+   (`ai_source_full.sql` maps it if HoopmetricsEngine exposes it);
 3. no new algorithm.
 
 ## Population builder (FASE 2)

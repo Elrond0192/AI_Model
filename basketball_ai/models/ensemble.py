@@ -343,6 +343,26 @@ class EnsembleModel:
         player_feats["role_off_enc"] = float(self.perf_model.role_off_encoding.get(latest_role_off, 0))
         player_feats["role_def_enc"] = float(self.perf_model.role_def_encoding.get(latest_role_def, 0))
 
+        # Competition-aware production models treat nominal labels as one-hot.
+        role_values = {
+            "ruolo_combinato": latest_role,
+            "ruolo_offensivo": latest_role_off,
+            "ruolo_difensivo": latest_role_def,
+        }
+        for column, mapping in (
+            getattr(self.perf_model, "role_feature_encodings", {}) or {}
+        ).items():
+            current = role_values.get(column, "")
+            for value, feature_name in mapping.items():
+                player_feats[feature_name] = 1.0 if current == value else 0.0
+
+        for value, feature_name in (
+            getattr(self.perf_model, "competition_feature_encodings", {}) or {}
+        ).items():
+            player_feats[feature_name] = (
+                1.0 if str(value).strip().upper() == competition else 0.0
+            )
+
         po_feats = compute_po_features(p_stats)
         player_feats.update(po_feats)
 
@@ -360,9 +380,10 @@ class EnsembleModel:
             age_ratio   = float(np.clip(target_af / current_af, _AGE_RATIO_MIN, _AGE_RATIO_MAX))
             base_rating = float(np.clip(base_rating * age_ratio, 3.5, 10.0))
 
-        # 4. Compatibility: KNN score [0,1] → mapped to multiplier [0.90, 1.10]
+        # 4. Compatibility: KNN score [0,1] → multiplier [0.90,1.10].
+        # A centred score of 0.50 is neutral (1.00).
         cf          = self.compat_model.score(player_id, team_id, data)
-        compat_mult = 0.90 + cf * 0.20   # neutral ≈ 1.05
+        compat_mult = 0.90 + cf * 0.20
 
         # 5. League quality factor — derived from competitiveness_score in real data.
         # No hardcoded tier map: the factor is proportional to the league's
@@ -380,11 +401,26 @@ class EnsembleModel:
         # Using a wider mapping range so player-specific position/style fit creates
         # meaningful differentiation between teams (different players rank teams differently).
         ctx = compute_context_features(player_id, team_id, data)
+        # The exact same-league production context should not receive a fixed
+        # +2% adaptation uplift; adaptation matters when crossing contexts.
+        league_adaptation = ctx["league_adaptation_factor"]
+        player_league = player_row.get("current_league_id")
+        team_league = team_row.get("league_id")
+        try:
+            same_league = (
+                player_league is not None
+                and team_league is not None
+                and str(player_league) == str(team_league)
+            )
+        except Exception:
+            same_league = False
+        if same_league:
+            league_adaptation = 1.0
         ctx_score = (
             ctx["position_team_fit"]        * 0.25
             + ctx["style_compatibility"]    * 0.30
             + ctx["role_opportunity"]       * 0.20
-            + ctx["league_adaptation_factor"] * 0.15
+            + league_adaptation             * 0.15
             + ctx["spacing_fit"]            * 0.10
         )
         # Map ctx_score (range ~0.55–0.98) to multiplier; wider range than before

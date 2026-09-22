@@ -41,13 +41,13 @@ docker build -t basketball-ai:test .
 | Area | Responsibility |
 |---|---|
 | `basketball_ai/data/postgres_loader.py` | load and validate the canonical PostgreSQL contract |
-| `basketball_ai/data/ai_source_schema.sql` | adapt BBallstat physical tables to `"AI_Source".*` |
+| `basketball_ai/data/ai_source_full.sql` | adapt BBallstat physical tables to `"AI_Source".*` |
 | `basketball_ai/data/ai_schema.sql` | model-owned PostgreSQL output tables |
 | `basketball_ai/features/` | feature engineering |
 | `basketball_ai/models/` | forecast, compatibility, calibration, registry |
 | `basketball_ai/scenarios/` | bounded what-if/team context logic |
 | `basketball_ai/api/` | authenticated typed inference |
-| `gui/app.py` | technical operations console |
+| `basketball_ai/admin_web/app.py` | technical operations console |
 
 Conversation, natural-language intent routing and public entity resolution belong
 in WordPress Chat V3/Bax, not AI_Model.
@@ -59,8 +59,8 @@ in WordPress Chat V3/Bax, not AI_Model.
 - No SQL Server/Azure SQL compatibility code in the production data layer.
 - No generic SQL endpoint.
 - Source BBallstat schemas are read-only to AI_Model; writes belong only in
-  schema `ai`.
-- New league tables should be picked up by `ai_source_schema.sql` without
+  schema `AI`.
+- New league tables should be picked up by `ai_source_full.sql` without
   Python changes.
 - Preserve season chronology: a player must not have multiple training rows for
   the same target season.
@@ -69,7 +69,7 @@ in WordPress Chat V3/Bax, not AI_Model.
 
 ## PostgreSQL contract changes
 
-After modifying `ai_source_schema.sql`, run it against a representative database
+After modifying `ai_source_full.sql`, run it against a representative database
 and verify:
 
 ```sql

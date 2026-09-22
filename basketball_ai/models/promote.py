@@ -228,6 +228,38 @@ def _segment_regressions_for_dimension(
     return errors
 
 
+def _evaluation_window_errors(candidate: dict, production: dict) -> list[str]:
+    """Require candidate and production to be evaluated on identical OOT folds."""
+    candidate_report = candidate.get("backtest") or {}
+    production_report = production.get("backtest") or {}
+    candidate_targets = list(candidate_report.get("target_seasons") or [])
+    production_targets = list(production_report.get("target_seasons") or [])
+    errors: list[str] = []
+    if candidate_targets != production_targets:
+        errors.append(
+            "candidate and production backtests use different target seasons"
+        )
+    candidate_folds = [
+        (
+            fold.get("train_through_season"),
+            fold.get("target_season"),
+        )
+        for fold in candidate_report.get("folds", [])
+    ]
+    production_folds = [
+        (
+            fold.get("train_through_season"),
+            fold.get("target_season"),
+        )
+        for fold in production_report.get("folds", [])
+    ]
+    if candidate_folds != production_folds:
+        errors.append(
+            "candidate and production backtests use different fold windows"
+        )
+    return errors
+
+
 def _segment_regressions(candidate: dict, production: dict) -> list[str]:
     errors = _segment_regressions_for_dimension(
         candidate, production, "by_league", 5, "league"
@@ -290,6 +322,7 @@ def promote_if_better(
 
     errors = _promotion_gate_errors(candidate)
     if production:
+        errors.extend(_evaluation_window_errors(candidate, production))
         errors.extend(_segment_regressions(candidate, production))
         cand_rmse = candidate.get("overall_rmse")
         prod_rmse = production.get("overall_rmse")

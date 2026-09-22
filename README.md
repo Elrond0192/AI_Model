@@ -6,9 +6,10 @@ The production API also exposes a composable Basketball Simulation & Causal
 Engine. See [docs/SIMULATION_ENGINE.md](docs/SIMULATION_ENGINE.md) for the
 probabilistic, matchup, lineup, roster and causal contracts.
 
-For PostgreSQL deployments, run `basketball_ai/data/ai_source_simulation.sql`
-followed by `basketball_ai/data/ai_scenario_serving.sql`
-after the core and competition adapters to expose available PBP/lineup feeds.
+For PostgreSQL deployments, run `basketball_ai/data/ai_source_full.sql` followed
+by `basketball_ai/data/ai_scenario_serving.sql`. The unified source contract
+contains the entity, competition-preserving and simulation adapters plus the
+PostgreSQL parallel-safety fixes.
 
 `AI_Model` is **not a chatbot**. It reads a stable PostgreSQL contract, trains strict season-ahead forecasts (`t -> t+1`) inside the same league and competition, evaluates the exact production ensemble out of time, promotes immutable model runs, stores bounded forecasts in PostgreSQL schema `ai`, and exposes typed inference to WordPress Chat V3.
 
@@ -60,11 +61,8 @@ Generate secrets with `openssl rand -hex 32`.
 Apply the entity adapter, competition-preserving statistical adapter and model-owned output schema in this order:
 
 ```bash
-# Existing lowercase installations only:
-psql -d YOUR_DATABASE -f basketball_ai/data/ai_pascalcase_migration.sql
-psql -d YOUR_DATABASE -f basketball_ai/data/ai_source_schema.sql
-psql -d YOUR_DATABASE -f basketball_ai/data/ai_source_competition.sql
-psql -d YOUR_DATABASE -f basketball_ai/data/ai_source_simulation.sql
+# Legacy lowercase schemas must be migrated separately before this contract.
+psql -d YOUR_DATABASE -f basketball_ai/data/ai_source_full.sql
 psql -d YOUR_DATABASE -f basketball_ai/data/ai_scenario_serving.sql
 psql -d YOUR_DATABASE -f basketball_ai/data/ai_schema.sql
 ```

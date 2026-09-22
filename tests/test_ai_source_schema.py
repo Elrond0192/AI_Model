@@ -7,76 +7,94 @@ import pandas as pd
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-SOURCE_SQL = ROOT / "basketball_ai" / "data" / "ai_source_schema.sql"
-COMPETITION_SQL = ROOT / "basketball_ai" / "data" / "ai_source_competition.sql"
-SIMULATION_SQL = ROOT / "basketball_ai" / "data" / "ai_source_simulation.sql"
+SOURCE_SQL = ROOT / "basketball_ai" / "data" / "ai_source_full.sql"
 SERVING_SQL = ROOT / "basketball_ai" / "data" / "ai_scenario_serving.sql"
 OUTPUT_SQL = ROOT / "basketball_ai" / "data" / "ai_schema.sql"
-MIGRATION_SQL = ROOT / "basketball_ai" / "data" / "ai_pascalcase_migration.sql"
 
 
-def test_ai_source_schema_defines_entity_contract():
+def test_ai_source_schema_defines_minimal_canonical_contract():
     sql = SOURCE_SQL.read_text(encoding="utf-8").lower()
-    for view in (
+    for table in (
         '"ai_source"."leagues"',
         '"ai_source"."teams"',
         '"ai_source"."players"',
         '"ai_source"."teamplayerrelations"',
+        '"ai_source"."playercompetitionstats"',
+        '"ai_source"."teamcompetitionstats"',
     ):
-        assert f"create view {view}" in sql
+        assert (
+            f"create table {table}" in sql
+            or f"create table if not exists {table}" in sql
+        )
+
+    for forbidden in (
+        '"ai_source"."playerregistryinternal"',
+        '"ai_source"."teamregistryinternal"',
+        '"ai_source"."statsrawinternal"',
+        '"ai_source"."rolesrawinternal"',
+        '"ai_source"."onoffrawinternal"',
+        '"ai_source"."clutchrawinternal"',
+        '"ai_source"."boxscorerawinternal"',
+        '"ai_source"."simulationpbpevents"',
+        '"ai_source"."simulationlineupstints"',
+    ):
+        assert forbidden not in sql
+
+    assert "create view " not in sql
+    assert "create materialized view " not in sql
+    assert "to_jsonb(" not in sql
+    assert "lowerkeys" not in sql
+    assert "numericvalue(" not in sql
+    assert "textvalue(" not in sql
+    assert "information_schema." not in sql
+    assert "from pg_catalog.pg_class" in sql
+    assert "create table " in sql
 
 
 def test_competition_schema_preserves_player_and_team_contexts():
-    sql = COMPETITION_SQL.read_text(encoding="utf-8").lower()
-    assert 'create view "ai_source"."playercompetitionstats"' in sql
-    assert 'create view "ai_source"."teamcompetitionstats"' in sql
-    assert "partition by pr.global_id, s.league_key, s.season, s.competition" in sql
-    assert "partition by tr.global_id, ts.league_key, ts.season, ts.competition" in sql
-    assert '"ai_source"."competitioncode"' in sql
+    sql = SOURCE_SQL.read_text(encoding="utf-8").lower()
+    assert 'create table "ai_source"."playercompetitionstats"' in sql
+    assert 'create table "ai_source"."teamcompetitionstats"' in sql
+    assert "percent_rank() over" in sql
     assert "advancedstats_player_" in sql
     assert "advancedstatsteam_" in sql
-    assert "information_schema.columns" in sql
-    assert "'gamesstarted', 'games_started'" in sql
-    assert "coalesce(s.games_started, bs.games_started, 0)" in sql
-    assert "percent_rank() over" in sql
-    assert "s.rating_0_10 as rating" in sql
+    assert "games_started" in sql
 
 
 def test_competition_schema_keeps_tot_separate_from_rs():
-    sql = COMPETITION_SQL.read_text(encoding="utf-8").lower()
+    sql = SOURCE_SQL.read_text(encoding="utf-8").lower()
+    assert "when 'total' then 'tot'" in sql
+    assert "when 'all' then 'tot'" in sql
     assert "when 'tot' then 'tot'" in sql
     assert "when 'playoffs' then 'po'" in sql
     assert "when 'regular season' then 'rs'" in sql
-    assert "when upper(s.competition) = 'tot' then 'rs'" not in sql
 
 
-def test_competition_schema_is_independent_of_base_internal_views():
-    sql = COMPETITION_SQL.read_text(encoding="utf-8").lower()
-    assert "from ai_source._team_registry" not in sql
-    assert "from ai_source._stats_raw" not in sql
-    assert "from ai_source._team_stats_raw" not in sql
-
-
-def test_simulation_schema_adapts_pbp_lineups_play_types_and_shots():
-    sql = SIMULATION_SQL.read_text(encoding="utf-8").lower()
-    for view in (
-        '"ai_source"."simulationpbpevents"',
-        '"ai_source"."simulationlineupstints"',
-        '"ai_source"."simulationplaytypestats"',
-        '"ai_source"."simulationshotprofiles"',
-        '"ai_source"."simulationcausalpanel"',
+def test_ai_source_does_not_own_simulation_feeds():
+    sql = SOURCE_SQL.read_text(encoding="utf-8").lower()
+    for token in (
+        "simulationpbpevents",
+        "simulationlineupstints",
+        "simulationplaytypestats",
+        "simulationshotprofiles",
+        "simulationcausalpanel",
+        "advancedstats_lineups_quarter_",
     ):
-        assert f"create view {view}" in sql
-    assert "advancedstats_lineups_quarter_" in sql
-    assert "inferred_not_observed" not in sql  # inference labels belong to API output
-    assert "assignment_probability" in sql
+        assert token not in sql
+
+
+def test_ai_source_uses_native_typed_columns_for_row_transforms():
+    sql = SOURCE_SQL.read_text(encoding="utf-8").lower()
+    assert "pg_temp.ai_expr" in sql
+    assert "pg_catalog.pg_attribute" in sql
+    assert 'create table "ai_source"."playercompetitionstats" as' in sql
+    assert "union all" in sql
+    assert "hashtextextended" in sql
 
 
 def test_ai_source_schemas_have_no_sql_server_ddl():
     sql = (
         SOURCE_SQL.read_text(encoding="utf-8")
-        + COMPETITION_SQL.read_text(encoding="utf-8")
-        + SIMULATION_SQL.read_text(encoding="utf-8")
         + SERVING_SQL.read_text(encoding="utf-8")
     ).lower()
     forbidden = (
@@ -120,13 +138,14 @@ def test_ai_owned_schemas_and_relations_use_pascal_case():
     assert '"AI"."PlayerForecasts"' in output
     assert "CREATE SCHEMA IF NOT EXISTS ai_source" not in source
     assert "CREATE TABLE IF NOT EXISTS ai." not in output
-    migration = MIGRATION_SQL.read_text(encoding="utf-8")
-    assert "DROP SCHEMA IF EXISTS ai_source CASCADE" in migration
+    assert 'CREATE SCHEMA IF NOT EXISTS "AI_Source"' in source
 
 
 def test_stable_id_keeps_null_relations_null():
     sql = SOURCE_SQL.read_text(encoding="utf-8").lower()
-    assert "when value is null or btrim(value) = '' then null" in sql
+    assert "pg_temp.ai_stable_id" in sql
+    assert "or btrim(%1$s::text) = ''" in sql
+    assert "hashtextextended(%2$L || ':' || btrim(%1$s::text), 0)" in sql
 
 
 def _valid_frames():

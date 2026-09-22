@@ -7,11 +7,11 @@ estimates.
 
 ## Optional possession contract
 
-The strict forecasting service still starts when only the competition-aware
-core views exist. The following `"AI_Source"` views are additive and loaded when
-available:
+The strict forecasting service depends only on the six canonical physical tables
+created by `ai_source_full.sql`. Simulation/causal feeds are owned by
+`ai_scenario_serving.sql` and are loaded independently:
 
-| View | Required fields | Purpose |
+| Serving table | Required fields | Purpose |
 |---|---|---|
 | `scenario_defender_matchups` | Indexed player-pair/context aggregates | Defensive assignment evidence without loading raw PBP |
 | `scenario_lineup_stats` | Indexed lineup/context aggregates | Partial-pooled lineup and matchup exposure |

@@ -13,14 +13,11 @@ The admin console is a custom FastAPI + HTML/CSS/JS application; Streamlit is no
 ## First database setup
 
 ```bash
-psql -d YOUR_DATABASE -f basketball_ai/data/ai_source_schema.sql
-psql -d YOUR_DATABASE -f basketball_ai/data/ai_source_parallel_safety.sql
-psql -d YOUR_DATABASE -f basketball_ai/data/ai_source_competition.sql
-psql -d YOUR_DATABASE -f basketball_ai/data/ai_source_simulation.sql
+psql -d YOUR_DATABASE -f basketball_ai/data/ai_source_full.sql
 psql -d YOUR_DATABASE -f basketball_ai/data/ai_schema.sql
 ```
 
-`ai_source_parallel_safety.sql` marks `_num`, `_int` and `_date` as `PARALLEL UNSAFE` because the parsing helpers use exception/subtransaction handling that PostgreSQL cannot execute inside a parallel worker.
+The unified `ai_source_full.sql` contract includes the source adapter, competition-preserving views, simulation feed and parallel-safety fixes; no separate adapter SQL file is required.
 
 Verify the production contract:
 
@@ -44,7 +41,7 @@ GROUP BY team_id, league_id, season, competition
 HAVING count(*) > 1;
 ```
 
-Both duplicate queries must return zero rows. Re-run the source adapters after league/schema/competition ingestion changes and re-apply `ai_source_parallel_safety.sql` after `ai_source_schema.sql`.
+Both duplicate queries must return zero rows. Re-run `ai_source_full.sql` after league/schema/competition ingestion changes.
 
 ## Operations through the GUI
 
@@ -85,7 +82,7 @@ docker compose run --rm admin \
   --model-dir /app/models_saved
 ```
 
-Runs are immutable under `/app/models_saved/runs/<model_run_id>/`; production is unchanged until promotion. A complete run includes `production_state.joblib` containing the competition vocabulary and conformal state.
+Runs are immutable under `/app/models_saved/runs/<model_run_id>/`; production is unchanged until promotion. A complete run includes `production_state.joblib` containing the competition vocabulary, conformal state and empirical age-curve state. Compatibility training uses out-of-fold base predictions when sufficient historical data exists.
 
 ## CLI fallback: backtest
 
@@ -226,10 +223,7 @@ The admin container runs as non-root `appuser` and must be able to write runtime
 tar -C . -czf ai-model-runtime-$(date +%F).tar.gz runtime/
 git pull --ff-only
 docker compose build --pull
-psql -d YOUR_DATABASE -f basketball_ai/data/ai_source_schema.sql
-psql -d YOUR_DATABASE -f basketball_ai/data/ai_source_parallel_safety.sql
-psql -d YOUR_DATABASE -f basketball_ai/data/ai_source_competition.sql
-psql -d YOUR_DATABASE -f basketball_ai/data/ai_source_simulation.sql
+psql -d YOUR_DATABASE -f basketball_ai/data/ai_source_full.sql
 docker compose up -d
 ```
 

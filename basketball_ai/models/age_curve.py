@@ -303,6 +303,35 @@ def reset_fitted_params() -> None:
     logger.info("[AgeCurve] Empirical parameters cleared; using defaults.")
 
 
+def get_fitted_params() -> Dict[str, Dict[str, float]]:
+    """Return a serialisable snapshot of the empirical age-curve state."""
+    return {
+        "peak_ages": dict(_fitted_peak_ages),
+        "sigma_before": dict(_fitted_sigma_before),
+        "sigma_after": dict(_fitted_sigma_after),
+    }
+
+
+def set_fitted_params(state: Optional[Dict[str, Dict[str, float]]]) -> None:
+    """Restore a previously persisted empirical age-curve state."""
+    reset_fitted_params()
+    if not isinstance(state, dict):
+        return
+    for key, target in (
+        ("peak_ages", _fitted_peak_ages),
+        ("sigma_before", _fitted_sigma_before),
+        ("sigma_after", _fitted_sigma_after),
+    ):
+        values = state.get(key)
+        if not isinstance(values, dict):
+            continue
+        for position, value in values.items():
+            try:
+                target[str(position)] = float(value)
+            except (TypeError, ValueError):
+                continue
+
+
 def age_trajectory(
     position: str,
     age_start: int = 18,

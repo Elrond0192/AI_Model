@@ -1,5 +1,5 @@
 -- Scalable scenario-serving layer.
--- Run after ai_source_simulation.sql, then refresh only the contexts changed by ETL:
+-- Run after ai_source_full.sql, then refresh only the contexts changed by ETL:
 --   CALL "AI_Source"."RefreshScenarioServing"('ITA1', 2025, 'RS');
 
 BEGIN;

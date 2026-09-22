@@ -234,3 +234,178 @@ def test_metric_summary_reports_error_bias_and_coverage():
     assert np.isclose(summary["mae"], 0.2)
     assert np.isclose(summary["bias"], 0.0)
     assert summary["interval_coverage"] == 1.0
+
+
+def test_compatibility_score_is_centred_and_can_penalise():
+    from basketball_ai.models.competition_training import CompetitionTemporalCompatibilityModel
+
+    model = CompetitionTemporalCompatibilityModel()
+    model.is_trained = True
+
+    class Scaler:
+        def transform(self, value):
+            return value
+
+    class KNN:
+        def predict(self, value):
+            return np.asarray([0.40])
+
+    model.scaler = Scaler()
+    model.knn = KNN()
+    data = _snapshot_data()
+    data["player_stats"] = pd.DataFrame(
+        [
+            {
+                "player_id": 1, "team_id": 10, "league_id": 1,
+                "season": 2024, "competition": "PO",
+                "games_played": 8, "rating": 7.0,
+            }
+        ]
+    )
+    data["team_season_stats"]["competition"] = "PO"
+    data["_prediction_league_id"] = 1
+    data["_prediction_competition"] = "PO"
+    data["_as_of_season"] = 2024
+
+    assert model.score(1, 10, data) == 0.40
+
+
+def test_two_way_score_preserves_defensive_sign():
+    from basketball_ai.models.performance_model import PerformanceModel
+
+    row = pd.Series(
+        {
+            "player_id": 1,
+            "season": 2024,
+            "rating": 7.0,
+            "minutes_per_game": 25.0,
+            "points": 15.0,
+            "raptor_off": 2.0,
+            "raptor_def": -3.0,
+            "competition": "RS",
+        }
+    )
+    model = PerformanceModel()
+    features = model._build_row(
+        row,
+        age=24,
+        position="PG",
+        player_stats_history=pd.DataFrame([row]),
+        league_max_games={1: 30},
+    )
+    assert np.isclose(features["two_way_score"], -1.0)
+
+
+def test_empirical_age_curve_state_round_trips():
+    from basketball_ai.models.age_curve import (
+        get_fitted_params,
+        reset_fitted_params,
+        set_fitted_params,
+    )
+
+    state = {
+        "peak_ages": {"PG": 27.0},
+        "sigma_before": {"PG": 4.2},
+        "sigma_after": {"PG": 3.8},
+    }
+    set_fitted_params(state)
+    assert get_fitted_params() == state
+    reset_fitted_params()
+
+
+def test_competition_model_uses_one_hot_nominal_features():
+    from basketball_ai.models.competition_training import CompetitionSeasonAheadPerformanceModel
+
+    data = _season_data([2021, 2022, 2023, 2024])
+    stats = data["player_stats"].copy()
+    stats["ruolo_combinato"] = ["ROLE_A", "ROLE_B", "ROLE_A", "ROLE_B"]
+    stats["ruolo_offensivo"] = ["OFF_A", "OFF_A", "OFF_B", "OFF_B"]
+    stats["ruolo_difensivo"] = ["DEF_A", "DEF_B", "DEF_A", "DEF_B"]
+    data["player_stats"] = stats
+
+    model = CompetitionSeasonAheadPerformanceModel()
+    X, _ = model.prepare_features(data)
+    assert "competition_enc" not in X.columns
+    assert "role_enc" not in X.columns
+    assert "role_off_enc" not in X.columns
+    assert "role_def_enc" not in X.columns
+    assert "competition_1" in X.columns
+    assert "role_combo_1" in X.columns
+    assert "role_off_1" in X.columns
+    assert "role_def_1" in X.columns
+
+
+def test_base_oof_predictions_are_batched_per_source_year(monkeypatch):
+    import basketball_ai.models.strict_production as strict
+
+    years = [2020, 2021, 2022, 2023]
+    data = {
+        "player_stats": pd.DataFrame(
+            [
+                {
+                    "player_id": 1,
+                    "team_id": 10,
+                    "league_id": 1,
+                    "season": year,
+                    "games_played": 20,
+                    "rating": 6.0 + (year - 2020) * 0.1,
+                    "competition": "RS",
+                }
+                for year in years
+            ]
+        ),
+    }
+
+    def fake_snapshot(source_data, source_year):
+        stats = source_data["player_stats"]
+        stats = stats[stats["season"] <= source_year].copy()
+        return {
+            "player_stats": stats,
+            "player_dict": {1: {"id": 1, "position": "PG"}},
+        }
+
+    class FakePredictor:
+        def __init__(self):
+            self.calls = 0
+
+        def predict(self, values):
+            self.calls += 1
+            return values[:, 0] + 10.0
+
+    class FakeBaseModel:
+        instances = []
+
+        def __init__(self):
+            self.feature_names = ["marker"]
+            self.model = FakePredictor()
+            self.__class__.instances.append(self)
+
+        def train(self, snapshot):
+            return None
+
+        @staticmethod
+        def _precompute_history_features(history, **kwargs):
+            return [{"marker": float(row["rating"])} for _, row in history.iterrows()]
+
+        @staticmethod
+        def _build_row(source, age, position, history, **kwargs):
+            return {"marker": float(source["rating"])}
+
+        def predict_from_features(self, row):
+            raise AssertionError("OOF should use batched model.predict")
+
+    monkeypatch.setattr(strict, "build_historical_snapshot", fake_snapshot)
+    monkeypatch.setattr(strict, "CompetitionSeasonAheadPerformanceModel", FakeBaseModel)
+
+    result = strict.build_base_oof_predictions(data)
+
+    assert set(result) == {
+        (1, 1, "RS", 2021),
+        (1, 1, "RS", 2022),
+        (1, 1, "RS", 2023),
+    }
+    assert len(FakeBaseModel.instances) == 3
+    assert all(instance.model.calls == 1 for instance in FakeBaseModel.instances)
+    assert np.isclose(result[(1, 1, "RS", 2021)], 16.0)
+    assert np.isclose(result[(1, 1, "RS", 2022)], 16.1)
+    assert np.isclose(result[(1, 1, "RS", 2023)], 16.2)

@@ -8,7 +8,7 @@ configurable qualification rules (existing columns only: ``games_played`` and
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Iterable, Mapping, Optional, Sequence, Tuple
+from typing import Any, Mapping, Optional, Tuple
 
 import numpy as np
 import pandas as pd
