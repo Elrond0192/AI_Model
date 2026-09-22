@@ -386,6 +386,14 @@ class CompetitionTemporalCompatibilityModel(TemporalCompatibilityModel):
     multiplier and allows both positive and negative compatibility effects.
     """
 
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.neutral_mode = False
+        self.training_samples = 0
+        self.training_samples_by_competition: Dict[str, int] = {}
+        self.training_samples_by_context_mode: Dict[str, int] = {}
+        self.training_target_mode = "untrained"
+
     @staticmethod
     def _context(data: Dict[str, Any]) -> tuple[Optional[int], Optional[str]]:
         league_id = data.get("_prediction_league_id")
@@ -732,6 +740,7 @@ class CompetitionTemporalCompatibilityModel(TemporalCompatibilityModel):
                 np.asarray([0.5], dtype=float),
             )
             self.is_trained = True
+            self.neutral_mode = True
             self.training_samples = 0
             self.training_samples_by_competition = {}
             self.training_samples_by_context_mode = {"neutral_no_history": 1}
@@ -753,6 +762,7 @@ class CompetitionTemporalCompatibilityModel(TemporalCompatibilityModel):
         scaled = self.scaler.fit_transform(X)
         self.knn.fit(scaled, y)
         self.is_trained = True
+        self.neutral_mode = False
         self.training_samples = len(X)
         self.training_samples_by_competition = samples_by_competition
         self.training_samples_by_context_mode = samples_by_context_mode
@@ -766,7 +776,7 @@ class CompetitionTemporalCompatibilityModel(TemporalCompatibilityModel):
     def score(self, player_id: int, team_id: int, data: Dict[str, Any]) -> float:
         if not self.is_trained:
             raise RuntimeError("Compatibility model is not trained")
-        if getattr(self, "training_samples", 0) == 0:
+        if getattr(self, "neutral_mode", False):
             # Explicit neutral mode: there is no leakage-free historical
             # compatibility sample to learn from, so do not require a target
             # team's historical row merely to return the neutral multiplier.
