@@ -719,6 +719,11 @@ class PerformanceModel:
         if availability_source is None or availability_source.empty:
             availability_source = pd.DataFrame([stat_row])
         for column in availability_columns:
+            if precomputed_history is not None:
+                row[f"{column}_available"] = float(
+                    precomputed_history.get(f"available:{column}", 0.0)
+                )
+                continue
             if column not in availability_source.columns:
                 available = False
             else:
@@ -939,6 +944,13 @@ class PerformanceModel:
             po_games = np.zeros(size, dtype=float)
 
         result: List[Dict[str, float]] = []
+        availability_columns = (
+            "per", "ts_pct", "usg_pct", "vorp", "spm",
+            "raptor_off", "raptor_def", "lebron_off", "lebron_def",
+            "gm_sc", "fic", "ows", "dws", "scoring_efficiency",
+            "hustle_index", "foul_drawing_rate", "net_rtg_diff", "ortg_diff",
+            "clutch_ts_pct", "clutch_net_rtg", "starter_pct",
+        )
         for index in range(size):
             item = {
                 "form_score": float(form[index]),
@@ -953,6 +965,13 @@ class PerformanceModel:
             for col, values in cumulative_means.items():
                 if not np.isnan(values[index]):
                     item[f"mean:{col}"] = float(values[index])
+            for column in availability_columns:
+                if column not in grp.columns:
+                    available = False
+                else:
+                    values = pd.to_numeric(grp[column], errors="coerce").to_numpy(dtype=float)
+                    available = bool(np.isfinite(values[: index + 1]).any())
+                item[f"available:{column}"] = 1.0 if available else 0.0
             result.append(item)
         return result
 
