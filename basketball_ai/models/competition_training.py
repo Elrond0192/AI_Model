@@ -194,6 +194,31 @@ class CompetitionSeasonAheadPerformanceModel(SeasonAheadPerformanceModel):
         self.role_off_encoding = build_encoding("ruolo_offensivo")
         self.role_def_encoding = build_encoding("ruolo_difensivo")
 
+        # Role labels and competition labels are nominal categories, not ordinal
+        # quantities. Preserve the temporal vocabulary while exposing one-hot
+        # columns to XGBoost.
+        self.role_feature_encodings = {
+            "ruolo_combinato": {
+                value: f"role_combo_{index}"
+                for index, value in enumerate(sorted(self.role_encoding), 1)
+            },
+            "ruolo_offensivo": {
+                value: f"role_off_{index}"
+                for index, value in enumerate(sorted(self.role_off_encoding), 1)
+            },
+            "ruolo_difensivo": {
+                value: f"role_def_{index}"
+                for index, value in enumerate(sorted(self.role_def_encoding), 1)
+            },
+        }
+        self.competition_feature_encodings = {
+            value: f"competition_{index}"
+            for index, value in enumerate(
+                sorted(self.competition_encoding),
+                1,
+            )
+        }
+
         extra_feature_names: List[str] = []
         for column in extra_metrics:
             info = METRIC_CATALOG.get(column)
@@ -202,7 +227,15 @@ class CompetitionSeasonAheadPerformanceModel(SeasonAheadPerformanceModel):
             name = f"{column}_per_36" if info.use_per36 else f"avg_{column}"
             if name not in extra_feature_names:
                 extra_feature_names.append(name)
-        feature_names = FEATURE_COLS + extra_feature_names
+        categorical_feature_names = [
+            feature_name
+            for mapping in self.role_feature_encodings.values()
+            for feature_name in mapping.values()
+        ] + list(self.competition_feature_encodings.values())
+        ordinal_columns = {"competition_enc", "role_enc", "role_off_enc", "role_def_enc"}
+        feature_names = [
+            column for column in FEATURE_COLS if column not in ordinal_columns
+        ] + categorical_feature_names + extra_feature_names
 
         latest_data_year = int(player_stats["_season_year"].max())
         birth_year_map: Dict[int, int] = {}
