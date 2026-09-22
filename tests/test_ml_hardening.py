@@ -311,3 +311,25 @@ def test_empirical_age_curve_state_round_trips():
     set_fitted_params(state)
     assert get_fitted_params() == state
     reset_fitted_params()
+
+
+def test_competition_model_uses_one_hot_nominal_features():
+    from basketball_ai.models.competition_training import CompetitionSeasonAheadPerformanceModel
+
+    data = _season_data([2021, 2022, 2023, 2024])
+    stats = data["player_stats"].copy()
+    stats["ruolo_combinato"] = ["ROLE_A", "ROLE_B", "ROLE_A", "ROLE_B"]
+    stats["ruolo_offensivo"] = ["OFF_A", "OFF_A", "OFF_B", "OFF_B"]
+    stats["ruolo_difensivo"] = ["DEF_A", "DEF_B", "DEF_A", "DEF_B"]
+    data["player_stats"] = stats
+
+    model = CompetitionSeasonAheadPerformanceModel()
+    X, _ = model.prepare_features(data)
+    assert "competition_enc" not in X.columns
+    assert "role_enc" not in X.columns
+    assert "role_off_enc" not in X.columns
+    assert "role_def_enc" not in X.columns
+    assert "competition_1" in X.columns
+    assert "role_combo_1" in X.columns
+    assert "role_off_1" in X.columns
+    assert "role_def_1" in X.columns
