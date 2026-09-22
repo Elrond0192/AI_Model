@@ -305,9 +305,17 @@ def _training_worker(
         metrics = model.train(data)
 
         _set_training(stage="Walk-forward backtest", progress=58, message="Running leakage-safe out-of-time folds…")
+        # Use every eligible OOT target season by default. An explicit
+        # MODEL_BACKTEST_FOLDS value can cap runtime for large histories.
+        default_folds = max(1, len(seasons) - 4)
+        try:
+            configured_folds = int(os.getenv("MODEL_BACKTEST_FOLDS", str(default_folds)))
+        except ValueError:
+            configured_folds = default_folds
+        n_backtest_folds = min(max(1, configured_folds), default_folds)
         report = run_backtest(
             data,
-            n_folds=min(3, max(1, len(seasons) - 4)),
+            n_folds=n_backtest_folds,
             output_path=str(MODEL_ROOT / "backtest_report.json"),
         )
         if not report.get("valid") or not report.get("folds"):
