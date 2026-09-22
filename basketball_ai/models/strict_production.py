@@ -21,6 +21,8 @@ from basketball_ai.models.competition_training import (
     CompetitionSeasonAheadPerformanceModel,
     CompetitionTemporalCompatibilityModel,
     apply_competition_encoding,
+    forecast_competitions,
+    minimum_training_games,
     normalize_competition,
     scope_prediction_context,
 )
@@ -253,6 +255,162 @@ class AsOfPositionPerformanceModel(CompetitionSeasonAheadPerformanceModel):
         )
 
 
+
+def _league_max_games_map(data: Dict[str, Any]) -> Optional[Dict[int, int]]:
+    leagues = data.get("leagues")
+    if leagues is None or getattr(leagues, "empty", True) or "id" not in leagues.columns:
+        return None
+    result: Dict[int, int] = {}
+    if "max_games" in leagues.columns:
+        for row in leagues.to_dict("records"):
+            value = row.get("max_games")
+            try:
+                if value is not None and not pd.isna(value):
+                    result[_to_int(row["id"])] = max(1, int(value))
+            except (TypeError, ValueError):
+                continue
+    return result or None
+
+
+def _player_age_as_of(player: Dict[str, Any], season: int) -> int:
+    for key in ("birth_date", "date_of_birth"):
+        value = player.get(key)
+        try:
+            return int(season) - int(str(value)[:4])
+        except (TypeError, ValueError):
+            pass
+    try:
+        return int(player.get("age", 26) or 26)
+    except (TypeError, ValueError):
+        return 26
+
+
+def build_base_oof_predictions(
+    data: Dict[str, Any],
+) -> Dict[Tuple[int, int, str, int], float]:
+    """Return leakage-free base-XGBoost predictions for historical transitions.
+
+    For each source season, a temporary competition-aware base model is fitted
+    only on data available through that source season. It then predicts the
+    source-season feature vectors whose real next-season outcome exists in the
+    supplied dataset. These predictions are never trained on the corresponding
+    next-season target and are used only as the compatibility residual baseline.
+    """
+    stats = data.get("player_stats", pd.DataFrame())
+    if stats is None or stats.empty:
+        return {}
+    required = {"player_id", "league_id", "season", "competition"}
+    if not required.issubset(stats.columns):
+        return {}
+
+    all_stats = stats.copy()
+    all_stats["_season_year"] = _numeric_seasons(all_stats)
+    all_stats["_competition"] = all_stats["competition"].map(normalize_competition)
+    allowed = forecast_competitions()
+    all_stats = all_stats[
+        all_stats["_season_year"].notna()
+        & all_stats["_competition"].isin(allowed)
+    ].copy()
+    if all_stats.empty:
+        return {}
+
+    min_games = minimum_training_games()
+    all_stats["_pid_int"] = all_stats["player_id"].map(_to_int)
+    all_stats["_lid_int"] = all_stats["league_id"].map(_to_int)
+    source_years = sorted(
+        {
+            int(value)
+            for value in all_stats["_season_year"].dropna().tolist()
+            if int(value) + 1 in set(all_stats["_season_year"].dropna().astype(int))
+        }
+    )
+    if not source_years:
+        return {}
+
+    league_max_games = _league_max_games_map(data)
+    predictions: Dict[Tuple[int, int, str, int], float] = {}
+
+    for source_year in source_years:
+        target_year = source_year + 1
+        target_keys = {
+            (int(row["_pid_int"]), int(row["_lid_int"]), str(row["_competition"]))
+            for row in all_stats[all_stats["_season_year"] == target_year].to_dict("records")
+            if pd.notna(row.get("_pid_int")) and pd.notna(row.get("_lid_int"))
+        }
+        if not target_keys:
+            continue
+
+        snapshot = build_historical_snapshot(data, source_year)
+        try:
+            base_model = CompetitionSeasonAheadPerformanceModel()
+            base_model.train(snapshot)
+        except (RuntimeError, ValueError, KeyError):
+            continue
+
+        source = snapshot["player_stats"].copy()
+        source["_season_year"] = _numeric_seasons(source)
+        source["_competition"] = source["competition"].map(normalize_competition)
+        source = source[
+            (source["_season_year"] == source_year)
+            & source["_competition"].isin(allowed)
+        ].copy()
+        source["_pid_int"] = source["player_id"].map(_to_int)
+        source["_lid_int"] = source["league_id"].map(_to_int)
+
+        for (pid, league_id, competition), group in source.groupby(
+            ["_pid_int", "_lid_int", "_competition"], sort=False
+        ):
+            key = (int(pid), int(league_id), str(competition))
+            if key not in target_keys:
+                continue
+            games = pd.to_numeric(group["games_played"], errors="coerce").fillna(0.0)
+            if games.empty or float(games.iloc[0]) < min_games:
+                continue
+
+            player = snapshot["player_dict"].get(int(pid), {})
+            position = str(player.get("position", "PG") or "PG")
+            history = snapshot["player_stats"].copy()
+            history["_season_year"] = _numeric_seasons(history)
+            history["_competition"] = history["competition"].map(normalize_competition)
+            history = history[
+                (history["player_id"].map(_to_int) == int(pid))
+                & (history["league_id"].map(_to_int) == int(league_id))
+                & (history["_competition"] == str(competition))
+                & (history["_season_year"] <= source_year)
+            ].sort_values("_season_year")
+            if history.empty:
+                continue
+
+            source_row = history.iloc[-1].copy()
+            source_clean = source_row.drop(labels=["_season_year", "_competition"])
+            source_clean["competition"] = str(competition)
+            empty_history = history.drop(columns=["_season_year", "_competition"]).iloc[:0]
+            history_clean = history.drop(columns=["_season_year", "_competition"]).reset_index(drop=True)
+            precomputed = base_model._precompute_history_features(
+                history_clean,
+                league_max_games=league_max_games,
+            )
+            if not precomputed:
+                continue
+            try:
+                feature_row = base_model._build_row(
+                    source_clean,
+                    _player_age_as_of(player, source_year),
+                    position,
+                    empty_history,
+                    extra_metrics=[],
+                    league_max_games=league_max_games,
+                    precomputed_history=precomputed[-1],
+                )
+                predictions[(int(pid), int(league_id), str(competition), target_year)] = (
+                    float(base_model.predict_from_features(feature_row))
+                )
+            except (TypeError, ValueError, KeyError):
+                continue
+
+    return predictions
+
+
 class StrictProductionEnsembleModel(ProductionEnsembleModel):
     """Exact competition-aware model implementation used by production."""
 
@@ -267,6 +425,7 @@ class StrictProductionEnsembleModel(ProductionEnsembleModel):
         self._competition_encoding_state: Dict[str, int] = {}
         self._conformal_by_competition: Dict[str, float] = {}
         self._conformal_samples_by_competition: Dict[str, int] = {}
+        self._age_curve_state: Dict[str, Dict[str, float]] = {}
 
     def _restore_style_bounds(self) -> None:
         if not self._style_bounds_state:
@@ -382,7 +541,11 @@ class StrictProductionEnsembleModel(ProductionEnsembleModel):
 
     def train(self, data: Dict[str, Any]) -> Dict[str, Any]:
         from basketball_ai.features.team_features import calibrate_style_bounds
-        from basketball_ai.models.age_curve import reset_fitted_params
+        from basketball_ai.models.age_curve import (
+            get_fitted_params,
+            maybe_fit_from_db,
+            reset_fitted_params,
+        )
 
         reset_fitted_params()
         metrics = self.perf_model.train(data)
@@ -400,7 +563,26 @@ class StrictProductionEnsembleModel(ProductionEnsembleModel):
 
         self._style_bounds_state = dict(calibrate_style_bounds(fit_data))
         self._restore_style_bounds()
-        self.compat_model.train(fit_data)
+
+        try:
+            maybe_fit_from_db(fit_data)
+        except Exception as exc:
+            logger.warning("[StrictProduction] Empirical age-curve fit failed: %s", exc)
+        self._age_curve_state = get_fitted_params()
+
+        compatibility_oof = build_base_oof_predictions(fit_data)
+        if compatibility_oof:
+            self.compat_model.train(
+                fit_data,
+                base_predictions=compatibility_oof,
+            )
+        else:
+            logger.warning(
+                "[StrictProduction] OOF base predictions unavailable; "
+                "using legacy compatibility target."
+            )
+            self.compat_model.train(fit_data)
+        self._restore_competition_encoding()
         self._calibrate_mpg_baseline(fit_data)
         self._calibrate_league_factors(fit_data)
 
@@ -446,6 +628,12 @@ class StrictProductionEnsembleModel(ProductionEnsembleModel):
         metrics["compatibility_training_samples"] = int(
             getattr(self.compat_model, "training_samples", 0)
         )
+        metrics["compatibility_oof_samples"] = int(len(compatibility_oof))
+        metrics["compatibility_target_mode"] = getattr(
+            self.compat_model,
+            "training_target_mode",
+            "unknown",
+        )
         metrics["compatibility_samples_by_competition"] = dict(
             getattr(self.compat_model, "training_samples_by_competition", {})
         )
@@ -477,9 +665,9 @@ class StrictProductionEnsembleModel(ProductionEnsembleModel):
                 season_year(value)
                 for value in stats["season"].dropna()
             )
-        from basketball_ai.models.age_curve import reset_fitted_params
+        from basketball_ai.models.age_curve import set_fitted_params
 
-        reset_fitted_params()
+        set_fitted_params(self._age_curve_state or None)
         self._restore_style_bounds()
         self._restore_competition_encoding()
         return super().predict(
@@ -551,6 +739,11 @@ class StrictProductionEnsembleModel(ProductionEnsembleModel):
                 "conformal_samples_by_competition": dict(
                     self._conformal_samples_by_competition
                 ),
+                "age_curve": {
+                    "peak_ages": dict(self._age_curve_state.get("peak_ages", {})),
+                    "sigma_before": dict(self._age_curve_state.get("sigma_before", {})),
+                    "sigma_after": dict(self._age_curve_state.get("sigma_after", {})),
+                },
             },
             str(Path(directory) / _STATE_FILE),
         )
@@ -592,6 +785,23 @@ class StrictProductionEnsembleModel(ProductionEnsembleModel):
         self._conformal_nominal_coverage = (
             float(nominal) if nominal is not None else None
         )
+        age_curve = state.get("age_curve")
+        self._age_curve_state = {
+            "peak_ages": {
+                str(key): float(value)
+                for key, value in (age_curve or {}).get("peak_ages", {}).items()
+            },
+            "sigma_before": {
+                str(key): float(value)
+                for key, value in (age_curve or {}).get("sigma_before", {}).items()
+            },
+            "sigma_after": {
+                str(key): float(value)
+                for key, value in (age_curve or {}).get("sigma_after", {}).items()
+            },
+        }
+        from basketball_ai.models.age_curve import set_fitted_params
+        set_fitted_params(self._age_curve_state or None)
         self._restore_style_bounds()
         self._restore_competition_encoding()
 
