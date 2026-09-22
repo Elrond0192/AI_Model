@@ -41,7 +41,7 @@ docker build -t basketball-ai:test .
 | Area | Responsibility |
 |---|---|
 | `basketball_ai/data/postgres_loader.py` | load and validate the canonical PostgreSQL contract |
-| `basketball_ai/data/ai_source_schema.sql` | adapt BBallstat physical tables to `"AI_Source".*` |
+| `basketball_ai/data/ai_source_full.sql` | adapt BBallstat physical tables to `"AI_Source".*` |
 | `basketball_ai/data/ai_schema.sql` | model-owned PostgreSQL output tables |
 | `basketball_ai/features/` | feature engineering |
 | `basketball_ai/models/` | forecast, compatibility, calibration, registry |
@@ -60,7 +60,7 @@ in WordPress Chat V3/Bax, not AI_Model.
 - No generic SQL endpoint.
 - Source BBallstat schemas are read-only to AI_Model; writes belong only in
   schema `ai`.
-- New league tables should be picked up by `ai_source_schema.sql` without
+- New league tables should be picked up by `ai_source_full.sql` without
   Python changes.
 - Preserve season chronology: a player must not have multiple training rows for
   the same target season.
