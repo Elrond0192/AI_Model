@@ -6,7 +6,7 @@ sull'host, AI_Model in Docker e Chat V3 via API.
 ## 1. Prepara PostgreSQL
 
 ```bash
-psql -d YOUR_DATABASE -f basketball_ai/data/ai_source_schema.sql
+psql -d YOUR_DATABASE -f basketball_ai/data/ai_source_full.sql
 psql -d YOUR_DATABASE -f basketball_ai/data/ai_schema.sql
 ```
 
