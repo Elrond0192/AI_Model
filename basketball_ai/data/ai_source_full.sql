@@ -624,28 +624,49 @@ BEGIN
                 WHERE n.nspname='Boxscore' AND c.relname=opt_table
                   AND c.relkind IN ('r','p')
             ) THEN
-                box_started_expr := format(
-                    '(SELECT count(DISTINCT %1$s)::double precision
-                        FROM "Boxscore".%2$I b0
-                       WHERE %3$s = %4$s
-                         AND %5$s = %6$s
-                         AND %7$s)',
-                    pg_temp.ai_expr('Boxscore', opt_table, 'b0', 'text', ARRAY['game','idgame','gamecode']),
-                    opt_table,
+                -- Pre-aggregate Boxscore once per league. The previous
+                -- correlated count(DISTINCT game) scanned Boxscore repeatedly
+                -- for every AdvancedStats row.
+                boxscore_join := format(
+                    'LEFT JOIN (
+                        SELECT bx.season,
+                               bx.source_player_id,
+                               bx.competition,
+                               count(DISTINCT bx.game_id)::double precision AS games_started
+                        FROM (
+                            SELECT %1$s AS season,
+                                   %2$s AS source_player_id,
+                                   %3$s AS game_id,
+                                   %4$s AS competition
+                            FROM "Boxscore".%5$I b0
+                            WHERE %1$s IS NOT NULL
+                              AND %2$s IS NOT NULL
+                              AND %3$s IS NOT NULL
+                              AND %6$s
+                        ) bx
+                        GROUP BY bx.season, bx.source_player_id, bx.competition
+                    ) bs
+                      ON bs.season = %7$s
+                     AND bs.source_player_id = %8$s
+                     AND bs.competition = %9$s',
                     pg_temp.ai_expr('Boxscore', opt_table, 'b0', 'int', ARRAY['season']),
-                    season_expr,
                     pg_temp.ai_expr('Boxscore', opt_table, 'b0', 'text', ARRAY['id','idplayer','playerid']),
+                    pg_temp.ai_expr('Boxscore', opt_table, 'b0', 'text', ARRAY['game','idgame','gamecode']),
+                    pg_temp.ai_comp_expr('Boxscore', opt_table, 'b0', ARRAY['competition']),
+                    opt_table,
+                    pg_temp.ai_expr('Boxscore', opt_table, 'b0', 'bool', ARRAY['sf','starter','isstarter']),
+                    season_expr,
                     player_local_expr,
-                    pg_temp.ai_expr('Boxscore', opt_table, 'b0', 'bool', ARRAY['sf','starter','isstarter'])
+                    comp_expr
                 );
-                games_started_expr := box_started_expr;
+                games_started_expr := 'bs.games_started';
                 games_expr := pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['games','gamesplayed']);
                 starter_pct_expr := format(
                     '(CASE WHEN coalesce(%1$s, 0) > 0
-                            THEN least(1.0, %2$s / %1$s)
+                            THEN least(1.0, coalesce(%2$s, 0) / %1$s)
                             ELSE 0 END)',
                     games_expr,
-                    box_started_expr
+                    games_started_expr
                 );
             END IF;
         END IF;
