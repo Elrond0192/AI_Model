@@ -21,3 +21,80 @@ label{display:flex;flex-direction:column;gap:8px;color:#a9bbcc;font-size:12px;fo
 @media(max-width:860px){.app-shell{display:block}.sidebar{position:relative;width:100%;height:auto;display:block}.brand-block{padding-bottom:12px}.nav-list{display:grid;grid-template-columns:repeat(2,1fr)}.sidebar-spacer,.user-card{display:none}.sidebar .btn-ghost{margin-top:10px}.topbar{padding:0 16px;gap:14px}.topbar-spacer{display:none}.page-root{padding:23px 16px}.split-grid,.data-grid{grid-template-columns:1fr}.kpi-grid.five,.kpi-grid.four{grid-template-columns:repeat(2,1fr)}.quality-grid{grid-template-columns:repeat(2,1fr)}.config-grid{grid-template-columns:1fr 1fr}.password-form{grid-template-columns:1fr}.control-row{align-items:flex-start;flex-direction:column}.form-grid{grid-template-columns:1fr}.span-2{grid-column:span 1}}
 @media(max-width:520px){.kpi-grid.five,.kpi-grid.four,.quality-grid,.config-grid{grid-template-columns:1fr}.top-meta.utc{display:none}.page-heading h1{font-size:26px}.page-heading.action-heading{gap:16px;align-items:flex-start;flex-direction:column}.nav-list{grid-template-columns:1fr 1fr}.panel{padding:12px}}
 \n.scenario-result{min-height:460px;max-height:680px;overflow:auto;margin:0;padding:14px;border:1px solid #1a3a55;border-radius:7px;background:#071723;color:#c9e5ff;font:10px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;word-break:break-word}.scenario-grid textarea{resize:vertical}\n
+
+/* ---------------------------------------------------------------------------
+   Modern Control Center visual system
+   --------------------------------------------------------------------------- */
+:root{
+  --font-ui:"Aptos","Avenir Next","Inter","Segoe UI Variable","Segoe UI",system-ui,sans-serif;
+  --font-display:"Aptos Display","Avenir Next","Inter","Segoe UI Variable","Segoe UI",system-ui,sans-serif;
+  --radius-sm:10px;
+  --radius-md:14px;
+  --radius-lg:18px;
+  --panel-bg:linear-gradient(145deg,rgba(15,39,61,.97),rgba(8,25,41,.99));
+  --panel-border:#244d69;
+}
+html,body{font-family:var(--font-ui)}
+body{font-size:14px;line-height:1.5;letter-spacing:-.005em}
+button,input,select,textarea{font-family:var(--font-ui)}
+h1,h2,h3,strong,.brand-title,.login-brand,.kpi-value,.profile-name,.registry-run,.job-status{font-family:var(--font-display)}
+.nav-item{font-size:13px;line-height:1.25;padding:11px 12px;border-radius:10px}
+.page-root{padding:36px 36px 30px}
+.page-heading{margin-bottom:30px}
+.page-heading h1{font-size:34px;line-height:1.05;margin-bottom:10px}
+.page-heading p{font-size:13px;line-height:1.6;max-width:900px}
+.panel{padding:21px;border-radius:var(--radius-md);background:var(--panel-bg);border-color:var(--panel-border);box-shadow:0 14px 34px rgba(0,0,0,.16)}
+.panel-heading{margin-bottom:18px}
+.section-heading h2,.panel-heading h2{font-size:17px;line-height:1.3;letter-spacing:-.02em}
+.split-grid{gap:18px;margin-bottom:20px}
+.kpi-grid{gap:16px;margin-bottom:28px}
+.kpi-card{min-height:136px;padding:19px;border-radius:var(--radius-md)}
+.kpi-label{font-size:11px;margin-bottom:7px}
+.kpi-value{font-size:23px}
+.kpi-sub{font-size:10px;line-height:1.45}
+.table-shell{border-radius:12px}
+table{font-size:11px}
+th{padding:12px 14px}
+td{padding:13px 14px;line-height:1.45}
+.form-grid{gap:16px}
+label{gap:8px;font-size:11px;line-height:1.35}
+input,select,textarea{
+  width:100%;min-height:44px;border:1px solid #2b5773;border-radius:10px;
+  background:#081a2b;color:#f4f8fc;padding:11px 13px;line-height:1.4;
+  outline:none;transition:border-color .18s,box-shadow .18s,background .18s
+}
+textarea{min-height:120px;resize:vertical}
+input::placeholder,textarea::placeholder{color:#688199}
+input:hover,select:hover,textarea:hover{border-color:#3a6683}
+select{appearance:none;background-image:linear-gradient(45deg,transparent 50%,#7693aa 50%),linear-gradient(135deg,#7693aa 50%,transparent 50%);background-position:calc(100% - 17px) 19px,calc(100% - 12px) 19px;background-size:5px 5px,5px 5px;background-repeat:no-repeat;padding-right:32px}
+input:focus,select:focus,textarea:focus{border-color:#3b8cff;box-shadow:0 0 0 3px rgba(59,140,255,.13);background:#0a1f32}
+.btn{min-height:40px;padding:10px 14px;border-radius:10px;font-size:11px}
+.btn-small{min-height:36px;padding:8px 11px}
+.profile-list{gap:14px}
+.profile-card{border-radius:var(--radius-md);padding:18px;background:linear-gradient(145deg,#0b2134,#091d2e);box-shadow:inset 0 1px rgba(255,255,255,.025)}
+.profile-card.active{box-shadow:0 0 0 1px rgba(39,118,202,.24),0 12px 26px rgba(0,0,0,.16)}
+.profile-top{min-height:28px}
+.profile-name{font-size:15px}
+.profile-meta{margin:12px 0 15px;gap:9px;font-size:10px;line-height:1.55}
+.profile-meta span{padding:8px 10px;border-radius:9px;background:#0a1a2a;border:1px solid #173953}
+.button-row{gap:9px}
+.microcopy{font-size:11px;line-height:1.65;margin:14px 0 0;max-width:1000px}
+.lifecycle-panel{padding:23px}
+.lifecycle-grid{grid-template-columns:repeat(4,minmax(0,1fr));gap:14px}
+.quality-card{border-radius:12px;padding:17px;min-height:126px}
+.quality-card span{font-size:10px;margin-bottom:10px}
+.quality-card strong{font-size:16px;line-height:1.3}
+.quality-card small{display:block;margin-top:8px;color:#7892a9;font-size:10px;line-height:1.6}
+.contract-panel{margin-top:20px}
+.contract-tags{gap:9px}
+.contract-tags span{padding:8px 11px;border-radius:999px;font-size:9px}
+.job-panel{padding:20px;border-radius:var(--radius-md)}
+.progress-track{height:9px;margin-top:18px}
+.settings-row,.summary-row{padding:13px 4px;font-size:11px;line-height:1.5}
+.health-list,.endpoint-list{gap:11px}
+.health-item,.endpoint-item{padding:13px;border-radius:10px}
+.toast{right:28px;top:24px;border-radius:12px;padding:13px 16px;font-size:11px}
+footer{padding:15px 36px 20px;font-size:9px}
+@media(max-width:1180px){.lifecycle-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:860px){.page-root{padding:24px 18px}.panel{padding:17px}.lifecycle-grid{grid-template-columns:1fr}}
+@media(max-width:520px){.page-heading h1{font-size:29px}.profile-meta{grid-template-columns:1fr}.panel{padding:15px}}
