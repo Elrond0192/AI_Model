@@ -143,7 +143,9 @@ def test_ai_owned_schemas_and_relations_use_pascal_case():
 
 def test_stable_id_keeps_null_relations_null():
     sql = SOURCE_SQL.read_text(encoding="utf-8").lower()
-    assert "when value is null or btrim(value) = '' then null" in sql
+    assert "pg_temp.ai_stable_id" in sql
+    assert "or btrim(%1$s::text) = ''" in sql
+    assert "hashtextextended(%2$L || ':' || btrim(%1$s::text), 0)" in sql
 
 
 def _valid_frames():
