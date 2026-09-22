@@ -293,11 +293,15 @@ def build_base_oof_predictions(
 ) -> Dict[Tuple[int, int, str, int], float]:
     """Return leakage-free base-XGBoost predictions for historical transitions.
 
-    For each source season, a temporary competition-aware base model is fitted
-    only on data available through that source season. It then predicts the
-    source-season feature vectors whose real next-season outcome exists in the
-    supplied dataset. These predictions are never trained on the corresponding
-    next-season target and are used only as the compatibility residual baseline.
+    The rolling-origin OOF contract is unchanged: for each source season, the
+    base model is trained only on data available through that season and then
+    predicts source-season feature rows whose next-season outcome exists.
+
+    The implementation avoids the old O(years × players × full_dataset) history
+    filtering pattern. Source/target keys are indexed once, only eligible
+    histories are grouped per fold, history features are precomputed once per
+    player/league/competition, and predictions are batched into one XGBoost call
+    per source year.
     """
     stats = data.get("player_stats", pd.DataFrame())
     if stats is None or stats.empty:
@@ -309,38 +313,70 @@ def build_base_oof_predictions(
     all_stats = stats.copy()
     all_stats["_season_year"] = _numeric_seasons(all_stats)
     all_stats["_competition"] = all_stats["competition"].map(normalize_competition)
-    allowed = forecast_competitions()
     all_stats = all_stats[
         all_stats["_season_year"].notna()
-        & all_stats["_competition"].isin(allowed)
+        & all_stats["_competition"].isin(forecast_competitions())
     ].copy()
     if all_stats.empty:
         return {}
 
-    min_games = minimum_training_games()
     all_stats["_pid_int"] = all_stats["player_id"].map(_to_int)
     all_stats["_lid_int"] = all_stats["league_id"].map(_to_int)
+    season_values = all_stats["_season_year"].astype(int)
+    available_years = set(season_values.tolist())
     source_years = sorted(
         {
-            int(value)
-            for value in all_stats["_season_year"].dropna().tolist()
-            if int(value) + 1 in set(all_stats["_season_year"].dropna().astype(int))
+            int(year)
+            for year in available_years
+            if int(year) + 1 in available_years
         }
     )
     if not source_years:
         return {}
 
+    min_games = minimum_training_games()
     league_max_games = _league_max_games_map(data)
     predictions: Dict[Tuple[int, int, str, int], float] = {}
 
+    # The key frame for each target season is tiny compared with the full stats
+    # table and is reused to avoid rebuilding Python tuple sets repeatedly.
+    target_keys_by_year: Dict[int, pd.DataFrame] = {}
+    for target_year in source_years:
+        target = all_stats.loc[
+            season_values.eq(target_year + 1),
+            ["_pid_int", "_lid_int", "_competition"],
+        ].drop_duplicates()
+        if not target.empty:
+            target_keys_by_year[target_year] = target
+
     for source_year in source_years:
-        target_year = source_year + 1
-        target_keys = {
-            (int(row["_pid_int"]), int(row["_lid_int"]), str(row["_competition"]))
-            for row in all_stats[all_stats["_season_year"] == target_year].to_dict("records")
-            if pd.notna(row.get("_pid_int")) and pd.notna(row.get("_lid_int"))
-        }
-        if not target_keys:
+        target_keys = target_keys_by_year.get(source_year)
+        if target_keys is None or target_keys.empty:
+            continue
+
+        source = all_stats.loc[
+            season_values.eq(source_year),
+            ["_pid_int", "_lid_int", "_competition", "games_played"],
+        ].copy()
+        if source.empty:
+            continue
+        source_games = pd.to_numeric(source["games_played"], errors="coerce").fillna(0.0)
+        source = source.loc[source_games >= min_games]
+        if source.empty:
+            continue
+
+        # In the previous implementation a source row was eligible exactly when
+        # its (player, league, competition) key appeared in the target season.
+        # An inner merge preserves that rule while avoiding a Python tuple-set
+        # construction for every target row.
+        eligible = source.merge(
+            target_keys,
+            on=["_pid_int", "_lid_int", "_competition"],
+            how="inner",
+            sort=False,
+            copy=False,
+        )
+        if eligible.empty:
             continue
 
         snapshot = build_historical_snapshot(data, source_year)
@@ -350,65 +386,109 @@ def build_base_oof_predictions(
         except (RuntimeError, ValueError, KeyError):
             continue
 
-        source = snapshot["player_stats"].copy()
-        source["_season_year"] = _numeric_seasons(source)
-        source["_competition"] = source["competition"].map(normalize_competition)
-        source = source[
-            (source["_season_year"] == source_year)
-            & source["_competition"].isin(allowed)
-        ].copy()
-        source["_pid_int"] = source["player_id"].map(_to_int)
-        source["_lid_int"] = source["league_id"].map(_to_int)
+        snapshot_stats = snapshot["player_stats"].copy()
+        snapshot_stats["_season_year"] = _numeric_seasons(snapshot_stats)
+        snapshot_stats["_competition"] = snapshot_stats["competition"].map(
+            normalize_competition
+        )
+        snapshot_stats["_pid_int"] = snapshot_stats["player_id"].map(_to_int)
+        snapshot_stats["_lid_int"] = snapshot_stats["league_id"].map(_to_int)
 
-        for (pid, league_id, competition), group in source.groupby(
+        # Restrict the history table to only eligible player/league/competition
+        # contexts before grouping. This replaces N scans of the whole snapshot
+        # with one hash join + groupby.
+        history = snapshot_stats.merge(
+            eligible[["_pid_int", "_lid_int", "_competition"]].drop_duplicates(),
+            on=["_pid_int", "_lid_int", "_competition"],
+            how="inner",
+            sort=False,
+            copy=False,
+        )
+        if history.empty:
+            continue
+
+        feature_rows: List[Dict[str, float]] = []
+        prediction_keys: List[Tuple[int, int, str, int]] = []
+
+        for (pid, league_id, competition), group in history.groupby(
             ["_pid_int", "_lid_int", "_competition"], sort=False
         ):
-            key = (int(pid), int(league_id), str(competition))
-            if key not in target_keys:
-                continue
-            games = pd.to_numeric(group["games_played"], errors="coerce").fillna(0.0)
-            if games.empty or float(games.iloc[0]) < min_games:
+            ordered = group.sort_values("_season_year", kind="stable").reset_index(drop=True)
+            years = ordered["_season_year"].astype(int).to_numpy()
+
+            source_index = int(np.searchsorted(years, source_year, side="left"))
+            if source_index >= len(ordered) or int(years[source_index]) != source_year:
                 continue
 
-            player = snapshot["player_dict"].get(int(pid), {})
+            source_row = ordered.iloc[source_index]
+            player_id = int(pid)
+            lid = int(league_id)
+            comp = str(competition)
+            player = snapshot["player_dict"].get(player_id, {})
             position = str(player.get("position", "PG") or "PG")
-            history = snapshot["player_stats"].copy()
-            history["_season_year"] = _numeric_seasons(history)
-            history["_competition"] = history["competition"].map(normalize_competition)
-            history = history[
-                (history["player_id"].map(_to_int) == int(pid))
-                & (history["league_id"].map(_to_int) == int(league_id))
-                & (history["_competition"] == str(competition))
-                & (history["_season_year"] <= source_year)
-            ].sort_values("_season_year")
-            if history.empty:
-                continue
 
-            source_row = history.iloc[-1].copy()
-            source_clean = source_row.drop(labels=["_season_year", "_competition"])
-            source_clean["competition"] = str(competition)
-            history_clean = history.drop(columns=["_season_year", "_competition"]).reset_index(drop=True)
-            precomputed = base_model._precompute_history_features(
-                history_clean,
-                league_max_games=league_max_games,
-            )
-            if not precomputed:
-                continue
+            history_clean = ordered.drop(
+                columns=["_season_year", "_pid_int", "_lid_int", "_competition"]
+            ).reset_index(drop=True)
+            source_clean = source_row.drop(
+                labels=["_season_year", "_pid_int", "_lid_int", "_competition"]
+            ).copy()
+            source_clean["competition"] = comp
+
             try:
-                feature_row = base_model._build_row(
-                    source_clean,
-                    _player_age_as_of(player, source_year),
-                    position,
+                precomputed = base_model._precompute_history_features(
                     history_clean,
-                    extra_metrics=[],
                     league_max_games=league_max_games,
-                    precomputed_history=precomputed[-1],
                 )
-                predictions[(int(pid), int(league_id), str(competition), target_year)] = (
-                    float(base_model.predict_from_features(feature_row))
+                if not precomputed:
+                    continue
+                feature_rows.append(
+                    base_model._build_row(
+                        source_clean,
+                        _player_age_as_of(player, source_year),
+                        position,
+                        history_clean,
+                        extra_metrics=[],
+                        league_max_games=league_max_games,
+                        precomputed_history=precomputed[source_index],
+                    )
                 )
+                prediction_keys.append((player_id, lid, comp, target_year))
             except (TypeError, ValueError, KeyError):
                 continue
+
+        if not feature_rows:
+            continue
+
+        # XGBoost prediction is vectorised. The old implementation invoked
+        # model.predict() once per player/competition pair, which adds substantial
+        # Python/XGBoost dispatch overhead on large historical OOF sets.
+        feature_frame = pd.DataFrame(
+            feature_rows,
+            columns=base_model.feature_names,
+        ).fillna(0.0)
+
+        try:
+            batch_predictions = np.asarray(
+                base_model.model.predict(feature_frame.to_numpy(dtype=float)),
+                dtype=float,
+            )
+        except (TypeError, ValueError):
+            # Defensive fallback for an unexpected backend/feature-shape issue.
+            batch_predictions = np.asarray(
+                [
+                    base_model.predict_from_features(row)
+                    for row in feature_rows
+                ],
+                dtype=float,
+            )
+
+        predictions.update(
+            {
+                key: float(value)
+                for key, value in zip(prediction_keys, batch_predictions)
+            }
+        )
 
     return predictions
 
