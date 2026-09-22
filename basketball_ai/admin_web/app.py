@@ -338,8 +338,8 @@ def _training_worker(
         metadata = {
             **(metrics or {}),
             "model_run_id": run_id,
-            "model_version": "2.3.0",
-            "feature_version": "forecast-t-plus-1-quality-v2",
+            "model_version": "2.4.0",
+            "feature_version": "forecast-t-plus-1-quality-v3",
             "data_cutoff": datetime.now(timezone.utc).date().isoformat(),
             "latest_observed_season": max(seasons),
             "database_profile": active_profile,
@@ -686,7 +686,7 @@ def training(user: dict[str, str] = Depends(_operator)) -> dict[str, Any]:
         ],
         "configuration": {
             "forecast_horizon": "exactly t+1 season",
-            "feature_version": "forecast-t-plus-1-quality-v2",
+            "feature_version": "forecast-t-plus-1-quality-v3",
             "pairing": "same player + league + competition",
             "split": "whole target seasons",
             "calibration": "global + competition split-conformal",
