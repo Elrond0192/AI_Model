@@ -425,6 +425,35 @@ def test_backtests_registry_promote_rollback(monkeypatch):
         admin.rollback(admin.ConfirmPayload(confirm=False), {"username": "admin", "role": "admin", "token": "x"})
 
 
+def test_scenario_entity_search_and_server_side_resolution():
+    _reset_state()
+    data = _data()
+    with admin.STATE.lock:
+        admin.STATE.data = data
+    user = {"username": "admin", "role": "admin", "token": "x"}
+
+    players = admin.scenario_entities("player", "play", 12, user)
+    assert players["items"] == [
+        {"selection_id": "1", "name": "Player", "subtitle": "", "identity_status": "canonical"}
+    ]
+
+    teams = admin.scenario_entities("team", "team", 12, user)
+    assert teams["items"][0]["selection_id"] == "2"
+    assert teams["items"][0]["name"] == "Team"
+
+    resolved = admin._resolve_scenario_selections(
+        {
+            "scenario": "player_team",
+            "player_selection_ids": ["1"],
+            "team_selection_ids": ["2"],
+        }
+    )
+    assert resolved["player_global_ids"] == ["p1"]
+    assert resolved["team_global_ids"] == ["t1"]
+    assert "player_selection_ids" not in resolved
+    assert "team_selection_ids" not in resolved
+
+
 @pytest.mark.asyncio
 async def test_api_health(monkeypatch):
     monkeypatch.setattr(admin, "_probe", lambda path: {"ok": path.endswith("live"), "status": 200 if path.endswith("live") else 503})
