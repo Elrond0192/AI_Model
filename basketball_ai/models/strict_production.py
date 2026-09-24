@@ -473,10 +473,19 @@ def build_base_oof_predictions(
         ).fillna(0.0)
 
         try:
-            batch_predictions = np.asarray(
+            raw_predictions = np.asarray(
                 base_model.model.predict(feature_frame.to_numpy(dtype=float)),
                 dtype=float,
             )
+            if getattr(base_model, "target_mode", "rating") == "delta_vs_prior":
+                prior_ratings = feature_frame["last_rating"].to_numpy(dtype=float)
+                batch_predictions = np.clip(
+                    prior_ratings + raw_predictions,
+                    0.0,
+                    10.0,
+                )
+            else:
+                batch_predictions = raw_predictions
         except (TypeError, ValueError):
             # Defensive fallback for an unexpected backend/feature-shape issue.
             batch_predictions = np.asarray(
