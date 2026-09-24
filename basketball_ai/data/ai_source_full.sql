@@ -1274,7 +1274,8 @@ WITH stats_rel AS (
         s.team_id,
         s.season,
         coalesce(p.position, '') AS role,
-        p.jersey_number
+        p.jersey_number,
+        1 AS relation_priority
     FROM "AI_Source"."PlayerCompetitionStats" s
     JOIN pg_temp.ai_players_registry p
       ON p.player_id=s.player_id
@@ -1289,7 +1290,8 @@ roster_rel AS (
         t.team_id,
         p.season,
         coalesce(p.position, '') AS role,
-        p.jersey_number
+        p.jersey_number,
+        2 AS relation_priority
     FROM pg_temp.ai_players_registry p
     JOIN pg_temp.ai_teams_registry t
       ON t.league_key=p.league_key
@@ -1301,16 +1303,34 @@ roster_rel AS (
     WHERE p.team_name IS NOT NULL
       AND p.player_id IS NOT NULL
       AND t.team_id IS NOT NULL
+),
+deduped AS (
+    SELECT DISTINCT ON (player_id, team_id, season)
+           player_id,
+           team_id,
+           season,
+           role,
+           jersey_number
+    FROM (
+        SELECT * FROM stats_rel
+        UNION ALL
+        SELECT * FROM roster_rel
+    ) q
+    WHERE player_id IS NOT NULL
+      AND team_id IS NOT NULL
+      AND season IS NOT NULL
+    ORDER BY
+        player_id,
+        team_id,
+        season,
+        relation_priority,
+        CASE WHEN role = '' THEN 1 ELSE 0 END,
+        CASE WHEN jersey_number IS NULL THEN 1 ELSE 0 END,
+        role,
+        jersey_number
 )
-SELECT DISTINCT player_id, team_id, season, role, jersey_number
-FROM (
-    SELECT * FROM stats_rel
-    UNION ALL
-    SELECT * FROM roster_rel
-) q
-WHERE player_id IS NOT NULL
-  AND team_id IS NOT NULL
-  AND season IS NOT NULL;
+SELECT player_id, team_id, season, role, jersey_number
+FROM deduped;
 
 -- ---------------------------------------------------------------------------
 -- Players — latest registry state + latest known historical relation.
