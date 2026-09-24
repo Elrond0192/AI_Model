@@ -353,7 +353,6 @@ class EnsembleModel:
         )
         if len(rating_history):
             last_rating = float(rating_history[-1])
-            deltas = rating_history[-1] - rating_history[-2:] if len(rating_history) >= 2 else np.asarray([])
             rating_delta_1 = float(rating_history[-1] - rating_history[-2]) if len(rating_history) >= 2 else 0.0
             rating_delta_2 = float(rating_history[-1] - rating_history[-3]) if len(rating_history) >= 3 else 0.0
             recent = rating_history[-3:]
