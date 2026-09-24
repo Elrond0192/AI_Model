@@ -245,4 +245,57 @@ BEGIN
 END;
 $$;
 
+-- Administrative/runtime read access is re-applied on every serving rebuild.
+DO $grant_ai_source_serving$
+DECLARE
+    requested_role text := NULLIF(
+        btrim(current_setting('app.ai_source_read_role', true)),
+        ''
+    );
+    read_role text;
+BEGIN
+    FOREACH read_role IN ARRAY ARRAY[
+        'ai_model',
+        'hm_admin',
+        requested_role
+    ]
+    LOOP
+        CONTINUE WHEN read_role IS NULL OR btrim(read_role) = '';
+
+        IF EXISTS (
+            SELECT 1
+            FROM pg_catalog.pg_roles
+            WHERE rolname = read_role
+        ) THEN
+            EXECUTE format(
+                'GRANT USAGE ON SCHEMA "AI_Source" TO %I',
+                read_role
+            );
+            EXECUTE format(
+                'GRANT SELECT ON TABLE
+                    "AI_Source"."TrainingPlayerCompetitionStats",
+                    "AI_Source"."TrainingTeamCompetitionStats",
+                    "AI_Source"."ScenarioPlayTypeStats",
+                    "AI_Source"."ScenarioShotProfiles",
+                    "AI_Source"."ScenarioDefenderMatchups",
+                    "AI_Source"."ScenarioLineupStats",
+                    "AI_Source"."ServingRefreshState"
+                 TO %I',
+                read_role
+            );
+            EXECUTE format(
+                'GRANT EXECUTE ON PROCEDURE "AI_Source"."RefreshScenarioServing"(text, integer, text),
+                                         "AI_Source"."RefreshTrainingServing"(text, integer, text),
+                                         "AI_Source"."RefreshContext"(text, integer, text)
+                 TO %I',
+                read_role
+            );
+            RAISE NOTICE
+                'AI_Source serving read/execute access granted to role %',
+                read_role;
+        END IF;
+    END LOOP;
+END;
+$grant_ai_source_serving$;
+
 COMMIT;
