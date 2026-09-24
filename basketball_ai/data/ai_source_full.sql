@@ -374,7 +374,9 @@ DECLARE
     comp_expr text;
     rating_expr text;
     player_global_expr text;
+    p_team_local_expr text;
     p_team_name_expr text;
+    team_source_expr text;
     direct_team_global_expr text := 'NULL::text';
     fallback_team_global_expr text := 'NULL::text';
 
@@ -468,6 +470,10 @@ BEGIN
         season_expr := pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'int', ARRAY['season']);
         player_local_expr := pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'text', ARRAY['id', 'playerid', 'idplayer']);
         team_local_expr := pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'text', ARRAY['teamid', 'idteam']);
+        p_team_local_expr := pg_temp.ai_expr(
+            'Anagrafiche', player_table, 'p', 'text', ARRAY['team', 'teamid', 'idteam']
+        );
+        team_source_expr := format('coalesce(%s, %s)', team_local_expr, p_team_local_expr);
         comp_expr := pg_temp.ai_comp_expr(r.table_schema, r.table_name, 's', ARRAY['competition']);
         rating_expr := pg_temp.ai_expr(
             r.table_schema, r.table_name, 's', 'numeric', ARRAY['vallegapergame', 'rating']
@@ -480,7 +486,7 @@ BEGIN
             pg_temp.ai_expr('Anagrafiche', player_table, 'p', 'text', ARRAY['id'])
         );
         p_team_name_expr := pg_temp.ai_expr(
-            'Anagrafiche', player_table, 'p', 'text', ARRAY['teamname']
+            'Anagrafiche', player_table, 'p', 'text', ARRAY['teamname', 'team', 'name']
         );
 
         IF EXISTS (
@@ -847,7 +853,7 @@ BEGIN
             || season_expr || ' = '
             || pg_temp.ai_expr('Anagrafiche', team_table, 'dt', 'int', ARRAY['season'])
             || ' AND '
-            || pg_temp.ai_id_key(team_local_expr) || ' = '
+            || pg_temp.ai_id_key(team_source_expr) || ' = '
             || pg_temp.ai_id_key(
                 pg_temp.ai_expr('Anagrafiche', team_table, 'dt', 'text', ARRAY['id'])
             )
