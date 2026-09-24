@@ -105,6 +105,14 @@ Do not grant write access to source schemas and do not expose PostgreSQL 5432 pu
 
 ## 4. Admin console
 
+The admin service serves `AI Model Control Center`, a self-contained
+dashboard (vanilla HTML/CSS/JS, no framework) under
+`basketball_ai/admin_web/static/`: login, overview KPIs, data/snapshot
+lifecycle, training, backtests, Scenario Lab, model registry, health and
+audit pages. Icons are Phosphor Icons, self-hosted under
+`static/assets/phosphor/` (regular + fill weights, woff2/woff only) —
+no external CDN calls, so the console keeps working fully offline/air-gapped.
+
 ```bash
 docker compose up -d --build admin
 docker compose logs -f admin
