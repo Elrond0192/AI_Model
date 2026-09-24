@@ -72,6 +72,7 @@ def run_backtest(
     n_folds: int = 3,
     output_path: Optional[str] = "models_saved/backtest_report.json",
     min_samples_per_fold: Optional[int] = None,
+    include_stage_metrics: bool = False,
 ) -> Dict[str, Any]:
     """Evaluate the complete production path on untouched future seasons.
 
