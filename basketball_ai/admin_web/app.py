@@ -385,6 +385,76 @@ def _probe(path: str) -> dict[str, Any]:
         return {"ok": False, "status": None, "body": None, "error": str(exc)[:300]}
 
 
+def _scenario_entity_rows(entity: str, query: str, limit: int = 12) -> list[dict[str, Any]]:
+    """Search already-loaded canonical entities without exposing global IDs."""
+    key = "players" if entity == "player" else "teams"
+    frame = (STATE.data or {}).get(key)
+    if frame is None or frame.empty:
+        return []
+
+    query_norm = str(query or "").strip().casefold()
+    records: list[dict[str, Any]] = []
+    for row in frame.to_dict("records"):
+        global_id = row.get("global_id")
+        internal_id = row.get("id")
+        if global_id in (None, "") or internal_id in (None, ""):
+            continue
+        names = [
+            row.get("name"), row.get("display_name"), row.get("team_name"),
+            row.get("short_name"), row.get("shortname"), row.get("id"),
+        ]
+        haystack = " ".join(str(value) for value in names if value not in (None, "")).casefold()
+        if query_norm and query_norm not in haystack:
+            continue
+        name = next(
+            (str(value).strip() for value in names[:5] if value not in (None, "") and str(value).strip()),
+            str(internal_id),
+        )
+        subtitle_parts: list[str] = []
+        for column in (("position", "league_key") if entity == "player" else ("league_key",)):
+            value = row.get(column)
+            if value not in (None, ""):
+                subtitle_parts.append(str(value).strip())
+        if not subtitle_parts and row.get("league_id") not in (None, ""):
+            subtitle_parts.append(f"league {row['league_id']}")
+        records.append({
+            "selection_id": str(internal_id),
+            "name": name,
+            "subtitle": " · ".join(subtitle_parts),
+            "identity_status": "canonical" if global_id else "unreconciled",
+        })
+
+    records.sort(key=lambda item: (0 if query_norm and item["name"].casefold().startswith(query_norm) else 1, item["name"].casefold()))
+    return records[:max(1, min(int(limit), 20))]
+
+
+def _resolve_scenario_selections(payload: dict[str, Any]) -> dict[str, Any]:
+    """Translate opaque admin selections to canonical global IDs server-side."""
+    resolved = dict(payload)
+    with STATE.lock:
+        data = STATE.data or {}
+        for entity, selection_key, global_key in (
+            ("player", "player_selection_ids", "player_global_ids"),
+            ("team", "team_selection_ids", "team_global_ids"),
+        ):
+            selections = [str(value).strip() for value in resolved.pop(selection_key, []) if str(value).strip()]
+            if not selections:
+                continue
+            table = data.get("players" if entity == "player" else "teams")
+            if table is None or table.empty:
+                raise RuntimeError("Carica prima il database nella pagina Dati e snapshot")
+            by_id = {
+                str(row.get("id")): str(row.get("global_id"))
+                for row in table.to_dict("records")
+                if row.get("id") not in (None, "") and row.get("global_id") not in (None, "")
+            }
+            missing = [value for value in selections if value not in by_id]
+            if missing:
+                raise RuntimeError(f"{entity} selection non disponibile: {missing[0]}")
+            resolved[global_key] = [by_id[value] for value in selections]
+    return resolved
+
+
 def _evaluate_scenario(payload: dict[str, Any]) -> dict[str, Any]:
     """Forward an authenticated admin request to the API scenario engine."""
     api_key = os.environ.get("API_KEY", "").strip()
@@ -745,11 +815,30 @@ def backtests(user: dict[str, str] = Depends(_operator)) -> dict[str, Any]:
 
 
 @app.post("/admin-api/scenarios/evaluate")
+@app.get("/admin-api/scenario-entities")
+def scenario_entities(
+    entity: str = "player",
+    q: str = "",
+    limit: int = 12,
+    user: dict[str, str] = Depends(_operator),
+) -> dict[str, Any]:
+    del user
+    entity = entity.strip().lower()
+    if entity not in {"player", "team"}:
+        raise HTTPException(status_code=400, detail="entity must be player or team")
+    with STATE.lock:
+        loaded = STATE.data is not None
+    if not loaded:
+        raise HTTPException(status_code=409, detail="Carica prima il database nella pagina Dati e snapshot")
+    return {"entity": entity, "items": _scenario_entity_rows(entity, q, limit)}
+
+
 async def evaluate_scenario(payload: dict[str, Any], user: dict[str, str] = Depends(_csrf)) -> dict[str, Any]:
     """Expose the production scenario engine in the authenticated admin UI."""
     del user
     try:
-        return await asyncio.to_thread(_evaluate_scenario, payload)
+        resolved_payload = _resolve_scenario_selections(payload)
+        return await asyncio.to_thread(_evaluate_scenario, resolved_payload)
     except Exception as exc:
         raise HTTPException(status_code=502, detail=_safe_error(exc)) from exc
 
