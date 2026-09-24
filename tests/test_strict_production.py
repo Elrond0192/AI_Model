@@ -173,6 +173,47 @@ def test_descriptive_splits_stay_observed_but_never_train(monkeypatch):
     assert "AWAY" not in model.competition_encoding
 
 
+def test_persistence_features_and_delta_target_are_source_only():
+    from basketball_ai.models.strict_production import AsOfPositionPerformanceModel
+
+    model = AsOfPositionPerformanceModel()
+    X, y = model.prepare_features(_competition_training_data())
+
+    expected_features = {
+        "last_rating",
+        "rating_delta_1",
+        "rating_delta_2",
+        "recent_rating_mean",
+        "recent_rating_std",
+    }
+    assert expected_features.issubset(X.columns)
+    assert model.target_mode == "delta_vs_prior"
+
+    # Two RS transitions (+0.1) followed by two PO transitions (+0.2).
+    assert list(y) == pytest.approx([0.1, 0.1, 0.2, 0.2])
+    assert X.iloc[0]["last_rating"] == pytest.approx(6.0)
+    assert X.iloc[1]["last_rating"] == pytest.approx(6.1)
+    assert X.iloc[1]["rating_delta_1"] == pytest.approx(0.1)
+    assert X.iloc[1]["rating_delta_2"] == pytest.approx(0.0)
+    assert X.iloc[1]["recent_rating_mean"] == pytest.approx(6.05)
+    assert X.iloc[1]["recent_rating_std"] == pytest.approx(0.05)
+
+
+def test_delta_target_is_reconstructed_to_absolute_rating(monkeypatch):
+    from basketball_ai.models.strict_production import AsOfPositionPerformanceModel
+
+    model = AsOfPositionPerformanceModel()
+    model.is_trained = True
+    monkeypatch.setattr(
+        model,
+        "predict_from_features",
+        lambda feature_dict: 0.35,
+    )
+
+    prediction = model.predict_target_rating({"last_rating": 6.10})
+    assert prediction == pytest.approx(6.45)
+
+
 def test_forecast_pairs_use_minimum_games_and_reliability_weights(monkeypatch):
     from basketball_ai.models.strict_production import AsOfPositionPerformanceModel
 
