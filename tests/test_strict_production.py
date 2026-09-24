@@ -214,6 +214,22 @@ def test_delta_target_is_reconstructed_to_absolute_rating(monkeypatch):
     assert prediction == pytest.approx(6.45)
 
 
+def test_delta_native_prediction_is_not_absolute_clipped():
+    from basketball_ai.models.strict_production import AsOfPositionPerformanceModel
+
+    class _Model:
+        def predict(self, _features):
+            return [-0.75]
+
+    model = AsOfPositionPerformanceModel()
+    model.is_trained = True
+    model.target_mode = "delta_vs_prior"
+    model.feature_names = ["last_rating"]
+    model.model = _Model()
+
+    assert model.predict_from_features({"last_rating": 6.10}) == pytest.approx(-0.75)
+
+
 def test_forecast_pairs_use_minimum_games_and_reliability_weights(monkeypatch):
     from basketball_ai.models.strict_production import AsOfPositionPerformanceModel
 
