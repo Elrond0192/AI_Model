@@ -339,6 +339,38 @@ class EnsembleModel:
             latest_role = latest_role_off = latest_role_def = ""
             latest_games_played = 0.0
             latest_mpg = 20.0
+        # Explicit persistence features must use only the player history
+        # available in the scoped/as-of prediction context. This mirrors the
+        # source-season features built by PerformanceModel._precompute_history_features.
+        rating_history = (
+            pd.to_numeric(
+                p_stats.sort_values("season")["rating"],
+                errors="coerce",
+            )
+            .ffill()
+            .fillna(6.5)
+            .to_numpy(dtype=float)
+        )
+        if len(rating_history):
+            last_rating = float(rating_history[-1])
+            deltas = rating_history[-1] - rating_history[-2:] if len(rating_history) >= 2 else np.asarray([])
+            rating_delta_1 = float(rating_history[-1] - rating_history[-2]) if len(rating_history) >= 2 else 0.0
+            rating_delta_2 = float(rating_history[-1] - rating_history[-3]) if len(rating_history) >= 3 else 0.0
+            recent = rating_history[-3:]
+            recent_rating_mean = float(np.mean(recent))
+            recent_rating_std = float(np.std(recent))
+        else:
+            last_rating = 6.5
+            rating_delta_1 = 0.0
+            rating_delta_2 = 0.0
+            recent_rating_mean = 6.5
+            recent_rating_std = 0.0
+        player_feats["last_rating"] = last_rating
+        player_feats["rating_delta_1"] = rating_delta_1
+        player_feats["rating_delta_2"] = rating_delta_2
+        player_feats["recent_rating_mean"] = recent_rating_mean
+        player_feats["recent_rating_std"] = recent_rating_std
+
         player_feats["role_enc"]     = float(self.perf_model.role_encoding.get(latest_role, 0))
         player_feats["role_off_enc"] = float(self.perf_model.role_off_encoding.get(latest_role_off, 0))
         player_feats["role_def_enc"] = float(self.perf_model.role_def_encoding.get(latest_role_def, 0))
