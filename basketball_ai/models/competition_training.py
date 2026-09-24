@@ -119,13 +119,14 @@ def resolve_league_id(data: Dict[str, Any], league: str | int) -> int:
 
 
 class CompetitionSeasonAheadPerformanceModel(SeasonAheadPerformanceModel):
-    target_mode = "delta_vs_prior"
     """Season-ahead XGBoost samples isolated by league and competition.
 
     The strict production target is the one-season rating change. The previous
     season rating remains an explicit feature, so inference reconstructs the
     absolute 0–10 target as ``rating(t) + predicted_delta``.
+    """
 
+    target_mode = "delta_vs_prior"
     competition_encoding: Dict[str, int]
 
     def prepare_features(
