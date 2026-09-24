@@ -31,6 +31,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--league-key", default=None)
     parser.add_argument("--season", type=int, default=None)
     parser.add_argument("--competition", default=None)
+    parser.add_argument("--diagnostic-stages", action="store_true")
+    parser.add_argument("--compare-target-modes", action="store_true")
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8000)
     return parser.parse_args(argv)
@@ -125,7 +127,12 @@ def mode_train(args: argparse.Namespace) -> None:
 
 def mode_backtest(args: argparse.Namespace) -> None:
     from basketball_ai.models.backtest import run_backtest
-    report = run_backtest(_load_data(args), output_path=str(Path(args.model_dir) / "backtest_report.json"))
+    report = run_backtest(
+        _load_data(args),
+        output_path=str(Path(args.model_dir) / "backtest_report.json"),
+        include_stage_metrics=args.diagnostic_stages,
+        compare_target_modes=args.compare_target_modes,
+    )
     print(json.dumps(report, indent=2, default=str))
     if not report.get("valid"):
         raise SystemExit(2)
