@@ -340,6 +340,10 @@ class CompetitionSeasonAheadPerformanceModel(SeasonAheadPerformanceModel):
                 )
                 source_clean = source.drop(labels=["_season_year", "_competition"])
                 source_clean["competition"] = competition
+                source_rating = pd.to_numeric(source.get("rating"), errors="coerce")
+                target_rating = pd.to_numeric(target.get("rating"), errors="coerce")
+                if pd.isna(source_rating) or pd.isna(target_rating):
+                    continue
                 rows.append(
                     self._build_row(
                         source_clean,
@@ -350,10 +354,6 @@ class CompetitionSeasonAheadPerformanceModel(SeasonAheadPerformanceModel):
                         league_max_games=league_max_games,
                     )
                 )
-                source_rating = pd.to_numeric(source.get("rating"), errors="coerce")
-                target_rating = pd.to_numeric(target.get("rating"), errors="coerce")
-                if pd.isna(source_rating) or pd.isna(target_rating):
-                    continue
                 # Learn the change relative to the immediately previous rating.
                 # This makes persistence the explicit zero-change reference while
                 # preserving all historical leakage boundaries.
@@ -388,6 +388,24 @@ class CompetitionSeasonAheadPerformanceModel(SeasonAheadPerformanceModel):
         self._forecast_competitions = sorted(allowed_competitions)
         self._target_mode = self.target_mode
         return X, y
+
+    def train(
+        self,
+        data: Dict[str, Any],
+        extra_metrics: Optional[List[str]] = None,
+        cv_folds: int = 0,
+        rating_distributions: Optional[Any] = None,
+    ) -> Dict[str, Any]:
+        """Train the season-ahead model and expose its native target contract."""
+        metrics = super().train(
+            data,
+            extra_metrics=extra_metrics,
+            cv_folds=cv_folds,
+            rating_distributions=rating_distributions,
+        )
+        metrics["target_mode"] = self.target_mode
+        self._last_metrics = metrics
+        return metrics
 
 
 class CompetitionTemporalCompatibilityModel(TemporalCompatibilityModel):
