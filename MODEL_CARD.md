@@ -6,7 +6,7 @@
 |---|---|
 | Version | 2.5.0 |
 | Feature contract | `forecast-t-plus-1-persistence-delta-v1` |
-| Primary target | same-league, same-competition next-season rating (`t -> t+1`) |
+| Primary target | same-league, same-competition next-season rating (`t -> t+1`), learned as `rating(t+1) - rating(t)` and reconstructed to 0–10 at inference |
 | Competition support | explicit allow-list; `RS,PO,TOT` by default |
 | Base estimator | pooled XGBoost regressor with nominal competition/role one-hot features |
 | Team/context layer | temporally trained competition-aware k-NN + bounded context adjustments |
@@ -54,6 +54,7 @@ Team-style normalization bounds and the trained competition vocabulary are run-o
 ## Feature families
 
 - source-season age and roster position;
+- explicit persistence: last rating, one-step/two-step rating deltas, recent rating mean and volatility;
 - explicit competition encoding;
 - per-36 volume and efficiency/usage;
 - PIE, TS%, USG%, OBPM, DBPM, RAPTOR, LEBRON, SPM, OWS/DWS, FIC when available;
