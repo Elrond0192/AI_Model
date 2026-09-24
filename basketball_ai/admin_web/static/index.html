@@ -155,8 +155,24 @@
         <section class="panel"><div class="panel-heading"><h2>Scenario request</h2></div>
           <form id="scenario-form" class="form-grid">
             <label class="span-2">Scenario<select name="scenario"><option value="player_team">Player in team</option><option value="style_change">Style change</option><option value="player_role_change">Player role change</option><option value="league_transfer">League transfer</option><option value="probabilistic_boxscore">Probabilistic boxscore</option><option value="opponent_matchup">Opponent matchup</option><option value="defensive_matchup">Defensive matchup</option><option value="play_type_matchup">Play type matchup</option><option value="shot_profile_counterfactual">Shot profile counterfactual</option><option value="lineup_synergy">Lineup synergy</option><option value="lineup_optimizer">Lineup optimizer</option><option value="roster_optimizer">Roster optimizer</option><option value="causal_effect">Causal effect</option></select></label>
-            <label class="span-2">Player global ID(s)<input name="player_global_ids" placeholder="Uno o più ID separati da virgola"></label>
-            <label class="span-2">Team global ID(s)<input name="team_global_ids" placeholder="Uno o più ID separati da virgola"></label>
+            <div class="span-2 entity-picker" data-entity="player">
+              <label>Giocatori</label>
+              <div class="entity-picker-control">
+                <div class="entity-chips" data-chips></div>
+                <input data-search type="search" autocomplete="off" placeholder="Cerca giocatore per nome…">
+              </div>
+              <div class="entity-picker-menu hidden" data-results></div>
+              <small class="entity-picker-hint">Seleziona uno o più giocatori. L'identità globale viene risolta automaticamente dal sistema.</small>
+            </div>
+            <div class="span-2 entity-picker" data-entity="team">
+              <label>Squadre</label>
+              <div class="entity-picker-control">
+                <div class="entity-chips" data-chips></div>
+                <input data-search type="search" autocomplete="off" placeholder="Cerca squadra per nome…">
+              </div>
+              <div class="entity-picker-menu hidden" data-results></div>
+              <small class="entity-picker-hint">Seleziona una o più squadre. L'identità globale viene risolta automaticamente dal sistema.</small>
+            </div>
             <label>Source league<input name="source_league" placeholder="ITA1"></label><label>Target league<input name="target_league" placeholder="ITA1"></label>
             <label>Season<input name="season" type="number" min="2000" max="2100" required></label><label>Competition<input name="competition" value="RS" required></label>
             <label>Top N<input name="top_n" type="number" min="1" max="20" value="5"></label><label>Simulations<input name="simulations" type="number" min="500" max="50000" value="5000"></label>
