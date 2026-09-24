@@ -92,6 +92,13 @@ def test_ai_source_resolves_player_team_from_roster_team_id_when_stats_team_id_i
     assert "array['teamname', 'team', 'name']" in sql
 
 
+def test_ai_source_deduplicates_team_player_relations_by_canonical_key():
+    sql = SOURCE_SQL.read_text(encoding="utf-8").lower()
+    assert "select distinct on (player_id, team_id, season)" in sql
+    assert "relation_priority" in sql
+    assert "order by" in sql
+
+
 def test_ai_source_uses_native_typed_columns_for_row_transforms():
     sql = SOURCE_SQL.read_text(encoding="utf-8").lower()
     assert "pg_temp.ai_expr" in sql
