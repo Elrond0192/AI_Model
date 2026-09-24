@@ -974,6 +974,7 @@ def evaluate_target_season(
             )
         except (ValueError, RuntimeError):
             continue
+        diagnostic_stages = getattr(result, "_diagnostic_stages", {})
         records.append(
             {
                 "player_id": pid,
@@ -987,6 +988,12 @@ def evaluate_target_season(
                 "confidence_low": float(result.confidence_low),
                 "confidence_high": float(result.confidence_high),
                 "persistence_prediction": prior_rating,
+                "raw_xgb_prediction": diagnostic_stages.get("raw_xgb_prediction"),
+                "base_before_age_prediction": diagnostic_stages.get("base_before_age"),
+                "base_after_age_prediction": diagnostic_stages.get("base_after_age"),
+                "after_compatibility_prediction": diagnostic_stages.get("after_compatibility"),
+                "after_league_prediction": diagnostic_stages.get("after_league"),
+                "after_context_prediction": diagnostic_stages.get("after_context"),
                 "position": position_as_of(
                     pid,
                     relations,

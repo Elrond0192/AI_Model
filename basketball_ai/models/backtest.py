@@ -13,6 +13,7 @@ import numpy as np
 import pandas as pd
 
 from basketball_ai.models.strict_production import (
+    AsOfPositionPerformanceModel,
     StrictProductionEnsembleModel,
     build_historical_snapshot,
     evaluate_target_season,
@@ -23,6 +24,21 @@ from basketball_ai.models.strict_production import (
 _logger = logging.getLogger(__name__)
 
 
+class _AbsoluteTargetPerformanceModel(AsOfPositionPerformanceModel):
+    """Diagnostic-only variant that learns absolute t+1 ratings."""
+
+    target_mode = "rating"
+
+
+class _AbsoluteTargetEnsemble(StrictProductionEnsembleModel):
+    """Diagnostic-only production path with the pre-#60 absolute target."""
+
+    def __init__(self) -> None:
+        super().__init__(performance_model=_AbsoluteTargetPerformanceModel())
+
+
+
+
 def _rmse(records: Iterable[Dict[str, Any]], key: str) -> float:
     rows = list(records)
     if not rows:
@@ -30,6 +46,19 @@ def _rmse(records: Iterable[Dict[str, Any]], key: str) -> float:
     actual = np.asarray([row["actual"] for row in rows], dtype=float)
     prediction = np.asarray([row[key] for row in rows], dtype=float)
     return float(np.sqrt(np.mean((prediction - actual) ** 2)))
+
+
+def _diagnostic_stage_rmse(records: List[Dict[str, Any]]) -> Dict[str, float]:
+    stages = {
+        "raw_xgb_rmse": "raw_xgb_prediction",
+        "base_before_age_rmse": "base_before_age_prediction",
+        "base_after_age_rmse": "base_after_age_prediction",
+        "after_compatibility_rmse": "after_compatibility_prediction",
+        "after_league_rmse": "after_league_prediction",
+        "after_context_rmse": "after_context_prediction",
+        "final_ensemble_rmse": "prediction",
+    }
+    return {name: _rmse(records, key) for name, key in stages.items()}
 
 
 def _segment_metrics(records: List[Dict[str, Any]], key: str) -> Dict[str, Dict[str, float]]:
@@ -59,6 +88,8 @@ def run_backtest(
     n_folds: int = 3,
     output_path: Optional[str] = "models_saved/backtest_report.json",
     min_samples_per_fold: Optional[int] = None,
+    include_stage_metrics: bool = False,
+    compare_target_modes: bool = False,
 ) -> Dict[str, Any]:
     """Evaluate the complete production path on untouched future seasons.
 
@@ -114,6 +145,29 @@ def run_backtest(
                 )
 
             summary = metric_summary(records)
+            target_mode_comparison = None
+            if compare_target_modes:
+                absolute_ensemble = _AbsoluteTargetEnsemble()
+                absolute_ensemble.train(train_data)
+                absolute_records = evaluate_target_season(
+                    absolute_ensemble,
+                    data,
+                    target_season,
+                )
+                target_mode_comparison = {
+                    "delta_target": {
+                        "raw_xgb_rmse": _rmse(records, "raw_xgb_prediction"),
+                        "base_rmse": _rmse(records, "base_prediction"),
+                        "ensemble_rmse": _rmse(records, "prediction"),
+                        "n": len(records),
+                    },
+                    "absolute_target": {
+                        "raw_xgb_rmse": _rmse(absolute_records, "raw_xgb_prediction"),
+                        "base_rmse": _rmse(absolute_records, "base_prediction"),
+                        "ensemble_rmse": _rmse(absolute_records, "prediction"),
+                        "n": len(absolute_records),
+                    },
+                }
             base_rmse = _rmse(records, "base_prediction")
             persistence_rmse = _rmse(records, "persistence_prediction")
             for row in records:
@@ -127,6 +181,7 @@ def run_backtest(
                 **summary,
                 "base_rmse": base_rmse,
                 "persistence_rmse": persistence_rmse,
+                "target_mode_comparison": target_mode_comparison,
                 "ensemble_vs_base_delta": base_rmse - summary["rmse"],
                 "ensemble_vs_persistence_delta": persistence_rmse - summary["rmse"],
                 "by_league": _segment_metrics(records, "league_id"),
@@ -144,6 +199,8 @@ def run_backtest(
                 },
             }
             folds.append(fold)
+            if include_stage_metrics:
+                fold["stage_metrics"] = _diagnostic_stage_rmse(records)
             all_records.extend(records)
             _logger.info(
                 "[Backtest] target=%s n=%d ensemble_rmse=%.4f base=%.4f persistence=%.4f",
@@ -201,8 +258,23 @@ def run_backtest(
         "by_competition": _segment_metrics(all_records, "competition") if all_records else {},
         "by_position": _segment_metrics(all_records, "position") if all_records else {},
         "by_age_band": _segment_metrics(all_records, "age_band") if all_records else {},
+        "target_mode_comparison": None,
         "valid": valid,
     }
+
+    if compare_target_modes:
+        report["target_mode_comparison"] = [
+            {
+                "fold": fold["fold"],
+                "target_season": fold["target_season"],
+                **fold["target_mode_comparison"],
+            }
+            for fold in folds
+            if fold.get("valid") and fold.get("target_mode_comparison")
+        ]
+
+    if include_stage_metrics and all_records:
+        report["stage_metrics"] = _diagnostic_stage_rmse(all_records)
 
     if output_path:
         path = Path(output_path)

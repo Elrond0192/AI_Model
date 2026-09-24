@@ -398,7 +398,13 @@ class EnsembleModel:
         player_feats.update(po_feats)
 
         # 2. Base rating from XGBoost
+        # Keep the raw model output separately for diagnostics. In delta mode
+        # this is the predicted one-season change, not an absolute rating.
+        raw_xgb_prediction = float(
+            self.perf_model.predict_from_features(player_feats)
+        )
         base_rating = self.perf_model.predict_target_rating(player_feats)
+        base_before_age = float(base_rating)
 
         # 3. Age-curve ratio (only for trajectory projections)
         # Cap the ratio at ×1.5 to prevent unrealistic peak projections for
@@ -410,11 +416,13 @@ class EnsembleModel:
         if target_age is not None and target_age != current_age and current_af > 0.01:
             age_ratio   = float(np.clip(target_af / current_af, _AGE_RATIO_MIN, _AGE_RATIO_MAX))
             base_rating = float(np.clip(base_rating * age_ratio, 3.5, 10.0))
+        base_after_age = float(base_rating)
 
         # 4. Compatibility: KNN score [0,1] → multiplier [0.90,1.10].
         # A centred score of 0.50 is neutral (1.00).
         cf          = self.compat_model.score(player_id, team_id, data)
         compat_mult = 0.90 + cf * 0.20
+        after_compatibility = float(np.clip(base_after_age * compat_mult, 3.5, 10.0))
 
         # 5. League quality factor — derived from competitiveness_score in real data.
         # No hardcoded tier map: the factor is proportional to the league's
@@ -427,6 +435,7 @@ class EnsembleModel:
             # Fallback: look up from league_dict directly (loaded at prediction time)
             from basketball_ai.features.team_features import _league_tier_factor as _ltf
             lf = _ltf(team_row, data)
+        after_league = float(np.clip(after_compatibility * lf, 3.5, 10.0))
 
         # 6. Contextual adjustment (position fit, style, role, adaptation, spacing)
         # Using a wider mapping range so player-specific position/style fit creates
@@ -462,6 +471,7 @@ class EnsembleModel:
             _CTX_MULT_LO,
             _CTX_MULT_HI,
         ))
+        after_context = float(np.clip(after_league * ctx_mult, 3.5, 10.0))
 
         # 7. Playing-time adjustment: bench players (low minutes) are penalised.
         # A player averaging 10 min/game contributes much less proven impact than
@@ -474,8 +484,7 @@ class EnsembleModel:
         ))
 
         # Final rating (apply mpg_factor before CI so interval is always consistent)
-        adjusted = float(np.clip(base_rating * compat_mult * lf * ctx_mult, 3.5, 10.0))
-        adjusted = float(np.clip(adjusted * mpg_factor, 3.5, 10.0))
+        adjusted = float(np.clip(after_context * mpg_factor, 3.5, 10.0))
 
         # Confidence interval
         # Prefer split-conformal quantiles from calibration (empirically grounded).
@@ -512,7 +521,7 @@ class EnsembleModel:
             f"| competizione: {competition}"
         )
 
-        return PredictionResult(
+        result = PredictionResult(
             player_id=player_id,
             team_id=team_id,
             season=season,
@@ -528,6 +537,19 @@ class EnsembleModel:
             explanation=explanation,
             competition=competition,
         )
+        # Private diagnostics consumed only by the walk-forward diagnostic
+        # runner. They are deliberately not dataclass fields, so the public
+        # prediction/API contract is unchanged.
+        result._diagnostic_stages = {
+            "raw_xgb_prediction": raw_xgb_prediction,
+            "base_before_age": base_before_age,
+            "base_after_age": base_after_age,
+            "after_compatibility": after_compatibility,
+            "after_league": after_league,
+            "after_context": after_context,
+            "final_prediction": adjusted,
+        }
+        return result
 
     # ------------------------------------------------------------------
     # Persistence
