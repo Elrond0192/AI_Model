@@ -119,7 +119,12 @@ def resolve_league_id(data: Dict[str, Any], league: str | int) -> int:
 
 
 class CompetitionSeasonAheadPerformanceModel(SeasonAheadPerformanceModel):
-    """Season-ahead XGBoost samples isolated by league and competition."""
+    target_mode = "delta_vs_prior"
+    """Season-ahead XGBoost samples isolated by league and competition.
+
+    The strict production target is the one-season rating change. The previous
+    season rating remains an explicit feature, so inference reconstructs the
+    absolute 0–10 target as ``rating(t) + predicted_delta``.
 
     competition_encoding: Dict[str, int]
 
@@ -335,6 +340,10 @@ class CompetitionSeasonAheadPerformanceModel(SeasonAheadPerformanceModel):
                 )
                 source_clean = source.drop(labels=["_season_year", "_competition"])
                 source_clean["competition"] = competition
+                source_rating = pd.to_numeric(source.get("rating"), errors="coerce")
+                target_rating = pd.to_numeric(target.get("rating"), errors="coerce")
+                if pd.isna(source_rating) or pd.isna(target_rating):
+                    continue
                 rows.append(
                     self._build_row(
                         source_clean,
@@ -345,7 +354,10 @@ class CompetitionSeasonAheadPerformanceModel(SeasonAheadPerformanceModel):
                         league_max_games=league_max_games,
                     )
                 )
-                targets.append(float(target["rating"]))
+                # Learn the change relative to the immediately previous rating.
+                # This makes persistence the explicit zero-change reference while
+                # preserving all historical leakage boundaries.
+                targets.append(float(target_rating - source_rating))
                 source_years.append(source_year)
                 target_years.append(target_year)
                 competitions.append(str(competition))
@@ -374,7 +386,26 @@ class CompetitionSeasonAheadPerformanceModel(SeasonAheadPerformanceModel):
         self._skipped_low_sample_pairs = skipped_low_sample_pairs
         self._excluded_descriptive_rows = observed_rows - len(player_stats)
         self._forecast_competitions = sorted(allowed_competitions)
+        self._target_mode = self.target_mode
         return X, y
+
+    def train(
+        self,
+        data: Dict[str, Any],
+        extra_metrics: Optional[List[str]] = None,
+        cv_folds: int = 0,
+        rating_distributions: Optional[Any] = None,
+    ) -> Dict[str, Any]:
+        """Train the season-ahead model and expose its native target contract."""
+        metrics = super().train(
+            data,
+            extra_metrics=extra_metrics,
+            cv_folds=cv_folds,
+            rating_distributions=rating_distributions,
+        )
+        metrics["target_mode"] = self.target_mode
+        self._last_metrics = metrics
+        return metrics
 
 
 class CompetitionTemporalCompatibilityModel(TemporalCompatibilityModel):
