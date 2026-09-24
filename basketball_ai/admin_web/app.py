@@ -24,6 +24,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+from sqlalchemy import text
 
 from basketball_ai.auth.auth import (
     ADMIN_CREDENTIALS_FILE,
@@ -386,74 +387,111 @@ def _probe(path: str) -> dict[str, Any]:
 
 
 def _scenario_entity_rows(entity: str, query: str, limit: int = 12) -> list[dict[str, Any]]:
-    """Search already-loaded canonical entities without exposing global IDs."""
-    key = "players" if entity == "player" else "teams"
-    frame = (STATE.data or {}).get(key)
-    if frame is None or frame.empty:
+    """Search canonical source entities directly in PostgreSQL."""
+    with STATE.lock:
+        profile_name = STATE.active_profile
+    if not profile_name:
         return []
-
-    query_norm = str(query or "").strip().casefold()
-    records: list[dict[str, Any]] = []
-    for row in frame.to_dict("records"):
-        global_id = row.get("global_id")
-        internal_id = row.get("id")
-        if global_id in (None, "") or internal_id in (None, ""):
-            continue
-        names = [
-            row.get("name"), row.get("display_name"), row.get("team_name"),
-            row.get("short_name"), row.get("shortname"), row.get("id"),
-        ]
-        haystack = " ".join(str(value) for value in names if value not in (None, "")).casefold()
-        if query_norm and query_norm not in haystack:
-            continue
-        name = next(
-            (str(value).strip() for value in names[:5] if value not in (None, "") and str(value).strip()),
-            str(internal_id),
+    profile = load_profiles().get(profile_name)
+    if not profile:
+        return []
+    schema = str(profile.get("source_schema", "AI_Source"))
+    if not _SCHEMA_RE.fullmatch(schema):
+        raise RuntimeError("Invalid PostgreSQL source schema")
+    table = "Players" if entity == "player" else "Teams"
+    columns = (
+        "id, global_id, name, position, current_league_key"
+        if entity == "player"
+        else "id, global_id, name, short_name, league_id"
+    )
+    search = str(query or "").strip()
+    max_rows = max(1, min(int(limit), 20))
+    if search:
+        statement = text(
+            f'SELECT {columns} FROM "{schema}"."{table}" '
+            "WHERE lower(coalesce(name, '')) LIKE lower(:query) "
+            "OR lower(coalesce(short_name, '')) LIKE lower(:query) "
+            "ORDER BY CASE WHEN lower(coalesce(name, '')) = lower(:exact) THEN 0 "
+            "WHEN lower(coalesce(name, '')) LIKE lower(:prefix) THEN 1 ELSE 2 END, "
+            "name NULLS LAST LIMIT :limit"
         )
-        subtitle_parts: list[str] = []
-        for column in (("position", "league_key") if entity == "player" else ("league_key",)):
-            value = row.get(column)
-            if value not in (None, ""):
-                subtitle_parts.append(str(value).strip())
-        if not subtitle_parts and row.get("league_id") not in (None, ""):
-            subtitle_parts.append(f"league {row['league_id']}")
+        params = {"query": f"%{search}%", "exact": search, "prefix": f"{search}%", "limit": max_rows}
+    else:
+        statement = text(
+            f'SELECT {columns} FROM "{schema}"."{table}" '
+            "ORDER BY name NULLS LAST LIMIT :limit"
+        )
+        params = {"limit": max_rows}
+    with get_engine(profile_url(profile_name)).connect() as connection:
+        rows = connection.execute(statement, params).mappings().all()
+    records = []
+    for row in rows:
+        internal_id = row.get("id")
+        if internal_id in (None, ""):
+            continue
+        name = str(row.get("name") or internal_id).strip()
+        if entity == "player":
+            values = (row.get("position"), row.get("current_league_key"))
+        else:
+            values = (row.get("short_name"),)
+        subtitle = " · ".join(
+            str(value).strip() for value in values
+            if value not in (None, "") and str(value).strip() != name
+        )
         records.append({
             "selection_id": str(internal_id),
             "name": name,
-            "subtitle": " · ".join(subtitle_parts),
-            "identity_status": "canonical" if global_id else "unreconciled",
+            "subtitle": subtitle,
+            "identity_status": "canonical" if row.get("global_id") not in (None, "") else "unreconciled",
         })
-
-    records.sort(key=lambda item: (0 if query_norm and item["name"].casefold().startswith(query_norm) else 1, item["name"].casefold()))
-    return records[:max(1, min(int(limit), 20))]
+    return records
 
 
 def _resolve_scenario_selections(payload: dict[str, Any]) -> dict[str, Any]:
     """Translate opaque admin selections to canonical global IDs server-side."""
     resolved = dict(payload)
     with STATE.lock:
-        data = STATE.data or {}
-        for entity, selection_key, global_key in (
-            ("player", "player_selection_ids", "player_global_ids"),
-            ("team", "team_selection_ids", "team_global_ids"),
+        profile_name = STATE.active_profile
+    if not profile_name:
+        raise RuntimeError("Seleziona e carica prima un profilo database")
+    profile = load_profiles().get(profile_name)
+    if not profile:
+        raise RuntimeError("Profilo database attivo non disponibile")
+    schema = str(profile.get("source_schema", "AI_Source"))
+    if not _SCHEMA_RE.fullmatch(schema):
+        raise RuntimeError("Invalid PostgreSQL source schema")
+    with get_engine(profile_url(profile_name)).connect() as connection:
+        for entity, selection_key, global_key, table in (
+            ("player", "player_selection_ids", "player_global_ids", "Players"),
+            ("team", "team_selection_ids", "team_global_ids", "Teams"),
         ):
             selections = [str(value).strip() for value in resolved.pop(selection_key, []) if str(value).strip()]
             if not selections:
                 continue
-            table = data.get("players" if entity == "player" else "teams")
-            if table is None or table.empty:
-                raise RuntimeError("Carica prima il database nella pagina Dati e snapshot")
+            placeholders, params = [], {}
+            for index, value in enumerate(selections):
+                key = f"id_{index}"
+                placeholders.append(f":{key}")
+                params[key] = value
+            rows = connection.execute(
+                text(
+                    f'SELECT id, global_id FROM "{schema}"."{table}" '
+                    f'WHERE id::text IN ({", ".join(placeholders)})'
+                ),
+                params,
+            ).mappings().all()
             by_id = {
-                str(row.get("id")): str(row.get("global_id"))
-                for row in table.to_dict("records")
-                if row.get("id") not in (None, "") and row.get("global_id") not in (None, "")
+                str(row["id"]): str(row["global_id"])
+                for row in rows
+                if row.get("global_id") not in (None, "")
             }
             missing = [value for value in selections if value not in by_id]
             if missing:
-                raise RuntimeError(f"{entity} selection non disponibile: {missing[0]}")
+                raise RuntimeError(
+                    f"{entity} selezionato non ha ancora un GlobalId riconciliato: {missing[0]}"
+                )
             resolved[global_key] = [by_id[value] for value in selections]
     return resolved
-
 
 def _evaluate_scenario(payload: dict[str, Any]) -> dict[str, Any]:
     """Forward an authenticated admin request to the API scenario engine."""
@@ -814,7 +852,6 @@ def backtests(user: dict[str, str] = Depends(_operator)) -> dict[str, Any]:
     return {"candidate": candidate, "report": report, "quality": _candidate_quality(candidate)}
 
 
-@app.post("/admin-api/scenarios/evaluate")
 @app.get("/admin-api/scenario-entities")
 def scenario_entities(
     entity: str = "player",
@@ -833,6 +870,7 @@ def scenario_entities(
     return {"entity": entity, "items": _scenario_entity_rows(entity, q, limit)}
 
 
+@app.post("/admin-api/scenarios/evaluate")
 async def evaluate_scenario(payload: dict[str, Any], user: dict[str, str] = Depends(_csrf)) -> dict[str, Any]:
     """Expose the production scenario engine in the authenticated admin UI."""
     del user
