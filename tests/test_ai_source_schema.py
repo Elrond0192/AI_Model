@@ -99,6 +99,13 @@ def test_ai_source_deduplicates_team_player_relations_by_canonical_key():
     assert "order by" in sql
 
 
+def test_ai_source_reapplies_hm_admin_access_on_rebuild():
+    sql = SOURCE_SQL.read_text(encoding="utf-8").lower()
+    assert "'hm_admin'" in sql
+    assert "grant usage on schema \"ai_source\" to %i" in sql
+    assert "grant select on table" in sql
+
+
 def test_ai_source_uses_native_typed_columns_for_row_transforms():
     sql = SOURCE_SQL.read_text(encoding="utf-8").lower()
     assert "pg_temp.ai_expr" in sql
