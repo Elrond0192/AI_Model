@@ -5,7 +5,9 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="color-scheme" content="dark"><meta name="theme-color" content="#07131f">
   <title>AI Model Control Center</title>
-  <link rel="stylesheet" href="/assets/app.css?v=2.4.1">
+  <link rel="stylesheet" href="/assets/app.css?v=2.5.0">
+  <link rel="stylesheet" href="/assets/phosphor/regular/style.css">
+  <link rel="stylesheet" href="/assets/phosphor/fill/style.css">
 </head>
 <body>
   <div id="toast" class="toast" aria-live="polite"></div>
@@ -14,14 +16,14 @@
     <div class="login-glow login-glow-a"></div>
     <div class="login-glow login-glow-b"></div>
     <form id="login-form" class="login-card" autocomplete="on">
-      <div class="brand-mark large"><span class="brand-diamond">◆</span></div>
+      <div class="brand-mark large"><i class="ph-fill ph-diamond brand-diamond"></i></div>
       <div class="login-brand">AI Model</div>
       <div class="login-kicker">CONTROL CENTER</div>
       <h1>Operations Console</h1>
       <p>Accesso riservato agli operatori del modello.</p>
       <label>Utente<input id="login-username" name="username" type="text" autocomplete="username" required></label>
       <label>Password<input id="login-password" name="password" type="password" autocomplete="current-password" required></label>
-      <button class="btn btn-primary btn-wide" type="submit"><span>Accedi</span><span>→</span></button>
+      <button class="btn btn-primary btn-wide" type="submit"><span>Accedi</span><i class="ph ph-arrow-right"></i></button>
       <div id="login-error" class="form-error"></div>
     </form>
   </section>
@@ -29,30 +31,30 @@
   <div id="app-shell" class="app-shell hidden">
     <aside class="sidebar">
       <div class="brand-block">
-        <div class="brand-mark"><span class="brand-diamond">◆</span></div>
+        <div class="brand-mark"><i class="ph-fill ph-diamond brand-diamond"></i></div>
         <div><div class="brand-title">AI Model</div><div class="brand-subtitle">Control Center</div></div>
       </div>
 
       <nav class="nav-list" aria-label="Navigazione principale">
-        <button class="nav-item active" data-page="overview"><span class="nav-icon">⌂</span><span>Overview</span></button>
-        <button class="nav-item" data-page="data"><span class="nav-icon">▤</span><span>Dati e snapshot</span></button>
-        <button class="nav-item" data-page="training"><span class="nav-icon">↗</span><span>Training</span></button>
-        <button class="nav-item" data-page="backtests"><span class="nav-icon">⌁</span><span>Backtests</span></button>
-        <button class="nav-item" data-page="scenarios"><span class="nav-icon">◈</span><span>Scenario Lab</span></button>
-        <button class="nav-item" data-page="registry"><span class="nav-icon">⬡</span><span>Model Registry</span></button>
-        <button class="nav-item" data-page="health"><span class="nav-icon">◇</span><span>API &amp; Health</span></button>
-        <button class="nav-item admin-only" data-page="audit"><span class="nav-icon">▣</span><span>Audit Logs</span></button>
-        <button class="nav-item" data-page="contact"><span class="nav-icon">✉</span><span>Contatti</span></button>
-        <button class="nav-item" data-page="settings"><span class="nav-icon">⚙</span><span>Settings</span></button>
+        <button class="nav-item active" data-page="overview"><span class="nav-icon"><i class="ph ph-house"></i></span><span>Overview</span></button>
+        <button class="nav-item" data-page="data"><span class="nav-icon"><i class="ph ph-database"></i></span><span>Dati e snapshot</span></button>
+        <button class="nav-item" data-page="training"><span class="nav-icon"><i class="ph ph-trend-up"></i></span><span>Training</span></button>
+        <button class="nav-item" data-page="backtests"><span class="nav-icon"><i class="ph ph-chart-line-up"></i></span><span>Backtests</span></button>
+        <button class="nav-item" data-page="scenarios"><span class="nav-icon"><i class="ph ph-flask"></i></span><span>Scenario Lab</span></button>
+        <button class="nav-item" data-page="registry"><span class="nav-icon"><i class="ph ph-cube"></i></span><span>Model Registry</span></button>
+        <button class="nav-item" data-page="health"><span class="nav-icon"><i class="ph ph-heartbeat"></i></span><span>API &amp; Health</span></button>
+        <button class="nav-item admin-only" data-page="audit"><span class="nav-icon"><i class="ph ph-clipboard-text"></i></span><span>Audit Logs</span></button>
+        <button class="nav-item" data-page="contact"><span class="nav-icon"><i class="ph ph-envelope"></i></span><span>Contatti</span></button>
+        <button class="nav-item" data-page="settings"><span class="nav-icon"><i class="ph ph-gear"></i></span><span>Settings</span></button>
       </nav>
 
       <div class="sidebar-spacer"></div>
       <div class="user-card">
         <div id="user-avatar" class="avatar">A</div>
         <div class="user-copy"><strong id="user-name">admin</strong><span id="user-role">Administrator</span></div>
-        <span class="chevron">›</span>
+        <span class="chevron"><i class="ph ph-caret-right"></i></span>
       </div>
-      <button id="logout-btn" class="btn btn-ghost btn-wide"><span>⇥</span><span>Esci</span></button>
+      <button id="logout-btn" class="btn btn-ghost btn-wide"><i class="ph ph-sign-out"></i><span>Esci</span></button>
     </aside>
 
     <main class="main-area">
@@ -207,17 +209,26 @@
       <div class="split-grid">
         <section class="panel">
           <div class="panel-heading"><div><h2>Invia un messaggio</h2><p class="microcopy">Compila il form e descrivi la tua richiesta nel modo più dettagliato possibile.</p></div></div>
-          <form class="form-grid" onsubmit="event.preventDefault();const f=this,b=f.querySelector('button[type=submit]');b.disabled=true;b.textContent='Messaggio inviato ✓';f.querySelector('.contact-success').classList.remove('hidden');setTimeout(()=>{f.reset();b.disabled=false;b.textContent='Invia messaggio';},1200);">
+          <form class="form-grid" id="contact-form">
             <label>Nome<input name="name" type="text" autocomplete="name" placeholder="Il tuo nome" required></label>
             <label>Email<input name="email" type="email" autocomplete="email" placeholder="nome@azienda.it" required></label>
             <label class="span-2">Oggetto<input name="subject" type="text" placeholder="Come possiamo aiutarti?" required></label>
             <label class="span-2">Messaggio<textarea name="message" rows="8" placeholder="Scrivi qui il tuo messaggio..." required></textarea></label>
             <div class="span-2 button-row" style="align-items:center;justify-content:space-between">
               <span class="microcopy"><strong>Privacy:</strong> i dati saranno usati esclusivamente per rispondere alla richiesta.</span>
-              <button class="btn btn-primary" type="submit">Invia messaggio</button>
+              <button class="btn btn-primary" type="submit">Apri client email</button>
             </div>
-            <div class="span-2 contact-success hidden" style="font-size:12px;color:var(--success,#48c78e)">Messaggio inviato correttamente. In questo mockup l'invio è simulato.</div>
+            <p class="span-2 microcopy">Compilando e inviando, si apre il tuo client di posta con i campi già pronti verso il team operativo. Nessun dato viene inviato direttamente da questa pagina finché non è collegato un backend reale.</p>
           </form>
+          <script>
+            document.getElementById('contact-form').addEventListener('submit', function(e){
+              e.preventDefault();
+              const f = new FormData(this);
+              const subject = encodeURIComponent(f.get('subject') || 'Richiesta da AI Model Control Center');
+              const body = encodeURIComponent(`Da: ${f.get('name')} <${f.get('email')}>\n\n${f.get('message')}`);
+              window.location.href = `mailto:support@bballstat.com?subject=${subject}&body=${body}`;
+            });
+          </script>
         </section>
         <aside class="panel">
           <div class="panel-heading"><h2>Prima di scriverci</h2></div>
