@@ -32,6 +32,19 @@ def _rmse(records: Iterable[Dict[str, Any]], key: str) -> float:
     return float(np.sqrt(np.mean((prediction - actual) ** 2)))
 
 
+def _diagnostic_stage_rmse(records: List[Dict[str, Any]]) -> Dict[str, float]:
+    stages = {
+        "raw_xgb_rmse": "raw_xgb_prediction",
+        "base_before_age_rmse": "base_before_age_prediction",
+        "base_after_age_rmse": "base_after_age_prediction",
+        "after_compatibility_rmse": "after_compatibility_prediction",
+        "after_league_rmse": "after_league_prediction",
+        "after_context_rmse": "after_context_prediction",
+        "final_ensemble_rmse": "prediction",
+    }
+    return {name: _rmse(records, key) for name, key in stages.items()}
+
+
 def _segment_metrics(records: List[Dict[str, Any]], key: str) -> Dict[str, Dict[str, float]]:
     groups: Dict[str, List[Dict[str, Any]]] = {}
     for row in records:
