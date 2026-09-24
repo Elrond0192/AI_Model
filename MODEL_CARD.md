@@ -4,8 +4,8 @@
 
 | Field | Value |
 |---|---|
-| Version | 2.4.0 |
-| Feature contract | `forecast-t-plus-1-quality-v3` |
+| Version | 2.5.0 |
+| Feature contract | `forecast-t-plus-1-persistence-delta-v1` |
 | Primary target | same-league, same-competition next-season rating (`t -> t+1`) |
 | Competition support | explicit allow-list; `RS,PO,TOT` by default |
 | Base estimator | pooled XGBoost regressor with nominal competition/role one-hot features |
@@ -73,7 +73,9 @@ league + competition + source season
 isolated player history + team context
              |
              v
-       XGBoost t+1
+       XGBoost t+1 delta
+             |
+       add source-season rating
              |
        compatibility
        context / league
