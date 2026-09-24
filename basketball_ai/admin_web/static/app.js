@@ -109,7 +109,92 @@ function chartSvg(points){if(!points||points.length<1)return empty('⌁','Dati n
 async function renderBacktests(){const d=await api('/admin-api/backtests'),r=d.report||{},o=r.overall||{},q=d.quality||{};$('#backtest-kpis').innerHTML=[kpi('⌁','Ensemble RMSE',fmt(o.rmse),'<span>OOT</span>'),kpi('↗','Base RMSE',fmt(r.base_rmse),'<span>XGBoost base</span>','green'),kpi('◫','Persistence RMSE',fmt(r.persistence_rmse),'<span>previous season</span>','violet'),kpi('◎','Interval coverage',pct(o.interval_coverage),'<span>conformal</span>','orange')].join('');$('#backtest-chart').innerHTML=chartSvg(q.folds||[]);$('#backtest-summary').innerHTML=d.candidate?.run_id?summaryRows([['Run ID',shortId(d.candidate.run_id)],['Samples',o.n??'—'],['Competitions',q.competitions??'—'],['Valid',r.valid?'Yes':'No']]):empty('▤','Nessun candidate','Completa un training run per ispezionare il report.','Avvia training','training');const comps=Object.entries(r.by_competition||{});$('#competition-body').innerHTML=comps.length?comps.map(([name,m])=>`<tr><td><strong>${esc(name)}</strong></td><td>${esc(m.n??'—')}</td><td>${esc(fmt(m.rmse))}</td><td>${esc(fmt(m.mae))}</td><td>${esc(fmt(m.bias))}</td><td>${esc(pct(m.interval_coverage))}</td></tr>`).join(''):'<tr><td colspan="6" class="muted-inline">Nessuna metrica per competition disponibile.</td></tr>';$$('.jump',root).forEach(b=>b.addEventListener('click',()=>navigate(b.dataset.page)));}
 
 function csvValues(value){return String(value||'').split(',').map(v=>v.trim()).filter(Boolean);}
-async function renderScenarios(){const form=$('#scenario-form'),result=$('#scenario-result'),submit=$('#scenario-submit');const overview=App.overview||await api('/admin-api/overview');form.season.value=overview.summary?.season_max||new Date().getFullYear();form.addEventListener('submit',async ev=>{ev.preventDefault();let parameters={};try{const raw=form.parameters.value.trim();parameters=raw?JSON.parse(raw):{};}catch(_){toast('Parameters JSON non valido','error');return;}const payload={scenario:form.scenario.value,player_global_ids:csvValues(form.player_global_ids.value),team_global_ids:csvValues(form.team_global_ids.value),source_league:form.source_league.value.trim()||null,target_league:form.target_league.value.trim()||null,season:Number(form.season.value),competition:form.competition.value.trim()||'RS',top_n:Number(form.top_n.value||5),parameters:{...parameters,simulations:Number(form.simulations.value||5000)}};submit.disabled=true;submit.textContent='Valutazione…';result.textContent='Il motore scenari sta elaborando la richiesta…';try{const data=await api('/admin-api/scenarios/evaluate',{method:'POST',body:payload});result.textContent=JSON.stringify(data,null,2);}catch(e){result.textContent='';toast(e.message,'error');}finally{submit.disabled=false;submit.textContent='Valuta scenario';}});}
+const scenarioSelections={player:[],team:[]};
+
+function renderScenarioChips(picker){
+  const entity=picker.dataset.entity;
+  const chips=picker.querySelector('[data-chips]');
+  chips.innerHTML=scenarioSelections[entity].map(item=>
+    `<span class="entity-chip"><span class="entity-chip-copy"><span class="entity-chip-name">${esc(item.name)}</span><span class="entity-chip-subtitle">${esc(item.subtitle||'')}</span></span><button type="button" class="entity-chip-remove" data-selection-id="${esc(item.selection_id)}" aria-label="Rimuovi">×</button></span>`
+  ).join('');
+  chips.querySelectorAll('.entity-chip-remove').forEach(button=>button.addEventListener('click',()=>{
+    scenarioSelections[entity]=scenarioSelections[entity].filter(item=>item.selection_id!==button.dataset.selectionId);
+    renderScenarioChips(picker);
+  }));
+}
+
+async function searchScenarioEntities(picker){
+  const entity=picker.dataset.entity;
+  const input=picker.querySelector('[data-search]');
+  const menu=picker.querySelector('[data-results]');
+  const q=input.value.trim();
+  menu.classList.remove('hidden');
+  menu.innerHTML='<div class="entity-picker-empty">Ricerca…</div>';
+  try{
+    const data=await api(`/admin-api/scenario-entities?entity=${encodeURIComponent(entity)}&q=${encodeURIComponent(q)}&limit=12`);
+    const selected=new Set(scenarioSelections[entity].map(item=>item.selection_id));
+    const items=(data.items||[]).filter(item=>!selected.has(item.selection_id));
+    menu.innerHTML=items.length?items.map(item=>
+      `<button type="button" class="entity-result" data-selection-id="${esc(item.selection_id)}"><span class="entity-result-copy"><span class="entity-result-name">${esc(item.name)}</span><span class="entity-result-subtitle">${esc(item.subtitle||'')}</span></span><span class="entity-result-status ${item.identity_status==='canonical'?'':'fallback'}">${esc(item.identity_status||'canonical')}</span></button>`
+    ).join(''):'<div class="entity-picker-empty">Nessun risultato.</div>';
+    menu.querySelectorAll('.entity-result').forEach(button=>button.addEventListener('click',()=>{
+      const item=items.find(value=>value.selection_id===button.dataset.selectionId);
+      if(!item)return;
+      scenarioSelections[entity].push(item);
+      input.value='';
+      renderScenarioChips(picker);
+      menu.classList.add('hidden');
+      input.focus();
+    }));
+  }catch(e){menu.innerHTML=`<div class="entity-picker-empty">${esc(e.message)}</div>`;}
+}
+
+function setupScenarioEntityPicker(picker){
+  const input=picker.querySelector('[data-search]');
+  const menu=picker.querySelector('[data-results]');
+  let timer=null;
+  input.addEventListener('input',()=>{
+    clearTimeout(timer);
+    timer=setTimeout(()=>searchScenarioEntities(picker),220);
+  });
+  input.addEventListener('focus',()=>{
+    if(!menu.children.length)searchScenarioEntities(picker);
+    else menu.classList.remove('hidden');
+  });
+  document.addEventListener('click',event=>{
+    if(!picker.contains(event.target))menu.classList.add('hidden');
+  },{once:false});
+  renderScenarioChips(picker);
+}
+
+async function renderScenarios(){
+  const form=$('#scenario-form'),result=$('#scenario-result'),submit=$('#scenario-submit');
+  scenarioSelections.player=[];scenarioSelections.team=[];
+  $$('.entity-picker',form).forEach(setupScenarioEntityPicker);
+  const overview=App.overview||await api('/admin-api/overview');
+  form.season.value=overview.summary?.season_max||new Date().getFullYear();
+  form.addEventListener('submit',async ev=>{
+    ev.preventDefault();
+    let parameters={};
+    try{const raw=form.parameters.value.trim();parameters=raw?JSON.parse(raw):{};}
+    catch(_){toast('Parameters JSON non valido','error');return;}
+    const payload={
+      scenario:form.scenario.value,
+      player_selection_ids:scenarioSelections.player.map(item=>item.selection_id),
+      team_selection_ids:scenarioSelections.team.map(item=>item.selection_id),
+      source_league:form.source_league.value.trim()||null,
+      target_league:form.target_league.value.trim()||null,
+      season:Number(form.season.value),
+      competition:form.competition.value.trim()||'RS',
+      top_n:Number(form.top_n.value||5),
+      parameters:{...parameters,simulations:Number(form.simulations.value||5000)}
+    };
+    submit.disabled=true;submit.textContent='Valutazione…';result.textContent='Il motore scenari sta elaborando la richiesta…';
+    try{const data=await api('/admin-api/scenarios/evaluate',{method:'POST',body:payload});result.textContent=JSON.stringify(data,null,2);}
+    catch(e){result.textContent='';toast(e.message,'error');}
+    finally{submit.disabled=false;submit.textContent='Valuta scenario';}
+  });
+}
 
 function registryCard(title,entry,tone=''){if(!entry||!entry.run_id)return `<div class="registry-card">${empty('⬡',`Nessun ${title.toLowerCase()}`,`Non è presente un run ${title.toLowerCase()} nel registry.`)}</div>`;return `<div class="registry-card"><span class="registry-badge ${tone}">${esc(title)}</span><div class="registry-run">${esc(entry.run_id)}</div><div class="registry-meta">Version: ${esc(entry.model_version||'—')}<br>Data cutoff: ${esc(entry.data_cutoff||'—')}<br>OOT RMSE: ${esc(fmt(entry.overall_rmse))}<br>Registered: ${esc(entry.registered_at||entry.promoted_at||'—')}</div></div>`;}
 async function renderRegistry(){const d=await api('/admin-api/registry');$('#top-model').textContent=shortId(d.production?.run_id);$('#registry-cards').innerHTML=registryCard('Production',d.production)+registryCard('Candidate',d.candidate,'candidate');const hist=d.history||[];$('#registry-history').innerHTML=hist.length?[...hist].reverse().map(h=>`<tr><td>${esc(h.at||'—')}</td><td>${esc(h.event||'—')}</td><td>${esc(h.run_id||'—')}</td></tr>`).join(''):'<tr><td colspan="3" class="muted-inline">Nessun evento nel registry.</td></tr>';const check=$('#registry-confirm'),prom=$('#promote-btn'),roll=$('#rollback-btn');check.addEventListener('change',()=>{prom.disabled=!check.checked||!d.candidate;roll.disabled=!check.checked||!d.previous;});prom.addEventListener('click',async()=>{prom.disabled=true;try{const r=await api('/admin-api/registry/promote',{method:'POST',body:{confirm:true}});toast(r.reason||'Candidate promoted');await renderRegistry();}catch(e){toast(e.message,'error');prom.disabled=false;}});roll.addEventListener('click',async()=>{roll.disabled=true;try{const r=await api('/admin-api/registry/rollback',{method:'POST',body:{confirm:true}});toast(r.reason||'Rollback completed');await renderRegistry();}catch(e){toast(e.message,'error');roll.disabled=false;}});}
