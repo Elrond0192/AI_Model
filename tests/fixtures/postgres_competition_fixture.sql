@@ -7,6 +7,7 @@ CREATE TABLE IF NOT EXISTS "Anagrafiche"."ITA1" (
   "Id" text NOT NULL,
   "IdGlobal" text NOT NULL,
   "PlayerName" text NOT NULL,
+  "Team" text,
   "BirthDate" date,
   "Pos" text,
   "TeamName" text
@@ -72,10 +73,10 @@ TRUNCATE TABLE
   "Boxscore"."ITA1";
 
 INSERT INTO "Anagrafiche"."ITA1"
-  ("Season", "Id", "IdGlobal", "PlayerName", "BirthDate", "Pos", "TeamName")
+  ("Season", "Id", "IdGlobal", "PlayerName", "Team", "BirthDate", "Pos", "TeamName")
 VALUES
-  (2024, 'P_LOCAL', 'P_GLOBAL', 'Test Player', DATE '2000-01-01', 'PG', 'Test Team'),
-  (2025, 'P_LOCAL', 'P_GLOBAL', 'Test Player', DATE '2000-01-01', 'PG', 'Test Team');
+  (2024, 'P_LOCAL', 'P_GLOBAL', 'Test Player', '1001', DATE '2000-01-01', 'PG', 'Test Team'),
+  (2025, 'P_LOCAL', 'P_GLOBAL', 'Test Player', '1001', DATE '2000-01-01', 'PG', 'Test Team');
 
 INSERT INTO "Anagrafiche"."Team_ITA1"
   ("Season", "Id", "IdGlobal", "TeamName", "ShortName")
@@ -88,7 +89,7 @@ INSERT INTO "Analisi"."AdvancedStats_Player_ITA1"
 VALUES
   (2024, 'P_LOCAL', '1001.0', 'Regular Season', 30, 750, 360, 120, 150, 30, 5, 60, 50, 0.580, 22.0, 2.0, 0.5, 0.35, 6.50),
   (2024, 'P_LOCAL', '1001.0', 'Playoffs',        8, 224, 112,  36,  48, 10, 2, 18, 16, 0.610, 24.0, 3.0, 0.8, 0.38, 7.00),
-  (2025, 'P_LOCAL', '1001.0', 'RS',             30, 780, 390, 126, 156, 32, 6, 58, 48, 0.590, 22.5, 2.4, 0.6, 0.36, 6.70),
+  (2025, 'P_LOCAL', NULL,       'RS',             30, 780, 390, 126, 156, 32, 6, 58, 48, 0.590, 22.5, 2.4, 0.6, 0.36, 6.70),
   (2025, 'P_LOCAL', '1001.0', 'PO',              9, 261, 135,  40,  54, 11, 2, 17, 15, 0.620, 25.0, 3.3, 0.9, 0.40, 7.20);
 
 INSERT INTO "Analisi"."AdvancedStatsTeam_ITA1"
