@@ -1330,13 +1330,23 @@ class PerformanceModel:
         return raw_prediction
 
     def predict_from_features(self, feature_dict: Dict[str, float]) -> float:
-        """Predict the model-native target from an engineered feature dict."""
+        """Predict the model-native target from an engineered feature dict.
+
+        Delta-mode models predict a one-season rating change, so their native
+        output must not use the legacy absolute-rating clamp of ``[3.5, 10.0]``.
+        The absolute clamp belongs in ``predict_target_rating``, after the
+        prior rating is restored.
+        """
         if not self.is_trained:
+            if getattr(self, "target_mode", "rating") == "delta_vs_prior":
+                return 0.0
             return float(np.clip(feature_dict.get("form_score", 6.5), 4.0, 10.0))
         logger.debug("[PerformanceModel] predict_from_features called; stored data_signature=%s", self.data_signature)
         arr = np.array([[feature_dict.get(c, 0.0) for c in self.feature_names]], dtype=float)
-        return float(np.clip(self.model.predict(arr)[0], 3.5, 10.0))
-
+        raw_prediction = float(self.model.predict(arr)[0])
+        if getattr(self, "target_mode", "rating") == "delta_vs_prior":
+            return raw_prediction
+        return float(np.clip(raw_prediction, 3.5, 10.0))
     def get_shap_values(self, feature_dict: Dict[str, float]) -> Dict[str, float]:
         if not self.is_trained or not _SHAP_AVAILABLE:
             return {}
