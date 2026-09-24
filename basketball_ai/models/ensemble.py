@@ -367,7 +367,7 @@ class EnsembleModel:
         player_feats.update(po_feats)
 
         # 2. Base rating from XGBoost
-        base_rating = self.perf_model.predict_from_features(player_feats)
+        base_rating = self.perf_model.predict_target_rating(player_feats)
 
         # 3. Age-curve ratio (only for trajectory projections)
         # Cap the ratio at ×1.5 to prevent unrealistic peak projections for
