@@ -201,6 +201,13 @@ FEATURE_COLS: List[str] = [
     # --- Career signals -------------------------------------------------------
     "form_score",
     "consistency_score",
+    # Explicit persistence / short-term momentum signals derived only from
+    # source-season history.
+    "last_rating",
+    "rating_delta_1",
+    "rating_delta_2",
+    "recent_rating_mean",
+    "recent_rating_std",
     "career_trajectory",
     "age_vs_peak_age",
     "ts_efficiency_trend",  # per-season slope of TS% over career
@@ -875,6 +882,24 @@ class PerformanceModel:
             form[2:] = 0.2 * ratings[:-2] + 0.3 * ratings[1:-1] + 0.5 * ratings[2:]
         trajectory = cumulative_slope(ratings, dropna=False)
 
+        # Explicit persistence signals. Forward-fill only within the observed
+        # history so a missing rating cannot leak future information.
+        rating_series = pd.Series(ratings, dtype=float).ffill().fillna(6.5)
+        rating_history = rating_series.to_numpy(dtype=float)
+        last_rating = rating_history.copy()
+        rating_delta_1 = np.zeros(size, dtype=float)
+        rating_delta_2 = np.zeros(size, dtype=float)
+        recent_rating_mean = np.zeros(size, dtype=float)
+        recent_rating_std = np.zeros(size, dtype=float)
+        if size >= 2:
+            rating_delta_1[1:] = rating_history[1:] - rating_history[:-1]
+        if size >= 3:
+            rating_delta_2[2:] = rating_history[2:] - rating_history[:-2]
+        for index in range(size):
+            recent = rating_history[max(0, index - 2): index + 1]
+            recent_rating_mean[index] = float(np.mean(recent))
+            recent_rating_std[index] = float(np.std(recent))
+
         if "ts_pct" in grp.columns:
             ts_values = pd.to_numeric(grp["ts_pct"], errors="coerce").to_numpy(dtype=float)
             ts_trend = cumulative_slope(ts_values, dropna=True)
@@ -956,6 +981,11 @@ class PerformanceModel:
                 "form_score": float(form[index]),
                 "consistency_score": float(consistency[index]),
                 "career_trajectory": float(trajectory[index]),
+                "last_rating": float(last_rating[index]),
+                "rating_delta_1": float(rating_delta_1[index]),
+                "rating_delta_2": float(rating_delta_2[index]),
+                "recent_rating_mean": float(recent_rating_mean[index]),
+                "recent_rating_std": float(recent_rating_std[index]),
                 "ts_efficiency_trend": float(ts_trend[index]),
                 "durability_score": float(durability[index]),
                 "po_vs_rs_delta": float(po_vs_rs[index]),
@@ -1291,8 +1321,16 @@ class PerformanceModel:
         self._last_metrics = metrics
         return metrics
 
+    def predict_target_rating(self, feature_dict: Dict[str, float]) -> float:
+        """Predict the target-season rating from an engineered source-season row."""
+        raw_prediction = self.predict_from_features(feature_dict)
+        if getattr(self, "target_mode", "rating") == "delta_vs_prior":
+            prior_rating = float(feature_dict.get("last_rating", 6.5))
+            return float(np.clip(prior_rating + raw_prediction, 0.0, 10.0))
+        return raw_prediction
+
     def predict_from_features(self, feature_dict: Dict[str, float]) -> float:
-        """Predict rating from an already-engineered feature dict."""
+        """Predict the model-native target from an engineered feature dict."""
         if not self.is_trained:
             return float(np.clip(feature_dict.get("form_score", 6.5), 4.0, 10.0))
         logger.debug("[PerformanceModel] predict_from_features called; stored data_signature=%s", self.data_signature)
