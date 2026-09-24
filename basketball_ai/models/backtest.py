@@ -158,6 +158,8 @@ def run_backtest(
                 },
             }
             folds.append(fold)
+            if include_stage_metrics:
+                fold["stage_metrics"] = _diagnostic_stage_rmse(records)
             all_records.extend(records)
             _logger.info(
                 "[Backtest] target=%s n=%d ensemble_rmse=%.4f base=%.4f persistence=%.4f",
@@ -217,6 +219,9 @@ def run_backtest(
         "by_age_band": _segment_metrics(all_records, "age_band") if all_records else {},
         "valid": valid,
     }
+
+    if include_stage_metrics and all_records:
+        report["stage_metrics"] = _diagnostic_stage_rmse(all_records)
 
     if output_path:
         path = Path(output_path)
