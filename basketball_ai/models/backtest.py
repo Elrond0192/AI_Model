@@ -93,7 +93,8 @@ def _compatibility_diagnostics(records: List[Dict[str, Any]]) -> Dict[str, Any]:
     score = np.asarray(
         [float(row["compatibility_factor"]) for row in rows], dtype=float
     )
-    multiplier = 0.90 + score * 0.20
+    # Compatibility is now an additive residual correction. Keep the score
+    # diagnostics centred at 0.5 and report the actual rating-point adjustment.
     adjustment = after - base
     residual_before = actual - base
 
@@ -120,7 +121,6 @@ def _compatibility_diagnostics(records: List[Dict[str, Any]]) -> Dict[str, Any]:
     return {
         "n": int(len(rows)),
         "compatibility_score": _stats(score),
-        "compatibility_multiplier": _stats(multiplier),
         "compatibility_adjustment": _stats(adjustment),
         "base_before_compatibility": base_metrics,
         "after_compatibility": after_metrics,
