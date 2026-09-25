@@ -511,7 +511,8 @@ def test_base_oof_predictions_are_batched_per_source_year(monkeypatch):
     assert len(FakeBaseModel.instances) == 3
     assert all(instance.model.calls == 1 for instance in FakeBaseModel.instances)
     assert all(
-        np.allclose(instance.model.seen[0][:, 1:], 0.0)
+        np.allclose(instance.model.seen[0][:, 1], 0.0)
+        and np.allclose(instance.model.seen[0][:, 2], 1.0)
         for instance in FakeBaseModel.instances
     )
     assert np.isclose(result[(1, 1, "RS", 2021)], 16.0)
