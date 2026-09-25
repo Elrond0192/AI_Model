@@ -465,16 +465,22 @@ def test_base_oof_predictions_are_batched_per_source_year(monkeypatch):
     class FakePredictor:
         def __init__(self):
             self.calls = 0
+            self.seen = []
 
         def predict(self, values):
             self.calls += 1
+            self.seen.append(values.copy())
             return values[:, 0] + 10.0
 
     class FakeBaseModel:
         instances = []
 
         def __init__(self):
-            self.feature_names = ["marker"]
+            self.feature_names = ["marker", "role_combo_1", "competition_1"]
+            self.role_feature_encodings = {
+                "ruolo_combinato": {"ROLE_A": "role_combo_1"},
+            }
+            self.competition_feature_encodings = {"RS": "competition_1"}
             self.model = FakePredictor()
             self.__class__.instances.append(self)
 
@@ -504,6 +510,10 @@ def test_base_oof_predictions_are_batched_per_source_year(monkeypatch):
     }
     assert len(FakeBaseModel.instances) == 3
     assert all(instance.model.calls == 1 for instance in FakeBaseModel.instances)
+    assert all(
+        np.allclose(instance.model.seen[0][:, 1:], 0.0)
+        for instance in FakeBaseModel.instances
+    )
     assert np.isclose(result[(1, 1, "RS", 2021)], 16.0)
     assert np.isclose(result[(1, 1, "RS", 2022)], 16.1)
     assert np.isclose(result[(1, 1, "RS", 2023)], 16.2)
