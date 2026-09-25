@@ -71,6 +71,70 @@ def _segment_metrics(records: List[Dict[str, Any]], key: str) -> Dict[str, Dict[
     return {name: metric_summary(rows) for name, rows in groups.items()}
 
 
+def _compatibility_diagnostics(records: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Describe the learned compatibility correction without changing inference."""
+    rows = [
+        row for row in records
+        if row.get("after_compatibility_prediction") is not None
+        and row.get("base_after_age_prediction") is not None
+        and row.get("actual") is not None
+        and row.get("compatibility_factor") is not None
+    ]
+    if not rows:
+        return {"n": 0}
+
+    actual = np.asarray([float(row["actual"]) for row in rows], dtype=float)
+    base = np.asarray(
+        [float(row["base_after_age_prediction"]) for row in rows], dtype=float
+    )
+    after = np.asarray(
+        [float(row["after_compatibility_prediction"]) for row in rows], dtype=float
+    )
+    score = np.asarray(
+        [float(row["compatibility_factor"]) for row in rows], dtype=float
+    )
+    multiplier = 0.90 + score * 0.20
+    adjustment = after - base
+    residual_before = actual - base
+
+    def _corr(left: np.ndarray, right: np.ndarray) -> Optional[float]:
+        if len(left) < 2 or np.std(left) == 0.0 or np.std(right) == 0.0:
+            return None
+        return float(np.corrcoef(left, right)[0, 1])
+
+    def _stats(values: np.ndarray) -> Dict[str, float]:
+        return {
+            "mean": float(np.mean(values)),
+            "std": float(np.std(values)),
+            "min": float(np.min(values)),
+            "max": float(np.max(values)),
+        }
+
+    base_metrics = metric_summary(
+        [{"actual": float(a), "prediction": float(p)} for a, p in zip(actual, base)]
+    )
+    after_metrics = metric_summary(
+        [{"actual": float(a), "prediction": float(p)} for a, p in zip(actual, after)]
+    )
+
+    return {
+        "n": int(len(rows)),
+        "compatibility_score": _stats(score),
+        "compatibility_multiplier": _stats(multiplier),
+        "compatibility_adjustment": _stats(adjustment),
+        "base_before_compatibility": base_metrics,
+        "after_compatibility": after_metrics,
+        "rmse_delta_after_minus_before": (
+            after_metrics["rmse"] - base_metrics["rmse"]
+        ),
+        "correlation": {
+            "score_vs_actual_minus_base": _corr(score, residual_before),
+            "adjustment_vs_actual_minus_base": _corr(adjustment, residual_before),
+            "score_vs_base_minus_actual": _corr(score, -residual_before),
+        },
+    }
+
+
 def _age_band(age: int) -> str:
     if age <= 21:
         return "<=21"
@@ -214,6 +278,7 @@ def run_backtest(
             folds.append(fold)
             if include_stage_metrics:
                 fold["stage_metrics"] = _diagnostic_stage_rmse(records)
+                fold["compatibility_diagnostics"] = _compatibility_diagnostics(records)
             all_records.extend(records)
             _logger.info(
                 "[Backtest] target=%s n=%d ensemble_rmse=%.4f base=%.4f persistence=%.4f",
@@ -288,6 +353,7 @@ def run_backtest(
 
     if include_stage_metrics and all_records:
         report["stage_metrics"] = _diagnostic_stage_rmse(all_records)
+        report["compatibility_diagnostics"] = _compatibility_diagnostics(all_records)
 
     if output_path:
         path = Path(output_path)
