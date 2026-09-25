@@ -494,6 +494,30 @@ def build_base_oof_predictions(
                         extra_metrics=[],
                         league_max_games=league_max_games,
                     )
+                # prepare_features() adds nominal role/competition one-hot
+                # columns after _build_row(). The optimized OOF path builds rows
+                # directly, so reproduce the exact production feature contract here;
+                # otherwise the fitted XGBoost sees all categorical columns as zero
+                # during OOF inference and compatibility learns residuals for a
+                # different base predictor than the one used at production inference.
+                role_values = {
+                    "ruolo_combinato": str(source_clean.get("ruolo_combinato", "") or "").strip(),
+                    "ruolo_offensivo": str(source_clean.get("ruolo_offensivo", "") or "").strip(),
+                    "ruolo_difensivo": str(source_clean.get("ruolo_difensivo", "") or "").strip(),
+                }
+                for column, mapping in (
+                    getattr(base_model, "role_feature_encodings", {}) or {}
+                ).items():
+                    current = role_values.get(column, "")
+                    for value, feature_name in mapping.items():
+                        feature_row[feature_name] = 1.0 if current == value else 0.0
+                for value, feature_name in (
+                    getattr(base_model, "competition_feature_encodings", {}) or {}
+                ).items():
+                    feature_row[feature_name] = (
+                        1.0 if normalize_competition(value) == comp else 0.0
+                    )
+
                 feature_rows.append(feature_row)
                 prediction_keys.append((player_id, lid, comp, source_year + 1))
             except (TypeError, ValueError, KeyError) as exc:
