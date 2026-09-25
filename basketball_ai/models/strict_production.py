@@ -448,8 +448,8 @@ def build_base_oof_predictions(
                 )
                 if not precomputed:
                     continue
-                feature_rows.append(
-                    base_model._build_row(
+                try:
+                    feature_row = base_model._build_row(
                         source_clean,
                         _player_age_as_of(player, source_year),
                         position,
@@ -458,9 +458,31 @@ def build_base_oof_predictions(
                         league_max_games=league_max_games,
                         precomputed_history=precomputed[source_index],
                     )
-                )
+                except (TypeError, ValueError, KeyError):
+                    # Keep OOF generation compatible with model implementations
+                    # whose row builder cannot consume the optimized history
+                    # cache. The fallback is still leakage-safe because
+                    # history_clean is bounded to source_year.
+                    feature_row = base_model._build_row(
+                        source_clean,
+                        _player_age_as_of(player, source_year),
+                        position,
+                        history_clean,
+                        extra_metrics=[],
+                        league_max_games=league_max_games,
+                    )
+                feature_rows.append(feature_row)
                 prediction_keys.append((player_id, lid, comp, source_year + 1))
-            except (TypeError, ValueError, KeyError):
+            except (TypeError, ValueError, KeyError) as exc:
+                logger.debug(
+                    "[StrictProduction] OOF row skipped source=%s player=%s league=%s "
+                    "competition=%s: %s",
+                    source_year,
+                    player_id,
+                    lid,
+                    comp,
+                    exc,
+                )
                 continue
 
         if not feature_rows:
