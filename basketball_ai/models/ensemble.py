@@ -45,6 +45,8 @@ logger = logging.getLogger(__name__)
 _AGE_RATIO_MIN: float = 0.50
 _AGE_RATIO_MAX: float = 1.50
 
+_COMPATIBILITY_ADJUSTMENT_CAP: float = 0.50  # bounded additive compatibility correction
+
 # Contextual fit multiplier: maps the weighted ctx_score onto a rating
 # multiplier with a wider range than the old ±2% so that position/style fit
 # creates meaningful differentiation between teams for different players.
