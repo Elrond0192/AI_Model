@@ -23,6 +23,7 @@ from basketball_ai.models.production_training import (
     TemporalCompatibilityModel,
     _model_threads,
     _numeric_seasons,
+    _xgb,
     season_year,
 )
 
@@ -389,6 +390,29 @@ class CompetitionSeasonAheadPerformanceModel(SeasonAheadPerformanceModel):
         self._forecast_competitions = sorted(allowed_competitions)
         self._target_mode = self.target_mode
         return X, y
+
+    def fit_oof(self, data: Dict[str, Any]) -> None:
+        """Fit the base model on history strictly before an OOF prediction.
+
+        OOF folds cannot use the normal production train/validation/calibration
+        split: that contract intentionally requires three target seasons, while
+        an early rolling-origin fold may contain only one or two historical
+        transitions.  This path fits only on samples available through the
+        source season, so no source->target outcome can leak into the fold.
+        """
+        X, y = self.prepare_features(data)
+        self.feature_names = list(X.columns)
+        raw_weights = getattr(self, "_last_sample_weights", None)
+        sample_weights = (
+            np.asarray(raw_weights, dtype=float)
+            if raw_weights is not None and len(raw_weights) == len(X)
+            else np.ones(len(X), dtype=float)
+        )
+        if X.empty:
+            raise ValueError("No historical t -> t+1 samples are available for OOF fit")
+        self.model = _xgb(300, early_stopping=False)
+        self.model.fit(X, y, sample_weight=sample_weights, verbose=False)
+        self.is_trained = True
 
     def train(
         self,
