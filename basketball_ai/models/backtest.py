@@ -135,6 +135,102 @@ def _compatibility_diagnostics(records: List[Dict[str, Any]]) -> Dict[str, Any]:
     }
 
 
+def _component_diagnostics(records: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Isolate the rating-point contribution of each post-base component."""
+    required = (
+        "actual", "base_after_age_prediction", "after_league_prediction",
+        "after_context_prediction", "prediction", "league_factor",
+        "context_multiplier", "mpg_factor",
+    )
+    rows = [row for row in records if all(row.get(key) is not None for key in required)]
+    if not rows:
+        return {"n": 0}
+
+    actual = np.asarray([float(row["actual"]) for row in rows], dtype=float)
+    base = np.asarray([float(row["base_after_age_prediction"]) for row in rows], dtype=float)
+    after_league = np.asarray([float(row["after_league_prediction"]) for row in rows], dtype=float)
+    after_context = np.asarray([float(row["after_context_prediction"]) for row in rows], dtype=float)
+    final = np.asarray([float(row["prediction"]) for row in rows], dtype=float)
+    league_factor = np.asarray([float(row["league_factor"]) for row in rows], dtype=float)
+    context_multiplier = np.asarray([float(row["context_multiplier"]) for row in rows], dtype=float)
+    mpg_factor = np.asarray([float(row["mpg_factor"]) for row in rows], dtype=float)
+
+    def corr(left: np.ndarray, right: np.ndarray) -> Optional[float]:
+        if len(left) < 2 or np.std(left) == 0.0 or np.std(right) == 0.0:
+            return None
+        return float(np.corrcoef(left, right)[0, 1])
+
+    def metrics(prediction: np.ndarray) -> Dict[str, float]:
+        error = prediction - actual
+        return {
+            "rmse": float(np.sqrt(np.mean(error ** 2))),
+            "mae": float(np.mean(np.abs(error))),
+            "bias": float(np.mean(error)),
+        }
+
+    league_only = np.clip(base * league_factor, 3.5, 10.0)
+    context_only = np.clip(base * context_multiplier, 3.5, 10.0)
+    mpg_only = np.clip(base * mpg_factor, 3.5, 10.0)
+
+    components = {
+        "league": {
+            "factor": {
+                "mean": float(np.mean(league_factor)),
+                "std": float(np.std(league_factor)),
+                "min": float(np.min(league_factor)),
+                "max": float(np.max(league_factor)),
+            },
+            "standalone_metrics": metrics(league_only),
+            "sequential_metrics": metrics(after_league),
+            "correction_mean": float(np.mean(after_league - base)),
+            "correction_std": float(np.std(after_league - base)),
+            "correction_residual_correlation": corr(after_league - base, actual - base),
+        },
+        "context": {
+            "multiplier": {
+                "mean": float(np.mean(context_multiplier)),
+                "std": float(np.std(context_multiplier)),
+                "min": float(np.min(context_multiplier)),
+                "max": float(np.max(context_multiplier)),
+            },
+            "standalone_metrics": metrics(context_only),
+            "sequential_metrics": metrics(after_context),
+            "correction_mean": float(np.mean(after_context - after_league)),
+            "correction_std": float(np.std(after_context - after_league)),
+            "correction_residual_correlation": corr(
+                after_context - after_league, actual - after_league
+            ),
+        },
+        "mpg": {
+            "factor": {
+                "mean": float(np.mean(mpg_factor)),
+                "std": float(np.std(mpg_factor)),
+                "min": float(np.min(mpg_factor)),
+                "max": float(np.max(mpg_factor)),
+            },
+            "standalone_metrics": metrics(mpg_only),
+            "sequential_metrics": metrics(final),
+            "correction_mean": float(np.mean(final - after_context)),
+            "correction_std": float(np.std(final - after_context)),
+            "correction_residual_correlation": corr(
+                final - after_context, actual - after_context
+            ),
+        },
+    }
+
+    return {
+        "n": int(len(rows)),
+        "base_metrics": metrics(base),
+        "after_context_metrics": metrics(after_context),
+        "final_metrics": metrics(final),
+        "components": components,
+        "final_gain_vs_after_context_rmse": (
+            float(np.sqrt(np.mean((after_context - actual) ** 2)))
+            - float(np.sqrt(np.mean((final - actual) ** 2)))
+        ),
+    }
+
+
 def _age_band(age: int) -> str:
     if age <= 21:
         return "<=21"
@@ -279,6 +375,7 @@ def run_backtest(
             if include_stage_metrics:
                 fold["stage_metrics"] = _diagnostic_stage_rmse(records)
                 fold["compatibility_diagnostics"] = _compatibility_diagnostics(records)
+                fold["component_diagnostics"] = _component_diagnostics(records)
             all_records.extend(records)
             _logger.info(
                 "[Backtest] target=%s n=%d ensemble_rmse=%.4f base=%.4f persistence=%.4f",
@@ -354,6 +451,7 @@ def run_backtest(
     if include_stage_metrics and all_records:
         report["stage_metrics"] = _diagnostic_stage_rmse(all_records)
         report["compatibility_diagnostics"] = _compatibility_diagnostics(all_records)
+        report["component_diagnostics"] = _component_diagnostics(all_records)
 
     if output_path:
         path = Path(output_path)
