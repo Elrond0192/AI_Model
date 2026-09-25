@@ -809,6 +809,13 @@ def evaluate_target_season(
 
 
 def metric_summary(records: Iterable[Dict[str, Any]]) -> Dict[str, float]:
+    """Summarize predictions with optional prediction-interval diagnostics.
+
+    Diagnostics such as compatibility compare raw base/adjusted predictions and
+    therefore do not carry confidence intervals.  Core error metrics must remain
+    available for those records instead of requiring production-only interval
+    fields.
+    """
     rows = list(records)
     if not rows:
         return {}
@@ -817,25 +824,41 @@ def metric_summary(records: Iterable[Dict[str, Any]]) -> Dict[str, float]:
     error = pred - actual
     ss_res = float(np.sum(error ** 2))
     ss_tot = float(np.sum((actual - actual.mean()) ** 2))
-    coverage = np.mean(
-        [
-            row["confidence_low"] <= row["actual"] <= row["confidence_high"]
-            for row in rows
-        ]
-    )
-    widths = np.asarray(
-        [row["confidence_high"] - row["confidence_low"] for row in rows],
-        dtype=float,
-    )
-    return {
+
+    result: Dict[str, float] = {
         "n": int(len(rows)),
         "rmse": float(np.sqrt(np.mean(error ** 2))),
         "mae": float(np.mean(np.abs(error))),
         "r2": 1.0 - ss_res / ss_tot if ss_tot > 0 else 0.0,
         "bias": float(np.mean(error)),
-        "interval_coverage": float(coverage),
-        "interval_mean_width": float(np.mean(widths)),
     }
+
+    interval_rows = [
+        row
+        for row in rows
+        if row.get("confidence_low") is not None
+        and row.get("confidence_high") is not None
+    ]
+    if interval_rows:
+        coverage = np.mean(
+            [
+                float(row["confidence_low"])
+                <= float(row["actual"])
+                <= float(row["confidence_high"])
+                for row in interval_rows
+            ]
+        )
+        widths = np.asarray(
+            [
+                float(row["confidence_high"]) - float(row["confidence_low"])
+                for row in interval_rows
+            ],
+            dtype=float,
+        )
+        result["interval_coverage"] = float(coverage)
+        result["interval_mean_width"] = float(np.mean(widths))
+
+    return result
 
 
 class ProductionEnsembleModel(EnsembleModel):
