@@ -386,6 +386,8 @@ def build_base_oof_predictions(
             continue
 
         snapshot = build_historical_snapshot(data, source_year)
+        snapshot_stats = snapshot["player_stats"].copy()
+        snapshot_stats["_season_year"] = _numeric_seasons(snapshot_stats)
         try:
             base_model = CompetitionSeasonAheadPerformanceModel()
             base_model.train(snapshot)
@@ -403,7 +405,6 @@ def build_base_oof_predictions(
             )
             continue
 
-        snapshot_stats = snapshot["player_stats"].copy()
         snapshot_stats["_season_year"] = _numeric_seasons(snapshot_stats)
         snapshot_stats["_competition"] = snapshot_stats["competition"].map(
             normalize_competition
