@@ -1091,6 +1091,11 @@ def evaluate_target_season(
                 "compatibility_factor": float(result.compatibility_factor),
                 "after_league_prediction": diagnostic_stages.get("after_league"),
                 "after_context_prediction": diagnostic_stages.get("after_context"),
+                "league_factor": diagnostic_stages.get("league_factor"),
+                "context_multiplier": diagnostic_stages.get("context_multiplier"),
+                "mpg_factor": diagnostic_stages.get("mpg_factor"),
+                "latest_mpg": diagnostic_stages.get("latest_mpg"),
+                "mpg_baseline": diagnostic_stages.get("mpg_baseline"),
                 "position": position_as_of(
                     pid,
                     relations,
