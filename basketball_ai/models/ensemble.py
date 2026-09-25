@@ -420,22 +420,20 @@ class EnsembleModel:
             base_rating = float(np.clip(base_rating * age_ratio, 3.5, 10.0))
         base_after_age = float(base_rating)
 
-        # 4. Compatibility: centred KNN score [0,1] → bounded additive
-        # residual adjustment. 0.50 is exactly neutral; the adjustment is
-        # capped at ±0.50 rating points so compatibility cannot amplify the
-        # entire base prediction. The score itself remains in the public
-        # 0–1 contract for diagnostics/API compatibility.
+        # 4. Compatibility is a contextual signal, not a prediction correction.
+        #
+        # The competition-aware compatibility model is currently trained on
+        # player/team style vectors against an OOF residual target. That makes
+        # its score useful as a fit signal, but it is not sufficiently calibrated
+        # to be added to the rating prediction itself. In particular, the learned
+        # score can be systematically shifted away from 0.50 even when the base
+        # predictor already has a positive/negative bias.
+        #
+        # Keep the score in the public 0–1 contract for diagnostics, scenarios and
+        # the future BB Rating, but do NOT feed it back into the prediction.
         cf = float(np.clip(self.compat_model.score(player_id, team_id, data), 0.0, 1.0))
-        compat_adjustment = float(
-            np.clip(
-                (cf - 0.50) * (2.0 * _COMPATIBILITY_ADJUSTMENT_CAP),
-                -_COMPATIBILITY_ADJUSTMENT_CAP,
-                _COMPATIBILITY_ADJUSTMENT_CAP,
-            )
-        )
-        after_compatibility = float(
-            np.clip(base_after_age + compat_adjustment, 3.5, 10.0)
-        )
+        compat_adjustment = 0.0
+        after_compatibility = base_after_age
 
         # 5. League quality factor — derived from competitiveness_score in real data.
         # No hardcoded tier map: the factor is proportional to the league's
@@ -525,7 +523,7 @@ class EnsembleModel:
         explanation = (
             f"Rating 0–10 basato su: "
             f"XGBoost ({len(self.perf_model.feature_names)} features, base {base_rating:.2f}) "
-            f"+ compatibilità stile ({compat_adjustment:+.2f}) "
+            f"+ compatibilità stile (score {cf:.3f}, non applicata alla previsione) "
             f"× qualità lega (league {league_id}, fattore {lf:.3f}) "
             f"× contesto (posizione+stile+adattamento, fattore {ctx_mult:.3f}) "
             f"× minuti ({latest_mpg:.0f} min/g, fattore {mpg_factor:.2f}) "
