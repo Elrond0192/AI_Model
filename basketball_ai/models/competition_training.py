@@ -47,6 +47,7 @@ _COMP_ALIASES = {
 _PREFERRED_COMPETITION_ORDER = ("RS", "PO", "CUP", "SUPERCUP", "TOT")
 _SCOPE_CACHE_KEY = "_competition_scope_cache"
 _COMPATIBILITY_ADJUSTMENT_CAP = 0.5
+_COMPATIBILITY_RESIDUAL_SCALE = 4.0
 
 
 def forecast_competitions() -> set[str]:
@@ -760,7 +761,7 @@ class CompetitionTemporalCompatibilityModel(TemporalCompatibilityModel):
                     compatibility = float(
                         np.clip(
                             0.5
-                            + residual / (2.0 * _COMPATIBILITY_ADJUSTMENT_CAP),
+                            + residual / (2.0 * _COMPATIBILITY_RESIDUAL_SCALE),
                             0.0,
                             1.0,
                         )
