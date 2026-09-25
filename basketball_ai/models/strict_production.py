@@ -389,7 +389,18 @@ def build_base_oof_predictions(
         try:
             base_model = CompetitionSeasonAheadPerformanceModel()
             base_model.train(snapshot)
-        except (RuntimeError, ValueError, KeyError):
+        except (RuntimeError, ValueError, KeyError) as exc:
+            logger.warning(
+                "[StrictProduction] OOF fold unavailable source_year=%s "
+                "target_year=%s eligible=%s snapshot_max_season=%s: %s",
+                source_year,
+                source_year + 1,
+                len(eligible),
+                int(snapshot_stats["_season_year"].max())
+                if not snapshot_stats.empty
+                else None,
+                exc,
+            )
             continue
 
         snapshot_stats = snapshot["player_stats"].copy()
@@ -485,7 +496,19 @@ def build_base_oof_predictions(
                 )
                 continue
 
+        logger.info(
+            "[StrictProduction] OOF source_year=%s eligible=%s feature_rows=%s",
+            source_year,
+            len(eligible),
+            len(feature_rows),
+        )
         if not feature_rows:
+            logger.warning(
+                "[StrictProduction] OOF source_year=%s produced no feature rows "
+                "from %s eligible rows",
+                source_year,
+                len(eligible),
+            )
             continue
 
         # XGBoost prediction is vectorised. The old implementation invoked
@@ -526,7 +549,18 @@ def build_base_oof_predictions(
                 for key, value in zip(prediction_keys, batch_predictions)
             }
         )
+        logger.info(
+            "[StrictProduction] OOF source_year=%s predictions_added=%s total=%s",
+            source_year,
+            len(batch_predictions),
+            len(predictions),
+        )
 
+    logger.info(
+        "[StrictProduction] OOF generation complete predictions=%s source_years=%s",
+        len(predictions),
+        len(source_years),
+    )
     return predictions
 
 
