@@ -560,6 +560,13 @@ class EnsembleModel:
             "after_league": after_league,
             "after_context": after_context,
             "final_prediction": adjusted,
+            # Component-level diagnostics are intentionally private and are
+            # consumed only by the walk-forward diagnostic runner.
+            "league_factor": float(lf),
+            "context_multiplier": float(ctx_mult),
+            "mpg_factor": float(mpg_factor),
+            "latest_mpg": float(latest_mpg),
+            "mpg_baseline": float(self._mpg_baseline),
         }
         return result
 
