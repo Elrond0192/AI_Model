@@ -760,17 +760,19 @@ class StrictProductionEnsembleModel(ProductionEnsembleModel):
         self._age_curve_state = get_fitted_params()
 
         compatibility_oof = build_base_oof_predictions(fit_data)
-        if compatibility_oof:
-            self.compat_model.train(
-                fit_data,
-                base_predictions=compatibility_oof,
-            )
-        else:
-            logger.warning(
+        if not compatibility_oof:
+            raise RuntimeError(
                 "[StrictProduction] OOF base predictions unavailable; "
-                "using legacy compatibility target."
+                "refusing to train the legacy compatibility target."
             )
-            self.compat_model.train(fit_data)
+        self.compat_model.train(
+            fit_data,
+            base_predictions=compatibility_oof,
+        )
+        logger.info(
+            "[StrictProduction] Compatibility trained on %s leakage-safe OOF base predictions",
+            len(compatibility_oof),
+        )
         self._restore_competition_encoding()
         self._calibrate_mpg_baseline(fit_data)
         self._calibrate_league_factors(fit_data)
