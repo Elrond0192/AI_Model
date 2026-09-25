@@ -390,7 +390,13 @@ def build_base_oof_predictions(
         snapshot_stats["_season_year"] = _numeric_seasons(snapshot_stats)
         try:
             base_model = CompetitionSeasonAheadPerformanceModel()
-            base_model.train(snapshot)
+            fit_oof = getattr(base_model, "fit_oof", None)
+            if callable(fit_oof):
+                fit_oof(snapshot)
+            else:
+                # Preserve the lightweight test double contract while real
+                # production models use the dedicated leakage-safe OOF fit.
+                base_model.train(snapshot)
         except (RuntimeError, ValueError, KeyError) as exc:
             logger.warning(
                 "[StrictProduction] OOF fold unavailable source_year=%s "
