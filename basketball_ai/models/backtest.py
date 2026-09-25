@@ -85,15 +85,16 @@ def _age_band(age: int) -> str:
 
 def run_backtest(
     data: Dict[str, Any],
-    n_folds: int = 3,
+    n_folds: Optional[int] = None,
     output_path: Optional[str] = "models_saved/backtest_report.json",
     min_samples_per_fold: Optional[int] = None,
     include_stage_metrics: bool = False,
     compare_target_modes: bool = False,
 ) -> Dict[str, Any]:
-    """Evaluate the complete production path on untouched future seasons.
+    """Evaluate the complete production path on all eligible future seasons.
 
-    Each fold trains/calibrates using only seasons up to ``target-1`` and then
+    By default every eligible target season is evaluated. Each fold
+    trains/calibrates using only seasons up to ``target-1`` and then
     predicts exact same-league/same-competition outcomes in ``target``.  The
     final ensemble is compared with base XGBoost and persistence and is also
     reported independently for every observed competition.
@@ -121,8 +122,15 @@ def run_backtest(
         }
 
     eligible_targets = seasons[4:]
-    requested_folds = max(1, int(n_folds))
-    targets = eligible_targets[-min(requested_folds, len(eligible_targets)):]
+    # By default evaluate every eligible historical target season. ``n_folds``
+    # is an explicit cap for faster diagnostics, not the production default.
+    # With 2018-2025 source history this evaluates 2022-2025, while each fold
+    # trains only on seasons strictly before its target season.
+    if n_folds is None:
+        targets = eligible_targets
+    else:
+        requested_folds = max(1, int(n_folds))
+        targets = eligible_targets[-min(requested_folds, len(eligible_targets)):]
     minimum = (
         int(os.getenv("BACKTEST_MIN_SAMPLES_PER_FOLD", "1"))
         if min_samples_per_fold is None
@@ -177,6 +185,11 @@ def run_backtest(
                 "fold": index,
                 "train_through_season": source_season,
                 "target_season": target_season,
+                "train_history_start": min(seasons) if seasons else None,
+                "train_history_end": source_season,
+                "train_history_seasons": [
+                    year for year in seasons if year <= source_season
+                ],
                 "valid": True,
                 **summary,
                 "base_rmse": base_rmse,

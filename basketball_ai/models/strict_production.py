@@ -238,6 +238,7 @@ class AsOfPositionPerformanceModel(CompetitionSeasonAheadPerformanceModel):
         player_stats_history: pd.DataFrame,
         extra_metrics: Optional[List[str]] = None,
         league_max_games: Optional[Dict[int, int]] = None,
+        precomputed_history: Optional[Dict[str, float]] = None,
     ) -> Dict[str, float]:
         try:
             position = position_as_of(
@@ -257,6 +258,7 @@ class AsOfPositionPerformanceModel(CompetitionSeasonAheadPerformanceModel):
             player_stats_history,
             extra_metrics=extra_metrics,
             league_max_games=league_max_games,
+            precomputed_history=precomputed_history,
         )
 
 
