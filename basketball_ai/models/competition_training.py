@@ -46,7 +46,8 @@ _COMP_ALIASES = {
 }
 _PREFERRED_COMPETITION_ORDER = ("RS", "PO", "CUP", "SUPERCUP", "TOT")
 _SCOPE_CACHE_KEY = "_competition_scope_cache"
-_COMPATIBILITY_RESIDUAL_SCALE = 4.0
+_COMPATIBILITY_ADJUSTMENT_CAP = 0.5
+_COMPATIBILITY_RESIDUAL_SCALE = 1.0
 
 
 def forecast_competitions() -> set[str]:
@@ -438,8 +439,10 @@ class CompetitionTemporalCompatibilityModel(TemporalCompatibilityModel):
 
     When ``base_predictions`` are supplied, the KNN target is a centred,
     bounded transform of ``future_rating - out_of_fold_base_prediction``.
-    A neutral residual therefore maps to 0.5, which becomes a 1.00 ensemble
-    multiplier and allows both positive and negative compatibility effects.
+    A neutral residual therefore maps to 0.5. The production ensemble converts
+    that centred score into a bounded additive rating adjustment rather than a
+    multiplicative boost, so compatibility cannot silently scale the whole base
+    prediction.
     """
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
@@ -752,11 +755,13 @@ class CompetitionTemporalCompatibilityModel(TemporalCompatibilityModel):
                     if not np.isfinite(base_prediction):
                         continue
                     residual = float(stat["rating"]) - base_prediction
-                    # Neutral residual (0.0) -> 0.5. Values outside +/-4.0
-                    # are clipped before mapping so noisy targets remain bounded.
+                    # Neutral residual (0.0) -> 0.5. The learned score is a
+                    # centred representation of the OOF residual; inference
+                    # converts it back to a conservative additive adjustment.
                     compatibility = float(
                         np.clip(
-                            0.5 + residual / (2.0 * _COMPATIBILITY_RESIDUAL_SCALE),
+                            0.5
+                            + residual / (2.0 * _COMPATIBILITY_RESIDUAL_SCALE),
                             0.0,
                             1.0,
                         )
@@ -782,7 +787,7 @@ class CompetitionTemporalCompatibilityModel(TemporalCompatibilityModel):
         if not X_rows:
             # Compatibility is an additive adjustment to the base model. When
             # no usable prior same-league/same-competition history exists, use
-            # a neutral multiplier rather than borrowing another competition,
+            # a neutral score rather than borrowing another competition,
             # using the target season, or failing the complete model.
             neutral_vector = np.zeros(12, dtype=float)
             self.knn = KNeighborsRegressor(
