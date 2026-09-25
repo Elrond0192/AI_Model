@@ -418,11 +418,22 @@ class EnsembleModel:
             base_rating = float(np.clip(base_rating * age_ratio, 3.5, 10.0))
         base_after_age = float(base_rating)
 
-        # 4. Compatibility: KNN score [0,1] → multiplier [0.90,1.10].
-        # A centred score of 0.50 is neutral (1.00).
-        cf          = self.compat_model.score(player_id, team_id, data)
-        compat_mult = 0.90 + cf * 0.20
-        after_compatibility = float(np.clip(base_after_age * compat_mult, 3.5, 10.0))
+        # 4. Compatibility: centred KNN score [0,1] → bounded additive
+        # residual adjustment. 0.50 is exactly neutral; the adjustment is
+        # capped at ±0.50 rating points so compatibility cannot amplify the
+        # entire base prediction. The score itself remains in the public
+        # 0–1 contract for diagnostics/API compatibility.
+        cf = float(np.clip(self.compat_model.score(player_id, team_id, data), 0.0, 1.0))
+        compat_adjustment = float(
+            np.clip(
+                (cf - 0.50) * (2.0 * _COMPATIBILITY_ADJUSTMENT_CAP),
+                -_COMPATIBILITY_ADJUSTMENT_CAP,
+                _COMPATIBILITY_ADJUSTMENT_CAP,
+            )
+        )
+        after_compatibility = float(
+            np.clip(base_after_age + compat_adjustment, 3.5, 10.0)
+        )
 
         # 5. League quality factor — derived from competitiveness_score in real data.
         # No hardcoded tier map: the factor is proportional to the league's
@@ -512,7 +523,7 @@ class EnsembleModel:
         explanation = (
             f"Rating 0–10 basato su: "
             f"XGBoost ({len(self.perf_model.feature_names)} features, base {base_rating:.2f}) "
-            f"× compatibilità stile ({compat_mult:.2f}) "
+            f"+ compatibilità stile ({compat_adjustment:+.2f}) "
             f"× qualità lega (league {league_id}, fattore {lf:.3f}) "
             f"× contesto (posizione+stile+adattamento, fattore {ctx_mult:.3f}) "
             f"× minuti ({latest_mpg:.0f} min/g, fattore {mpg_factor:.2f}) "
@@ -545,6 +556,7 @@ class EnsembleModel:
             "base_before_age": base_before_age,
             "base_after_age": base_after_age,
             "after_compatibility": after_compatibility,
+            "compatibility_adjustment": compat_adjustment,
             "after_league": after_league,
             "after_context": after_context,
             "final_prediction": adjusted,
