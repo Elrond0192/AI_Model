@@ -1086,6 +1086,7 @@ def evaluate_target_season(
                 "base_before_age_prediction": diagnostic_stages.get("base_before_age"),
                 "base_after_age_prediction": diagnostic_stages.get("base_after_age"),
                 "after_compatibility_prediction": diagnostic_stages.get("after_compatibility"),
+                "compatibility_factor": float(result.compatibility_factor),
                 "after_league_prediction": diagnostic_stages.get("after_league"),
                 "after_context_prediction": diagnostic_stages.get("after_context"),
                 "position": position_as_of(
