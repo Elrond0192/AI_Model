@@ -493,7 +493,7 @@ def test_base_oof_predictions_are_batched_per_source_year(monkeypatch):
             raise AssertionError("OOF should use batched model.predict")
 
     monkeypatch.setattr(strict, "build_historical_snapshot", fake_snapshot)
-    monkeypatch.setattr(strict, "CompetitionSeasonAheadPerformanceModel", FakeBaseModel)
+    monkeypatch.setattr(strict, "AsOfPositionPerformanceModel", FakeBaseModel)
 
     result = strict.build_base_oof_predictions(data)
 
