@@ -231,6 +231,80 @@ def _component_diagnostics(records: List[Dict[str, Any]]) -> Dict[str, Any]:
     }
 
 
+def _persistence_blend_diagnostics(records: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """OOF-only diagnostic for blending the learned delta with persistence.
+
+    This does not change production inference. It answers whether the current
+    model contains useful information beyond persistence, and how much of it
+    survives when the prediction is shrunk back toward the persistence prior.
+    """
+    rows = [
+        row for row in records
+        if row.get("actual") is not None
+        and row.get("persistence_prediction") is not None
+        and row.get("prediction") is not None
+    ]
+    if len(rows) < 2:
+        return {"n": len(rows)}
+
+    actual = np.asarray([float(row["actual"]) for row in rows], dtype=float)
+    persistence = np.asarray([float(row["persistence_prediction"]) for row in rows], dtype=float)
+    prediction = np.asarray([float(row["prediction"]) for row in rows], dtype=float)
+    delta = prediction - persistence
+    residual = actual - persistence
+
+    def rmse(values: np.ndarray) -> float:
+        return float(np.sqrt(np.mean((values - actual) ** 2)))
+
+    denominator = float(np.sum(delta * delta))
+    alpha = float(np.sum(delta * residual) / denominator) if denominator > 0 else 0.0
+    alpha_clipped = float(np.clip(alpha, 0.0, 1.0))
+    blended = persistence + alpha_clipped * delta
+
+    return {
+        "n": int(len(rows)),
+        "persistence_rmse": rmse(persistence),
+        "model_rmse": rmse(prediction),
+        "raw_model_delta_rmse_gain_vs_persistence": rmse(persistence) - rmse(prediction),
+        "optimal_oof_alpha_unbounded": alpha,
+        "optimal_oof_alpha_0_1": alpha_clipped,
+        "blended_rmse_0_1": rmse(blended),
+        "blended_gain_vs_persistence": rmse(persistence) - rmse(blended),
+        "delta_std": float(np.std(delta)),
+        "delta_residual_correlation": (
+            float(np.corrcoef(delta, residual)[0, 1])
+            if np.std(delta) > 0.0 and np.std(residual) > 0.0
+            else None
+        ),
+    }
+
+
+def _role_residual_diagnostics(records: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Measure whether model-vs-persistence residuals are role-dependent."""
+    rows = [
+        row for row in records
+        if row.get("position") is not None
+        and row.get("actual") is not None
+        and row.get("persistence_prediction") is not None
+        and row.get("prediction") is not None
+    ]
+    result: Dict[str, Any] = {}
+    for position in sorted({str(row["position"]) for row in rows}):
+        group = [row for row in rows if str(row["position"]) == position]
+        if len(group) < 20:
+            continue
+        actual = np.asarray([float(row["actual"]) for row in group], dtype=float)
+        persistence = np.asarray([float(row["persistence_prediction"]) for row in group], dtype=float)
+        prediction = np.asarray([float(row["prediction"]) for row in group], dtype=float)
+        result[position] = {
+            "n": len(group),
+            "persistence_rmse": float(np.sqrt(np.mean((persistence - actual) ** 2))),
+            "model_rmse": float(np.sqrt(np.mean((prediction - actual) ** 2))),
+            "model_bias": float(np.mean(prediction - actual)),
+            "persistence_bias": float(np.mean(persistence - actual)),
+        }
+    return result
+
 def _age_band(age: int) -> str:
     if age <= 21:
         return "<=21"
