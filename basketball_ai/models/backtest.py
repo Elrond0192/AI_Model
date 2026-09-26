@@ -425,21 +425,24 @@ def run_backtest(
                     f"only {len(records)} evaluable samples; minimum is {minimum}"
                 )
 
-            nested_shrinkage = _nested_temporal_shrinkage_alpha(data, source_season)
-            nested_alpha = float(nested_shrinkage.get("alpha", 0.0))
-            for row in records:
-                persistence = float(row["persistence_prediction"])
-                model_prediction = float(row["prediction"])
-                row["nested_shrinkage_prediction"] = float(np.clip(
-                    persistence + nested_alpha * (model_prediction - persistence),
-                    3.5, 10.0,
-                ))
+            nested_shrinkage = None
+            nested_summary = None
+            if include_stage_metrics:
+                nested_shrinkage = _nested_temporal_shrinkage_alpha(data, source_season)
+                nested_alpha = float(nested_shrinkage.get("alpha", 0.0))
+                for row in records:
+                    persistence = float(row["persistence_prediction"])
+                    model_prediction = float(row["prediction"])
+                    row["nested_shrinkage_prediction"] = float(np.clip(
+                        persistence + nested_alpha * (model_prediction - persistence),
+                        3.5, 10.0,
+                    ))
+                nested_summary = metric_summary([
+                    {"actual": row["actual"], "prediction": row["nested_shrinkage_prediction"]}
+                    for row in records
+                ])
 
             summary = metric_summary(records)
-            nested_summary = metric_summary([
-                {"actual": row["actual"], "prediction": row["nested_shrinkage_prediction"]}
-                for row in records
-            ])
             target_mode_comparison = None
             if compare_target_modes:
                 absolute_ensemble = _AbsoluteTargetEnsemble()
@@ -484,15 +487,6 @@ def run_backtest(
                 "target_mode_comparison": target_mode_comparison,
                 "ensemble_vs_base_delta": base_rmse - summary["rmse"],
                 "ensemble_vs_persistence_delta": persistence_rmse - summary["rmse"],
-                "nested_shrinkage": {
-                    **nested_shrinkage,
-                    "outer_rmse": nested_summary["rmse"],
-                    "outer_mae": nested_summary["mae"],
-                    "outer_bias": nested_summary["bias"],
-                    "outer_r2": nested_summary["r2"],
-                    "outer_gain_vs_persistence": persistence_rmse - nested_summary["rmse"],
-                    "outer_gain_vs_raw_model": summary["rmse"] - nested_summary["rmse"],
-                },
                 "by_league": _segment_metrics(records, "league_id"),
                 "by_competition": _segment_metrics(records, "competition"),
                 "by_position": _segment_metrics(records, "position"),
@@ -514,6 +508,15 @@ def run_backtest(
                 fold["component_diagnostics"] = _component_diagnostics(records)
                 fold["persistence_blend_diagnostics"] = _persistence_blend_diagnostics(records)
                 fold["role_residual_diagnostics"] = _role_residual_diagnostics(records)
+                fold["nested_shrinkage"] = {
+                    **(nested_shrinkage or {}),
+                    "outer_rmse": nested_summary["rmse"],
+                    "outer_mae": nested_summary["mae"],
+                    "outer_bias": nested_summary["bias"],
+                    "outer_r2": nested_summary["r2"],
+                    "outer_gain_vs_persistence": persistence_rmse - nested_summary["rmse"],
+                    "outer_gain_vs_raw_model": summary["rmse"] - nested_summary["rmse"],
+                }
             all_records.extend(records)
             _logger.info(
                 "[Backtest] target=%s n=%d ensemble_rmse=%.4f base=%.4f persistence=%.4f",
@@ -538,11 +541,14 @@ def run_backtest(
     overall = metric_summary(all_records)
     base_rmse = _rmse(all_records, "base_prediction")
     persistence_rmse = _rmse(all_records, "persistence_prediction")
-    nested_overall = metric_summary([
-        {"actual": row["actual"], "prediction": row["nested_shrinkage_prediction"]}
-        for row in all_records
-    ])
-    nested_shrinkage_rmse = nested_overall.get("rmse", float("nan"))
+    nested_overall = None
+    nested_shrinkage_rmse = float("nan")
+    if include_stage_metrics and all_records:
+        nested_overall = metric_summary([
+            {"actual": row["actual"], "prediction": row["nested_shrinkage_prediction"]}
+            for row in all_records
+        ])
+        nested_shrinkage_rmse = nested_overall.get("rmse", float("nan"))
     if all_records:
         for row in all_records:
             row["age_band"] = _age_band(int(row.get("age", 0) or 0))
@@ -572,20 +578,6 @@ def run_backtest(
             if overall and math.isfinite(persistence_rmse)
             else float("nan")
         ),
-        "nested_shrinkage": {
-            **nested_overall,
-            "gain_vs_persistence": persistence_rmse - nested_shrinkage_rmse,
-            "gain_vs_raw_model": overall["rmse"] - nested_shrinkage_rmse,
-            "alphas": [
-                {
-                    "target_season": fold["target_season"],
-                    "alpha": fold["nested_shrinkage"].get("alpha"),
-                    "valid": fold["nested_shrinkage"].get("valid"),
-                }
-                for fold in folds
-                if fold.get("valid") and fold.get("nested_shrinkage")
-            ],
-        },
         "by_league": _segment_metrics(all_records, "league_id") if all_records else {},
         "by_competition": _segment_metrics(all_records, "competition") if all_records else {},
         "by_position": _segment_metrics(all_records, "position") if all_records else {},
@@ -611,6 +603,20 @@ def run_backtest(
         report["component_diagnostics"] = _component_diagnostics(all_records)
         report["persistence_blend_diagnostics"] = _persistence_blend_diagnostics(all_records)
         report["role_residual_diagnostics"] = _role_residual_diagnostics(all_records)
+        report["nested_shrinkage"] = {
+            **(nested_overall or {}),
+            "gain_vs_persistence": persistence_rmse - nested_shrinkage_rmse,
+            "gain_vs_raw_model": overall["rmse"] - nested_shrinkage_rmse,
+            "alphas": [
+                {
+                    "target_season": fold["target_season"],
+                    "alpha": fold["nested_shrinkage"].get("alpha"),
+                    "valid": fold["nested_shrinkage"].get("valid"),
+                }
+                for fold in folds
+                if fold.get("valid") and fold.get("nested_shrinkage")
+            ],
+        }
 
     if output_path:
         path = Path(output_path)
