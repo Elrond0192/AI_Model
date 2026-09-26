@@ -604,6 +604,11 @@ class StrictProductionEnsembleModel(ProductionEnsembleModel):
     """Exact competition-aware model implementation used by production."""
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
+        self._enable_persistence_shrinkage = bool(
+            kwargs.pop("enable_persistence_shrinkage", True)
+        )
+        self._persistence_shrinkage_alpha = 0.0
+        self._persistence_shrinkage_calibration: Dict[str, Any] = {}
         kwargs.setdefault("performance_model", AsOfPositionPerformanceModel())
         kwargs.setdefault(
             "compatibility_model", CompetitionTemporalCompatibilityModel()
@@ -615,6 +620,28 @@ class StrictProductionEnsembleModel(ProductionEnsembleModel):
         self._conformal_by_competition: Dict[str, float] = {}
         self._conformal_samples_by_competition: Dict[str, int] = {}
         self._age_curve_state: Dict[str, Dict[str, float]] = {}
+
+    @staticmethod
+    def _fit_persistence_shrinkage(records: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Fit alpha for model-delta shrinkage on a prior calibration season."""
+        rows = [
+            row for row in records
+            if row.get("actual") is not None
+            and row.get("persistence_prediction") is not None
+            and row.get("prediction") is not None
+        ]
+        if len(rows) < 2:
+            return {"valid": False, "alpha": 0.0, "n": len(rows)}
+        actual = np.asarray([float(row["actual"]) for row in rows], dtype=float)
+        persistence = np.asarray([float(row["persistence_prediction"]) for row in rows], dtype=float)
+        prediction = np.asarray([float(row["prediction"]) for row in rows], dtype=float)
+        delta = prediction - persistence
+        residual = actual - persistence
+        denominator = float(np.sum(delta * delta))
+        alpha = float(np.clip(np.sum(delta * residual) / denominator, 0.0, 1.0)) if denominator > 0.0 else 0.0
+        blended = persistence + alpha * delta
+        rmse = lambda values: float(np.sqrt(np.mean((values - actual) ** 2)))
+        return {"valid": True, "alpha": alpha, "n": len(rows), "persistence_rmse": rmse(persistence), "model_rmse": rmse(prediction), "blended_rmse": rmse(blended), "gain_vs_persistence": rmse(persistence) - rmse(blended)}
 
     def _restore_style_bounds(self) -> None:
         if not self._style_bounds_state:
@@ -737,6 +764,8 @@ class StrictProductionEnsembleModel(ProductionEnsembleModel):
         )
 
         reset_fitted_params()
+        self._persistence_shrinkage_alpha = 0.0
+        self._persistence_shrinkage_calibration = {}
         metrics = self.perf_model.train(data)
         self._competition_encoding_state = dict(
             getattr(self.perf_model, "competition_encoding", {})
@@ -790,21 +819,29 @@ class StrictProductionEnsembleModel(ProductionEnsembleModel):
             raise RuntimeError(
                 "At least 10 final-ensemble calibration predictions are required"
             )
-        residuals = [
-            abs(row["prediction"] - row["actual"])
-            for row in calibration_records
-        ]
+        if self._enable_persistence_shrinkage:
+            shrinkage = self._fit_persistence_shrinkage(calibration_records)
+            self._persistence_shrinkage_alpha = float(shrinkage.get("alpha", 0.0))
+            self._persistence_shrinkage_calibration = {"target_season": calibration_season, **shrinkage}
+        else:
+            self._persistence_shrinkage_alpha = 0.0
+            self._persistence_shrinkage_calibration = {"target_season": calibration_season, "valid": False, "alpha": 0.0, "n": len(calibration_records), "disabled": True}
+        calibrated_predictions = []
+        for row in calibration_records:
+            persistence = float(row["persistence_prediction"])
+            raw_prediction = float(row["prediction"])
+            final_prediction = float(np.clip(persistence + self._persistence_shrinkage_alpha * (raw_prediction - persistence), 3.5, 10.0))
+            calibrated_predictions.append({**row, "prediction": final_prediction})
+        residuals = [abs(row["prediction"] - row["actual"]) for row in calibrated_predictions]
         self._calibrate_conformal(residuals)
         if self._conformal_q_hi is None:
             raise RuntimeError("Final-ensemble conformal calibration failed")
-        self._calibrate_competitions(calibration_records)
-
-        calibrated_records = self._records_with_calibrated_intervals(
-            calibration_records
-        )
+        self._calibrate_competitions(calibrated_predictions)
+        calibrated_records = self._records_with_calibrated_intervals(calibrated_predictions)
         metrics["final_calibration"] = {
             "target_season": calibration_season,
             "nominal_coverage": self._conformal_nominal_coverage,
+            "persistence_shrinkage": dict(self._persistence_shrinkage_calibration),
             **metric_summary(calibrated_records),
         }
         metrics["competition_vocabulary"] = dict(
@@ -938,6 +975,11 @@ class StrictProductionEnsembleModel(ProductionEnsembleModel):
                     "sigma_before": dict(self._age_curve_state.get("sigma_before", {})),
                     "sigma_after": dict(self._age_curve_state.get("sigma_after", {})),
                 },
+                "persistence_shrinkage": {
+                    "enabled": bool(self._enable_persistence_shrinkage),
+                    "alpha": float(self._persistence_shrinkage_alpha),
+                    "calibration": dict(self._persistence_shrinkage_calibration),
+                },
             },
             str(Path(directory) / _STATE_FILE),
         )
@@ -979,6 +1021,11 @@ class StrictProductionEnsembleModel(ProductionEnsembleModel):
         self._conformal_nominal_coverage = (
             float(nominal) if nominal is not None else None
         )
+        persistence_shrinkage = state.get("persistence_shrinkage") or {}
+        self._enable_persistence_shrinkage = bool(persistence_shrinkage.get("enabled", True))
+        self._persistence_shrinkage_alpha = float(np.clip(persistence_shrinkage.get("alpha", 0.0), 0.0, 1.0))
+        self._persistence_shrinkage_calibration = dict(persistence_shrinkage.get("calibration") or {})
+
         age_curve = state.get("age_curve")
         self._age_curve_state = {
             "peak_ages": {
