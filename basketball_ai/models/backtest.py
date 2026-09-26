@@ -93,8 +93,7 @@ def _compatibility_diagnostics(records: List[Dict[str, Any]]) -> Dict[str, Any]:
     score = np.asarray(
         [float(row["compatibility_factor"]) for row in rows], dtype=float
     )
-    # Compatibility is now an additive residual correction. Keep the score
-    # diagnostics centred at 0.5 and report the actual rating-point adjustment.
+    # Compatibility is currently a contextual signal only; it is not added to the prediction.
     adjustment = after - base
     residual_before = actual - base
 
@@ -279,6 +278,46 @@ def _persistence_blend_diagnostics(records: List[Dict[str, Any]]) -> Dict[str, A
     }
 
 
+def _nested_temporal_shrinkage_alpha(
+    data: Dict[str, Any],
+    outer_source_season: int,
+) -> Dict[str, Any]:
+    """Estimate shrinkage using only seasons before the outer target."""
+    inner_target = int(outer_source_season)
+    inner_train_through = inner_target - 1
+    try:
+        inner_train_data = build_historical_snapshot(data, inner_train_through)
+        inner_ensemble = StrictProductionEnsembleModel()
+        inner_ensemble.train(inner_train_data)
+        inner_records = evaluate_target_season(inner_ensemble, data, inner_target)
+        diagnostics = _persistence_blend_diagnostics(inner_records)
+        alpha = float(np.clip(
+            diagnostics.get("optimal_oof_alpha_0_1", 0.0), 0.0, 1.0
+        ))
+        return {
+            "valid": bool(inner_records) and math.isfinite(alpha),
+            "alpha": alpha,
+            "inner_target_season": inner_target,
+            "inner_train_through_season": inner_train_through,
+            "inner_n": len(inner_records),
+            "inner_persistence_rmse": diagnostics.get("persistence_rmse"),
+            "inner_model_rmse": diagnostics.get("model_rmse"),
+            "inner_blended_rmse": diagnostics.get("blended_rmse_0_1"),
+            "inner_blended_gain_vs_persistence": diagnostics.get("blended_gain_vs_persistence"),
+        }
+    except Exception as exc:
+        _logger.warning(
+            "[Backtest] Nested shrinkage calibration failed for inner target=%s: %s",
+            inner_target, exc,
+        )
+        return {
+            "valid": False, "alpha": 0.0,
+            "inner_target_season": inner_target,
+            "inner_train_through_season": inner_train_through,
+            "inner_n": 0, "error": str(exc),
+        }
+
+
 def _role_residual_diagnostics(records: List[Dict[str, Any]]) -> Dict[str, Any]:
     """Measure whether model-vs-persistence residuals are role-dependent."""
     rows = [
@@ -386,7 +425,21 @@ def run_backtest(
                     f"only {len(records)} evaluable samples; minimum is {minimum}"
                 )
 
+            nested_shrinkage = _nested_temporal_shrinkage_alpha(data, source_season)
+            nested_alpha = float(nested_shrinkage.get("alpha", 0.0))
+            for row in records:
+                persistence = float(row["persistence_prediction"])
+                model_prediction = float(row["prediction"])
+                row["nested_shrinkage_prediction"] = float(np.clip(
+                    persistence + nested_alpha * (model_prediction - persistence),
+                    3.5, 10.0,
+                ))
+
             summary = metric_summary(records)
+            nested_summary = metric_summary([
+                {"actual": row["actual"], "prediction": row["nested_shrinkage_prediction"]}
+                for row in records
+            ])
             target_mode_comparison = None
             if compare_target_modes:
                 absolute_ensemble = _AbsoluteTargetEnsemble()
@@ -431,6 +484,15 @@ def run_backtest(
                 "target_mode_comparison": target_mode_comparison,
                 "ensemble_vs_base_delta": base_rmse - summary["rmse"],
                 "ensemble_vs_persistence_delta": persistence_rmse - summary["rmse"],
+                "nested_shrinkage": {
+                    **nested_shrinkage,
+                    "outer_rmse": nested_summary["rmse"],
+                    "outer_mae": nested_summary["mae"],
+                    "outer_bias": nested_summary["bias"],
+                    "outer_r2": nested_summary["r2"],
+                    "outer_gain_vs_persistence": persistence_rmse - nested_summary["rmse"],
+                    "outer_gain_vs_raw_model": summary["rmse"] - nested_summary["rmse"],
+                },
                 "by_league": _segment_metrics(records, "league_id"),
                 "by_competition": _segment_metrics(records, "competition"),
                 "by_position": _segment_metrics(records, "position"),
@@ -476,6 +538,11 @@ def run_backtest(
     overall = metric_summary(all_records)
     base_rmse = _rmse(all_records, "base_prediction")
     persistence_rmse = _rmse(all_records, "persistence_prediction")
+    nested_overall = metric_summary([
+        {"actual": row["actual"], "prediction": row["nested_shrinkage_prediction"]}
+        for row in all_records
+    ])
+    nested_shrinkage_rmse = nested_overall.get("rmse", float("nan"))
     if all_records:
         for row in all_records:
             row["age_band"] = _age_band(int(row.get("age", 0) or 0))
@@ -505,6 +572,20 @@ def run_backtest(
             if overall and math.isfinite(persistence_rmse)
             else float("nan")
         ),
+        "nested_shrinkage": {
+            **nested_overall,
+            "gain_vs_persistence": persistence_rmse - nested_shrinkage_rmse,
+            "gain_vs_raw_model": overall["rmse"] - nested_shrinkage_rmse,
+            "alphas": [
+                {
+                    "target_season": fold["target_season"],
+                    "alpha": fold["nested_shrinkage"].get("alpha"),
+                    "valid": fold["nested_shrinkage"].get("valid"),
+                }
+                for fold in folds
+                if fold.get("valid") and fold.get("nested_shrinkage")
+            ],
+        },
         "by_league": _segment_metrics(all_records, "league_id") if all_records else {},
         "by_competition": _segment_metrics(all_records, "competition") if all_records else {},
         "by_position": _segment_metrics(all_records, "position") if all_records else {},
