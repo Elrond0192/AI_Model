@@ -414,3 +414,25 @@ def test_team_features_use_as_of_roster_not_future_roster():
     features = compute_team_features(10, data)
     assert features["avg_teammate_rating"] == 6.0
     assert features["league_tier_factor"] == 1.0
+def test_persistence_shrinkage_alpha_uses_prior_calibration_only():
+    from basketball_ai.models.strict_production import StrictProductionEnsembleModel
+
+    records = [
+        {"actual": 7.2, "persistence_prediction": 7.0, "prediction": 8.0},
+        {"actual": 6.8, "persistence_prediction": 7.0, "prediction": 6.0},
+        {"actual": 7.1, "persistence_prediction": 7.0, "prediction": 7.5},
+    ]
+    result = StrictProductionEnsembleModel._fit_persistence_shrinkage(records)
+    assert result["valid"] is True
+    assert 0.0 <= result["alpha"] <= 1.0
+    assert result["alpha"] == pytest.approx(0.1)
+    assert result["blended_rmse"] < result["model_rmse"]
+
+
+def test_persistence_shrinkage_can_be_disabled_for_raw_diagnostics():
+    from basketball_ai.models.strict_production import StrictProductionEnsembleModel
+
+    model = StrictProductionEnsembleModel(enable_persistence_shrinkage=False)
+    assert model._enable_persistence_shrinkage is False
+    assert model._persistence_shrinkage_alpha == 0.0
+
