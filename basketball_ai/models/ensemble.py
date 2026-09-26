@@ -573,7 +573,6 @@ class EnsembleModel:
             "compatibility_adjustment": compat_adjustment,
             "after_league": after_league,
             "after_context": after_context,
-            "final_prediction": adjusted,
             # Component-level diagnostics are intentionally private and are
             # consumed only by the walk-forward diagnostic runner.
             "league_factor": float(lf),
