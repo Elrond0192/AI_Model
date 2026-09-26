@@ -33,8 +33,8 @@ class _AbsoluteTargetPerformanceModel(AsOfPositionPerformanceModel):
 class _AbsoluteTargetEnsemble(StrictProductionEnsembleModel):
     """Diagnostic-only production path with the pre-#60 absolute target."""
 
-    def __init__(self) -> None:
-        super().__init__(performance_model=_AbsoluteTargetPerformanceModel())
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(performance_model=_AbsoluteTargetPerformanceModel(), **kwargs)
 
 
 
@@ -287,7 +287,7 @@ def _nested_temporal_shrinkage_alpha(
     inner_train_through = inner_target - 1
     try:
         inner_train_data = build_historical_snapshot(data, inner_train_through)
-        inner_ensemble = StrictProductionEnsembleModel()
+        inner_ensemble = StrictProductionEnsembleModel(enable_persistence_shrinkage=False)
         inner_ensemble.train(inner_train_data)
         inner_records = evaluate_target_season(inner_ensemble, data, inner_target)
         diagnostics = _persistence_blend_diagnostics(inner_records)
@@ -332,7 +332,7 @@ def _nested_role_shrinkage_alpha(
     inner_train_through = inner_target - 1
     try:
         inner_train_data = build_historical_snapshot(data, inner_train_through)
-        inner_ensemble = StrictProductionEnsembleModel()
+        inner_ensemble = StrictProductionEnsembleModel(enable_persistence_shrinkage=False)
         inner_ensemble.train(inner_train_data)
         inner_records = evaluate_target_season(inner_ensemble, data, inner_target)
         global_diag = _persistence_blend_diagnostics(inner_records)
@@ -563,7 +563,7 @@ def run_backtest(
             summary = metric_summary(records)
             target_mode_comparison = None
             if compare_target_modes:
-                absolute_ensemble = _AbsoluteTargetEnsemble()
+                absolute_ensemble = _AbsoluteTargetEnsemble(enable_persistence_shrinkage=False)
                 absolute_ensemble.train(train_data)
                 absolute_records = evaluate_target_season(
                     absolute_ensemble,
