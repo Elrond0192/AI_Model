@@ -494,8 +494,20 @@ class EnsembleModel:
             1.00,
         ))
 
-        # Final rating (apply mpg_factor before CI so interval is always consistent)
-        adjusted = float(np.clip(after_context * mpg_factor, 3.5, 10.0))
+        # Final raw ensemble rating (apply mpg_factor before persistence shrinkage).
+        raw_adjusted = float(np.clip(after_context * mpg_factor, 3.5, 10.0))
+
+        # Production uses persistence as the prior and the trained model only as
+        # a calibrated delta correction. The shrinkage coefficient is fitted on
+        # a strictly prior calibration season by StrictProductionEnsembleModel.
+        persistence_shrinkage_alpha = float(
+            np.clip(getattr(self, "_persistence_shrinkage_alpha", 0.0), 0.0, 1.0)
+        )
+        adjusted = float(np.clip(
+            last_rating + persistence_shrinkage_alpha * (raw_adjusted - last_rating),
+            3.5,
+            10.0,
+        ))
 
         # Confidence interval
         # Prefer split-conformal quantiles from calibration (empirically grounded).
@@ -529,6 +541,8 @@ class EnsembleModel:
             f"× minuti ({latest_mpg:.0f} min/g, fattore {mpg_factor:.2f}) "
             f"| età: {age} (curva {af:.3f}) "
             f"| ruolo: {latest_role or '—'} / off: {latest_role_off or '—'} / def: {latest_role_def or '—'} "
+            f"| shrinkage persistence: α {persistence_shrinkage_alpha:.3f} "
+            f"(prior {last_rating:.2f} → final {adjusted:.2f}) "
             f"| competizione: {competition}"
         )
 
@@ -567,6 +581,10 @@ class EnsembleModel:
             "mpg_factor": float(mpg_factor),
             "latest_mpg": float(latest_mpg),
             "mpg_baseline": float(self._mpg_baseline),
+            "persistence_prediction": float(last_rating),
+            "pre_shrinkage_prediction": float(raw_adjusted),
+            "persistence_shrinkage_alpha": float(persistence_shrinkage_alpha),
+            "final_prediction": float(adjusted),
         }
         return result
 
