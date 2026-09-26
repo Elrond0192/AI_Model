@@ -450,6 +450,8 @@ def run_backtest(
                 fold["stage_metrics"] = _diagnostic_stage_rmse(records)
                 fold["compatibility_diagnostics"] = _compatibility_diagnostics(records)
                 fold["component_diagnostics"] = _component_diagnostics(records)
+                fold["persistence_blend_diagnostics"] = _persistence_blend_diagnostics(records)
+                fold["role_residual_diagnostics"] = _role_residual_diagnostics(records)
             all_records.extend(records)
             _logger.info(
                 "[Backtest] target=%s n=%d ensemble_rmse=%.4f base=%.4f persistence=%.4f",
@@ -526,6 +528,8 @@ def run_backtest(
         report["stage_metrics"] = _diagnostic_stage_rmse(all_records)
         report["compatibility_diagnostics"] = _compatibility_diagnostics(all_records)
         report["component_diagnostics"] = _component_diagnostics(all_records)
+        report["persistence_blend_diagnostics"] = _persistence_blend_diagnostics(all_records)
+        report["role_residual_diagnostics"] = _role_residual_diagnostics(all_records)
 
     if output_path:
         path = Path(output_path)
