@@ -318,6 +318,100 @@ def _nested_temporal_shrinkage_alpha(
         }
 
 
+def _nested_role_shrinkage_alpha(
+    data: Dict[str, Any],
+    outer_source_season: int,
+) -> Dict[str, Any]:
+    """Estimate role-specific shrinkage using only seasons before the outer target.
+
+    Diagnostic-only: this never changes the production prediction path. A role
+    alpha is accepted only when the inner OOF sample has at least 30 rows;
+    otherwise the inner global alpha is used as the role fallback.
+    """
+    inner_target = int(outer_source_season)
+    inner_train_through = inner_target - 1
+    try:
+        inner_train_data = build_historical_snapshot(data, inner_train_through)
+        inner_ensemble = StrictProductionEnsembleModel()
+        inner_ensemble.train(inner_train_data)
+        inner_records = evaluate_target_season(inner_ensemble, data, inner_target)
+        global_diag = _persistence_blend_diagnostics(inner_records)
+        global_alpha = float(np.clip(
+            global_diag.get("optimal_oof_alpha_0_1", 0.0), 0.0, 1.0
+        ))
+        by_role: Dict[str, Any] = {}
+        for role in sorted({
+            str(row.get("position"))
+            for row in inner_records
+            if row.get("position") is not None
+        }):
+            rows = [
+                row for row in inner_records
+                if str(row.get("position")) == role
+                and row.get("actual") is not None
+                and row.get("persistence_prediction") is not None
+                and row.get("prediction") is not None
+            ]
+            if len(rows) < 30:
+                by_role[role] = {
+                    "n": len(rows),
+                    "valid": False,
+                    "alpha": global_alpha,
+                    "fallback": "global",
+                }
+                continue
+            actual = np.asarray([float(row["actual"]) for row in rows], dtype=float)
+            persistence = np.asarray(
+                [float(row["persistence_prediction"]) for row in rows], dtype=float
+            )
+            prediction = np.asarray(
+                [float(row["prediction"]) for row in rows], dtype=float
+            )
+            delta = prediction - persistence
+            residual = actual - persistence
+            denominator = float(np.sum(delta * delta))
+            alpha = (
+                float(np.sum(delta * residual) / denominator)
+                if denominator > 0.0 else global_alpha
+            )
+            alpha = float(np.clip(alpha, 0.0, 1.0))
+            blended = persistence + alpha * delta
+            persistence_rmse = float(np.sqrt(np.mean((persistence - actual) ** 2)))
+            blended_rmse = float(np.sqrt(np.mean((blended - actual) ** 2)))
+            by_role[role] = {
+                "n": len(rows),
+                "valid": True,
+                "alpha": alpha,
+                "fallback": None,
+                "persistence_rmse": persistence_rmse,
+                "model_rmse": float(np.sqrt(np.mean((prediction - actual) ** 2))),
+                "blended_rmse": blended_rmse,
+                "gain_vs_persistence": persistence_rmse - blended_rmse,
+            }
+        return {
+            "valid": bool(inner_records) and math.isfinite(global_alpha),
+            "inner_target_season": inner_target,
+            "inner_train_through_season": inner_train_through,
+            "inner_n": len(inner_records),
+            "global_alpha": global_alpha,
+            "roles": by_role,
+        }
+    except Exception as exc:
+        _logger.warning(
+            "[Backtest] Role-conditioned nested shrinkage failed for inner target=%s: %s",
+            inner_target, exc,
+        )
+        return {
+            "valid": False,
+            "inner_target_season": inner_target,
+            "inner_train_through_season": inner_train_through,
+            "inner_n": 0,
+            "global_alpha": 0.0,
+            "roles": {},
+            "error": str(exc),
+        }
+
+
 def _role_residual_diagnostics(records: List[Dict[str, Any]]) -> Dict[str, Any]:
     """Measure whether model-vs-persistence residuals are role-dependent."""
     rows = [
@@ -427,6 +521,8 @@ def run_backtest(
 
             nested_shrinkage = None
             nested_summary = None
+            nested_role_shrinkage = None
+            nested_role_summary = None
             if include_stage_metrics:
                 nested_shrinkage = _nested_temporal_shrinkage_alpha(data, source_season)
                 nested_alpha = float(nested_shrinkage.get("alpha", 0.0))
@@ -439,6 +535,28 @@ def run_backtest(
                     ))
                 nested_summary = metric_summary([
                     {"actual": row["actual"], "prediction": row["nested_shrinkage_prediction"]}
+                    for row in records
+                ])
+
+                nested_role_shrinkage = _nested_role_shrinkage_alpha(data, source_season)
+                global_role_alpha = float(
+                    nested_role_shrinkage.get("global_alpha", nested_alpha)
+                )
+                role_alphas = {
+                    str(role): float(info.get("alpha", global_role_alpha))
+                    for role, info in nested_role_shrinkage.get("roles", {}).items()
+                }
+                for row in records:
+                    persistence = float(row["persistence_prediction"])
+                    model_prediction = float(row["prediction"])
+                    role = str(row.get("position"))
+                    alpha = role_alphas.get(role, global_role_alpha)
+                    row["nested_role_shrinkage_prediction"] = float(np.clip(
+                        persistence + alpha * (model_prediction - persistence),
+                        3.5, 10.0,
+                    ))
+                nested_role_summary = metric_summary([
+                    {"actual": row["actual"], "prediction": row["nested_role_shrinkage_prediction"]}
                     for row in records
                 ])
 
@@ -517,6 +635,15 @@ def run_backtest(
                     "outer_gain_vs_persistence": persistence_rmse - nested_summary["rmse"],
                     "outer_gain_vs_raw_model": summary["rmse"] - nested_summary["rmse"],
                 }
+                fold["nested_role_shrinkage"] = {
+                    **(nested_role_shrinkage or {}),
+                    "outer_rmse": nested_role_summary["rmse"],
+                    "outer_mae": nested_role_summary["mae"],
+                    "outer_bias": nested_role_summary["bias"],
+                    "outer_r2": nested_role_summary["r2"],
+                    "outer_gain_vs_persistence": persistence_rmse - nested_role_summary["rmse"],
+                    "outer_gain_vs_raw_model": summary["rmse"] - nested_role_summary["rmse"],
+                }
             all_records.extend(records)
             _logger.info(
                 "[Backtest] target=%s n=%d ensemble_rmse=%.4f base=%.4f persistence=%.4f",
@@ -543,12 +670,19 @@ def run_backtest(
     persistence_rmse = _rmse(all_records, "persistence_prediction")
     nested_overall = None
     nested_shrinkage_rmse = float("nan")
+    nested_role_overall = None
+    nested_role_shrinkage_rmse = float("nan")
     if include_stage_metrics and all_records:
         nested_overall = metric_summary([
             {"actual": row["actual"], "prediction": row["nested_shrinkage_prediction"]}
             for row in all_records
         ])
         nested_shrinkage_rmse = nested_overall.get("rmse", float("nan"))
+        nested_role_overall = metric_summary([
+            {"actual": row["actual"], "prediction": row["nested_role_shrinkage_prediction"]}
+            for row in all_records
+        ])
+        nested_role_shrinkage_rmse = nested_role_overall.get("rmse", float("nan"))
     if all_records:
         for row in all_records:
             row["age_band"] = _age_band(int(row.get("age", 0) or 0))
@@ -615,6 +749,21 @@ def run_backtest(
                 }
                 for fold in folds
                 if fold.get("valid") and fold.get("nested_shrinkage")
+            ],
+        }
+        report["nested_role_shrinkage"] = {
+            **(nested_role_overall or {}),
+            "gain_vs_persistence": persistence_rmse - nested_role_shrinkage_rmse,
+            "gain_vs_raw_model": overall["rmse"] - nested_role_shrinkage_rmse,
+            "alphas": [
+                {
+                    "target_season": fold["target_season"],
+                    "global_alpha": fold.get("nested_role_shrinkage", {}).get("global_alpha"),
+                    "roles": fold.get("nested_role_shrinkage", {}).get("roles", {}),
+                    "valid": fold.get("nested_role_shrinkage", {}).get("valid"),
+                }
+                for fold in folds
+                if fold.get("valid") and fold.get("nested_role_shrinkage")
             ],
         }
 
