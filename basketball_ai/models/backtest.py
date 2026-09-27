@@ -248,7 +248,7 @@ def _persistence_blend_diagnostics(records: List[Dict[str, Any]]) -> Dict[str, A
 
     actual = np.asarray([float(row["actual"]) for row in rows], dtype=float)
     persistence = np.asarray([float(row["persistence_prediction"]) for row in rows], dtype=float)
-    prediction = np.asarray([float(row["prediction"]) for row in rows], dtype=float)
+    prediction = np.asarray([float(row.get("pre_shrinkage_prediction", row["prediction"])) for row in rows], dtype=float)
     delta = prediction - persistence
     residual = actual - persistence
 
@@ -528,7 +528,7 @@ def run_backtest(
                 nested_alpha = float(nested_shrinkage.get("alpha", 0.0))
                 for row in records:
                     persistence = float(row["persistence_prediction"])
-                    model_prediction = float(row["prediction"])
+                    model_prediction = float(row.get("pre_shrinkage_prediction", row["prediction"]))
                     row["nested_shrinkage_prediction"] = float(np.clip(
                         persistence + nested_alpha * (model_prediction - persistence),
                         3.5, 10.0,
@@ -548,7 +548,7 @@ def run_backtest(
                 }
                 for row in records:
                     persistence = float(row["persistence_prediction"])
-                    model_prediction = float(row["prediction"])
+                    model_prediction = float(row.get("pre_shrinkage_prediction", row["prediction"]))
                     role = str(row.get("position"))
                     alpha = role_alphas.get(role, global_role_alpha)
                     row["nested_role_shrinkage_prediction"] = float(np.clip(
