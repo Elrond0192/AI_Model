@@ -796,6 +796,8 @@ def evaluate_target_season(
                 "competition": competition,
                 "actual": float(target["rating"]),
                 "prediction": float(result.predicted_rating),
+                "pre_shrinkage_prediction": float(getattr(result, "_diagnostic_stages", {}).get("pre_shrinkage_prediction", result.predicted_rating)),
+                "persistence_shrinkage_alpha": float(getattr(result, "_diagnostic_stages", {}).get("persistence_shrinkage_alpha", 0.0)),
                 "base_prediction": float(result.base_rating),
                 "confidence_low": float(result.confidence_low),
                 "confidence_high": float(result.confidence_high),
