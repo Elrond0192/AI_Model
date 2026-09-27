@@ -365,7 +365,7 @@ def _nested_role_shrinkage_alpha(
                 [float(row["persistence_prediction"]) for row in rows], dtype=float
             )
             prediction = np.asarray(
-                [float(row["prediction"]) for row in rows], dtype=float
+                [float(row.get("pre_shrinkage_prediction", row["prediction"])) for row in rows], dtype=float
             )
             delta = prediction - persistence
             residual = actual - persistence
@@ -428,7 +428,7 @@ def _role_residual_diagnostics(records: List[Dict[str, Any]]) -> Dict[str, Any]:
             continue
         actual = np.asarray([float(row["actual"]) for row in group], dtype=float)
         persistence = np.asarray([float(row["persistence_prediction"]) for row in group], dtype=float)
-        prediction = np.asarray([float(row["prediction"]) for row in group], dtype=float)
+        prediction = np.asarray([float(row.get("pre_shrinkage_prediction", row["prediction"])) for row in group], dtype=float)
         result[position] = {
             "n": len(group),
             "persistence_rmse": float(np.sqrt(np.mean((persistence - actual) ** 2))),
