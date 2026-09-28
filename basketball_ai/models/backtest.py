@@ -192,6 +192,70 @@ def _residual_calibration_diagnostics(
     }
 
 
+
+def _residual_stage_decomposition_diagnostics(
+    records: List[Dict[str, Any]],
+    group_key: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Show where the OOS delta bias enters the prediction pipeline."""
+    rows = [
+        row for row in records
+        if row.get("actual") is not None
+        and row.get("persistence_prediction") is not None
+        and row.get("base_prediction") is not None
+        and row.get("pre_shrinkage_prediction", row.get("prediction")) is not None
+    ]
+    if group_key is not None:
+        groups: Dict[str, List[Dict[str, Any]]] = {}
+        for row in rows:
+            value = row.get(group_key)
+            if value is None or (isinstance(value, float) and pd.isna(value)):
+                continue
+            groups.setdefault(str(value), []).append(row)
+        return {
+            name: _residual_stage_decomposition_diagnostics(group_rows)
+            for name, group_rows in groups.items()
+        }
+
+    if len(rows) < 3:
+        return {"n": len(rows), "valid": False}
+
+    actual = np.asarray([float(row["actual"]) for row in rows], dtype=float)
+    persistence = np.asarray(
+        [float(row["persistence_prediction"]) for row in rows], dtype=float
+    )
+    base = np.asarray([float(row["base_prediction"]) for row in rows], dtype=float)
+    pre_shrinkage = np.asarray(
+        [
+            float(row.get("pre_shrinkage_prediction", row["prediction"]))
+            for row in rows
+        ],
+        dtype=float,
+    )
+
+    actual_delta = actual - persistence
+    base_delta = base - persistence
+    post_base_adjustment = pre_shrinkage - base
+    total_delta = pre_shrinkage - persistence
+
+    rmse = lambda values: float(np.sqrt(np.mean((values - actual) ** 2)))
+
+    return {
+        "n": int(len(rows)),
+        "valid": True,
+        "actual_delta_mean": float(np.mean(actual_delta)),
+        "base_delta_mean": float(np.mean(base_delta)),
+        "post_base_adjustment_mean": float(np.mean(post_base_adjustment)),
+        "total_delta_mean": float(np.mean(total_delta)),
+        "base_prediction_rmse": rmse(base),
+        "pre_shrinkage_rmse": rmse(pre_shrinkage),
+        "persistence_rmse": rmse(persistence),
+        "base_delta_std": float(np.std(base_delta)),
+        "post_base_adjustment_std": float(np.std(post_base_adjustment)),
+        "total_delta_std": float(np.std(total_delta)),
+    }
+
+
 def _nested_temporal_shrinkage_alpha(
     data: Dict[str, Any],
     outer_source_season: int,
@@ -367,6 +431,13 @@ def run_backtest(
                     "by_position": _residual_calibration_diagnostics(records, "position"),
                     "by_age_band": _residual_calibration_diagnostics(records, "age_band"),
                 }
+                fold["residual_stage_decomposition"] = {
+                    "overall": _residual_stage_decomposition_diagnostics(records),
+                    "by_league": _residual_stage_decomposition_diagnostics(records, "league_id"),
+                    "by_competition": _residual_stage_decomposition_diagnostics(records, "competition"),
+                    "by_position": _residual_stage_decomposition_diagnostics(records, "position"),
+                    "by_age_band": _residual_stage_decomposition_diagnostics(records, "age_band"),
+                }
                 fold["nested_shrinkage"] = {
                     **(nested_shrinkage or {}),
                     "outer_rmse": nested_summary["rmse"],
@@ -452,6 +523,13 @@ def run_backtest(
             "by_competition": _residual_calibration_diagnostics(all_records, "competition"),
             "by_position": _residual_calibration_diagnostics(all_records, "position"),
             "by_age_band": _residual_calibration_diagnostics(all_records, "age_band"),
+        }
+        report["residual_stage_decomposition"] = {
+            "overall": _residual_stage_decomposition_diagnostics(all_records),
+            "by_league": _residual_stage_decomposition_diagnostics(all_records, "league_id"),
+            "by_competition": _residual_stage_decomposition_diagnostics(all_records, "competition"),
+            "by_position": _residual_stage_decomposition_diagnostics(all_records, "position"),
+            "by_age_band": _residual_stage_decomposition_diagnostics(all_records, "age_band"),
         }
         report["nested_shrinkage"] = {
             **(nested_overall or {}),
