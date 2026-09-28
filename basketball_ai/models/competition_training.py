@@ -378,7 +378,9 @@ class CompetitionSeasonAheadPerformanceModel(SeasonAheadPerformanceModel):
                 "No consecutive t -> t+1 player/league/competition samples are available"
             )
 
-        X = pd.DataFrame(rows, columns=feature_names).fillna(0.0)
+        X_raw = pd.DataFrame(rows, columns=feature_names)
+        self._last_feature_frame_raw = X_raw.copy()
+        X = X_raw.fillna(0.0)
         y = np.asarray(targets, dtype=float)
         self._last_source_years = source_years
         self._last_season_years = target_years
