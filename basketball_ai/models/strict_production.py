@@ -1143,6 +1143,9 @@ def evaluate_target_season(
                 "mpg_factor": diagnostic_stages.get("mpg_factor"),
                 "latest_mpg": diagnostic_stages.get("latest_mpg"),
                 "mpg_baseline": diagnostic_stages.get("mpg_baseline"),
+                "pre_shrinkage_prediction": diagnostic_stages.get("pre_shrinkage_prediction"),
+                "persistence_shrinkage_alpha": diagnostic_stages.get("persistence_shrinkage_alpha"),
+                "final_prediction": diagnostic_stages.get("final_prediction"),
                 "position": position_as_of(
                     pid,
                     relations,
