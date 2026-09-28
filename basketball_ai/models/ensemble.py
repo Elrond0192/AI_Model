@@ -566,24 +566,15 @@ class EnsembleModel:
         # runner. They are deliberately not dataclass fields, so the public
         # prediction/API contract is unchanged.
         result._diagnostic_stages = {
+            # Minimal walk-forward diagnostics for the current residual-model
+            # investigation. Keep only the raw XGBoost delta and the stage
+            # immediately after the age transformation; later ensemble stages
+            # are already covered by the production prediction itself.
             "raw_xgb_prediction": raw_xgb_prediction,
             "base_before_age": base_before_age,
             "base_after_age": base_after_age,
-            "after_compatibility": after_compatibility,
-            "compatibility_adjustment": compat_adjustment,
-            "after_league": after_league,
-            "after_context": after_context,
-            # Component-level diagnostics are intentionally private and are
-            # consumed only by the walk-forward diagnostic runner.
-            "league_factor": float(lf),
-            "context_multiplier": float(ctx_mult),
-            "mpg_factor": float(mpg_factor),
-            "latest_mpg": float(latest_mpg),
-            "mpg_baseline": float(self._mpg_baseline),
             "persistence_prediction": float(last_rating),
             "pre_shrinkage_prediction": float(raw_adjusted),
-            "persistence_shrinkage_alpha": float(persistence_shrinkage_alpha),
-            "final_prediction": float(adjusted),
         }
         return result
 
