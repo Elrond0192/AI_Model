@@ -61,6 +61,38 @@ def _diagnostic_stage_rmse(records: List[Dict[str, Any]]) -> Dict[str, float]:
     return {name: _rmse(records, key) for name, key in stages.items()}
 
 
+
+def _persistence_reconciliation_diagnostics(records: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Verify that production shrinkage can be reconstructed exactly from diagnostics."""
+    rows = [
+        row for row in records
+        if row.get("persistence_prediction") is not None
+        and row.get("pre_shrinkage_prediction") is not None
+        and row.get("persistence_shrinkage_alpha") is not None
+        and row.get("prediction") is not None
+    ]
+    if not rows:
+        return {"n": 0, "valid": False, "reason": "missing shrinkage diagnostics"}
+
+    persistence = np.asarray([float(row["persistence_prediction"]) for row in rows], dtype=float)
+    raw = np.asarray([float(row["pre_shrinkage_prediction"]) for row in rows], dtype=float)
+    alpha = np.asarray([float(row["persistence_shrinkage_alpha"]) for row in rows], dtype=float)
+    actual = np.asarray([float(row["prediction"]) for row in rows], dtype=float)
+    reconstructed = np.clip(persistence + alpha * (raw - persistence), 3.5, 10.0)
+    absolute_diff = np.abs(actual - reconstructed)
+
+    return {
+        "n": int(len(rows)),
+        "valid": bool(np.all(np.isfinite(absolute_diff))),
+        "max_abs_diff": float(np.max(absolute_diff)),
+        "mean_abs_diff": float(np.mean(absolute_diff)),
+        "rmse_diff": float(np.sqrt(np.mean(absolute_diff ** 2))),
+        "exact_matches": int(np.sum(absolute_diff <= 1e-12)),
+        "mismatches": int(np.sum(absolute_diff > 1e-12)),
+        "alpha_min": float(np.min(alpha)),
+        "alpha_max": float(np.max(alpha)),
+    }
+
 def _segment_metrics(records: List[Dict[str, Any]], key: str) -> Dict[str, Dict[str, float]]:
     groups: Dict[str, List[Dict[str, Any]]] = {}
     for row in records:
@@ -561,6 +593,7 @@ def run_backtest(
                 ])
 
             summary = metric_summary(records)
+            shrinkage_reconciliation = _persistence_reconciliation_diagnostics(records)
             target_mode_comparison = None
             if compare_target_modes:
                 absolute_ensemble = _AbsoluteTargetEnsemble(enable_persistence_shrinkage=False)
@@ -625,6 +658,7 @@ def run_backtest(
                 fold["compatibility_diagnostics"] = _compatibility_diagnostics(records)
                 fold["component_diagnostics"] = _component_diagnostics(records)
                 fold["persistence_blend_diagnostics"] = _persistence_blend_diagnostics(records)
+                fold["shrinkage_reconciliation"] = shrinkage_reconciliation
                 fold["role_residual_diagnostics"] = _role_residual_diagnostics(records)
                 fold["nested_shrinkage"] = {
                     **(nested_shrinkage or {}),
@@ -668,6 +702,7 @@ def run_backtest(
     overall = metric_summary(all_records)
     base_rmse = _rmse(all_records, "base_prediction")
     persistence_rmse = _rmse(all_records, "persistence_prediction")
+    shrinkage_reconciliation = _persistence_reconciliation_diagnostics(all_records)
     nested_overall = None
     nested_shrinkage_rmse = float("nan")
     nested_role_overall = None
@@ -736,6 +771,7 @@ def run_backtest(
         report["compatibility_diagnostics"] = _compatibility_diagnostics(all_records)
         report["component_diagnostics"] = _component_diagnostics(all_records)
         report["persistence_blend_diagnostics"] = _persistence_blend_diagnostics(all_records)
+        report["shrinkage_reconciliation"] = shrinkage_reconciliation
         report["role_residual_diagnostics"] = _role_residual_diagnostics(all_records)
         report["nested_shrinkage"] = {
             **(nested_overall or {}),
