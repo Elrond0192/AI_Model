@@ -212,6 +212,83 @@ def _nested_temporal_shrinkage_alpha(
         }
 
 
+def _feature_predictive_stability(folds: List[Dict[str, Any]], top_n: int = 30) -> Dict[str, Any]:
+    """Aggregate train/validation target-correlation stability across folds.
+
+    Diagnostic-only: this summarizes the feature/target relationship drift already
+    measured per fold. It does not alter training, feature selection, or inference.
+    """
+    grouped: Dict[str, List[Dict[str, Any]]] = {}
+    for fold in folds:
+        if not fold.get("valid"):
+            continue
+        diagnostics = fold.get("feature_shift_diagnostics") or {}
+        for item in diagnostics.get("features", []):
+            feature = item.get("feature")
+            if not feature:
+                continue
+            grouped.setdefault(str(feature), []).append({
+                "target_season": fold.get("target_season"),
+                "train_corr": item.get("train_target_correlation"),
+                "validation_corr": item.get("validation_target_correlation"),
+                "corr_shift": (
+                    item.get("validation_target_correlation")
+                    - item.get("train_target_correlation")
+                    if item.get("train_target_correlation") is not None
+                    and item.get("validation_target_correlation") is not None
+                    else None
+                ),
+            })
+
+    rows: List[Dict[str, Any]] = []
+    for feature, observations in grouped.items():
+        train_corr = np.asarray(
+            [float(x["train_corr"]) for x in observations if x["train_corr"] is not None],
+            dtype=float,
+        )
+        validation_corr = np.asarray(
+            [float(x["validation_corr"]) for x in observations if x["validation_corr"] is not None],
+            dtype=float,
+        )
+        shifts = np.asarray(
+            [float(x["corr_shift"]) for x in observations if x["corr_shift"] is not None],
+            dtype=float,
+        )
+        if validation_corr.size == 0:
+            continue
+        sign_flips = sum(
+            1 for x in observations
+            if x["train_corr"] is not None
+            and x["validation_corr"] is not None
+            and float(x["train_corr"]) * float(x["validation_corr"]) < 0.0
+        )
+        rows.append({
+            "feature": feature,
+            "folds_present": int(len(observations)),
+            "train_corr_mean": float(np.mean(train_corr)) if train_corr.size else None,
+            "validation_corr_mean": float(np.mean(validation_corr)),
+            "mean_abs_validation_corr": float(np.mean(np.abs(validation_corr))),
+            "validation_corr_std": float(np.std(validation_corr)),
+            "mean_abs_corr_shift": float(np.mean(np.abs(shifts))) if shifts.size else None,
+            "max_abs_corr_shift": float(np.max(np.abs(shifts))) if shifts.size else None,
+            "sign_flip_count": int(sign_flips),
+            "observations": observations,
+        })
+
+    rows.sort(
+        key=lambda row: (
+            row["mean_abs_corr_shift"] if row["mean_abs_corr_shift"] is not None else -1.0,
+            row["mean_abs_validation_corr"] if row["mean_abs_validation_corr"] is not None else -1.0,
+        ),
+        reverse=True,
+    )
+    return {
+        "n_features": len(rows),
+        "top_n": min(int(top_n), len(rows)),
+        "features": rows[:top_n],
+    }
+
+
 def _age_band(age: int) -> str:
     if age <= 21:
         return "<=21"
