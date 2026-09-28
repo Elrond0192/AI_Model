@@ -1227,6 +1227,22 @@ class PerformanceModel:
         if X_train.empty or X_val.empty or X_conformal.empty:
             raise ValueError("Season-blocked split produced an empty partition")
         self._split_metadata = {"train_seasons": unique_seasons[:-2], "validation_season": validation_season, "calibration_season": conformal_season}
+        # Diagnostic-only target/prediction distribution snapshot. The competition-
+        # aware subclass already supplies native delta_vs_prior targets here.
+        target_diagnostics = {
+            "target_all_mean": float(np.mean(y)),
+            "target_all_std": float(np.std(y)),
+            "target_all_min": float(np.min(y)),
+            "target_all_max": float(np.max(y)),
+            "target_train_mean": float(np.mean(y_train)),
+            "target_train_std": float(np.std(y_train)),
+            "target_train_min": float(np.min(y_train)),
+            "target_train_max": float(np.max(y_train)),
+            "target_validation_mean": float(np.mean(y_val)),
+            "target_validation_std": float(np.std(y_val)),
+            "target_conformal_mean": float(np.mean(y_conformal)),
+            "target_conformal_std": float(np.std(y_conformal)),
+        }
 
         self.model.fit(
             X_train, y_train,
@@ -1236,6 +1252,12 @@ class PerformanceModel:
 
         y_tr_pred = self.model.predict(X_train)
         y_va_pred = self.model.predict(X_val)
+        target_diagnostics.update({
+            "train_prediction_mean": float(np.mean(y_tr_pred)),
+            "train_prediction_std": float(np.std(y_tr_pred)),
+            "validation_prediction_mean": float(np.mean(y_va_pred)),
+            "validation_prediction_std": float(np.std(y_va_pred)),
+        })
 
         train_rmse = float(np.sqrt(np.mean((y_tr_pred - y_train) ** 2)))
         val_rmse   = float(np.sqrt(np.mean((y_va_pred - y_val)   ** 2)))
@@ -1255,7 +1277,8 @@ class PerformanceModel:
             "train_rmse": train_rmse,
             "val_rmse":   val_rmse,
             "val_mae":    val_mae,
-            "val_r2":     val_r2,
+            "val_r2":     val_r2, 
+            "target_diagnostics": target_diagnostics,
         }
 
         # --- Baseline models (A4) --------------------------------------------
