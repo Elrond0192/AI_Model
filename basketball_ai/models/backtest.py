@@ -33,55 +33,41 @@ def _rmse(records: Iterable[Dict[str, Any]], key: str) -> float:
     return float(np.sqrt(np.mean((prediction - actual) ** 2)))
 
 
-def _diagnostic_stage_rmse(records: List[Dict[str, Any]]) -> Dict[str, float]:
-    stages = {
-        "raw_xgb_rmse": "raw_xgb_prediction",
-        "base_rmse": "base_prediction",
-        "final_ensemble_rmse": "prediction",
-    }
-    return {name: _rmse(records, key) for name, key in stages.items()}
-
-
-
-def _persistence_reconciliation_diagnostics(records: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """Verify that production shrinkage can be reconstructed exactly from diagnostics."""
-    rows = [
-        row for row in records
-        if row.get("persistence_prediction") is not None
-        and row.get("pre_shrinkage_prediction") is not None
-        and row.get("persistence_shrinkage_alpha") is not None
-        and row.get("prediction") is not None
-    ]
-    if not rows:
-        return {"n": 0, "valid": False, "reason": "missing shrinkage diagnostics"}
-
-    persistence = np.asarray([float(row["persistence_prediction"]) for row in rows], dtype=float)
-    raw = np.asarray([float(row["pre_shrinkage_prediction"]) for row in rows], dtype=float)
-    alpha = np.asarray([float(row["persistence_shrinkage_alpha"]) for row in rows], dtype=float)
-    actual = np.asarray([float(row["prediction"]) for row in rows], dtype=float)
-    reconstructed = np.clip(persistence + alpha * (raw - persistence), 3.5, 10.0)
-    absolute_diff = np.abs(actual - reconstructed)
-
-    return {
-        "n": int(len(rows)),
-        "valid": bool(np.all(np.isfinite(absolute_diff))),
-        "max_abs_diff": float(np.max(absolute_diff)),
-        "mean_abs_diff": float(np.mean(absolute_diff)),
-        "rmse_diff": float(np.sqrt(np.mean(absolute_diff ** 2))),
-        "exact_matches": int(np.sum(absolute_diff <= 1e-12)),
-        "mismatches": int(np.sum(absolute_diff > 1e-12)),
-        "alpha_min": float(np.min(alpha)),
-        "alpha_max": float(np.max(alpha)),
-    }
-
 def _segment_metrics(records: List[Dict[str, Any]], key: str) -> Dict[str, Dict[str, float]]:
+    """Compare the model correction with persistence by segment."""
     groups: Dict[str, List[Dict[str, Any]]] = {}
     for row in records:
         value = row.get(key)
         if value is None or (isinstance(value, float) and pd.isna(value)):
             continue
         groups.setdefault(str(value), []).append(row)
-    return {name: metric_summary(rows) for name, rows in groups.items()}
+
+    result: Dict[str, Dict[str, float]] = {}
+    for name, rows in groups.items():
+        actual = np.asarray([float(row["actual"]) for row in rows], dtype=float)
+        persistence = np.asarray(
+            [float(row["persistence_prediction"]) for row in rows], dtype=float
+        )
+        model = np.asarray(
+            [float(row.get("pre_shrinkage_prediction", row["prediction"])) for row in rows],
+            dtype=float,
+        )
+        persistence_error = persistence - actual
+        model_error = model - actual
+        result[name] = {
+            "n": int(len(rows)),
+            "persistence_rmse": float(np.sqrt(np.mean(persistence_error ** 2))),
+            "model_rmse": float(np.sqrt(np.mean(model_error ** 2))),
+            "gain_vs_persistence": float(
+                np.sqrt(np.mean(persistence_error ** 2))
+                - np.sqrt(np.mean(model_error ** 2))
+            ),
+            "persistence_bias": float(np.mean(persistence_error)),
+            "model_bias": float(np.mean(model_error)),
+            "correction_mean": float(np.mean(model - persistence)),
+            "correction_std": float(np.std(model - persistence)),
+        }
+    return result
 
 
 def _persistence_blend_diagnostics(records: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -298,7 +284,6 @@ def run_backtest(
 
 
             summary = metric_summary(records)
-            shrinkage_reconciliation = _persistence_reconciliation_diagnostics(records)
             base_rmse = _rmse(records, "base_prediction")
             persistence_rmse = _rmse(records, "persistence_prediction")
             for row in records:
@@ -323,21 +308,10 @@ def run_backtest(
                 "by_competition": _segment_metrics(records, "competition"),
                 "by_position": _segment_metrics(records, "position"),
                 "by_age_band": _segment_metrics(records, "age_band"),
-                "training": {
-                    "validation_rmse": train_metrics.get("val_rmse"),
-                    "calibration": train_metrics.get("final_calibration"),
-                    "consecutive_pairs": train_metrics.get("consecutive_pairs"),
-                    "competition_vocabulary": train_metrics.get("competition_vocabulary"),
-                    "compatibility_samples_by_competition": train_metrics.get(
-                        "compatibility_samples_by_competition"
-                    ),
-                },
             }
             folds.append(fold)
             if include_stage_metrics:
-                fold["stage_metrics"] = _diagnostic_stage_rmse(records)
                 fold["persistence_blend_diagnostics"] = _persistence_blend_diagnostics(records)
-                fold["shrinkage_reconciliation"] = shrinkage_reconciliation
                 fold["nested_shrinkage"] = {
                     **(nested_shrinkage or {}),
                     "outer_rmse": nested_summary["rmse"],
@@ -371,7 +345,6 @@ def run_backtest(
     overall = metric_summary(all_records)
     base_rmse = _rmse(all_records, "base_prediction")
     persistence_rmse = _rmse(all_records, "persistence_prediction")
-    shrinkage_reconciliation = _persistence_reconciliation_diagnostics(all_records)
     nested_overall = None
     nested_shrinkage_rmse = float("nan")
     if include_stage_metrics and all_records:
@@ -417,9 +390,7 @@ def run_backtest(
     }
 
     if include_stage_metrics and all_records:
-        report["stage_metrics"] = _diagnostic_stage_rmse(all_records)
         report["persistence_blend_diagnostics"] = _persistence_blend_diagnostics(all_records)
-        report["shrinkage_reconciliation"] = shrinkage_reconciliation
         report["nested_shrinkage"] = {
             **(nested_overall or {}),
             "gain_vs_persistence": persistence_rmse - nested_shrinkage_rmse,
