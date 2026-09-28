@@ -311,6 +311,32 @@ class SeasonAheadPerformanceModel(PerformanceModel):
         if X_train.empty or X_val.empty or X_cal.empty:
             raise ValueError("Season-blocked split produced an empty partition")
 
+        # Diagnostic-only snapshot of the native season-ahead target.
+        # prepare_features() constructs y directly as
+        # target_rating - source_rating; no residual scaling is applied here.
+        target_diagnostics = {
+            "target_mode": str(getattr(self, "target_mode", "rating")),
+            "target_transform": "target_rating_minus_source_rating",
+            "target_scaling": False,
+            "target_scale": 1.0,
+            "target_all_mean": float(np.mean(y)),
+            "target_all_std": float(np.std(y)),
+            "target_all_min": float(np.min(y)),
+            "target_all_max": float(np.max(y)),
+            "target_train_mean": float(np.mean(y_train)),
+            "target_train_std": float(np.std(y_train)),
+            "target_train_min": float(np.min(y_train)),
+            "target_train_max": float(np.max(y_train)),
+            "target_validation_mean": float(np.mean(y_val)),
+            "target_validation_std": float(np.std(y_val)),
+            "target_validation_min": float(np.min(y_val)),
+            "target_validation_max": float(np.max(y_val)),
+            "target_calibration_mean": float(np.mean(y[cal_mask])),
+            "target_calibration_std": float(np.std(y[cal_mask])),
+            "target_calibration_min": float(np.min(y[cal_mask])),
+            "target_calibration_max": float(np.max(y[cal_mask])),
+        }
+
         selector = _xgb(300, early_stopping=True)
         selector.fit(
             X_train,
@@ -322,6 +348,12 @@ class SeasonAheadPerformanceModel(PerformanceModel):
         )
         train_pred = selector.predict(X_train)
         val_pred = selector.predict(X_val)
+        target_diagnostics.update({
+            "train_prediction_mean": float(np.mean(train_pred)),
+            "train_prediction_std": float(np.std(train_pred)),
+            "validation_prediction_mean": float(np.mean(val_pred)),
+            "validation_prediction_std": float(np.std(val_pred)),
+        })
         best_iteration = getattr(selector, "best_iteration", None)
         selected_trees = (
             int(best_iteration) + 1
@@ -352,6 +384,7 @@ class SeasonAheadPerformanceModel(PerformanceModel):
             "fit_through_season": validation_season,
         }
         metrics: Dict[str, Any] = {
+            "target_diagnostics": target_diagnostics,
             "train_rmse": train_rmse,
             "val_rmse": val_rmse,
             "val_mae": val_mae,
