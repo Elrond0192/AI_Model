@@ -1130,8 +1130,10 @@ def evaluate_target_season(
                 "base_prediction": float(result.base_rating),
                 "confidence_low": float(result.confidence_low),
                 "confidence_high": float(result.confidence_high),
-                # Core persistence-centered diagnostics only. Internal stage
-                # values are intentionally not exported by the backtest.
+                # Minimal stage diagnostics for the residual-model investigation.
+                "raw_xgb_prediction": diagnostic_stages.get("raw_xgb_prediction"),
+                "base_before_age": diagnostic_stages.get("base_before_age"),
+                "base_prediction": float(result.base_rating),
                 "persistence_prediction": diagnostic_stages.get("persistence_prediction"),
                 "pre_shrinkage_prediction": diagnostic_stages.get("pre_shrinkage_prediction"),
                 "position": position_as_of(
