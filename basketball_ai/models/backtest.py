@@ -118,6 +118,80 @@ def _persistence_blend_diagnostics(records: List[Dict[str, Any]]) -> Dict[str, A
     }
 
 
+def _residual_calibration_diagnostics(
+    records: List[Dict[str, Any]],
+    group_key: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Diagnose OOS calibration of predicted delta versus persistence."""
+    rows = [
+        row for row in records
+        if row.get("actual") is not None
+        and row.get("persistence_prediction") is not None
+        and row.get("pre_shrinkage_prediction", row.get("prediction")) is not None
+    ]
+    if group_key is not None:
+        groups: Dict[str, List[Dict[str, Any]]] = {}
+        for row in rows:
+            value = row.get(group_key)
+            if value is None or (isinstance(value, float) and pd.isna(value)):
+                continue
+            groups.setdefault(str(value), []).append(row)
+        return {
+            name: _residual_calibration_diagnostics(group_rows)
+            for name, group_rows in groups.items()
+        }
+
+    if len(rows) < 3:
+        return {"n": len(rows), "valid": False}
+
+    actual_delta = np.asarray(
+        [float(row["actual"]) - float(row["persistence_prediction"]) for row in rows],
+        dtype=float,
+    )
+    predicted_delta = np.asarray(
+        [
+            float(row.get("pre_shrinkage_prediction", row["prediction"]))
+            - float(row["persistence_prediction"])
+            for row in rows
+        ],
+        dtype=float,
+    )
+
+    x_mean = float(np.mean(predicted_delta))
+    y_mean = float(np.mean(actual_delta))
+    centered_x = predicted_delta - x_mean
+    centered_y = actual_delta - y_mean
+    denominator = float(np.sum(centered_x * centered_x))
+    slope = float(np.sum(centered_x * centered_y) / denominator) if denominator > 0.0 else 0.0
+    intercept = y_mean - slope * x_mean
+    fitted_delta = intercept + slope * predicted_delta
+
+    raw_rmse = float(np.sqrt(np.mean((actual_delta - predicted_delta) ** 2)))
+    calibrated_rmse = float(np.sqrt(np.mean((actual_delta - fitted_delta) ** 2)))
+    zero_delta_rmse = float(np.sqrt(np.mean(actual_delta ** 2)))
+    correlation = (
+        float(np.corrcoef(predicted_delta, actual_delta)[0, 1])
+        if np.std(predicted_delta) > 0.0 and np.std(actual_delta) > 0.0
+        else None
+    )
+
+    return {
+        "n": int(len(rows)),
+        "valid": True,
+        "actual_delta_mean": float(np.mean(actual_delta)),
+        "predicted_delta_mean": float(np.mean(predicted_delta)),
+        "actual_delta_std": float(np.std(actual_delta)),
+        "predicted_delta_std": float(np.std(predicted_delta)),
+        "delta_correlation": correlation,
+        "calibration_intercept": float(intercept),
+        "calibration_slope": float(slope),
+        "raw_delta_rmse": raw_rmse,
+        "calibrated_delta_rmse": calibrated_rmse,
+        "calibrated_gain_vs_raw_delta": raw_rmse - calibrated_rmse,
+        "zero_delta_rmse": zero_delta_rmse,
+    }
+
+
 def _nested_temporal_shrinkage_alpha(
     data: Dict[str, Any],
     outer_source_season: int,
@@ -286,6 +360,13 @@ def run_backtest(
             folds.append(fold)
             if include_stage_metrics:
                 fold["persistence_blend_diagnostics"] = _persistence_blend_diagnostics(records)
+                fold["residual_calibration_diagnostics"] = {
+                    "overall": _residual_calibration_diagnostics(records),
+                    "by_league": _residual_calibration_diagnostics(records, "league_id"),
+                    "by_competition": _residual_calibration_diagnostics(records, "competition"),
+                    "by_position": _residual_calibration_diagnostics(records, "position"),
+                    "by_age_band": _residual_calibration_diagnostics(records, "age_band"),
+                }
                 fold["nested_shrinkage"] = {
                     **(nested_shrinkage or {}),
                     "outer_rmse": nested_summary["rmse"],
@@ -365,6 +446,13 @@ def run_backtest(
 
     if include_stage_metrics and all_records:
         report["persistence_blend_diagnostics"] = _persistence_blend_diagnostics(all_records)
+        report["residual_calibration_diagnostics"] = {
+            "overall": _residual_calibration_diagnostics(all_records),
+            "by_league": _residual_calibration_diagnostics(all_records, "league_id"),
+            "by_competition": _residual_calibration_diagnostics(all_records, "competition"),
+            "by_position": _residual_calibration_diagnostics(all_records, "position"),
+            "by_age_band": _residual_calibration_diagnostics(all_records, "age_band"),
+        }
         report["nested_shrinkage"] = {
             **(nested_overall or {}),
             "gain_vs_persistence": persistence_rmse - nested_shrinkage_rmse,
