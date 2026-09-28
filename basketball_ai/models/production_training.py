@@ -100,6 +100,57 @@ def _xgb(n_estimators: int = 300, *, early_stopping: bool = False) -> XGBRegress
         kwargs["early_stopping_rounds"] = 50
     return XGBRegressor(**kwargs)
 
+def _feature_shift_diagnostics(model: XGBRegressor, X_raw: pd.DataFrame, X_train: pd.DataFrame,
+                               X_val: pd.DataFrame, y_train: np.ndarray, y_val: np.ndarray,
+                               top_n: int = 20) -> Dict[str, Any]:
+    """Diagnostic-only snapshot of XGB importance and train/validation feature shift."""
+    booster = model.get_booster()
+    feature_names = list(X_train.columns)
+    scores = {kind: booster.get_score(importance_type=kind) for kind in ("gain", "weight", "cover")}
+    ranked = sorted(feature_names, key=lambda name: float(scores["gain"].get(name, 0.0)), reverse=True)[:max(1, int(top_n))]
+    raw = X_raw.reindex(columns=feature_names)
+    rows: List[Dict[str, Any]] = []
+    for feature in ranked:
+        tr = pd.to_numeric(raw.loc[X_train.index, feature], errors="coerce")
+        va = pd.to_numeric(raw.loc[X_val.index, feature], errors="coerce")
+        trv, vav = tr.dropna().to_numpy(dtype=float), va.dropna().to_numpy(dtype=float)
+        tr_mean, va_mean = (float(np.mean(trv)) if len(trv) else 0.0), (float(np.mean(vav)) if len(vav) else 0.0)
+        tr_std, va_std = (float(np.std(trv)) if len(trv) else 0.0), (float(np.std(vav)) if len(vav) else 0.0)
+
+        def corr(series: pd.Series, target: np.ndarray) -> Optional[float]:
+            values = series.to_numpy(dtype=float)
+            target = np.asarray(target, dtype=float)
+            mask = np.isfinite(values) & np.isfinite(target)
+            if int(mask.sum()) < 2:
+                return None
+            xv, yv = values[mask], target[mask]
+            if np.std(xv) == 0.0 or np.std(yv) == 0.0:
+                return None
+            return float(np.corrcoef(xv, yv)[0, 1])
+
+        pooled_std = float(np.sqrt((tr_std ** 2 + va_std ** 2) / 2.0))
+        rows.append({
+            "feature": feature,
+            "gain": float(scores["gain"].get(feature, 0.0)),
+            "weight": float(scores["weight"].get(feature, 0.0)),
+            "cover": float(scores["cover"].get(feature, 0.0)),
+            "train_mean": tr_mean, "train_std": tr_std,
+            "train_min": float(np.min(trv)) if len(trv) else 0.0,
+            "train_max": float(np.max(trv)) if len(trv) else 0.0,
+            "validation_mean": va_mean, "validation_std": va_std,
+            "validation_min": float(np.min(vav)) if len(vav) else 0.0,
+            "validation_max": float(np.max(vav)) if len(vav) else 0.0,
+            "train_missing_pct": float(tr.isna().mean() * 100.0),
+            "validation_missing_pct": float(va.isna().mean() * 100.0),
+            "train_nunique": int(tr.nunique(dropna=True)),
+            "validation_nunique": int(va.nunique(dropna=True)),
+            "train_target_correlation": corr(tr, y_train),
+            "validation_target_correlation": corr(va, y_val),
+            "mean_shift": float(va_mean - tr_mean),
+            "standardized_mean_shift": float((va_mean - tr_mean) / pooled_std) if pooled_std > 1e-12 else None,
+        })
+    return {"top_n": len(rows), "features": rows}
+
 
 class SeasonAheadPerformanceModel(PerformanceModel):
     """Strict season-ahead XGBoost model used by the production pipeline."""
@@ -258,7 +309,9 @@ class SeasonAheadPerformanceModel(PerformanceModel):
         if not rows:
             raise ValueError("No consecutive t -> t+1 player-season samples are available")
 
-        X = pd.DataFrame(rows, columns=feature_names).fillna(0.0)
+        X_raw = pd.DataFrame(rows, columns=feature_names)
+        self._last_feature_frame_raw = X_raw.copy()
+        X = X_raw.fillna(0.0)
         y = np.asarray(targets, dtype=float)
         self._last_source_years = source_years
         self._last_season_years = target_years
@@ -284,6 +337,8 @@ class SeasonAheadPerformanceModel(PerformanceModel):
         target_years = np.asarray(self._last_season_years, dtype=int)
         sort_idx = np.argsort(target_years, kind="stable")
         X = X.iloc[sort_idx].reset_index(drop=True)
+        X_raw = self._last_feature_frame_raw.iloc[sort_idx].reset_index(drop=True)
+        self._last_feature_frame_raw = X_raw
         y = y[sort_idx]
         target_years = target_years[sort_idx]
         raw_weights = getattr(self, "_last_sample_weights", None)
@@ -354,6 +409,7 @@ class SeasonAheadPerformanceModel(PerformanceModel):
             "validation_prediction_mean": float(np.mean(val_pred)),
             "validation_prediction_std": float(np.std(val_pred)),
         })
+        feature_shift_diagnostics = _feature_shift_diagnostics(selector, X_raw, X_train, X_val, y_train, y_val, top_n=20)
         best_iteration = getattr(selector, "best_iteration", None)
         selected_trees = (
             int(best_iteration) + 1
@@ -385,6 +441,7 @@ class SeasonAheadPerformanceModel(PerformanceModel):
         }
         metrics: Dict[str, Any] = {
             "target_diagnostics": target_diagnostics,
+            "feature_shift_diagnostics": feature_shift_diagnostics,
             "train_rmse": train_rmse,
             "val_rmse": val_rmse,
             "val_mae": val_mae,
