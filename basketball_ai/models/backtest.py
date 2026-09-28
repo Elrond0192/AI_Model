@@ -339,10 +339,12 @@ def run_backtest(
             }
             folds.append(fold)
             if include_stage_metrics:
+                last_metrics = getattr(ensemble.perf_model, "_last_metrics", {}) or {}
                 fold["target_diagnostics"] = dict(
-                    getattr(ensemble.perf_model, "_last_metrics", {}).get(
-                        "target_diagnostics", {}
-                    )
+                    last_metrics.get("target_diagnostics", {})
+                )
+                fold["feature_shift_diagnostics"] = dict(
+                    last_metrics.get("feature_shift_diagnostics", {})
                 )
                 fold["persistence_blend_diagnostics"] = _persistence_blend_diagnostics(records)
                 fold["raw_xgb_stage_diagnostics"] = _raw_xgb_stage_diagnostics(records)
