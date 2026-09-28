@@ -502,6 +502,9 @@ def run_backtest(
         "valid": valid,
     }
 
+    if include_stage_metrics:
+        report["feature_predictive_stability"] = _feature_predictive_stability(folds)
+
     if include_stage_metrics and all_records:
         report["persistence_blend_diagnostics"] = _persistence_blend_diagnostics(all_records)
         report["raw_xgb_stage_diagnostics"] = _raw_xgb_stage_diagnostics(all_records)
