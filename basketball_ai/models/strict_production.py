@@ -1130,7 +1130,7 @@ def evaluate_target_season(
                 "base_prediction": float(result.base_rating),
                 "confidence_low": float(result.confidence_low),
                 "confidence_high": float(result.confidence_high),
-                "persistence_prediction": prior_rating,
+                "persistence_prediction": diagnostic_stages.get("persistence_prediction"),
                 "raw_xgb_prediction": diagnostic_stages.get("raw_xgb_prediction"),
                 "base_before_age_prediction": diagnostic_stages.get("base_before_age"),
                 "base_after_age_prediction": diagnostic_stages.get("base_after_age"),
