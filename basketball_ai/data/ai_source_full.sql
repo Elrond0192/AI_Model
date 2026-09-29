@@ -774,8 +774,8 @@ BEGIN
             || pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['ftpct','ft_pct']) || ' AS ft_pct, '
             || pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['plusminus','plus_minus']) || ' AS plus_minus, '
             || pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['pie','per']) || ' AS per, '
-            || pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['tspct','ts_pct']) || ' AS ts_pct, '
-            || pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['usgpct','usg_pct']) || ' AS usg_pct, '
+            || 'CASE WHEN ' || pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['tspct','ts_pct']) || ' IS NULL THEN NULL WHEN abs(' || pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['tspct','ts_pct']) || ') > 1.0 THEN ' || pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['tspct','ts_pct']) || ' / 100.0 ELSE ' || pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['tspct','ts_pct']) || ' END AS ts_pct, '
+            || 'CASE WHEN ' || pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['usgpct','usg_pct']) || ' IS NULL THEN NULL WHEN abs(' || pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['usgpct','usg_pct']) || ') > 1.0 THEN ' || pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['usgpct','usg_pct']) || ' / 100.0 ELSE ' || pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['usgpct','usg_pct']) || ' END AS usg_pct, '
             || pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['bpm']) || ' AS bpm, '
             || pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['vorp']) || ' AS vorp, '
             || pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['ws','winshares']) || ' AS win_shares, '
@@ -807,14 +807,14 @@ BEGIN
             || pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['scoringefficiency','scoring_efficiency']) || ' AS scoring_efficiency, '
             || pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['ppsa']) || ' AS ppsa, '
             || pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['fg2pct','twopointpct']) || ' AS two_point_pct, '
-            || pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['tovpct','tov_pct']) || ' AS tov_pct, '
-            || pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['astpct','ast_pct']) || ' AS ast_pct, '
+            || 'CASE WHEN ' || pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['tovpct','tov_pct']) || ' IS NULL THEN NULL WHEN abs(' || pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['tovpct','tov_pct']) || ') > 1.0 THEN ' || pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['tovpct','tov_pct']) || ' / 100.0 ELSE ' || pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['tovpct','tov_pct']) || ' END AS tov_pct, '
+            || 'CASE WHEN ' || pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['astpct','ast_pct']) || ' IS NULL THEN NULL WHEN abs(' || pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['astpct','ast_pct']) || ') > 1.0 THEN ' || pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['astpct','ast_pct']) || ' / 100.0 ELSE ' || pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['astpct','ast_pct']) || ' END AS ast_pct, '
             || pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['stlpct','stl_pct']) || ' AS stl_pct, '
             || pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['blkpct','blk_pct']) || ' AS blk_pct, '
-            || pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['orebpct','orbpct','orb_pct']) || ' AS orb_pct, '
-            || pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['drebpct','drbpct','drb_pct']) || ' AS drb_pct, '
-            || pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['threepar','three_par']) || ' AS three_par, '
-            || pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['tusgpct','trueusgpct','true_usg_pct']) || ' AS true_usg_pct, '
+            || 'CASE WHEN ' || pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['orebpct','orbpct','orb_pct']) || ' IS NULL THEN NULL WHEN abs(' || pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['orebpct','orbpct','orb_pct']) || ') > 1.0 THEN ' || pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['orebpct','orbpct','orb_pct']) || ' / 100.0 ELSE ' || pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['orebpct','orbpct','orb_pct']) || ' END AS orb_pct, '
+            || 'CASE WHEN ' || pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['drebpct','drbpct','drb_pct']) || ' IS NULL THEN NULL WHEN abs(' || pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['drebpct','drbpct','drb_pct']) || ') > 1.0 THEN ' || pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['drebpct','drbpct','drb_pct']) || ' / 100.0 ELSE ' || pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['drebpct','drbpct','drb_pct']) || ' END AS drb_pct, '
+            || 'CASE WHEN ' || pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['threepar','three_par']) || ' IS NULL THEN NULL WHEN abs(' || pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['threepar','three_par']) || ') > 1.0 THEN ' || pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['threepar','three_par']) || ' / 100.0 ELSE ' || pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['threepar','three_par']) || ' END AS three_par, 
+            || 'CASE WHEN ' || pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['tusgpct','trueusgpct','true_usg_pct']) || ' IS NULL THEN NULL WHEN abs(' || pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['tusgpct','trueusgpct','true_usg_pct']) || ') > 1.0 THEN ' || pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['tusgpct','trueusgpct','true_usg_pct']) || ' / 100.0 ELSE ' || pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['tusgpct','trueusgpct','true_usg_pct']) || ' END AS true_usg_pct, 
             || pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['fouldrawingrate','foul_drawing_rate']) || ' AS foul_drawing_rate, '
             || pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['rfpergame','rf_per_game']) || ' AS rf_per_game, '
             || pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['hustleindex','hustle_index']) || ' AS hustle_index, '
@@ -1378,6 +1378,7 @@ SELECT
     NULL::integer AS draft_year,
     NULL::integer AS draft_pick,
     p.birth_date,
+    p.season AS age_reference_season,
     p.league_key AS current_league_key
 FROM ranked p
 LEFT JOIN current_relation cr ON cr.player_id=p.player_id
