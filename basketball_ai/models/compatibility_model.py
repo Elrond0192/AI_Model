@@ -24,6 +24,7 @@ from sklearn.preprocessing import StandardScaler
 from basketball_ai.features.team_features import compute_team_style_vector
 from basketball_ai.data.models import Team
 from basketball_ai.data.loader import _to_int
+from basketball_ai.models.performance_model import _canonical_source_value
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +38,7 @@ _POSITION_BUCKET: Dict[str, float] = {
 }
 
 _PLAYER_STYLE_DEFAULTS: Dict[str, float] = {
-    "usg_pct": 18.0,
+    "usg_pct": 0.18,
     "ts_pct": 0.52,
     "points": 12.0,
     "three_par": 0.30,
@@ -69,6 +70,10 @@ def _with_prior_player_means(
             continue
         numeric_column = f"_numeric_{column}"
         work[numeric_column] = pd.to_numeric(work[column], errors="coerce")
+        if column in {"ts_pct", "usg_pct", "tov_pct", "ast_pct", "stl_pct", "blk_pct", "orb_pct", "drb_pct", "three_par", "true_usg_pct"}:
+            work[numeric_column] = work[numeric_column].map(
+                lambda value: _canonical_source_value(column, value)
+            )
         numeric_columns.append(column)
         aggregate_spec[f"_sum_{column}"] = (numeric_column, "sum")
         aggregate_spec[f"_count_{column}"] = (numeric_column, "count")
@@ -128,7 +133,7 @@ def _style_vector_from_prior(
     return np.asarray(
         [
             bucket,
-            np.clip(mean("usg_pct") / 40.0, 0.0, 1.0),
+            np.clip(mean("usg_pct") / 0.40, 0.0, 1.0),
             np.clip(mean("ts_pct"), 0.0, 1.0),
             np.clip(mean("points") / 40.0, 0.0, 1.0),
             np.clip(mean("three_par"), 0.0, 1.0),
