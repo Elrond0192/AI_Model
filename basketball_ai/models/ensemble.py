@@ -322,25 +322,114 @@ class EnsembleModel:
         current_age  = int(player_row.get("age", 26))
         age          = target_age if target_age is not None else current_age
 
-        # 1. Player feature vector for XGBoost
-        player_feats = compute_player_features(player_id, data, season=season, target_age=age)
+        # 1. Player feature vector for XGBoost.
+        #
+        # IMPORTANT: production training builds rows through PerformanceModel._build_row()
+        # directly from the DataFrame. The previous inference path converted every row
+        # through the PlayerStats dataclass first; PostgreSQL contracts may legitimately
+        # omit optional/legacy columns required by that dataclass, causing every
+        # conversion to fail and silently returning _empty_features() defaults.
+        #
+        # Use the exact same row builder here so train/validation/OOS/inference share
+        # one feature construction contract. This also preserves the explicit "age"
+        # feature that FEATURE_COLS requires.
+        stats_frame = data["player_stats"]
+        pid_value = _normalize_id(player_id)
+        player_ids = stats_frame["player_id"].map(_normalize_id)
+        p_stats = stats_frame.loc[player_ids == pid_value].copy()
 
-        # Inject competition-aware features that the model was trained on
-        player_feats["competition_enc"] = float(COMPETITION_ENCODING.get(competition, 0))
+        # Keep inference strictly as-of the requested source season. Scoped production
+        # contexts are already bounded, but this also makes the base ensemble safe for
+        # direct callers that pass the full data frame.
+        if not p_stats.empty and "season" in p_stats.columns:
+            season_years = pd.to_numeric(p_stats["season"], errors="coerce")
+            if season_years.isna().any():
+                extracted = pd.to_numeric(
+                    p_stats["season"].astype(str).str.extract(r"(\d{4})", expand=False),
+                    errors="coerce",
+                )
+                season_years = season_years.fillna(extracted)
+            p_stats = p_stats.loc[season_years.notna() & season_years.le(int(season))].copy()
 
-        # Inject DB role encoding – all three dimensions
-        p_stats  = data["player_stats"][data["player_stats"]["player_id"] == _normalize_id(player_id)]
+        # Exact competition/league scoping is supplied by strict production
+        # prediction contexts. Respect it when present for direct ensemble callers.
+        prediction_league = data.get("_prediction_league_id")
+        prediction_competition = data.get("_prediction_competition")
+        if prediction_league is not None and "league_id" in p_stats.columns:
+            p_stats = p_stats.loc[
+                p_stats["league_id"].map(_normalize_id) == _normalize_id(prediction_league)
+            ].copy()
+        if prediction_competition is not None and "competition" in p_stats.columns:
+            requested_competition = str(prediction_competition).strip().upper()
+            p_stats = p_stats.loc[
+                p_stats["competition"].astype(str).str.strip().str.upper()
+                == requested_competition
+            ].copy()
+
         if not p_stats.empty:
-            latest_row          = p_stats.sort_values("season").iloc[-1]
+            # The strict model class can apply the source-season roster-position
+            # contract inside _build_row(). The DataFrame is intentionally passed
+            # through untouched so optional PostgreSQL columns never cause a
+            # dataclass construction failure.
+            p_stats = p_stats.copy()
+            p_stats["_feature_season_year"] = pd.to_numeric(
+                p_stats["season"], errors="coerce"
+            )
+            if p_stats["_feature_season_year"].isna().any():
+                extracted = pd.to_numeric(
+                    p_stats["season"].astype(str).str.extract(
+                        r"(\d{4})", expand=False
+                    ),
+                    errors="coerce",
+                )
+                p_stats["_feature_season_year"] = p_stats[
+                    "_feature_season_year"
+                ].fillna(extracted)
+            p_stats = (
+                p_stats.sort_values("_feature_season_year", kind="stable")
+                .drop(columns=["_feature_season_year"])
+                .reset_index(drop=True)
+            )
+            latest_row = p_stats.iloc[-1].copy()
+
+            league_max_games = None
+            leagues_df = data.get("leagues")
+            if leagues_df is not None and not leagues_df.empty and "id" in leagues_df.columns:
+                if "max_games" in leagues_df.columns:
+                    league_max_games = {
+                        _normalize_id(row["id"]): int(row["max_games"])
+                        for row in leagues_df.to_dict("records")
+                        if row.get("max_games") is not None
+                        and not pd.isna(row.get("max_games"))
+                    }
+            player_feats = self.perf_model._build_row(
+                latest_row,
+                age,
+                position,
+                p_stats,
+                extra_metrics=[],
+                league_max_games=league_max_games,
+                precomputed_history=None,
+            )
             latest_role         = str(latest_row.get("ruolo_combinato",  "") or "").strip()
             latest_role_off     = str(latest_row.get("ruolo_offensivo",  "") or "").strip()
             latest_role_def     = str(latest_row.get("ruolo_difensivo",  "") or "").strip()
             latest_games_played = float(latest_row.get("games_played", 0) or 0)
             latest_mpg          = float(latest_row.get("minutes_per_game", 20) or 20)
         else:
+            # Preserve the established neutral fallback only when there is genuinely
+            # no source-season history. Normal production OOS rows with a prior rating
+            # should always take the DataFrame _build_row() path above.
+            player_feats = compute_player_features(
+                player_id, data, season=season, target_age=age
+            )
+            player_feats["age"] = float(age)
             latest_role = latest_role_off = latest_role_def = ""
             latest_games_played = 0.0
             latest_mpg = 20.0
+
+        # Inject competition-aware features that the model was trained on
+        player_feats["competition_enc"] = float(COMPETITION_ENCODING.get(competition, 0))
         # Explicit persistence features must use only the player history
         # available in the scoped/as-of prediction context. This mirrors the
         # source-season features built by PerformanceModel._precompute_history_features.
