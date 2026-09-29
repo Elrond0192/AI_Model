@@ -35,6 +35,33 @@ from basketball_ai.data.loader import _to_int
 logger = logging.getLogger(__name__)
 
 
+# Source rate columns are canonicalised to fractional form (0..1) before
+# entering the model. Historical source tables contain both fraction and percent
+# encodings; keeping the normalisation here guarantees the same contract for
+# training, OOF and production inference without depending on DB rebuild order.
+_RATE_FRACTION_COLUMNS = frozenset({
+    "ts_pct", "usg_pct", "tov_pct", "ast_pct", "stl_pct", "blk_pct",
+    "orb_pct", "drb_pct", "three_par", "true_usg_pct",
+})
+_PER40_SANITY_MAX = 60.0
+
+
+def _canonical_source_value(column: str, value: Any) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return float("nan")
+    if not np.isfinite(number):
+        return float("nan")
+    if column in _RATE_FRACTION_COLUMNS and abs(number) > 1.0:
+        number /= 100.0
+    if column == "pts_per_40":
+        # A per-40 rate above 60 is a small-minute ratio outlier, not useful
+        # signal for a season-ahead model. Treat it as bounded domain noise.
+        number = float(np.clip(number, 0.0, _PER40_SANITY_MAX))
+    return number
+
+
 def _xgb_device() -> str:
     """Return 'cuda' when an NVIDIA GPU with CUDA is available, else 'cpu'.
 
@@ -495,19 +522,19 @@ class PerformanceModel:
             return (float(v) if not pd.isna(v) else 0.0) / mpg * 36
 
         def hist_avg(col: str, fallback: float = 0.0) -> float:
-            """Historical average of *col* from career so far; fall back to current row."""
+            """Historical average with one canonical source-unit contract."""
             if precomputed_history is not None:
                 key = f"mean:{col}"
                 if key in precomputed_history:
-                    return precomputed_history[key]
-                v = stat_row.get(col, fallback)
-                return fallback if pd.isna(v) else float(v)
+                    value = _canonical_source_value(col, precomputed_history[key])
+                    return fallback if pd.isna(value) else float(value)
             if not player_stats_history.empty and col in player_stats_history.columns:
-                vals = player_stats_history[col].dropna().tolist()
-                if vals:
-                    return float(np.mean(vals))
-            v = stat_row.get(col, fallback)
-            return fallback if pd.isna(v) else float(v)
+                values = pd.to_numeric(player_stats_history[col], errors="coerce")
+                values = values.map(lambda value: _canonical_source_value(col, value)).dropna()
+                if not values.empty:
+                    return float(values.mean())
+            value = _canonical_source_value(col, stat_row.get(col, fallback))
+            return fallback if pd.isna(value) else float(value)
 
         # Career stats up to this season
         if precomputed_history is not None:
@@ -676,10 +703,10 @@ class PerformanceModel:
             "avg_hustle_index":       hist_avg("hustle_index", 0.0),
             "avg_foul_drawing_rate":  hist_avg("foul_drawing_rate", 0.0),
             # --- Rate stats (normalised percentages) -------------------------
-            "avg_tov_pct":          hist_avg("tov_pct", 10.0),
-            "avg_ast_pct":          hist_avg("ast_pct", 10.0),
-            "avg_orb_pct":          hist_avg("orb_pct", 3.0),
-            "avg_drb_pct":          hist_avg("drb_pct", 12.0),
+            "avg_tov_pct":          hist_avg("tov_pct", 0.10),
+            "avg_ast_pct":          hist_avg("ast_pct", 0.10),
+            "avg_orb_pct":          hist_avg("orb_pct", 0.03),
+            "avg_drb_pct":          hist_avg("drb_pct", 0.12),
             # --- Clutch performance ------------------------------------------
             "clutch_pts_per_game":  clutch_pts_per_game,
             "clutch_sample_reliability": clutch_sample_reliability,
