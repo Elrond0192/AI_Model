@@ -740,6 +740,7 @@ def _adjust_players_for_snapshot(
     for position, row in enumerate(players.to_dict("records")):
         pid = _to_int(row["id"])
         birth_date = row.get("birth_date", row.get("date_of_birth"))
+        position_name = str(row.get("position", "PG") or "PG")
         try:
             age = source_season - int(str(birth_date)[:4])
         except (TypeError, ValueError):
@@ -748,7 +749,6 @@ def _adjust_players_for_snapshot(
                 raw_age_value = float(raw_age)
             except (TypeError, ValueError):
                 raw_age_value = float("nan")
-            position_name = str(row.get("position", "PG") or "PG")
             if np.isfinite(raw_age_value) and 14 <= raw_age_value <= 44:
                 reference_season = row.get("age_reference_season")
                 try:
