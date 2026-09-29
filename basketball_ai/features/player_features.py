@@ -8,6 +8,7 @@ Provides two layers:
 from __future__ import annotations
 
 import math as _math
+from dataclasses import fields as _dataclass_fields
 from typing import Any, Dict, List, Optional
 
 import numpy as np
@@ -24,6 +25,9 @@ from basketball_ai.constants import (
 from basketball_ai.data.loader import _to_int as _lid_to_int
 from basketball_ai.data.models import Player, PlayerStats
 from basketball_ai.utils.helpers import normalize_id as _normalize_id
+
+_PLAYER_STATS_FIELDS = {field.name for field in _dataclass_fields(PlayerStats)}
+
 
 def _safe_int(val: Any, default: int = 0) -> int:
     """Convert val to int, treating NaN/inf as default."""
@@ -373,10 +377,18 @@ def compute_player_features(
 
     stat_objects: List[PlayerStats] = []
     for row in p_stats_df.to_dict("records"):
+        # PostgreSQL exposes additional canonical/identity columns that are not
+        # part of the typed PlayerStats dataclass. Filter them exactly as the
+        # CSV loader already does; otherwise the constructor rejects the row
+        # and the old silent exception fallback turns a real history into the
+        # neutral _empty_features() defaults.
+        filtered = {key: value for key, value in row.items() if key in _PLAYER_STATS_FIELDS}
         try:
-            stat_objects.append(PlayerStats(**row))
-        except Exception:
-            pass
+            stat_objects.append(PlayerStats(**filtered))
+        except (TypeError, ValueError):
+            # Keep the legacy tolerant behaviour for genuinely malformed rows,
+            # but do not fail merely because the source contains extra columns.
+            continue
 
     # Build a league_id → max_games lookup from the leagues data if available
     league_max_games: Optional[Dict[int, int]] = None
