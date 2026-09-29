@@ -246,8 +246,10 @@ BEGIN
                     THEN to_date(btrim(%1$s::text), ''YYYY/MM/DD'')
                 WHEN NULLIF(btrim(%1$s::text), '''') ~ ''^[0-9]{2}/[0-9]{2}/[0-9]{4}$''
                     THEN to_date(btrim(%1$s::text), ''DD/MM/YYYY'')
-                WHEN NULLIF(btrim(%1$s::text), '''') ~ ''^[0-9]{2}-[0-9]{2}-[0-9]{4}$''
+                WHEN NULLIF(btrim(%1$s::text), '''') ~ ''^[0-9]{1,2}-[0-9]{1,2}-[0-9]{4}$''
                     THEN to_date(btrim(%1$s::text), ''DD-MM-YYYY'')
+                WHEN NULLIF(btrim(%1$s::text), '''') ~ ''^[0-9]{1,2}/[0-9]{1,2}/[0-9]{4}$''
+                    THEN to_date(btrim(%1$s::text), ''DD/MM/YYYY'')
                 ELSE NULL::date
               END)',
             q
@@ -1165,7 +1167,8 @@ BEGIN
             || pg_temp.ai_expr('Anagrafiche',r.table_name,'p','numeric',ARRAY['cm','heightcm','height_cm']) || ' AS height_cm, '
             || pg_temp.ai_expr('Anagrafiche',r.table_name,'p','numeric',ARRAY['weight','weightkg','weight_kg']) || ' AS weight_kg, '
             || pg_temp.ai_expr('Anagrafiche',r.table_name,'p','int',ARRAY['shirtnumber','jerseynumber']) || ' AS jersey_number, '
-            || pg_temp.ai_expr('Anagrafiche',r.table_name,'p','text',ARRAY['teamname']) || ' AS team_name, '
+            || pg_temp.ai_expr('Anagrafiche',r.table_name,'p','text',ARRAY['team','teamid','idteam']) || ' AS source_team_id, '
+            || pg_temp.ai_expr('Anagrafiche',r.table_name,'p','text',ARRAY['teamname','team_name']) || ' AS team_name, '
             || pg_temp.ai_expr('Anagrafiche',r.table_name,'p','int',ARRAY['season']) || ' AS season, '
             || quote_literal(league_key) || '::text AS league_key '
             || 'FROM "Anagrafiche"."'
@@ -1174,7 +1177,7 @@ BEGIN
     END LOOP;
 
     IF body='' THEN
-        body := 'SELECT NULL::bigint player_id, NULL::text global_id, NULL::text name, NULL::date birth_date, NULL::bigint source_age, NULL::text position, NULL::text nationality, NULL::double precision height_cm, NULL::double precision weight_kg, NULL::bigint jersey_number, NULL::text team_name, NULL::integer season, NULL::text league_key WHERE false';
+        body := 'SELECT NULL::bigint player_id, NULL::text global_id, NULL::text name, NULL::date birth_date, NULL::bigint source_age, NULL::text position, NULL::text nationality, NULL::double precision height_cm, NULL::double precision weight_kg, NULL::bigint jersey_number, NULL::text source_team_id, NULL::text team_name, NULL::integer season, NULL::text league_key WHERE false';
     END IF;
 
     EXECUTE
@@ -1188,7 +1191,7 @@ BEGIN
         ON pg_temp.ai_players_registry (player_id, season, league_key);
 
     CREATE INDEX ai_players_registry_team
-        ON pg_temp.ai_players_registry (league_key, season, team_name);
+        ON pg_temp.ai_players_registry (league_key, season, source_team_id, team_name);
 END;
 $players_registry$;
 
@@ -1297,10 +1300,22 @@ roster_rel AS (
       ON t.league_key=p.league_key
      AND t.season=p.season
      AND (
-         lower(btrim(p.team_name)) = lower(btrim(t.name))
-         OR lower(btrim(p.team_name)) = lower(btrim(coalesce(t.short_name,'')))
+         (
+             p.source_team_id IS NOT NULL
+             AND t.source_team_id IS NOT NULL
+             AND btrim(p.source_team_id) = btrim(t.source_team_id)
+         )
+         OR
+         (
+             p.source_team_id IS NULL
+             AND p.team_name IS NOT NULL
+             AND (
+                 lower(btrim(p.team_name)) = lower(btrim(t.name))
+                 OR lower(btrim(p.team_name)) = lower(btrim(coalesce(t.short_name,'')))
+             )
+         )
      )
-    WHERE p.team_name IS NOT NULL
+    WHERE (p.source_team_id IS NOT NULL OR p.team_name IS NOT NULL)
       AND p.player_id IS NOT NULL
       AND t.team_id IS NOT NULL
 ),
@@ -1354,20 +1369,19 @@ current_relation AS (
 SELECT
     p.player_id AS id,
     p.global_id,
-    coalesce(p.name, p.global_id) AS name,
-    coalesce(
-        p.source_age,
-        CASE
-            WHEN p.birth_date IS NOT NULL
-                THEN p.season - extract(year FROM p.birth_date)::integer
-            ELSE 0
-        END
-    )::integer AS age,
-    coalesce(nullif(p.position,''),'PG') AS position,
-    coalesce(p.nationality,'') AS nationality,
+    p.name AS name,
+    CASE
+        WHEN p.source_age BETWEEN 14 AND 44
+            THEN p.source_age
+        WHEN p.birth_date IS NOT NULL
+            THEN p.season - extract(year FROM p.birth_date)::integer
+        ELSE NULL
+    END::integer AS age,
+    NULLIF(p.position,'') AS position,
+    NULLIF(p.nationality,'') AS nationality,
     p.height_cm,
     p.weight_kg,
-    'R'::text AS dominant_hand,
+    NULL::text AS dominant_hand,
     cr.team_id AS current_team_id,
     CASE
         WHEN p.league_key IS NULL OR btrim(p.league_key)=''
