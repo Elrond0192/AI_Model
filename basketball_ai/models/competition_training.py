@@ -279,7 +279,12 @@ class CompetitionSeasonAheadPerformanceModel(SeasonAheadPerformanceModel):
             except (TypeError, ValueError):
                 age_value = float("nan")
             if np.isfinite(age_value) and 14 <= age_value <= 44:
-                birth_year_map[pid] = latest_data_year - int(age_value)
+                reference_season = player.get("age_reference_season")
+                try:
+                    reference_year = int(reference_season)
+                except (TypeError, ValueError):
+                    reference_year = latest_data_year
+                birth_year_map[pid] = reference_year - int(age_value)
 
         league_max_games: Optional[Dict[int, int]] = None
         leagues = data.get("leagues")
