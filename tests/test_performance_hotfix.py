@@ -251,3 +251,92 @@ def test_model_threads_respect_configured_cpu_limit(monkeypatch):
 
     monkeypatch.setenv("MODEL_CPU_THREADS", "64")
     assert training._model_threads() == 8
+
+def test_production_inference_uses_dataframe_builder_when_dataclass_fields_are_missing(monkeypatch):
+    import basketball_ai.models.ensemble as ensemble_module
+    from basketball_ai.models.ensemble import EnsembleModel
+    from basketball_ai.models.performance_model import PerformanceModel
+
+    # This mimics the PostgreSQL source contract: core prediction columns are
+    # present, while several legacy PlayerStats dataclass-required columns are
+    # intentionally absent. The old inference path silently converted this
+    # into _empty_features() defaults.
+    data = {
+        "player_stats": pd.DataFrame(
+            [
+                {
+                    "player_id": 1,
+                    "team_id": 10,
+                    "league_id": 1,
+                    "season": 2024,
+                    "competition": "RS",
+                    "games_played": 30,
+                    "minutes_per_game": 28.0,
+                    "points": 18.0,
+                    "rating": 7.1,
+                }
+            ]
+        ),
+        "player_dict": {
+            1: {
+                "id": 1,
+                "name": "Player",
+                "position": "PG",
+                "age": 27,
+                "current_team_id": 10,
+                "current_league_id": 1,
+            }
+        },
+        "team_dict": {
+            10: {"id": 10, "league_id": 1},
+        },
+        "leagues": pd.DataFrame(),
+    }
+
+    perf = PerformanceModel()
+    perf.role_encoding = {}
+    perf.role_off_encoding = {}
+    perf.role_def_encoding = {}
+    perf.role_feature_encodings = {}
+    perf.competition_feature_encodings = {}
+    perf.feature_names = []
+    perf.target_mode = "delta_vs_prior"
+    perf.predict_from_features = lambda features: 0.0
+    perf.predict_target_rating = lambda features: 7.0
+    perf.get_shap_values = lambda features: {}
+
+    class Compat:
+        def score(self, player_id, team_id, scoped_data):
+            return 0.5
+
+    model = EnsembleModel(performance_model=perf, compatibility_model=Compat())
+    model._league_factors = {"1": 1.0}
+    model._mpg_baseline = 30.0
+
+    monkeypatch.setattr(
+        ensemble_module,
+        "compute_context_features",
+        lambda *args, **kwargs: {
+            "position_team_fit": 0.8,
+            "style_compatibility": 0.8,
+            "role_opportunity": 0.8,
+            "league_adaptation_factor": 1.0,
+            "spacing_fit": 0.8,
+        },
+    )
+    monkeypatch.setattr(ensemble_module, "age_performance_factor", lambda *args: 1.0)
+
+    result = model._predict_uncached(
+        1,
+        10,
+        data,
+        season=2024,
+        competition="RS",
+    )
+
+    assert result.predicted_rating >= 3.5
+    # A real source row must not be mistaken for an empty history.
+    # In particular, the old path returned form_score=5.0 and omitted age.
+    assert model._last_prediction_features["form_score"] == 7.1
+    assert model._last_prediction_features["age"] == 27.0
+    assert model._last_prediction_features["pts_per_36"] == 23.14
