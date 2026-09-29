@@ -283,13 +283,19 @@ def _player_age_as_of(player: Dict[str, Any], season: int) -> int:
     for key in ("birth_date", "date_of_birth"):
         value = player.get(key)
         try:
-            return int(season) - int(str(value)[:4])
+            birth_year = int(str(value)[:4])
+            age = int(season) - birth_year
+            if 14 <= age <= 45:
+                return age
         except (TypeError, ValueError):
             pass
     try:
-        return int(player.get("age", 26) or 26)
+        raw_age = float(player.get("age"))
+        if np.isfinite(raw_age) and 14 <= raw_age <= 44:
+            return int(raw_age)
     except (TypeError, ValueError):
-        return 26
+        pass
+    return int(round(_peak_age(str(player.get("position", "PG") or "PG"))))
 
 
 def build_base_oof_predictions(
