@@ -11,6 +11,9 @@ from typing import Any, Dict, Iterable, List, Optional
 
 import numpy as np
 import pandas as pd
+from sklearn.linear_model import Ridge
+from sklearn.pipeline import make_pipeline
+from sklearn.preprocessing import StandardScaler
 
 from basketball_ai.models.strict_production import (
     AsOfPositionPerformanceModel,
@@ -289,6 +292,227 @@ def _feature_predictive_stability(folds: List[Dict[str, Any]], top_n: int = 30) 
     }
 
 
+
+def _feature_distribution_diagnostics(
+    ensemble: Any,
+    oos_features: pd.DataFrame,
+    top_n: int = 20,
+) -> Dict[str, Any]:
+    """Compare the exact final-fit feature distribution with untouched OOS features.
+
+    Diagnostic-only. It reports robust quantiles, scale/range shifts, missingness
+    and the share of OOS values outside the training 1st/99th percentile.
+    """
+    model = getattr(ensemble, "perf_model", None)
+    fit_raw = getattr(model, "_diagnostic_fit_X_raw", None)
+    if not isinstance(fit_raw, pd.DataFrame) or fit_raw.empty:
+        return {"valid": False, "reason": "production_fit_frame_unavailable"}
+    if not isinstance(oos_features, pd.DataFrame) or oos_features.empty:
+        return {"valid": False, "reason": "oos_feature_frame_unavailable"}
+
+    metrics = getattr(model, "_last_metrics", {}) or {}
+    stability = metrics.get("feature_shift_diagnostics") or {}
+    ranked = [row.get("feature") for row in stability.get("features", []) if row.get("feature")]
+    if not ranked:
+        ranked = list(fit_raw.columns[:max(1, int(top_n))])
+    ranked = ranked[:max(1, int(top_n))]
+
+    fit = fit_raw.reindex(columns=ranked)
+    oos = oos_features.reindex(columns=ranked)
+    rows: List[Dict[str, Any]] = []
+
+    def numeric(series: pd.Series) -> np.ndarray:
+        values = pd.to_numeric(series, errors="coerce").to_numpy(dtype=float)
+        return values[np.isfinite(values)]
+
+    for feature in ranked:
+        tr = numeric(fit[feature])
+        oo = numeric(oos[feature])
+        if tr.size == 0 or oo.size == 0:
+            rows.append({
+                "feature": feature,
+                "gain": next(
+                    (float(item.get("gain", 0.0)) for item in stability.get("features", [])
+                     if item.get("feature") == feature),
+                    0.0,
+                ),
+                "valid": False,
+                "train_n": int(tr.size),
+                "oos_n": int(oo.size),
+            })
+            continue
+
+        p01, p25, p50, p75, p99 = np.percentile(tr, [1, 25, 50, 75, 99])
+        o01, o25, o50, o75, o99 = np.percentile(oo, [1, 25, 50, 75, 99])
+        train_iqr = float(max(p75 - p25, 0.0))
+        oos_iqr = float(max(o75 - o25, 0.0))
+        train_std = float(np.std(tr))
+        oos_std = float(np.std(oo))
+        train_range = float(np.max(tr) - np.min(tr))
+        oos_range = float(np.max(oo) - np.min(oo))
+        train_missing = float(pd.to_numeric(fit[feature], errors="coerce").isna().mean() * 100.0)
+        oos_missing = float(pd.to_numeric(oos[feature], errors="coerce").isna().mean() * 100.0)
+
+        outside = float(np.mean((oo < p01) | (oo > p99)) * 100.0)
+        robust_scale = train_iqr if train_iqr > 1e-9 else max(train_std, 1e-9)
+        median_shift = float((o50 - p50) / robust_scale)
+        std_ratio = float(oos_std / train_std) if train_std > 1e-9 else None
+        iqr_ratio = float(oos_iqr / train_iqr) if train_iqr > 1e-9 else None
+        range_ratio = float(oos_range / train_range) if train_range > 1e-9 else None
+        missing_delta_pp = float(oos_missing - train_missing)
+
+        flags: List[str] = []
+        if outside > 2.0:
+            flags.append("oos_outside_train_p01_p99")
+        if abs(median_shift) > 1.0:
+            flags.append("median_shift_gt_1_iqr")
+        if std_ratio is not None and (std_ratio > 2.0 or std_ratio < 0.5):
+            flags.append("std_ratio_outside_0_5_2")
+        if iqr_ratio is not None and (iqr_ratio > 2.0 or iqr_ratio < 0.5):
+            flags.append("iqr_ratio_outside_0_5_2")
+        if range_ratio is not None and (range_ratio > 3.0 or range_ratio < 1.0 / 3.0):
+            flags.append("range_ratio_outside_1_3_3")
+        if abs(missing_delta_pp) > 5.0:
+            flags.append("missingness_delta_gt_5pp")
+
+        gain = next(
+            (
+                float(item.get("gain", 0.0))
+                for item in stability.get("features", [])
+                if item.get("feature") == feature
+            ),
+            0.0,
+        )
+        rows.append({
+            "feature": feature,
+            "valid": True,
+            "gain": gain,
+            "train_n": int(tr.size),
+            "oos_n": int(oo.size),
+            "train_p01": float(p01),
+            "train_p25": float(p25),
+            "train_p50": float(p50),
+            "train_p75": float(p75),
+            "train_p99": float(p99),
+            "train_min": float(np.min(tr)),
+            "train_max": float(np.max(tr)),
+            "train_std": train_std,
+            "oos_p01": float(o01),
+            "oos_p25": float(o25),
+            "oos_p50": float(o50),
+            "oos_p75": float(o75),
+            "oos_p99": float(o99),
+            "oos_min": float(np.min(oo)),
+            "oos_max": float(np.max(oo)),
+            "oos_std": oos_std,
+            "train_missing_pct": train_missing,
+            "oos_missing_pct": oos_missing,
+            "missing_delta_pp": missing_delta_pp,
+            "oos_outside_train_p01_p99_pct": outside,
+            "robust_median_shift_iqr": median_shift,
+            "std_ratio": std_ratio,
+            "iqr_ratio": iqr_ratio,
+            "range_ratio": range_ratio,
+            "anomaly_flags": flags,
+        })
+
+    flagged = [row["feature"] for row in rows if row.get("anomaly_flags")]
+    return {
+        "valid": True,
+        "comparison": "final_fit_vs_oos_target",
+        "top_n": len(rows),
+        "features_flagged": int(len(flagged)),
+        "flagged_features": flagged,
+        "features": rows,
+    }
+
+
+def _ridge_oos_diagnostics(
+    ensemble: Any,
+    oos_features: pd.DataFrame,
+    records: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Fit a standardized Ridge on the exact XGB fit sample and evaluate on OOS.
+
+    Diagnostic-only. The Ridge model is never used by production prediction.
+    The target is the same native delta_vs_prior used by the production model.
+    """
+    model = getattr(ensemble, "perf_model", None)
+    fit_X = getattr(model, "_diagnostic_fit_X", None)
+    fit_y = getattr(model, "_diagnostic_fit_y", None)
+    feature_names = list(getattr(model, "feature_names", []) or [])
+    if not isinstance(fit_X, pd.DataFrame) or fit_X.empty:
+        return {"valid": False, "reason": "production_fit_matrix_unavailable"}
+    if fit_y is None or len(fit_y) != len(fit_X):
+        return {"valid": False, "reason": "production_fit_target_unavailable"}
+    if not isinstance(oos_features, pd.DataFrame) or oos_features.empty:
+        return {"valid": False, "reason": "oos_feature_frame_unavailable"}
+    if len(records) != len(oos_features):
+        return {
+            "valid": False,
+            "reason": "oos_feature_record_length_mismatch",
+            "feature_rows": len(oos_features),
+            "records": len(records),
+        }
+    if not feature_names:
+        return {"valid": False, "reason": "feature_names_unavailable"}
+
+    X_fit = fit_X.reindex(columns=feature_names).apply(pd.to_numeric, errors="coerce").fillna(0.0)
+    X_oos = oos_features.reindex(columns=feature_names).apply(pd.to_numeric, errors="coerce").fillna(0.0)
+    y_fit = np.asarray(fit_y, dtype=float)
+    persistence = np.asarray(
+        [float(row["persistence_prediction"]) for row in records],
+        dtype=float,
+    )
+    actual = np.asarray([float(row["actual"]) for row in records], dtype=float)
+    actual_delta = actual - persistence
+
+    if len(X_oos) < 2 or np.std(actual_delta) <= 1e-12:
+        return {"valid": False, "reason": "insufficient_oos_variance", "n": int(len(X_oos))}
+
+    ridge = make_pipeline(
+        StandardScaler(),
+        Ridge(alpha=1.0),
+    )
+    ridge.fit(X_fit, y_fit)
+    pred_delta = np.asarray(ridge.predict(X_oos), dtype=float)
+
+    error = pred_delta - actual_delta
+    persistence_error = persistence - actual
+    rmse = float(np.sqrt(np.mean(error ** 2)))
+    persistence_rmse = float(np.sqrt(np.mean(persistence_error ** 2)))
+    sst = float(np.sum((actual_delta - np.mean(actual_delta)) ** 2))
+    corr = (
+        float(np.corrcoef(pred_delta, actual_delta)[0, 1])
+        if np.std(pred_delta) > 1e-12
+        else None
+    )
+    return {
+        "valid": True,
+        "model": "Ridge",
+        "alpha": 1.0,
+        "standardized": True,
+        "target_mode": str(getattr(model, "target_mode", "unknown")),
+        "fit_n": int(len(X_fit)),
+        "oos_n": int(len(X_oos)),
+        "fit_target_mean": float(np.mean(y_fit)),
+        "fit_target_std": float(np.std(y_fit)),
+        "oos_actual_delta_mean": float(np.mean(actual_delta)),
+        "oos_actual_delta_std": float(np.std(actual_delta)),
+        "oos_prediction_mean": float(np.mean(pred_delta)),
+        "oos_prediction_std": float(np.std(pred_delta)),
+        "oos_bias_as_delta": float(np.mean(error)),
+        "oos_rmse_as_delta": rmse,
+        "oos_mae_as_delta": float(np.mean(np.abs(error))),
+        "oos_r2_as_delta": float(1.0 - np.sum(error ** 2) / sst) if sst > 0.0 else 0.0,
+        "oos_correlation": corr,
+        "persistence_rmse": persistence_rmse,
+        "gain_vs_persistence": float(persistence_rmse - rmse),
+        "prediction_minus_persistence_std": float(np.std(pred_delta)),
+        "oos_sse_as_delta": float(np.sum(error ** 2)),
+    }
+
+
 def _age_band(age: int) -> str:
     if age <= 21:
         return "<=21"
@@ -364,6 +588,8 @@ def run_backtest(
             train_data = build_historical_snapshot(data, source_season)
             ensemble = StrictProductionEnsembleModel()
             ensemble.train(train_data)
+            if include_stage_metrics:
+                ensemble._capture_diagnostic_features = True
             records = evaluate_target_season(ensemble, data, target_season)
             if len(records) < minimum:
                 raise RuntimeError(
@@ -422,6 +648,16 @@ def run_backtest(
                 )
                 fold["feature_shift_diagnostics"] = dict(
                     last_metrics.get("feature_shift_diagnostics", {})
+                )
+                fold["feature_distribution_diagnostics"] = _feature_distribution_diagnostics(
+                    ensemble,
+                    getattr(ensemble, "_last_oos_feature_frame", pd.DataFrame()),
+                    top_n=20,
+                )
+                fold["ridge_oos_diagnostics"] = _ridge_oos_diagnostics(
+                    ensemble,
+                    getattr(ensemble, "_last_oos_feature_frame", pd.DataFrame()),
+                    records,
                 )
                 fold["persistence_blend_diagnostics"] = _persistence_blend_diagnostics(records)
                 fold["raw_xgb_stage_diagnostics"] = _raw_xgb_stage_diagnostics(records)
