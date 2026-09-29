@@ -11,9 +11,6 @@ from typing import Any, Dict, Iterable, List, Optional
 
 import numpy as np
 import pandas as pd
-from sklearn.linear_model import Ridge
-from sklearn.pipeline import make_pipeline
-from sklearn.preprocessing import StandardScaler
 
 from basketball_ai.models.strict_production import (
     AsOfPositionPerformanceModel,
@@ -65,10 +62,8 @@ def _segment_metrics(records: List[Dict[str, Any]], key: str) -> Dict[str, Dict[
                 np.sqrt(np.mean(persistence_error ** 2))
                 - np.sqrt(np.mean(model_error ** 2))
             ),
-            "persistence_bias": float(np.mean(persistence_error)),
             "model_bias": float(np.mean(model_error)),
             "correction_mean": float(np.mean(model - persistence)),
-            "correction_std": float(np.std(model - persistence)),
         }
     return result
 
@@ -215,302 +210,47 @@ def _nested_temporal_shrinkage_alpha(
         }
 
 
-def _feature_predictive_stability(folds: List[Dict[str, Any]], top_n: int = 30) -> Dict[str, Any]:
-    """Aggregate train/validation target-correlation stability across folds.
-
-    Diagnostic-only: this summarizes the feature/target relationship drift already
-    measured per fold. It does not alter training, feature selection, or inference.
-    """
-    grouped: Dict[str, List[Dict[str, Any]]] = {}
-    for fold in folds:
-        if not fold.get("valid"):
-            continue
-        diagnostics = fold.get("feature_shift_diagnostics") or {}
-        for item in diagnostics.get("features", []):
-            feature = item.get("feature")
-            if not feature:
-                continue
-            grouped.setdefault(str(feature), []).append({
-                "target_season": fold.get("target_season"),
-                "train_corr": item.get("train_target_correlation"),
-                "validation_corr": item.get("validation_target_correlation"),
-                "corr_shift": (
-                    item.get("validation_target_correlation")
-                    - item.get("train_target_correlation")
-                    if item.get("train_target_correlation") is not None
-                    and item.get("validation_target_correlation") is not None
-                    else None
-                ),
-            })
-
-    rows: List[Dict[str, Any]] = []
-    for feature, observations in grouped.items():
-        train_corr = np.asarray(
-            [float(x["train_corr"]) for x in observations if x["train_corr"] is not None],
-            dtype=float,
-        )
-        validation_corr = np.asarray(
-            [float(x["validation_corr"]) for x in observations if x["validation_corr"] is not None],
-            dtype=float,
-        )
-        shifts = np.asarray(
-            [float(x["corr_shift"]) for x in observations if x["corr_shift"] is not None],
-            dtype=float,
-        )
-        if validation_corr.size == 0:
-            continue
-        sign_flips = sum(
-            1 for x in observations
-            if x["train_corr"] is not None
-            and x["validation_corr"] is not None
-            and float(x["train_corr"]) * float(x["validation_corr"]) < 0.0
-        )
-        rows.append({
-            "feature": feature,
-            "folds_present": int(len(observations)),
-            "train_corr_mean": float(np.mean(train_corr)) if train_corr.size else None,
-            "validation_corr_mean": float(np.mean(validation_corr)),
-            "mean_abs_validation_corr": float(np.mean(np.abs(validation_corr))),
-            "validation_corr_std": float(np.std(validation_corr)),
-            "mean_abs_corr_shift": float(np.mean(np.abs(shifts))) if shifts.size else None,
-            "max_abs_corr_shift": float(np.max(np.abs(shifts))) if shifts.size else None,
-            "sign_flip_count": int(sign_flips),
-            "observations": observations,
-        })
-
-    rows.sort(
-        key=lambda row: (
-            row["mean_abs_corr_shift"] if row["mean_abs_corr_shift"] is not None else -1.0,
-            row["mean_abs_validation_corr"] if row["mean_abs_validation_corr"] is not None else -1.0,
-        ),
-        reverse=True,
-    )
-    return {
-        "n_features": len(rows),
-        "top_n": min(int(top_n), len(rows)),
-        "features": rows[:top_n],
-    }
-
-
-
-def _feature_distribution_diagnostics(
+def _feature_sanity_diagnostics(
     ensemble: Any,
     oos_features: pd.DataFrame,
-    top_n: int = 20,
 ) -> Dict[str, Any]:
-    """Compare the exact final-fit feature distribution with untouched OOS features.
-
-    Diagnostic-only. It reports robust quantiles, scale/range shifts, missingness
-    and the share of OOS values outside the training 1st/99th percentile.
-    """
-    model = getattr(ensemble, "perf_model", None)
-    fit_raw = getattr(model, "_diagnostic_fit_X_raw", None)
-    if not isinstance(fit_raw, pd.DataFrame) or fit_raw.empty:
-        return {"valid": False, "reason": "production_fit_frame_unavailable"}
+    """Compact sanity checks for the few source features currently under review."""
     if not isinstance(oos_features, pd.DataFrame) or oos_features.empty:
         return {"valid": False, "reason": "oos_feature_frame_unavailable"}
 
-    metrics = getattr(model, "_last_metrics", {}) or {}
-    stability = metrics.get("feature_shift_diagnostics") or {}
-    ranked = [row.get("feature") for row in stability.get("features", []) if row.get("feature")]
-    if not ranked:
-        ranked = list(fit_raw.columns[:max(1, int(top_n))])
-    ranked = ranked[:max(1, int(top_n))]
-
-    fit = fit_raw.reindex(columns=ranked)
-    oos = oos_features.reindex(columns=ranked)
-    rows: List[Dict[str, Any]] = []
-
-    def numeric(series: pd.Series) -> np.ndarray:
-        values = pd.to_numeric(series, errors="coerce").to_numpy(dtype=float)
-        return values[np.isfinite(values)]
-
-    for feature in ranked:
-        tr = numeric(fit[feature])
-        oo = numeric(oos[feature])
-        if tr.size == 0 or oo.size == 0:
-            rows.append({
-                "feature": feature,
-                "gain": next(
-                    (float(item.get("gain", 0.0)) for item in stability.get("features", [])
-                     if item.get("feature") == feature),
-                    0.0,
-                ),
-                "valid": False,
-                "train_n": int(tr.size),
-                "oos_n": int(oo.size),
-            })
+    checks = {
+        "age": ("age",),
+        "avg_usg_pct": ("avg_usg_pct",),
+        "avg_pts_per_40": ("avg_pts_per_40",),
+        "avg_orb_pct": ("avg_orb_pct",),
+    }
+    result: Dict[str, Any] = {"valid": True}
+    for feature in checks:
+        if feature not in oos_features.columns:
+            result[feature] = {"valid": False}
             continue
-
-        p01, p25, p50, p75, p99 = np.percentile(tr, [1, 25, 50, 75, 99])
-        o01, o25, o50, o75, o99 = np.percentile(oo, [1, 25, 50, 75, 99])
-        train_iqr = float(max(p75 - p25, 0.0))
-        oos_iqr = float(max(o75 - o25, 0.0))
-        train_std = float(np.std(tr))
-        oos_std = float(np.std(oo))
-        train_range = float(np.max(tr) - np.min(tr))
-        oos_range = float(np.max(oo) - np.min(oo))
-        train_missing = float(pd.to_numeric(fit[feature], errors="coerce").isna().mean() * 100.0)
-        oos_missing = float(pd.to_numeric(oos[feature], errors="coerce").isna().mean() * 100.0)
-
-        outside = float(np.mean((oo < p01) | (oo > p99)) * 100.0)
-        robust_scale = train_iqr if train_iqr > 1e-9 else max(train_std, 1e-9)
-        median_shift = float((o50 - p50) / robust_scale)
-        std_ratio = float(oos_std / train_std) if train_std > 1e-9 else None
-        iqr_ratio = float(oos_iqr / train_iqr) if train_iqr > 1e-9 else None
-        range_ratio = float(oos_range / train_range) if train_range > 1e-9 else None
-        missing_delta_pp = float(oos_missing - train_missing)
-
-        flags: List[str] = []
-        if outside > 2.0:
-            flags.append("oos_outside_train_p01_p99")
-        if abs(median_shift) > 1.0:
-            flags.append("median_shift_gt_1_iqr")
-        if std_ratio is not None and (std_ratio > 2.0 or std_ratio < 0.5):
-            flags.append("std_ratio_outside_0_5_2")
-        if iqr_ratio is not None and (iqr_ratio > 2.0 or iqr_ratio < 0.5):
-            flags.append("iqr_ratio_outside_0_5_2")
-        if range_ratio is not None and (range_ratio > 3.0 or range_ratio < 1.0 / 3.0):
-            flags.append("range_ratio_outside_1_3_3")
-        if abs(missing_delta_pp) > 5.0:
-            flags.append("missingness_delta_gt_5pp")
-
-        gain = next(
-            (
-                float(item.get("gain", 0.0))
-                for item in stability.get("features", [])
-                if item.get("feature") == feature
-            ),
-            0.0,
-        )
-        rows.append({
-            "feature": feature,
+        values = pd.to_numeric(oos_features[feature], errors="coerce")
+        values = values[np.isfinite(values.to_numpy(dtype=float))]
+        if values.empty:
+            result[feature] = {"valid": False, "n": 0}
+            continue
+        item: Dict[str, Any] = {
             "valid": True,
-            "gain": gain,
-            "train_n": int(tr.size),
-            "oos_n": int(oo.size),
-            "train_p01": float(p01),
-            "train_p25": float(p25),
-            "train_p50": float(p50),
-            "train_p75": float(p75),
-            "train_p99": float(p99),
-            "train_min": float(np.min(tr)),
-            "train_max": float(np.max(tr)),
-            "train_std": train_std,
-            "oos_p01": float(o01),
-            "oos_p25": float(o25),
-            "oos_p50": float(o50),
-            "oos_p75": float(o75),
-            "oos_p99": float(o99),
-            "oos_min": float(np.min(oo)),
-            "oos_max": float(np.max(oo)),
-            "oos_std": oos_std,
-            "train_missing_pct": train_missing,
-            "oos_missing_pct": oos_missing,
-            "missing_delta_pp": missing_delta_pp,
-            "oos_outside_train_p01_p99_pct": outside,
-            "robust_median_shift_iqr": median_shift,
-            "std_ratio": std_ratio,
-            "iqr_ratio": iqr_ratio,
-            "range_ratio": range_ratio,
-            "anomaly_flags": flags,
-        })
-
-    flagged = [row["feature"] for row in rows if row.get("anomaly_flags")]
-    return {
-        "valid": True,
-        "comparison": "final_fit_vs_oos_target",
-        "top_n": len(rows),
-        "features_flagged": int(len(flagged)),
-        "flagged_features": flagged,
-        "features": rows,
-    }
-
-
-def _ridge_oos_diagnostics(
-    ensemble: Any,
-    oos_features: pd.DataFrame,
-    records: List[Dict[str, Any]],
-) -> Dict[str, Any]:
-    """Fit a standardized Ridge on the exact XGB fit sample and evaluate on OOS.
-
-    Diagnostic-only. The Ridge model is never used by production prediction.
-    The target is the same native delta_vs_prior used by the production model.
-    """
-    model = getattr(ensemble, "perf_model", None)
-    fit_X = getattr(model, "_diagnostic_fit_X", None)
-    fit_y = getattr(model, "_diagnostic_fit_y", None)
-    feature_names = list(getattr(model, "feature_names", []) or [])
-    if not isinstance(fit_X, pd.DataFrame) or fit_X.empty:
-        return {"valid": False, "reason": "production_fit_matrix_unavailable"}
-    if fit_y is None or len(fit_y) != len(fit_X):
-        return {"valid": False, "reason": "production_fit_target_unavailable"}
-    if not isinstance(oos_features, pd.DataFrame) or oos_features.empty:
-        return {"valid": False, "reason": "oos_feature_frame_unavailable"}
-    if len(records) != len(oos_features):
-        return {
-            "valid": False,
-            "reason": "oos_feature_record_length_mismatch",
-            "feature_rows": len(oos_features),
-            "records": len(records),
+            "n": int(len(values)),
+            "median": float(values.median()),
+            "min": float(values.min()),
+            "max": float(values.max()),
         }
-    if not feature_names:
-        return {"valid": False, "reason": "feature_names_unavailable"}
-
-    X_fit = fit_X.reindex(columns=feature_names).apply(pd.to_numeric, errors="coerce").fillna(0.0)
-    X_oos = oos_features.reindex(columns=feature_names).apply(pd.to_numeric, errors="coerce").fillna(0.0)
-    y_fit = np.asarray(fit_y, dtype=float)
-    persistence = np.asarray(
-        [float(row["persistence_prediction"]) for row in records],
-        dtype=float,
-    )
-    actual = np.asarray([float(row["actual"]) for row in records], dtype=float)
-    actual_delta = actual - persistence
-
-    if len(X_oos) < 2 or np.std(actual_delta) <= 1e-12:
-        return {"valid": False, "reason": "insufficient_oos_variance", "n": int(len(X_oos))}
-
-    ridge = make_pipeline(
-        StandardScaler(),
-        Ridge(alpha=1.0),
-    )
-    ridge.fit(X_fit, y_fit)
-    pred_delta = np.asarray(ridge.predict(X_oos), dtype=float)
-
-    error = pred_delta - actual_delta
-    persistence_error = persistence - actual
-    rmse = float(np.sqrt(np.mean(error ** 2)))
-    persistence_rmse = float(np.sqrt(np.mean(persistence_error ** 2)))
-    sst = float(np.sum((actual_delta - np.mean(actual_delta)) ** 2))
-    corr = (
-        float(np.corrcoef(pred_delta, actual_delta)[0, 1])
-        if np.std(pred_delta) > 1e-12
-        else None
-    )
-    return {
-        "valid": True,
-        "model": "Ridge",
-        "alpha": 1.0,
-        "standardized": True,
-        "target_mode": str(getattr(model, "target_mode", "unknown")),
-        "fit_n": int(len(X_fit)),
-        "oos_n": int(len(X_oos)),
-        "fit_target_mean": float(np.mean(y_fit)),
-        "fit_target_std": float(np.std(y_fit)),
-        "oos_actual_delta_mean": float(np.mean(actual_delta)),
-        "oos_actual_delta_std": float(np.std(actual_delta)),
-        "oos_prediction_mean": float(np.mean(pred_delta)),
-        "oos_prediction_std": float(np.std(pred_delta)),
-        "oos_bias_as_delta": float(np.mean(error)),
-        "oos_rmse_as_delta": rmse,
-        "oos_mae_as_delta": float(np.mean(np.abs(error))),
-        "oos_r2_as_delta": float(1.0 - np.sum(error ** 2) / sst) if sst > 0.0 else 0.0,
-        "oos_correlation": corr,
-        "persistence_rmse": persistence_rmse,
-        "gain_vs_persistence": float(persistence_rmse - rmse),
-        "prediction_minus_persistence_std": float(np.std(pred_delta)),
-        "oos_sse_as_delta": float(np.sum(error ** 2)),
-    }
+        if feature == "age":
+            item["pct_at_floor_14"] = float((values <= 14).mean() * 100.0)
+        elif feature == "avg_usg_pct":
+            item["pct_gt_1"] = float((values > 1.0).mean() * 100.0)
+        elif feature == "avg_pts_per_40":
+            item["pct_gt_60"] = float((values > 60.0).mean() * 100.0)
+        elif feature == "avg_orb_pct":
+            item["pct_gt_1"] = float((values > 1.0).mean() * 100.0)
+        result[feature] = item
+    return result
 
 
 def _age_band(age: int) -> str:
@@ -635,34 +375,21 @@ def run_backtest(
                 "persistence_rmse": persistence_rmse,
                 "ensemble_vs_base_delta": base_rmse - summary["rmse"],
                 "ensemble_vs_persistence_delta": persistence_rmse - summary["rmse"],
-                "by_league": _segment_metrics(records, "league_id"),
                 "by_competition": _segment_metrics(records, "competition"),
                 "by_position": _segment_metrics(records, "position"),
-                "by_age_band": _segment_metrics(records, "age_band"),
             }
             folds.append(fold)
             if include_stage_metrics:
-                last_metrics = getattr(ensemble.perf_model, "_last_metrics", {}) or {}
-                fold["target_diagnostics"] = dict(
-                    last_metrics.get("target_diagnostics", {})
-                )
-                fold["feature_shift_diagnostics"] = dict(
-                    last_metrics.get("feature_shift_diagnostics", {})
-                )
-                fold["feature_distribution_diagnostics"] = _feature_distribution_diagnostics(
+                fold["feature_sanity"] = _feature_sanity_diagnostics(
                     ensemble,
                     getattr(ensemble, "_last_oos_feature_frame", pd.DataFrame()),
-                    top_n=20,
                 )
-                fold["ridge_oos_diagnostics"] = _ridge_oos_diagnostics(
-                    ensemble,
-                    getattr(ensemble, "_last_oos_feature_frame", pd.DataFrame()),
-                    records,
-                )
-                fold["persistence_blend_diagnostics"] = _persistence_blend_diagnostics(records)
-                fold["raw_xgb_stage_diagnostics"] = _raw_xgb_stage_diagnostics(records)
+                fold["persistence_blend"] = _persistence_blend_diagnostics(records)
+                fold["raw_xgb"] = _raw_xgb_stage_diagnostics(records)
                 fold["nested_shrinkage"] = {
-                    **(nested_shrinkage or {}),
+                    "valid": bool((nested_shrinkage or {}).get("valid", False)),
+                    "alpha": (nested_shrinkage or {}).get("alpha"),
+                    "inner_n": (nested_shrinkage or {}).get("inner_n"),
                     "outer_rmse": nested_summary["rmse"],
                     "outer_mae": nested_summary["mae"],
                     "outer_bias": nested_summary["bias"],
@@ -731,21 +458,24 @@ def run_backtest(
             if overall and math.isfinite(persistence_rmse)
             else float("nan")
         ),
-        "by_league": _segment_metrics(all_records, "league_id") if all_records else {},
         "by_competition": _segment_metrics(all_records, "competition") if all_records else {},
         "by_position": _segment_metrics(all_records, "position") if all_records else {},
-        "by_age_band": _segment_metrics(all_records, "age_band") if all_records else {},
         "valid": valid,
     }
 
-    if include_stage_metrics:
-        report["feature_predictive_stability"] = _feature_predictive_stability(folds)
-
     if include_stage_metrics and all_records:
-        report["persistence_blend_diagnostics"] = _persistence_blend_diagnostics(all_records)
-        report["raw_xgb_stage_diagnostics"] = _raw_xgb_stage_diagnostics(all_records)
+        report["feature_sanity"] = (
+            folds[-1].get("feature_sanity", {})
+            if folds else {}
+        )
+        report["persistence_blend"] = _persistence_blend_diagnostics(all_records)
+        report["raw_xgb"] = _raw_xgb_stage_diagnostics(all_records)
         report["nested_shrinkage"] = {
-            **(nested_overall or {}),
+            "valid": bool(nested_overall),
+            "rmse": nested_shrinkage_rmse,
+            "mae": (nested_overall or {}).get("mae"),
+            "bias": (nested_overall or {}).get("bias"),
+            "r2": (nested_overall or {}).get("r2"),
             "gain_vs_persistence": persistence_rmse - nested_shrinkage_rmse,
             "gain_vs_raw_model": overall["rmse"] - nested_shrinkage_rmse,
             "alphas": [
