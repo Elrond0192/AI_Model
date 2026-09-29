@@ -1113,8 +1113,17 @@ class PerformanceModel:
             except (TypeError, ValueError):
                 pass
             age = player.get("age")
-            if age is not None and not (isinstance(age, float) and np.isnan(age)):
-                birth_year_map[pid] = latest_data_year - int(age)
+            try:
+                age_value = float(age)
+            except (TypeError, ValueError):
+                age_value = float("nan")
+            if np.isfinite(age_value) and 14 <= age_value <= 44:
+                reference_season = player.get("age_reference_season")
+                try:
+                    reference_year = int(reference_season)
+                except (TypeError, ValueError):
+                    reference_year = latest_data_year
+                birth_year_map[pid] = reference_year - int(age_value)
         position_map: Dict[int, str] = {
             _to_int(row["id"]): str(row["position"])
             for row in players.to_dict("records")
@@ -1149,8 +1158,7 @@ class PerformanceModel:
             pid = _to_int(pid)
             pos = position_map.get(pid, "PG")
             by  = birth_year_map.get(pid)
-            if by is None:
-                continue
+            fallback_age = int(round(_peak_age(pos)))
             # A sample uses information available at season t to forecast the
             # observed rating at t+1.  The first season has no prior state.
             cumulative_history = self._precompute_history_features(
@@ -1175,7 +1183,11 @@ class PerformanceModel:
                     year = int(season_str.split("-")[0])
                 except Exception:
                     continue
-                age = year - by
+                age = (
+                    year - by
+                    if by is not None
+                    else fallback_age
+                )
                 if age < 14 or age > 45:
                     continue
                 history_features = cumulative_history[history_end_positions[row_index - 1]]
