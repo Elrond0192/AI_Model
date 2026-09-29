@@ -29,6 +29,7 @@ from xgboost import XGBRegressor
 from basketball_ai.constants import (
     LEAGUE_MAX_GAMES_BY_NAME,
     LEAGUE_MAX_GAMES_DEFAULT,
+    _peak_age,
 )
 from basketball_ai.data.loader import _to_int
 from basketball_ai.models.compatibility_model import (
@@ -287,8 +288,12 @@ class SeasonAheadPerformanceModel(PerformanceModel):
                     continue
                 source = group.iloc[source_index]
                 target = group.iloc[target_index]
-                source_age = source_year - birth_year
-                if source_age < 14 or source_age > 44:
+                source_age = (
+                    source_year - birth_year
+                    if birth_year is not None
+                    else int(round(_peak_age(position)))
+                )
+                if source_age < 14 or source_age > 45:
                     continue
                 source_clean = source.drop(labels=["_season_year"])
                 rows.append(
