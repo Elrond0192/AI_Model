@@ -253,18 +253,6 @@ def _feature_sanity_diagnostics(
     return result
 
 
-def _age_band(age: int) -> str:
-    if age <= 21:
-        return "<=21"
-    if age <= 24:
-        return "22-24"
-    if age <= 28:
-        return "25-28"
-    if age <= 32:
-        return "29-32"
-    return "33+"
-
-
 def run_backtest(
     data: Dict[str, Any],
     n_folds: Optional[int] = None,
@@ -357,8 +345,6 @@ def run_backtest(
             summary = metric_summary(records)
             base_rmse = _rmse(records, "base_prediction")
             persistence_rmse = _rmse(records, "persistence_prediction")
-            for row in records:
-                row["age_band"] = _age_band(int(row.get("age", 0) or 0))
 
             fold = {
                 "fold": index,
@@ -429,10 +415,6 @@ def run_backtest(
             for row in all_records
         ])
         nested_shrinkage_rmse = nested_overall.get("rmse", float("nan"))
-    if all_records:
-        for row in all_records:
-            row["age_band"] = _age_band(int(row.get("age", 0) or 0))
-
     valid = (
         bool(folds)
         and len(folds) == len(targets)
