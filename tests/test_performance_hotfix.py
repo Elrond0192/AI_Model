@@ -15,6 +15,38 @@ def test_numeric_seasons_vectorized_mixed_values():
     assert pd.isna(values.iloc[3])
 
 
+def test_missing_usg_uses_fractional_default_and_interaction_contract():
+    from basketball_ai.models.performance_model import PerformanceModel
+
+    model = PerformanceModel()
+    history = pd.DataFrame(
+        [
+            {
+                "player_id": 1,
+                "league_id": 1,
+                "season": 2024,
+                "competition": "RS",
+                "rating": 7.0,
+                "minutes_per_game": 30.0,
+                "usg_pct": np.nan,
+                "obpm": 1.0,
+                "games_played": 30,
+            }
+        ]
+    )
+    row = model._build_row(
+        history.iloc[0],
+        27,
+        "PG",
+        history,
+        league_max_games={1: 34},
+    )
+
+    assert row["avg_usg_pct"] == pytest.approx(0.18)
+    assert row["obpm_x_usg"] == pytest.approx(0.18)
+
+
+
 def test_compatibility_prefix_fallback_handles_missing_optional_metric():
     from basketball_ai.models.competition_training import (
         CompetitionTemporalCompatibilityModel,
