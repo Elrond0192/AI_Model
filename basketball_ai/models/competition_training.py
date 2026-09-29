@@ -14,7 +14,7 @@ import numpy as np
 import pandas as pd
 from sklearn.neighbors import KNeighborsRegressor
 
-from basketball_ai.constants import LEAGUE_MAX_GAMES_BY_NAME, LEAGUE_MAX_GAMES_DEFAULT
+from basketball_ai.constants import LEAGUE_MAX_GAMES_BY_NAME, LEAGUE_MAX_GAMES_DEFAULT, _peak_age
 from basketball_ai.data.loader import _derive_playing_style, _to_int
 from basketball_ai.models.compatibility_model import _POSITION_BUCKET
 from basketball_ai.models.performance_model import FEATURE_COLS, METRIC_CATALOG
@@ -273,8 +273,13 @@ class CompetitionSeasonAheadPerformanceModel(SeasonAheadPerformanceModel):
             except (TypeError, ValueError):
                 pass
             age = player.get("age")
-            if age is not None and not pd.isna(age):
-                birth_year_map[pid] = latest_data_year - int(age)
+            # Zero is the canonical missing-age sentinel in AI_Source.
+            try:
+                age_value = float(age)
+            except (TypeError, ValueError):
+                age_value = float("nan")
+            if np.isfinite(age_value) and 14 <= age_value <= 44:
+                birth_year_map[pid] = latest_data_year - int(age_value)
 
         league_max_games: Optional[Dict[int, int]] = None
         leagues = data.get("leagues")
@@ -334,8 +339,12 @@ class CompetitionSeasonAheadPerformanceModel(SeasonAheadPerformanceModel):
                 if source_games < min_games or target_games < min_games:
                     skipped_low_sample_pairs += 1
                     continue
-                source_age = source_year - birth_year
-                if source_age < 14 or source_age > 44:
+                source_age = (
+                    source_year - birth_year
+                    if birth_year is not None
+                    else int(round(_peak_age(position)))
+                )
+                if source_age < 14 or source_age > 45:
                     continue
 
                 history = group.iloc[: source_index + 1].drop(
