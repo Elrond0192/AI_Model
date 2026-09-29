@@ -399,6 +399,12 @@ class EnsembleModel:
         po_feats = compute_po_features(p_stats)
         player_feats.update(po_feats)
 
+        # Diagnostic-only capture of the exact feature dictionary sent to the
+        # performance model. Disabled by default so production inference has
+        # no additional bookkeeping or output changes.
+        if getattr(self, "_capture_diagnostic_features", False):
+            self._last_prediction_features = dict(player_feats)
+
         # 2. Base rating from XGBoost
         # Keep the raw model output separately for diagnostics. In delta mode
         # this is the predicted one-season change, not an absolute rating.
