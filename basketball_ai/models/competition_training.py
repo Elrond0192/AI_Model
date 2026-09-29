@@ -17,7 +17,7 @@ from sklearn.neighbors import KNeighborsRegressor
 from basketball_ai.constants import LEAGUE_MAX_GAMES_BY_NAME, LEAGUE_MAX_GAMES_DEFAULT, _peak_age
 from basketball_ai.data.loader import _derive_playing_style, _to_int
 from basketball_ai.models.compatibility_model import _POSITION_BUCKET
-from basketball_ai.models.performance_model import FEATURE_COLS, METRIC_CATALOG
+from basketball_ai.models.performance_model import FEATURE_COLS, METRIC_CATALOG, _canonical_source_value
 from basketball_ai.models.production_training import (
     SeasonAheadPerformanceModel,
     TemporalCompatibilityModel,
@@ -518,13 +518,18 @@ class CompetitionTemporalCompatibilityModel(TemporalCompatibilityModel):
         def mean(column: str, fallback: float) -> float:
             if p_stats.empty or column not in p_stats.columns:
                 return fallback
-            values = pd.to_numeric(p_stats[column], errors="coerce").dropna()
+            values = pd.to_numeric(p_stats[column], errors="coerce")
+            if column in {"ts_pct", "usg_pct", "tov_pct", "ast_pct", "stl_pct", "blk_pct", "orb_pct", "drb_pct", "three_par", "true_usg_pct"}:
+                values = values.map(
+                    lambda value: _canonical_source_value(column, value)
+                )
+            values = values.dropna()
             return float(values.mean()) if not values.empty else fallback
 
         return np.asarray(
             [
                 bucket,
-                np.clip(mean("usg_pct", 18.0) / 40.0, 0.0, 1.0),
+                np.clip(mean("usg_pct", 0.18) / 0.40, 0.0, 1.0),
                 np.clip(mean("ts_pct", 0.52), 0.0, 1.0),
                 np.clip(mean("points", 12.0) / 40.0, 0.0, 1.0),
                 np.clip(mean("three_par", 0.30), 0.0, 1.0),
@@ -561,8 +566,15 @@ class CompetitionTemporalCompatibilityModel(TemporalCompatibilityModel):
         return rows.sort_values("_season_year").iloc[-1].to_dict()
 
     @staticmethod
-    def _prefix_mean(values: pd.Series, fallback: float) -> tuple[np.ndarray, np.ndarray, float]:
-        numeric = pd.to_numeric(values, errors="coerce").to_numpy(dtype=float)
+    def _prefix_mean(
+        values: pd.Series,
+        fallback: float,
+        column: Optional[str] = None,
+    ) -> tuple[np.ndarray, np.ndarray, float]:
+        numeric = pd.to_numeric(values, errors="coerce")
+        if column in {"ts_pct", "usg_pct", "tov_pct", "ast_pct", "stl_pct", "blk_pct", "orb_pct", "drb_pct", "three_par", "true_usg_pct"}:
+            numeric = numeric.map(lambda value: _canonical_source_value(column, value))
+        numeric = numeric.to_numpy(dtype=float)
         valid = np.isfinite(numeric)
         sums = np.cumsum(np.where(valid, numeric, 0.0))
         counts = np.cumsum(valid.astype(np.int64))
@@ -701,10 +713,10 @@ class CompetitionTemporalCompatibilityModel(TemporalCompatibilityModel):
                 position, _POSITION_BUCKET.get(position.split("/")[0], 0.5)
             )
             prefixes = {
-                "usg_pct": self._prefix_mean(ordered.get("usg_pct", pd.Series(dtype=float)), 18.0),
-                "ts_pct": self._prefix_mean(ordered.get("ts_pct", pd.Series(dtype=float)), 0.52),
+                "usg_pct": self._prefix_mean(ordered.get("usg_pct", pd.Series(dtype=float)), 0.18, "usg_pct"),
+                "ts_pct": self._prefix_mean(ordered.get("ts_pct", pd.Series(dtype=float)), 0.52, "ts_pct"),
                 "points": self._prefix_mean(ordered.get("points", pd.Series(dtype=float)), 12.0),
-                "three_par": self._prefix_mean(ordered.get("three_par", pd.Series(dtype=float)), 0.30),
+                "three_par": self._prefix_mean(ordered.get("three_par", pd.Series(dtype=float)), 0.30, "three_par"),
                 "dbpm": self._prefix_mean(ordered.get("dbpm", pd.Series(dtype=float)), 0.0),
                 "rating": self._prefix_mean(ordered["rating"], 0.0),
             }
