@@ -1189,7 +1189,18 @@ BEGIN
          SELECT DISTINCT ON (player_id, season, league_key) *
          FROM (' || body || ') q
          WHERE player_id IS NOT NULL AND season IS NOT NULL
-         ORDER BY player_id, season, league_key';
+         ORDER BY
+             player_id,
+             season,
+             league_key,
+             CASE WHEN NULLIF(btrim(name), '') IS NULL THEN 1 ELSE 0 END,
+             CASE WHEN birth_date IS NULL THEN 1 ELSE 0 END,
+             CASE WHEN source_age IS NULL THEN 1 ELSE 0 END,
+             CASE WHEN NULLIF(btrim(position), '') IS NULL THEN 1 ELSE 0 END,
+             CASE WHEN NULLIF(btrim(nationality), '') IS NULL THEN 1 ELSE 0 END,
+             CASE WHEN NULLIF(btrim(source_team_id), '') IS NULL THEN 1 ELSE 0 END,
+             CASE WHEN jersey_number IS NULL THEN 1 ELSE 0 END,
+             name';
 
     CREATE INDEX ai_players_registry_key
         ON pg_temp.ai_players_registry (player_id, season, league_key);
