@@ -838,7 +838,10 @@ class PerformanceModel:
         def cumulative_mean(col: str) -> Optional[np.ndarray]:
             if col not in grp.columns:
                 return None
-            values = pd.to_numeric(grp[col], errors="coerce").to_numpy(dtype=float)
+            raw_values = pd.to_numeric(grp[col], errors="coerce")
+            values = raw_values.map(
+                lambda value: _canonical_source_value(col, value)
+            ).to_numpy(dtype=float)
             valid = ~np.isnan(values)
             counts = np.cumsum(valid)
             sums = np.cumsum(np.where(valid, values, 0.0))
