@@ -530,66 +530,66 @@ class EnsembleModel:
         compat_adjustment = 0.0
         after_compatibility = base_after_age
 
-        # 5. League quality factor — derived from competitiveness_score in real data.
-        # No hardcoded tier map: the factor is proportional to the league's
-        # competitiveness_score relative to the best league in the loaded dataset.
-        team_row   = data["team_dict"].get(_normalize_id(team_id), {})
-        league_id  = str(team_row.get("league_id", ""))
-        # Use pre-calibrated per-league factor when available
-        lf         = self._league_factors.get(league_id, None)
-        if lf is None:
-            # Fallback: look up from league_dict directly (loaded at prediction time)
-            from basketball_ai.features.team_features import _league_tier_factor as _ltf
-            lf = _ltf(team_row, data)
-        after_league = float(np.clip(after_compatibility * lf, 3.5, 10.0))
+        # In delta mode XGBoost already learns the one-season change from the
+        # source-season feature vector. Applying independent league/context/minutes
+        # multipliers after that learned delta double-counts signals that are already
+        # present in the feature set. The OOS diagnostics also showed these heuristics
+        # systematically hurting PF/C predictions. Keep them neutral for the learned
+        # delta contract; they remain available for legacy absolute-rating models.
+        is_delta_model = getattr(self.perf_model, "target_mode", "rating") == "delta_vs_prior"
 
-        # 6. Contextual adjustment (position fit, style, role, adaptation, spacing)
-        # Using a wider mapping range so player-specific position/style fit creates
-        # meaningful differentiation between teams (different players rank teams differently).
-        ctx = compute_context_features(player_id, team_id, data)
-        # The exact same-league production context should not receive a fixed
-        # +2% adaptation uplift; adaptation matters when crossing contexts.
-        league_adaptation = ctx["league_adaptation_factor"]
-        player_league = player_row.get("current_league_id")
-        team_league = team_row.get("league_id")
-        try:
-            same_league = (
-                player_league is not None
-                and team_league is not None
-                and str(player_league) == str(team_league)
+        team_row = data["team_dict"].get(_normalize_id(team_id), {})
+        league_id = str(team_row.get("league_id", ""))
+
+        if is_delta_model:
+            lf = 1.0
+            after_league = after_compatibility
+            ctx_mult = 1.0
+            after_context = after_league
+            mpg_factor = 1.0
+        else:
+            # Legacy absolute-rating path.
+            lf = self._league_factors.get(league_id, None)
+            if lf is None:
+                from basketball_ai.features.team_features import _league_tier_factor as _ltf
+                lf = _ltf(team_row, data)
+            after_league = float(np.clip(after_compatibility * lf, 3.5, 10.0))
+
+            ctx = compute_context_features(player_id, team_id, data)
+            league_adaptation = ctx["league_adaptation_factor"]
+            player_league = player_row.get("current_league_id")
+            team_league = team_row.get("league_id")
+            try:
+                same_league = (
+                    player_league is not None
+                    and team_league is not None
+                    and str(player_league) == str(team_league)
+                )
+            except Exception:
+                same_league = False
+            if same_league:
+                league_adaptation = 1.0
+            ctx_score = (
+                ctx["position_team_fit"]        * 0.25
+                + ctx["style_compatibility"]    * 0.30
+                + ctx["role_opportunity"]       * 0.20
+                + league_adaptation             * 0.15
+                + ctx["spacing_fit"]            * 0.10
             )
-        except Exception:
-            same_league = False
-        if same_league:
-            league_adaptation = 1.0
-        ctx_score = (
-            ctx["position_team_fit"]        * 0.25
-            + ctx["style_compatibility"]    * 0.30
-            + ctx["role_opportunity"]       * 0.20
-            + league_adaptation             * 0.15
-            + ctx["spacing_fit"]            * 0.10
-        )
-        # Map ctx_score (range ~0.55–0.98) to multiplier; wider range than before
-        # so that a PG in pace-and-space vs a C in the same team get noticeably
-        # different ratings, preventing all players from ranking teams identically.
-        ctx_mult = float(np.clip(
-            _CTX_MULT_OFFSET + (ctx_score - 0.50) * _CTX_MULT_SLOPE,
-            _CTX_MULT_LO,
-            _CTX_MULT_HI,
-        ))
-        after_context = float(np.clip(after_league * ctx_mult, 3.5, 10.0))
+            ctx_mult = float(np.clip(
+                _CTX_MULT_OFFSET + (ctx_score - 0.50) * _CTX_MULT_SLOPE,
+                _CTX_MULT_LO,
+                _CTX_MULT_HI,
+            ))
+            after_context = float(np.clip(after_league * ctx_mult, 3.5, 10.0))
 
-        # 7. Playing-time adjustment: bench players (low minutes) are penalised.
-        # A player averaging 10 min/game contributes much less proven impact than
-        # a 30-min starter even when per-36 stats look similar.
-        # Factor: ≥30 min → 1.00; 20 min → 0.93; 10 min → 0.73
-        mpg_factor = float(np.clip(
-            _MPG_FACTOR_BASE + (min(latest_mpg, self._mpg_baseline) / self._mpg_baseline) * _MPG_FACTOR_RANGE,
-            _MPG_FACTOR_BASE,
-            1.00,
-        ))
+            mpg_factor = float(np.clip(
+                _MPG_FACTOR_BASE
+                + (min(latest_mpg, self._mpg_baseline) / self._mpg_baseline) * _MPG_FACTOR_RANGE,
+                _MPG_FACTOR_BASE,
+                1.00,
+            ))
 
-        # Final raw ensemble rating (apply mpg_factor before persistence shrinkage).
         raw_adjusted = float(np.clip(after_context * mpg_factor, 3.5, 10.0))
 
         # Production uses persistence as the prior and the trained model only as
