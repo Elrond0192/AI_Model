@@ -236,8 +236,17 @@ class SeasonAheadPerformanceModel(PerformanceModel):
             except (TypeError, ValueError):
                 pass
             age = player.get("age")
-            if age is not None and not pd.isna(age):
-                birth_year_map[pid] = latest_data_year - int(age)
+            try:
+                age_value = float(age)
+            except (TypeError, ValueError):
+                age_value = float("nan")
+            if np.isfinite(age_value) and 14 <= age_value <= 44:
+                reference_season = player.get("age_reference_season")
+                try:
+                    reference_year = int(reference_season)
+                except (TypeError, ValueError):
+                    reference_year = latest_data_year
+                birth_year_map[pid] = reference_year - int(age_value)
 
         league_max_games: Optional[Dict[int, int]] = None
         leagues = data.get("leagues")
@@ -735,12 +744,23 @@ def _adjust_players_for_snapshot(
             age = source_season - int(str(birth_date)[:4])
         except (TypeError, ValueError):
             raw_age = row.get("age")
-            age = (
-                int(raw_age) - (latest_data_year - source_season)
-                if raw_age is not None and not pd.isna(raw_age)
-                else 26
-            )
-        ages.append(max(14, min(45, int(age))))
+            try:
+                raw_age_value = float(raw_age)
+            except (TypeError, ValueError):
+                raw_age_value = float("nan")
+            position_name = str(row.get("position", "PG") or "PG")
+            if np.isfinite(raw_age_value) and 14 <= raw_age_value <= 44:
+                reference_season = row.get("age_reference_season")
+                try:
+                    reference_year = int(reference_season)
+                except (TypeError, ValueError):
+                    reference_year = latest_data_year
+                age = int(raw_age_value) - (reference_year - source_season)
+            else:
+                age = int(round(_peak_age(position_name)))
+        if not np.isfinite(float(age)) or not (14 <= int(age) <= 45):
+            age = int(round(_peak_age(position_name)))
+        ages.append(int(age))
         team_id = relation_latest.get(pid)
         if team_id is not None:
             current_team_ids[position] = team_id
