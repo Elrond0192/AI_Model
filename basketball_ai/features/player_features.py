@@ -379,7 +379,7 @@ def compute_player_features(
             season_years = pd.to_numeric(season_series, errors="coerce")
         else:
             season_years = pd.to_numeric(
-                season_series.astype(str).str.extract(r"(\\d{4})", expand=False),
+                season_series.astype(str).str.extract(r"(\d{4})", expand=False),
                 errors="coerce",
             )
         mask = mask & season_years.le(int(season))
