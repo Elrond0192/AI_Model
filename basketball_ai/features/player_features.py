@@ -371,8 +371,18 @@ def compute_player_features(
     # Filter stats for this player
     mask = stats_df["player_id"] == _normalize_id(player_id)
     if season is not None:
-        # include only seasons up to the target season
-        mask = mask & (stats_df["season"] <= str(season))
+        # PostgreSQL normalises season to nullable Int64, while legacy CSV data
+        # may expose strings such as "2023-24". Compare on the numeric start
+        # year so inference is stable across both loader representations.
+        season_series = stats_df["season"]
+        if pd.api.types.is_numeric_dtype(season_series):
+            season_years = pd.to_numeric(season_series, errors="coerce")
+        else:
+            season_years = pd.to_numeric(
+                season_series.astype(str).str.extract(r"(\\d{4})", expand=False),
+                errors="coerce",
+            )
+        mask = mask & season_years.le(int(season))
     p_stats_df = stats_df[mask].sort_values("season")
 
     stat_objects: List[PlayerStats] = []
