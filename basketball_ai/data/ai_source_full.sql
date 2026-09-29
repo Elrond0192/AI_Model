@@ -1159,7 +1159,11 @@ BEGIN
             || ', ' || quote_literal(league_key) || ' || ' ||
             pg_temp.ai_expr('Anagrafiche',r.table_name,'p','text',ARRAY['id'])
             || ') AS global_id, '
-            || pg_temp.ai_expr('Anagrafiche',r.table_name,'p','text',ARRAY['normalizedplayername','playername','name']) || ' AS name, '
+            || 'coalesce('
+            || pg_temp.ai_expr('Anagrafiche',r.table_name,'p','text',ARRAY['normalizedplayername'])
+            || ', ' || pg_temp.ai_expr('Anagrafiche',r.table_name,'p','text',ARRAY['playername'])
+            || ', ' || pg_temp.ai_expr('Anagrafiche',r.table_name,'p','text',ARRAY['name'])
+            || ') AS name, '
             || pg_temp.ai_expr('Anagrafiche',r.table_name,'p','date',ARRAY['birthdate','dateofbirth','dob']) || ' AS birth_date, '
             || pg_temp.ai_expr('Anagrafiche',r.table_name,'p','int',ARRAY['age']) || ' AS source_age, '
             || pg_temp.ai_expr('Anagrafiche',r.table_name,'p','text',ARRAY['pos','position']) || ' AS position, '
@@ -1235,7 +1239,11 @@ BEGIN
             pg_temp.ai_expr('Anagrafiche',r.table_name,'t','text',ARRAY['id'])
             || ') AS global_id, '
             || pg_temp.ai_expr('Anagrafiche',r.table_name,'t','text',ARRAY['id']) || ' AS source_team_id, '
-            || pg_temp.ai_expr('Anagrafiche',r.table_name,'t','text',ARRAY['teamname','name','shortname']) || ' AS name, '
+            || 'coalesce('
+            || pg_temp.ai_expr('Anagrafiche',r.table_name,'t','text',ARRAY['teamname'])
+            || ', ' || pg_temp.ai_expr('Anagrafiche',r.table_name,'t','text',ARRAY['name'])
+            || ', ' || pg_temp.ai_expr('Anagrafiche',r.table_name,'t','text',ARRAY['shortname'])
+            || ') AS name, '
             || pg_temp.ai_expr('Anagrafiche',r.table_name,'t','text',ARRAY['shortname','short_name']) || ' AS short_name, '
             || pg_temp.ai_expr('Anagrafiche',r.table_name,'t','int',ARRAY['season']) || ' AS season, '
             || quote_literal(league_key) || '::text AS league_key '
