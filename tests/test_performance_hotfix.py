@@ -341,3 +341,100 @@ def test_production_inference_uses_dataframe_builder_when_dataclass_fields_are_m
     assert model._last_prediction_features["form_score"] == 7.1
     assert model._last_prediction_features["age"] == 27.0
     assert model._last_prediction_features["pts_per_36"] == 23.14
+
+
+
+def test_source_rate_normalization_handles_mixed_units_and_per40_outliers():
+    from basketball_ai.models.performance_model import _canonical_source_value
+
+    assert _canonical_source_value("usg_pct", 0.18) == 0.18
+    assert _canonical_source_value("usg_pct", 18.0) == 0.18
+    assert _canonical_source_value("ts_pct", 1.5) == 0.015
+    assert _canonical_source_value("orb_pct", 6.0) == 0.06
+    assert _canonical_source_value("pts_per_40", 24.0) == 24.0
+    assert _canonical_source_value("pts_per_40", 240.0) == 60.0
+
+
+def test_invalid_snapshot_age_uses_neutral_peak_age_instead_of_floor():
+    from basketball_ai.constants import _peak_age
+    from basketball_ai.models.production_training import _adjust_players_for_snapshot
+
+    players = pd.DataFrame(
+        [{"id": 1, "position": "PG", "age": 0}]
+    )
+    full_stats = pd.DataFrame(
+        [
+            {"player_id": 1, "season": 2024},
+            {"player_id": 1, "season": 2025},
+        ]
+    )
+    adjusted = _adjust_players_for_snapshot(
+        players,
+        full_stats,
+        pd.DataFrame(),
+        {},
+        2024,
+    )
+    assert adjusted.loc[0, "age"] == int(round(_peak_age("PG")))
+    assert adjusted.loc[0, "age"] != 14
+
+
+def test_delta_model_does_not_apply_post_xgb_heuristic_multipliers(monkeypatch):
+    import basketball_ai.models.ensemble as ensemble_module
+    from basketball_ai.models.ensemble import EnsembleModel
+    from basketball_ai.models.performance_model import PerformanceModel
+
+    data = {
+        "player_stats": pd.DataFrame(
+            [{
+                "player_id": 1, "team_id": 10, "league_id": 1, "season": 2024,
+                "competition": "RS", "games_played": 30,
+                "minutes_per_game": 28.0, "points": 18.0, "rating": 7.1,
+            }]
+        ),
+        "player_dict": {
+            1: {"id": 1, "position": "C", "age": 27, "current_team_id": 10, "current_league_id": 1}
+        },
+        "team_dict": {10: {"id": 10, "league_id": 1}},
+        "leagues": pd.DataFrame(),
+    }
+
+    perf = PerformanceModel()
+    perf.role_encoding = {}
+    perf.role_off_encoding = {}
+    perf.role_def_encoding = {}
+    perf.role_feature_encodings = {}
+    perf.competition_feature_encodings = {}
+    perf.feature_names = []
+    perf.target_mode = "delta_vs_prior"
+    perf.predict_from_features = lambda features: 0.0
+    perf.predict_target_rating = lambda features: 7.25
+    perf.get_shap_values = lambda features: {}
+
+    class Compat:
+        def score(self, player_id, team_id, scoped_data):
+            return 0.5
+
+    model = EnsembleModel(performance_model=perf, compatibility_model=Compat())
+    model._persistence_shrinkage_alpha = 1.0
+    model._league_factors = {"1": 0.80}
+    model._mpg_baseline = 30.0
+
+    monkeypatch.setattr(ensemble_module, "age_performance_factor", lambda *args: 1.0)
+    monkeypatch.setattr(
+        ensemble_module,
+        "compute_context_features",
+        lambda *args, **kwargs: {
+            "position_team_fit": 0.1,
+            "style_compatibility": 0.1,
+            "role_opportunity": 0.1,
+            "league_adaptation_factor": 0.1,
+            "spacing_fit": 0.1,
+        },
+    )
+
+    result = model._predict_uncached(1, 10, data, season=2024, competition="RS")
+
+    assert result.predicted_rating == 7.25
+    assert result.league_factor == 1.0
+    assert result.context_adjustment == 1.0
