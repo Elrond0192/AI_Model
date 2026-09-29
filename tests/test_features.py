@@ -7,6 +7,7 @@ import pytest
 
 from basketball_ai.data.models import Player, PlayerStats
 from basketball_ai.features.player_features import (
+    compute_player_features,
     compute_player_features_from_objects,
     compute_form_score,
     compute_consistency_score,
@@ -144,6 +145,32 @@ class TestPlayerFeatures:
         feats = compute_player_features_from_objects(player, [])
         assert feats["form_score"] == 5.0
         assert feats["consistency_score"] == 0.5
+
+    def test_dict_api_ignores_extra_source_columns(self):
+        """Source-only PostgreSQL columns must not discard valid PlayerStats rows."""
+        player = _make_player("PG", 25)
+        stat = _make_stat("2023", 7.5, per=18.0, usg_pct=22.0)
+        row = dict(stat.__dict__)
+        row.update({
+            "global_id": "player-global-1",
+            "player_global_id": "player-global-1",
+            "league_key": "ITA1",
+            "unmapped_source_column": "ignored",
+        })
+        players = pd.DataFrame([player.__dict__])
+        data = {
+            "player_dict": {1: player.__dict__},
+            "player_stats": pd.DataFrame([row]),
+            "leagues": pd.DataFrame([{
+                "id": 1,
+                "name": "Test League",
+                "max_games": 30,
+            }]),
+        }
+        feats = compute_player_features(1, data, season=2024)
+        assert feats["form_score"] == pytest.approx(7.5)
+        assert feats["avg_per"] == pytest.approx(18.0)
+        assert feats["avg_usg_pct"] == pytest.approx(22.0)
 
     def test_hybrid_position_peak_age(self):
         from basketball_ai.models.age_curve import reset_fitted_params
