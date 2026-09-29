@@ -1082,6 +1082,8 @@ def evaluate_target_season(
     relations = snapshot.get("team_player_relations", pd.DataFrame())
     _position_index(relations)
     records: List[Dict[str, Any]] = []
+    capture_features = bool(getattr(ensemble, "_capture_diagnostic_features", False))
+    oos_feature_rows: List[Dict[str, Any]] = []
     ensemble.clear_cache()
     for target in target_stats.to_dict("records"):
         if (
@@ -1118,6 +1120,10 @@ def evaluate_target_season(
         except (ValueError, RuntimeError):
             continue
         diagnostic_stages = getattr(result, "_diagnostic_stages", {})
+        if capture_features:
+            oos_feature_rows.append(
+                dict(getattr(ensemble, "_last_prediction_features", {}) or {})
+            )
         records.append(
             {
                 "player_id": pid,
@@ -1145,6 +1151,15 @@ def evaluate_target_season(
                 "age": int(snapshot["player_dict"][pid].get("age", 0) or 0) + 1,
                 "competition_support": scoped.get("_competition_support", {}),
             }
+        )
+    if capture_features:
+        feature_names = list(getattr(ensemble.perf_model, "feature_names", []) or [])
+        ensemble._last_oos_feature_frame = (
+            pd.DataFrame(oos_feature_rows)
+            .reindex(columns=feature_names)
+            .reset_index(drop=True)
+            if feature_names
+            else pd.DataFrame()
         )
     ensemble.clear_cache()
     return records
