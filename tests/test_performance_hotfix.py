@@ -310,6 +310,7 @@ def test_production_inference_uses_dataframe_builder_when_dataclass_fields_are_m
             return 0.5
 
     model = EnsembleModel(performance_model=perf, compatibility_model=Compat())
+    model._capture_diagnostic_features = True
     model._league_factors = {"1": 1.0}
     model._mpg_baseline = 30.0
 
