@@ -426,6 +426,14 @@ class SeasonAheadPerformanceModel(PerformanceModel):
 
         fit_mask = target_years <= validation_season
         X_fit, y_fit = X.loc[fit_mask], y[fit_mask]
+
+        # Diagnostic-only snapshot of the exact feature frame/target used by
+        # the final production XGBoost refit. This is consumed by OOS model
+        # diagnostics and never affects fitting or inference.
+        self._diagnostic_fit_X = X_fit.copy()
+        self._diagnostic_fit_X_raw = X_raw.loc[fit_mask].copy()
+        self._diagnostic_fit_y = np.asarray(y_fit, dtype=float).copy()
+
         self.model = _xgb(selected_trees, early_stopping=False)
         self.model.fit(X_fit, y_fit, sample_weight=sample_weights[fit_mask], verbose=False)
         self.is_trained = True
