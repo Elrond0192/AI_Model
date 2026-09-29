@@ -598,14 +598,14 @@ class PerformanceModel:
 
         avg_per  = hist_avg("per",     12.0)
         avg_ts   = hist_avg("ts_pct",   0.52)
-        avg_usg  = hist_avg("usg_pct", 18.0)
+        avg_usg  = hist_avg("usg_pct", 0.18)
 # avg_bpm omitted from features (= obpm + dbpm)
         avg_obpm = hist_avg("obpm",     0.0)
         avg_dbpm = hist_avg("dbpm",     0.0)
 
         # Engineered interaction features
         avg_reb_pct = hist_avg("reb_pct", 5.0)
-        obpm_x_usg  = avg_obpm * avg_usg / 100.0
+        obpm_x_usg  = avg_obpm * avg_usg
         dbpm_x_reb  = avg_dbpm * avg_reb_pct / 100.0
 
         avg_raptor_off = hist_avg("raptor_off", 0.0)
