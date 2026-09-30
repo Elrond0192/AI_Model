@@ -486,7 +486,8 @@ def run_backtest(
                     "outer_bias": nested_summary["bias"],
                     "outer_r2": nested_summary["r2"],
                     "outer_gain_vs_persistence": persistence_rmse - nested_summary["rmse"],
-                    "outer_gain_vs_raw_model": summary["rmse"] - nested_summary["rmse"],
+                    "outer_gain_vs_final_production": summary["rmse"] - nested_summary["rmse"],
+                    "outer_gain_vs_raw_xgb": _rmse(records, "raw_target_prediction") - nested_summary["rmse"],
                 }
             all_records.extend(records)
             _logger.info(
@@ -565,7 +566,8 @@ def run_backtest(
             "bias": (nested_overall or {}).get("bias"),
             "r2": (nested_overall or {}).get("r2"),
             "gain_vs_persistence": persistence_rmse - nested_shrinkage_rmse,
-            "gain_vs_raw_model": overall["rmse"] - nested_shrinkage_rmse,
+            "gain_vs_final_production": overall["rmse"] - nested_shrinkage_rmse,
+            "gain_vs_raw_xgb": _rmse(all_records, "raw_target_prediction") - nested_shrinkage_rmse,
             "alphas": [
                 {
                     "target_season": fold["target_season"],
