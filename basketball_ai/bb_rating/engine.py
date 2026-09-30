@@ -59,6 +59,8 @@ RATE_COLUMNS = frozenset(
         "drb_pct",
         "reb_pct",
         "starter_pct",
+        "three_par",
+        "true_usg_pct",
     }
 )
 
@@ -529,8 +531,10 @@ class BBRatingEngine:
         used_weight = sum(e.weight for e in usable)
         coverage = float(used_weight / total_weight) if total_weight else 0.0
 
-        if not usable:
-            raise ValueError("BB-Rating cannot be computed: no usable metrics in context")
+        if not usable or used_weight <= 0.0:
+            raise ValueError(
+                "BB-Rating cannot be computed: no usable scoring metrics in context"
+            )
 
         composite_pct = sum(
             float(e.percentile) * float(e.weight) for e in usable
