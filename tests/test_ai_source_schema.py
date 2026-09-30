@@ -103,6 +103,20 @@ def test_ai_source_onoff_uses_resolved_team_id_for_aggregate_player_rows():
     assert "source_team_id" in sql
 
 
+def test_ai_source_preserves_player_team_context_in_final_dedupe():
+    sql = SOURCE_SQL.read_text(encoding="utf-8").lower()
+    assert """partition by
+                            r.player_global_id,
+                            r.league_key,
+                            r.season,
+                            r.competition,
+                            r.source_team_id""" in sql
+    assert "source_team_id
+                        order by coalesce(r.games, 0) desc" in sql
+    assert "team-aware" in sql
+
+
+
 def test_ai_source_deduplicates_team_player_relations_by_canonical_key():
     sql = SOURCE_SQL.read_text(encoding="utf-8").lower()
     assert "select distinct on (player_id, team_id, season)" in sql
