@@ -46,6 +46,52 @@ def _data(seasons=range(2021, 2026)):
     }
 
 
+def test_training_seasons_filters_in_progress_and_blocks_unknown(monkeypatch, tmp_path):
+    _reset_state()
+    data = _data(seasons=range(2021, 2027))
+    lifecycle_path = tmp_path / "season-lifecycle.json"
+    lifecycle_path.write_text(
+        json.dumps(
+            {
+                "2021": {"status": "complete"},
+                "2022": {"status": "complete"},
+                "2023": {"status": "complete"},
+                "2024": {"status": "complete"},
+                "2025": {"status": "complete"},
+                "2026": {"status": "in_progress"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(admin, "SEASON_LIFECYCLE_FILE", lifecycle_path)
+
+    training, excluded, blocked = admin._training_seasons(admin._seasons(data))
+    assert training == [2021, 2022, 2023, 2024, 2025]
+    assert excluded == [2026]
+    assert blocked == []
+
+    filtered = admin._filter_training_data(data)
+    assert sorted(filtered["player_stats"]["season"].tolist()) == [2021, 2022, 2023, 2024, 2025]
+
+    lifecycle_path.write_text(
+        json.dumps(
+            {
+                "2021": {"status": "complete"},
+                "2022": {"status": "complete"},
+                "2023": {"status": "complete"},
+                "2024": {"status": "complete"},
+                "2025": {"status": "complete"},
+                "2026": {"status": "unclassified"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    training, excluded, blocked = admin._training_seasons(admin._seasons(data))
+    assert training == [2021, 2022, 2023, 2024, 2025]
+    assert excluded == []
+    assert blocked == [2026]
+
+
 def _request(cookies: dict[str, str] | None = None) -> Request:
     cookie = "; ".join(f"{k}={v}" for k, v in (cookies or {}).items())
     headers = [(b"cookie", cookie.encode())] if cookie else []
@@ -367,11 +413,28 @@ def test_training_view_and_start(monkeypatch):
 
 
 def test_training_worker_success_and_failure(monkeypatch, tmp_path):
-    data = _data()
+    data = _data(seasons=range(2021, 2027))
+    lifecycle_path = tmp_path / "season-lifecycle.json"
+    lifecycle_path.write_text(
+        json.dumps(
+            {
+                "2021": {"status": "complete"},
+                "2022": {"status": "complete"},
+                "2023": {"status": "complete"},
+                "2024": {"status": "complete"},
+                "2025": {"status": "complete"},
+                "2026": {"status": "in_progress"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(admin, "SEASON_LIFECYCLE_FILE", lifecycle_path)
     monkeypatch.setattr(admin, "MODEL_ROOT", tmp_path)
+    captured = {}
 
     class Model:
         def train(self, data):
+            captured["seasons"] = sorted(data["player_stats"]["season"].tolist())
             return {"metric": 1}
         def save(self, path, metadata):
             Path(path).mkdir(parents=True, exist_ok=True)
@@ -387,6 +450,7 @@ def test_training_worker_success_and_failure(monkeypatch, tmp_path):
     admin._training_worker(data, "production")
     assert admin.STATE.training["status"] == "complete"
     assert admin.STATE.training["run_id"]
+    assert captured["seasons"] == [2021, 2022, 2023, 2024, 2025]
     assert registered
 
     class BrokenModel:
