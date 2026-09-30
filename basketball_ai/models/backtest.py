@@ -49,22 +49,56 @@ def _segment_metrics(records: List[Dict[str, Any]], key: str) -> Dict[str, Dict[
             [float(row["persistence_prediction"]) for row in rows], dtype=float
         )
         model = np.asarray(
+            [float(row["prediction"]) for row in rows], dtype=float
+        )
+        pre_shrinkage_model = np.asarray(
             [float(row.get("pre_shrinkage_prediction", row["prediction"])) for row in rows],
             dtype=float,
         )
         persistence_error = persistence - actual
         model_error = model - actual
+        pre_shrinkage_error = pre_shrinkage_model - actual
         result[name] = {
             "n": int(len(rows)),
+            # Canonical segment metrics consumed by promotion/monitoring.
+            "rmse": float(np.sqrt(np.mean(model_error ** 2))),
+            "mae": float(np.mean(np.abs(model_error))),
+            "bias": float(np.mean(model_error)),
+            "interval_coverage": None,
+            "interval_mean_width": None,
+            # Backward-compatible diagnostic fields.
             "persistence_rmse": float(np.sqrt(np.mean(persistence_error ** 2))),
-            "model_rmse": float(np.sqrt(np.mean(model_error ** 2))),
+            "model_rmse": float(np.sqrt(np.mean(pre_shrinkage_error ** 2))),
             "gain_vs_persistence": float(
                 np.sqrt(np.mean(persistence_error ** 2))
-                - np.sqrt(np.mean(model_error ** 2))
+                - np.sqrt(np.mean(pre_shrinkage_error ** 2))
             ),
-            "model_bias": float(np.mean(model_error)),
-            "correction_mean": float(np.mean(model - persistence)),
+            "model_bias": float(np.mean(pre_shrinkage_error)),
+            "correction_mean": float(np.mean(pre_shrinkage_model - persistence)),
         }
+
+        interval_rows = [
+            row
+            for row in rows
+            if row.get("confidence_low") is not None
+            and row.get("confidence_high") is not None
+        ]
+        if interval_rows:
+            covered = [
+                float(row["confidence_low"])
+                <= float(row["actual"])
+                <= float(row["confidence_high"])
+                for row in interval_rows
+            ]
+            widths = np.asarray(
+                [
+                    float(row["confidence_high"]) - float(row["confidence_low"])
+                    for row in interval_rows
+                ],
+                dtype=float,
+            )
+            result[name]["interval_coverage"] = float(np.mean(covered))
+            result[name]["interval_mean_width"] = float(np.mean(widths))
     return result
 
 
