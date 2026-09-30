@@ -139,3 +139,21 @@ without mixing leagues. Ties receive the same percentile score.
 ## Privacy and security
 
 Source schemas are read-only; writes are restricted to schema `ai`; secrets are runtime-only; browser clients never receive DB credentials or `IdGlobal`; WordPress calls AI_Model server-to-server over authenticated HTTPS.
+
+## BB-Rating layer
+
+The season-ahead Prediction Model and BB-Rating are separate contracts.
+
+- Prediction Model 2.6.0 forecasts the next-season rating using the native
+  delta_vs_prior target. It is evaluated with OOS forecasting metrics.
+- BB-Rating 1.0 is descriptive: it evaluates observed player performance
+  relative to a contextual peer population and returns a 1–100 score with
+  dimension scores, metric percentiles and deterministic explanations.
+- BB-Rating does not modify, shrink, floor or otherwise post-process Prediction
+  Model outputs.
+- USG% is a contextual role/involvement signal and has no standalone positive
+  weight in the composite score.
+
+The initial BB-Rating implementation lives in basketball_ai/bb_rating and is
+API-exposed at POST /api/v2/bb-rating/player. Its weights and peer thresholds
+must be validated on real production data before the methodology is frozen.
