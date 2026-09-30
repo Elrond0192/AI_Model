@@ -471,13 +471,6 @@ def _diagnostic_warnings(report: dict[str, Any]) -> list[str]:
                 "il contributo al BB-Rating è attualmente poco discriminante."
             )
 
-    source = report.get("source_enrichment", {})
-    if not source.get("enabled") and source.get("tables_discovered", 0):
-        warnings.append(
-            "L'arricchimento On/Off BB-Rating non ha prodotto sostituzioni; "
-            "verificare matching player/season/competition e copertura della sorgente."
-        )
-
     score = report["score_distribution"]
     if score["n"]:
         if score["stddev"] is not None and score["stddev"] < 8.0:
@@ -515,14 +508,10 @@ def _markdown(report: dict[str, Any]) -> str:
         "",
         "## BB-Rating data source",
         "",
-        "The BB-Rating runtime may apply an isolated On/Off enrichment from "
-        '"Analisi"."AdvancedStatsOnOffCourt_*". This enrichment is applied only '
-        "to the BB-Rating data copy and never mutates the Prediction Model dataset.",
-        "",
-        f"- Enrichment enabled: **{report['source_enrichment'].get('enabled', False)}**",
-        f"- On/Off tables used: **{report['source_enrichment'].get('tables_used', 0)}**",
-        f"- Matched player rows: **{report['source_enrichment'].get('matched_player_rows', 0)}**",
-        f"- NET_RTG_DIFF replacements: **{report['source_enrichment'].get('replacements', {}).get('net_rtg_diff', 0)}**",
+        "BB-Rating reads the canonical observed contract. On/Off fields are "
+        "resolved upstream by ai_source_full.sql from the Analisi On/Off tables "
+        "when the primary observation is NULL/zero and an authoritative source "
+        "value is available.",
         "",
         "## Registry audit",
         "",
@@ -751,10 +740,6 @@ def build_calibration_report(
             "min_context_samples": min_context_samples,
             "age_bands": [list(v) for v in AGE_BANDS],
         },
-        "source_enrichment": data.get(
-            "bb_rating_enrichment",
-            {"enabled": False, "reason": "not requested"},
-        ),
         "registry_audit": registry_audit,
         "contexts": {
             "n_contexts": int(len(context_sizes)),
