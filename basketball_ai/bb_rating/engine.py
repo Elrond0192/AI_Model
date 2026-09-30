@@ -18,6 +18,7 @@ from typing import Any, Iterable, Optional
 import numpy as np
 import pandas as pd
 
+from basketball_ai.bb_rating.semantics import METRIC_SEMANTICS, metric_interpretation
 
 BB_RATING_VERSION = "1.0"
 
@@ -104,7 +105,30 @@ BB_RATING_METRICS: tuple[RatingMetricSpec, ...] = (
     RatingMetricSpec("REB%", "reb_pct", "versatility", 0.045, description="Rebound Percentage"),
     RatingMetricSpec("HUSTLE", "hustle_index", "versatility", 0.04, description="Hustle index"),
     RatingMetricSpec("FOUL_DRAWING", "foul_drawing_rate", "versatility", 0.015, description="Foul drawing rate"),
+
+    # Explain-only evidence. These metrics are returned with contextual
+    # percentiles and semantic interpretation but have zero score weight.
+    RatingMetricSpec("POINTS", "points", "explanation_only", 0.0, direction="contextual", description="Points per game"),
+    RatingMetricSpec("ASSISTS", "assists", "explanation_only", 0.0, direction="contextual", description="Assists per game"),
+    RatingMetricSpec("REBOUNDS", "rebounds", "explanation_only", 0.0, direction="contextual", description="Rebounds per game"),
+    RatingMetricSpec("OFFENSIVE_REBOUNDS", "offensive_rebounds", "explanation_only", 0.0, direction="contextual", description="Offensive rebounds per game"),
+    RatingMetricSpec("DEFENSIVE_REBOUNDS", "defensive_rebounds", "explanation_only", 0.0, direction="contextual", description="Defensive rebounds per game"),
+    RatingMetricSpec("STEALS", "steals", "explanation_only", 0.0, direction="contextual", description="Steals per game"),
+    RatingMetricSpec("BLOCKS", "blocks", "explanation_only", 0.0, direction="contextual", description="Blocks per game"),
+    RatingMetricSpec("TURNOVERS", "turnovers", "explanation_only", 0.0, direction="lower_better", description="Turnovers per game"),
+    RatingMetricSpec("FG%", "fg_pct", "explanation_only", 0.0, direction="higher_better", description="Field goal percentage"),
+    RatingMetricSpec("3P%", "three_point_pct", "explanation_only", 0.0, direction="higher_better", description="Three-point percentage"),
+    RatingMetricSpec("FT%", "ft_pct", "explanation_only", 0.0, direction="higher_better", description="Free-throw percentage"),
+    RatingMetricSpec("eFG%", "efg_pct", "explanation_only", 0.0, direction="higher_better", description="Effective field-goal percentage"),
+    RatingMetricSpec("2P%", "two_point_pct", "explanation_only", 0.0, direction="higher_better", description="Two-point percentage"),
+    RatingMetricSpec("MINUTES", "minutes_per_game", "explanation_only", 0.0, direction="contextual", description="Minutes per game"),
+    RatingMetricSpec("GAMES", "games_played", "explanation_only", 0.0, direction="contextual", description="Games played"),
+    RatingMetricSpec("STARTER%", "starter_pct", "explanation_only", 0.0, direction="contextual", description="Starter percentage"),
+    RatingMetricSpec("PLUS_MINUS", "plus_minus", "explanation_only", 0.0, direction="contextual", description="Plus/minus"),
+    RatingMetricSpec("PTS_PER_40", "pts_per_40", "explanation_only", 0.0, direction="contextual", description="Points per 40"),
+    RatingMetricSpec("AST_PER_40", "ast_per_40", "explanation_only", 0.0, direction="contextual", description="Assists per 40"),
 )
+
 
 
 @dataclass(frozen=True)
@@ -130,6 +154,18 @@ class MetricEvidence:
             "sample_size": int(self.sample_size),
             "population_source": self.population_source,
             "direction": self.direction,
+            "meaning": METRIC_SEMANTICS.get(
+                self.metric,
+                None,
+            ).meaning if METRIC_SEMANTICS.get(self.metric) else self.metric,
+            "interpretation": metric_interpretation(
+                METRIC_SEMANTICS[self.metric],
+                self.value,
+                self.percentile,
+            ) if self.metric in METRIC_SEMANTICS
+              and self.value is not None
+              and self.percentile is not None
+            else None,
         }
 
 
@@ -474,7 +510,7 @@ class BBRatingEngine:
             (
                 e
                 for e in usable
-                if e.dimension != "role_context" and e.percentile >= 0.75
+                if e.weight > 0.0 and e.percentile >= 0.75
             ),
             key=lambda e: (float(e.percentile), float(e.weight)),
             reverse=True,
@@ -483,7 +519,7 @@ class BBRatingEngine:
             (
                 e
                 for e in usable
-                if e.dimension != "role_context" and e.percentile <= 0.35
+                if e.weight > 0.0 and e.percentile <= 0.35
             ),
             key=lambda e: (float(e.percentile), -float(e.weight)),
         )
