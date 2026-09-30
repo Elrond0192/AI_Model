@@ -122,8 +122,8 @@ def _load_app_state() -> None:
         from basketball_ai.bb_rating import BBRatingEngine
 
         app_state["bb_rating_engine"] = BBRatingEngine(
-            data.get("player_stats", pd.DataFrame()),
-            data.get("players", pd.DataFrame()),
+            data.get("player_stats"),
+            data.get("players"),
         )
         logger.info("[API] BB-Rating engine loaded")
     except Exception as exc:
