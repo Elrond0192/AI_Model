@@ -379,7 +379,6 @@ DECLARE
     p_team_local_expr text;
     p_team_name_expr text;
     team_source_expr text;
-    onoff_team_source_expr text;
     direct_team_global_expr text := 'NULL::text';
     fallback_team_global_expr text := 'NULL::text';
 
@@ -477,12 +476,6 @@ BEGIN
             'Anagrafiche', player_table, 'p', 'text', ARRAY['team', 'teamid', 'idteam']
         );
         team_source_expr := format('coalesce(%s, %s)', team_local_expr, p_team_local_expr);
-        onoff_team_source_expr := format(
-            'coalesce(%s, %s, %s)',
-            team_local_expr,
-            p_team_local_expr,
-            pg_temp.ai_expr('Anagrafiche', team_table, 'nt', 'text', ARRAY['id'])
-        );
         comp_expr := pg_temp.ai_comp_expr(r.table_schema, r.table_name, 's', ARRAY['competition']);
         rating_expr := pg_temp.ai_expr(
             r.table_schema, r.table_name, 's', 'numeric', ARRAY['vallegapergame', 'rating']
@@ -650,7 +643,7 @@ BEGIN
                 pg_temp.ai_id_key('oo.source_player_id'),
                 pg_temp.ai_id_key(player_local_expr),
                 comp_expr,
-                onoff_team_source_expr
+                team_local_expr
             );
             on_net_expr := '(CASE WHEN ' || on_net_expr || ' IS NULL OR ' || on_net_expr || ' = 0
                                   THEN coalesce(oo.on_net_rtg, ' || on_net_expr || ')
