@@ -600,8 +600,8 @@ BEGIN
                     ORDER BY season, source_player_id, competition
                 ) oo
                   ON oo.season = %11$s
-                 AND oo.source_player_id = %12$s
-                 AND oo.competition = %13$s',
+                 AND %12$s = %13$s
+                 AND oo.competition = %14$s',
                 pg_temp.ai_expr('Analisi', opt_table, 'oo0', 'int', ARRAY['season']),
                 pg_temp.ai_expr('Analisi', opt_table, 'oo0', 'text', ARRAY['id','playerid','idplayer']),
                 pg_temp.ai_comp_expr('Analisi', opt_table, 'oo0', ARRAY['competition']),
@@ -612,7 +612,10 @@ BEGIN
                 pg_temp.ai_expr('Analisi', opt_table, 'oo0', 'numeric', ARRAY['ortg_off']),
                 pg_temp.ai_expr('Analisi', opt_table, 'oo0', 'numeric', ARRAY['ortg_diff']),
                 opt_table,
-                season_expr, player_local_expr, comp_expr
+                season_expr,
+                pg_temp.ai_id_key('oo.source_player_id'),
+                pg_temp.ai_id_key(player_local_expr),
+                comp_expr
             );
             on_net_expr := '(CASE WHEN ' || on_net_expr || ' IS NULL OR ' || on_net_expr || ' = 0
                                   THEN coalesce(oo.on_net_rtg, ' || on_net_expr || ')
