@@ -275,6 +275,9 @@ def enrich_bb_rating_player_stats(
                 )
             ).mappings().all()
             diagnostics["tables_discovered"] = int(len(table_rows))
+            requested_leagues = set(
+                result["league_key"].astype(str).str.strip().str.upper().dropna().tolist()
+            )
 
             for table_row in table_rows:
                 table_name = str(table_row["table_name"])
@@ -287,6 +290,8 @@ def enrich_bb_rating_player_stats(
                     continue
                 league_key = match.group(1).strip().upper()
                 if not _SCHEMA_RE.fullmatch(league_key):
+                    continue
+                if requested_leagues and league_key not in requested_leagues:
                     continue
 
                 column_rows = connection.execute(
