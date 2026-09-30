@@ -70,6 +70,9 @@ def test_bb_rating_is_deterministic_and_contextual():
     assert 0.0 <= result.metric_coverage <= 1.0
     assert "RAPTOR" in result.metrics
     assert result.metrics["RAPTOR"].percentile is not None
+    payload = result.to_dict()
+    assert payload["metrics"]["RAPTOR"]["meaning"]
+    assert payload["metrics"]["RAPTOR"]["interpretation"]
     assert result.metrics["TOV%"].direction == "lower_better"
 
 
@@ -86,6 +89,7 @@ def test_usg_is_explanatory_but_does_not_change_score():
     assert score_b.score == score_a.score
     assert score_b.metrics["USG%"].percentile is not None
     assert "USG%" in score_b.explanation
+    assert score_b.to_dict()["metrics"]["USG%"]["interpretation"]
 
 
 def test_lower_turnover_rate_increases_metric_percentile():
@@ -133,6 +137,6 @@ def test_api_player_endpoint():
     assert response.status_code == 200
     payload = response.json()
     assert 1 <= payload["bb_rating"] <= 100
-    assert payload["bb_rating_version"] == "1.0"
+    assert payload["bb_rating_version"] == "1.1"
     assert payload["peer_group"]["definition"] == "position+age+role"
     assert payload["metrics"]["USG%"]["percentile"] is not None
