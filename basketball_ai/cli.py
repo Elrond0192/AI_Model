@@ -19,7 +19,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--mode",
         choices=(
-            "train", "backtest", "validate-data", "publish-batch",
+            "train", "backtest", "validate-data", "bb-rating-calibrate", "publish-batch",
             "promote", "rollback", "prepare-snapshot", "refresh-serving", "api",
         ),
         required=True,
@@ -35,6 +35,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--compare-target-modes", action="store_true")
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8000)
+    parser.add_argument("--output-dir", default="models_saved/bb_rating_calibration")
+    parser.add_argument("--min-peer-samples", type=int, default=25)
+    parser.add_argument("--min-context-samples", type=int, default=10)
     return parser.parse_args(argv)
 
 
@@ -136,6 +139,36 @@ def mode_backtest(args: argparse.Namespace) -> None:
     print(json.dumps(report, indent=2, default=str))
     if not report.get("valid"):
         raise SystemExit(2)
+
+
+def mode_bb_rating_calibrate(args: argparse.Namespace) -> None:
+    from basketball_ai.bb_rating.calibration import (
+        BBRatingCalibrationConfig,
+        build_calibration_report,
+        write_calibration_report,
+    )
+
+    data = _load_data(args)
+    report = build_calibration_report(
+        data,
+        config=BBRatingCalibrationConfig(
+            min_peer_samples=args.min_peer_samples,
+            min_context_samples=args.min_context_samples,
+        ),
+    )
+    paths = write_calibration_report(report, args.output_dir)
+    payload = {
+        "calibration_version": report["calibration_version"],
+        "bb_rating_version": report["bb_rating_version"],
+        "dataset": report["dataset"],
+        "contexts": report["contexts"],
+        "score_distribution": report["score_distribution"],
+        "stability": report["stability"],
+        "validation_signals": report["validation_signals"],
+        "warnings": report["warnings"],
+        "output": paths,
+    }
+    print(json.dumps(payload, indent=2, ensure_ascii=False, default=str))
 
 
 def mode_validate_data(args: argparse.Namespace) -> None:
@@ -281,6 +314,7 @@ def main(argv: list[str] | None = None) -> None:
         "train": mode_train,
         "backtest": mode_backtest,
         "validate-data": mode_validate_data,
+        "bb-rating-calibrate": mode_bb_rating_calibrate,
         "publish-batch": mode_publish_batch,
         "promote": mode_promote,
         "rollback": mode_rollback,
