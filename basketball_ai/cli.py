@@ -177,7 +177,20 @@ def mode_bb_rating_calibrate(args: argparse.Namespace) -> None:
         stats = stats.loc[stats["competition"].astype(str).str.upper() == competition_value]
     if stats.empty:
         raise RuntimeError("No player_stats rows remain after BB-Rating calibration filters")
-    data = {**data, "player_stats": stats.reset_index(drop=True)}
+    stats = stats.reset_index(drop=True)
+    enrichment = {"enabled": False}
+    if args.database_profile:
+        from basketball_ai.data.postgres_loader import enrich_bb_rating_player_stats
+
+        stats, enrichment = enrich_bb_rating_player_stats(
+            stats,
+            source_schema=os.environ.get("POSTGRES_SOURCE_SCHEMA", "AI_Source"),
+        )
+    data = {
+        **data,
+        "player_stats": stats,
+        "bb_rating_enrichment": enrichment,
+    }
 
     report = build_calibration_report(
         data,
@@ -196,6 +209,7 @@ def mode_bb_rating_calibrate(args: argparse.Namespace) -> None:
         "stability": report["stability"],
         "validation_signals": report["validation_signals"],
         "warnings": report["warnings"],
+        "bb_rating_enrichment": enrichment,
         "output": paths,
     }
     print(json.dumps(payload, indent=2, ensure_ascii=False, default=str))
