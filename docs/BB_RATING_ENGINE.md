@@ -187,3 +187,8 @@ These warnings are investigation signals, not promotion gates. No BB-Rating weig
 threshold or public methodology should be frozen from the report alone; the next step
 is to review the real-data output and decide whether the peer model, metric set and
 weights need calibration.
+
+## Data-source isolation
+
+The BB-Rating runtime applies an additive On/Off enrichment from `"Analisi"."AdvancedStatsOnOffCourt_*"` to a BB-Rating-only copy of player statistics. The canonical `AI_Source.PlayerCompetitionStats` dataset consumed by the Prediction Model is not mutated, and Prediction Model 2.6.0 logic is unchanged.
+
