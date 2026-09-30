@@ -38,6 +38,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--output-dir", default="models_saved/bb_rating_calibration")
     parser.add_argument("--min-peer-samples", type=int, default=25)
     parser.add_argument("--min-context-samples", type=int, default=10)
+    parser.add_argument("--min-season", type=int, default=None)
+    parser.add_argument("--max-season", type=int, default=None)
     return parser.parse_args(argv)
 
 
@@ -147,8 +149,36 @@ def mode_bb_rating_calibrate(args: argparse.Namespace) -> None:
         build_calibration_report,
         write_calibration_report,
     )
+    if args.database_profile:
+        os.environ["DATABASE_PROFILE"] = args.database_profile
 
-    data = _load_data(args)
+    if args.snapshot_id:
+        from basketball_ai.data.training_snapshots import load_training_snapshot
+        data = load_training_snapshot(args.snapshot_id, args.snapshot_dir)
+    else:
+        # BB-Rating calibration describes observed performance, so use the
+        # canonical analysis contract rather than the training-serving view.
+        from basketball_ai.data.postgres_loader import load_all_data
+        data = load_all_data(purpose="analysis")
+
+    stats = data["player_stats"].copy()
+    if args.league_key:
+        league_value = str(args.league_key).strip().upper()
+        if "league_key" in stats.columns:
+            stats = stats.loc[stats["league_key"].astype(str).str.upper() == league_value]
+    if args.season is not None:
+        stats = stats.loc[pd.to_numeric(stats["season"], errors="coerce") == int(args.season)]
+    if args.min_season is not None:
+        stats = stats.loc[pd.to_numeric(stats["season"], errors="coerce") >= int(args.min_season)]
+    if args.max_season is not None:
+        stats = stats.loc[pd.to_numeric(stats["season"], errors="coerce") <= int(args.max_season)]
+    if args.competition:
+        competition_value = str(args.competition).strip().upper()
+        stats = stats.loc[stats["competition"].astype(str).str.upper() == competition_value]
+    if stats.empty:
+        raise RuntimeError("No player_stats rows remain after BB-Rating calibration filters")
+    data = {**data, "player_stats": stats.reset_index(drop=True)}
+
     report = build_calibration_report(
         data,
         config=BBRatingCalibrationConfig(
