@@ -136,6 +136,18 @@ def test_missing_metrics_are_reported_and_weight_is_renormalised():
     assert result.score >= 1
 
 
+
+def test_calibration_warns_on_constant_scoring_metric():
+    stats = make_stats()
+    stats["net_rtg_diff"] = 0.0
+    report = build_calibration_report(
+        {"player_stats": stats, "players": make_players(), "source_contract": "test"}
+    )
+
+    assert "NET_RTG_DIFF" in report["validation_signals"]["constant_scoring_metrics"]
+    assert any("NET_RTG_DIFF" in warning for warning in report["warnings"])
+
+
 def test_missing_context_raises():
     engine = BBRatingEngine(make_stats(), make_players())
     with pytest.raises(ValueError, match="No BB-Rating context"):
