@@ -232,7 +232,7 @@ def enrich_bb_rating_player_stats(
     fields. This function deliberately enriches a copy used only by BB-Rating;
     Prediction Model data and logic remain untouched.
     """
-    result = player_stats.copy()
+    result = player_stats.copy().reset_index(drop=True)
     diagnostics: dict[str, Any] = {
         "enabled": False,
         "source_schema": source_schema,
