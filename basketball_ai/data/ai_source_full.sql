@@ -583,19 +583,18 @@ BEGIN
               AND c.relkind IN ('r','p')
         ) THEN
             onoff_join := format(
-                'LEFT JOIN (
-                    SELECT DISTINCT ON (
-                        season,
-                        source_player_id,
-                        competition,
-                        source_team_id
-                    )
-                           season,
-                           source_player_id,
-                           source_team_id,
-                           competition,
-                           on_net_rtg, off_net_rtg, net_rtg_diff,
-                           ortg_on, ortg_off, ortg_diff
+                'LEFT JOIN LATERAL (
+                    SELECT
+                        q.season,
+                        q.source_player_id,
+                        q.source_team_id,
+                        q.competition,
+                        q.on_net_rtg,
+                        q.off_net_rtg,
+                        q.net_rtg_diff,
+                        q.ortg_on,
+                        q.ortg_off,
+                        q.ortg_diff
                     FROM (
                         SELECT
                             %1$s AS season,
@@ -609,30 +608,29 @@ BEGIN
                             %9$s AS ortg_off,
                             %10$s AS ortg_diff
                         FROM "Analisi".%11$I oo0
-                        WHERE %1$s IS NOT NULL AND %2$s IS NOT NULL
+                        WHERE %1$s IS NOT NULL
+                          AND %2$s IS NOT NULL
                     ) q
+                    WHERE q.season = %12$s
+                      AND pg_temp.ai_id_key(q.source_player_id)
+                          = pg_temp.ai_id_key(%13$s)
+                      AND q.competition = %14$s
+                      AND (
+                           q.source_team_id IS NULL
+                           OR pg_temp.ai_id_key(q.source_team_id)
+                              = pg_temp.ai_id_key(%15$s)
+                      )
                     ORDER BY
-                        season,
-                        source_player_id,
-                        competition,
-                        source_team_id
-                ) oo
-                  ON oo.season = %12$s
-                 AND %13$s = %14$s
-                 AND oo.competition = %15$s
-                 AND (
-                      (
-                          oo.source_team_id IS NOT NULL
-                          AND pg_temp.ai_id_key(oo.source_team_id)
-                              =
-                              pg_temp.ai_id_key(%16$s)
-                      )
-                      OR
-                      (
-                          oo.source_team_id IS NULL
-                          AND pg_temp.ai_id_key(%16$s) IS NULL
-                      )
-                 )',
+                        CASE
+                            WHEN q.source_team_id IS NOT NULL
+                             AND pg_temp.ai_id_key(q.source_team_id)
+                                 = pg_temp.ai_id_key(%15$s)
+                            THEN 0
+                            ELSE 1
+                        END,
+                        CASE WHEN q.source_team_id IS NULL THEN 1 ELSE 0 END
+                    LIMIT 1
+                ) oo ON true',
                 pg_temp.ai_expr('Analisi', opt_table, 'oo0', 'int', ARRAY['season']),
                 pg_temp.ai_expr('Analisi', opt_table, 'oo0', 'text', ARRAY['player','id','playerid','idplayer']),
                 pg_temp.ai_expr('Analisi', opt_table, 'oo0', 'text', ARRAY['teamid','idteam']),
@@ -645,8 +643,7 @@ BEGIN
                 pg_temp.ai_expr('Analisi', opt_table, 'oo0', 'numeric', ARRAY['ortg_diff']),
                 opt_table,
                 season_expr,
-                pg_temp.ai_id_key('oo.source_player_id'),
-                pg_temp.ai_id_key(player_local_expr),
+                player_local_expr,
                 comp_expr,
                 team_local_expr
             );
@@ -668,6 +665,7 @@ BEGIN
             ortg_diff_expr := '(CASE WHEN ' || ortg_diff_expr || ' IS NULL OR ' || ortg_diff_expr || ' = 0
                                      THEN coalesce(oo.ortg_diff, ' || ortg_diff_expr || ')
                                      ELSE ' || ortg_diff_expr || ' END)';
+
         END IF;
 
         IF (
