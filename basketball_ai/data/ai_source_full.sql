@@ -629,7 +629,7 @@ BEGIN
                       )
                  )',
                 pg_temp.ai_expr('Analisi', opt_table, 'oo0', 'int', ARRAY['season']),
-                pg_temp.ai_expr('Analisi', opt_table, 'oo0', 'text', ARRAY['id','playerid','idplayer']),
+                pg_temp.ai_expr('Analisi', opt_table, 'oo0', 'text', ARRAY['player','id','playerid','idplayer']),
                 pg_temp.ai_expr('Analisi', opt_table, 'oo0', 'text', ARRAY['teamid','idteam']),
                 pg_temp.ai_comp_expr('Analisi', opt_table, 'oo0', ARRAY['competition']),
                 pg_temp.ai_expr('Analisi', opt_table, 'oo0', 'numeric', ARRAY['netrtg_on']),
