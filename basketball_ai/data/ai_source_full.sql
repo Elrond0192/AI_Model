@@ -929,22 +929,11 @@ BEGIN
          WITH raw AS (' || body || '),
          resolved AS (
              SELECT r.*,
-                    -- Preserve team-specific contexts. On/Off and the
-                    -- canonical PlayerCompetitionStats key are both
-                    -- team-aware, so aggregating across source_team_id here
-                    -- would discard valid multi-team season rows.
                     row_number() OVER (
-                        PARTITION BY
-                            r.player_global_id,
-                            r.league_key,
-                            r.season,
-                            r.competition,
-                            r.source_team_id
-                        ORDER BY coalesce(r.games, 0) DESC,
-                                 CASE
-                                     WHEN r.rating_source IS NULL THEN 1
-                                     ELSE 0
-                                 END
+                        PARTITION BY r.player_global_id, r.league_key, r.season, r.competition
+                        ORDER BY CASE WHEN r.source_team_id IS NULL THEN 0 ELSE 1 END,
+                                 coalesce(r.games, 0) DESC,
+                                 r.source_team_id NULLS LAST
                     ) AS rn
              FROM raw r
              WHERE r.rating_source IS NOT NULL
