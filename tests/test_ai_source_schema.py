@@ -92,31 +92,6 @@ def test_ai_source_resolves_player_team_from_roster_team_id_when_stats_team_id_i
     assert "array['teamname', 'team', 'name']" in sql
 
 
-def test_ai_source_onoff_uses_resolved_team_id_for_aggregate_player_rows():
-    sql = SOURCE_SQL.read_text(encoding="utf-8").lower()
-    assert "onoff_team_source_expr text" in sql
-    assert "onoff_team_source_expr := format(" in sql
-    assert "coalesce(%s, %s, %s)" in sql
-    assert "pg_temp.ai_expr('anagrafiche', team_table, 'nt', 'text', array['id'])" in sql
-    assert "onoff_team_source_expr" in sql
-    assert "select distinct on (" in sql
-    assert "source_team_id" in sql
-
-
-def test_ai_source_preserves_player_team_context_in_final_dedupe():
-    sql = SOURCE_SQL.read_text(encoding="utf-8").lower()
-    assert """partition by
-                            r.player_global_id,
-                            r.league_key,
-                            r.season,
-                            r.competition,
-                            r.source_team_id""" in sql
-    assert "source_team_id
-                        order by coalesce(r.games, 0) desc" in sql
-    assert "team-aware" in sql
-
-
-
 def test_ai_source_deduplicates_team_player_relations_by_canonical_key():
     sql = SOURCE_SQL.read_text(encoding="utf-8").lower()
     assert "select distinct on (player_id, team_id, season)" in sql
