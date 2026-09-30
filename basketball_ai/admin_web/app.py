@@ -153,6 +153,40 @@ def _lifecycle_rows(seasons: list[int]) -> list[dict[str, Any]]:
     ]
 
 
+def _training_seasons(seasons: list[int]) -> tuple[list[int], list[int], list[int]]:
+    """Return complete seasons for training, current seasons to exclude, and blocking seasons."""
+    lifecycle = {row["season"]: row["status"] for row in _lifecycle_rows(seasons)}
+    training_seasons = sorted(
+        season for season in seasons if lifecycle.get(season) == "complete"
+    )
+    excluded_in_progress = sorted(
+        season for season in seasons if lifecycle.get(season) == "in_progress"
+    )
+    blocking = sorted(
+        season
+        for season in seasons
+        if lifecycle.get(season) not in {"complete", "in_progress"}
+    )
+    return training_seasons, excluded_in_progress, blocking
+
+
+def _filter_training_data(data: dict[str, Any]) -> dict[str, Any]:
+    """Exclude in-progress seasons from model fitting/backtesting while preserving them in snapshots."""
+    seasons = _seasons(data)
+    training_seasons, _, _ = _training_seasons(seasons)
+    allowed = set(training_seasons)
+    filtered = dict(data)
+    for key, frame in data.items():
+        if not isinstance(frame, pd.DataFrame) or "season" not in frame.columns:
+            continue
+        years = pd.to_numeric(
+            frame["season"].astype(str).str.split("-").str[0],
+            errors="coerce",
+        )
+        filtered[key] = frame.loc[years.isin(allowed)].copy()
+    return filtered
+
+
 def _seasons(data: dict[str, Any] | None) -> list[int]:
     if not data or "player_stats" not in data or data["player_stats"].empty:
         return []
@@ -312,8 +346,30 @@ def _training_worker(
                 progress=8,
                 message=f"Training from immutable snapshot {snapshot['snapshot_id']}…",
             )
-        seasons = _seasons(data)
-        _set_training(status="running", stage="Training ensemble", progress=12, message="Training the strict competition-aware ensemble…")
+        observed_seasons = _seasons(data)
+        training_seasons, excluded_in_progress, blocking = _training_seasons(observed_seasons)
+        if blocking:
+            raise RuntimeError(
+                "Snapshot contiene stagioni non idonee al training: "
+                + ", ".join(map(str, blocking))
+            )
+        if len(training_seasons) < 5:
+            raise RuntimeError("Servono almeno cinque stagioni Complete per il training")
+        data = _filter_training_data(data)
+        seasons = training_seasons
+        _set_training(
+            status="running",
+            stage="Training ensemble",
+            progress=12,
+            message=(
+                "Training the strict competition-aware ensemble…"
+                + (
+                    f" ({len(excluded_in_progress)} stagione/i In corso escluse)"
+                    if excluded_in_progress
+                    else ""
+                )
+            ),
+        )
         model = StrictProductionEnsembleModel()
         metrics = model.train(data)
 
@@ -343,7 +399,9 @@ def _training_worker(
             "model_version": "2.6.0",
             "feature_version": "forecast-t-plus-1-persistence-delta-v1",
             "data_cutoff": datetime.now(timezone.utc).date().isoformat(),
-            "latest_observed_season": max(seasons),
+            "latest_observed_season": max(observed_seasons),
+            "training_seasons": seasons,
+            "excluded_in_progress_seasons": excluded_in_progress,
             "database_profile": active_profile,
             "training_snapshot_id": (snapshot or {}).get("snapshot_id"),
             "training_snapshot_sha256": (snapshot or {}).get("sha256"),
@@ -593,6 +651,7 @@ async def overview(user: dict[str, str] = Depends(_operator)) -> dict[str, Any]:
         summary = dict(STATE.summary)
         active_profile = STATE.active_profile
     seasons = summary.get("seasons", [])
+    training_seasons, excluded_in_progress, blocking = _training_seasons(seasons)
     production = registry.get("production") or {}
     candidate = registry.get("candidate") or {}
     api_live = await asyncio.to_thread(_probe, "/health/live")
@@ -613,9 +672,13 @@ async def overview(user: dict[str, str] = Depends(_operator)) -> dict[str, Any]:
         },
         {
             "component": "Training dataset",
-            "status": "ok" if len(seasons) >= 5 else "warning",
-            "label": "OK" if len(seasons) >= 5 else "Warning",
-            "detail": f"{len(seasons)} stagioni disponibili (minimo richiesto: 5)",
+            "status": "ok" if len(training_seasons) >= 5 and not blocking else "warning",
+            "label": "OK" if len(training_seasons) >= 5 and not blocking else "Warning",
+            "detail": (
+                f"{len(training_seasons)} stagioni Complete per il training"
+                + (f"; {len(excluded_in_progress)} In corso escluse" if excluded_in_progress else "")
+                + (f"; bloccanti: {', '.join(map(str, blocking))}" if blocking else "")
+            ),
             "action": "training",
         },
         {
@@ -783,13 +846,20 @@ def training(user: dict[str, str] = Depends(_operator)) -> dict[str, Any]:
     seasons = summary.get("seasons", [])
     competitions = summary.get("competitions", [])
     lifecycle = _lifecycle_rows(seasons)
-    can_train_snapshot = bool(lifecycle) and all(item["status"] == "complete" for item in lifecycle)
+    training_seasons, excluded_in_progress, blocking = _training_seasons(seasons)
+    training_data = _filter_training_data(STATE.data) if STATE.data is not None else None
+    training_summary = _summary(training_data)
+    can_train_snapshot = bool(lifecycle) and len(training_seasons) >= 5 and not blocking
     return {
         "profile": active,
         "snapshot": snapshot,
         "summary": summary,
+        "training_summary": training_summary,
+        "training_seasons": training_seasons,
+        "excluded_in_progress_seasons": excluded_in_progress,
+        "blocking_seasons": blocking,
         "job": job,
-        "can_start": bool(STATE.data is not None and len(seasons) >= 5 and can_train_snapshot and job.get("status") != "running"),
+        "can_start": bool(STATE.data is not None and can_train_snapshot and job.get("status") != "running"),
         "lifecycle": lifecycle,
         "contract": [
             {"stage": "Fit", "seasons": f"through {seasons[-2]}" if len(seasons) >= 2 else "—", "purpose": "Same player + league + competition, exact t → t+1"},
@@ -815,13 +885,23 @@ def start_training(user: dict[str, str] = Depends(_csrf)) -> dict[str, Any]:
         if STATE.data is None:
             raise HTTPException(status_code=400, detail="Carica prima un profilo database")
         seasons = _seasons(STATE.data)
-        if len(seasons) < 5:
-            raise HTTPException(status_code=400, detail="Servono almeno cinque stagioni")
-        blocked = [row["season"] for row in _lifecycle_rows(seasons) if row["status"] != "complete"]
+        training_seasons, excluded_in_progress, blocked = _training_seasons(seasons)
+        if len(training_seasons) < 5:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Servono almeno cinque stagioni Complete per il training"
+                    + (
+                        f"; le stagioni In corso escluse: {', '.join(map(str, excluded_in_progress))}"
+                        if excluded_in_progress
+                        else ""
+                    )
+                ),
+            )
         if blocked:
             raise HTTPException(
                 status_code=400,
-                detail="Classifica come Complete le stagioni presenti nello snapshot prima del training: "
+                detail="Classifica come Complete le stagioni non idonee presenti nello snapshot prima del training: "
                 + ", ".join(map(str, blocked)),
             )
         if STATE.training.get("status") == "running":
