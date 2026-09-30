@@ -60,6 +60,13 @@ METRIC_SEMANTICS: dict[str, MetricSemantic] = {
     "REB_PER_36": MetricSemantic("REB_PER_36", "reb_per_36", "REB/36", "produzione a rimbalzo normalizzata per 36 minuti"),
     "VOLUME_3PA": MetricSemantic("VOLUME_3PA", "three_point_attempts", "3PA", "volume di tentativi da tre"),
     "VOLUME_FTA": MetricSemantic("VOLUME_FTA", "free_throw_attempts", "FTA", "volume di tiri liberi tentati"),
+    "THREE_PAR": MetricSemantic("THREE_PAR", "three_par", "3P Rate", "quota di tiri dal campo presi da tre", unit="percent"),
+    "TRUE_USG": MetricSemantic("TRUE_USG", "true_usg_pct", "True USG%", "coinvolgimento offensivo normalizzato", unit="percent"),
+    "CLUTCH_TS%": MetricSemantic("CLUTCH_TS%", "clutch_ts_pct", "Clutch TS%", "efficienza al tiro nelle situazioni clutch", unit="percent", direction="higher_better"),
+    "CLUTCH_NET_RTG": MetricSemantic("CLUTCH_NET_RTG", "clutch_net_rtg", "Clutch Net Rating", "rendimento della squadra nelle situazioni clutch con il giocatore", direction="contextual"),
+    "ORTG_DIFF": MetricSemantic("ORTG_DIFF", "ortg_diff", "ORtg Diff", "differenziale offensivo on/off", direction="contextual"),
+    "NET_RTG": MetricSemantic("NET_RTG", "net_rtg", "Net Rating", "rendimento netto della squadra durante le presenze del giocatore", direction="contextual"),
+    "DURABILITY": MetricSemantic("DURABILITY", "games_played", "Availability", "volume di partite disputate nella stagione", direction="contextual"),
 }
 
 
