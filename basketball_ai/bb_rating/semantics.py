@@ -57,6 +57,8 @@ METRIC_SEMANTICS: dict[str, MetricSemantic] = {
     "PLUS_MINUS": MetricSemantic("PLUS_MINUS", "plus_minus", "+/-", "differenziale di punti durante le presenze in campo"),
     "PTS_PER_36": MetricSemantic("PTS_PER_36", "pts_per_36", "PTS/36", "produzione di punti normalizzata per 36 minuti"),
     "AST_PER_36": MetricSemantic("AST_PER_36", "ast_per_36", "AST/36", "produzione di assist normalizzata per 36 minuti"),
+    "PTS_PER_40": MetricSemantic("PTS_PER_40", "pts_per_40", "PTS/40", "produzione di punti normalizzata per 40 minuti"),
+    "AST_PER_40": MetricSemantic("AST_PER_40", "ast_per_40", "AST/40", "produzione di assist normalizzata per 40 minuti"),
     "REB_PER_36": MetricSemantic("REB_PER_36", "reb_per_36", "REB/36", "produzione a rimbalzo normalizzata per 36 minuti"),
     "VOLUME_3PA": MetricSemantic("VOLUME_3PA", "three_point_attempts", "3PA", "volume di tentativi da tre"),
     "VOLUME_FTA": MetricSemantic("VOLUME_FTA", "free_throw_attempts", "FTA", "volume di tiri liberi tentati"),
