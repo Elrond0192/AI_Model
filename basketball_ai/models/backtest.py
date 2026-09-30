@@ -273,6 +273,7 @@ def _production_ablation_diagnostics(
         },
     }
 
+
 def _nested_temporal_shrinkage_alpha(
     data: Dict[str, Any],
     outer_source_season: int,
