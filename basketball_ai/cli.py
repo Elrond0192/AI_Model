@@ -110,7 +110,7 @@ def mode_train(args: argparse.Namespace) -> None:
     metadata = {
         **(metrics or {}),
         "model_run_id": run_id,
-        "model_version": os.getenv("MODEL_VERSION", "2.5.0"),
+        "model_version": os.getenv("MODEL_VERSION", "2.6.0"),
         "feature_version": "forecast-t-plus-1-persistence-delta-v1",
         "data_cutoff": datetime.now(timezone.utc).date().isoformat(),
         "latest_observed_season": _latest_season(data),
