@@ -1,0 +1,138 @@
+# BB-Rating Engine
+
+The BB-Rating is the descriptive/contextual layer for player performance. It is
+separate from the season-ahead Prediction Model.
+
+The Prediction Model answers:
+
+> What rating is this player expected to have next season?
+
+BB-Rating answers:
+
+> How is this player performing relative to comparable players in this
+> league, season and competition?
+
+## Contract
+
+BBRatingEngine.rate_player() returns a deterministic score from **1 to 100**.
+
+The score is built from contextual percentiles of observed metrics. The default
+dimensions are:
+
+| Dimension | Main evidence |
+|---|---|
+| Impact | RAPTOR total, LEBRON total, VORP |
+| Offense | PER, TS%, scoring efficiency, AST%, TOV% |
+| Defense | RAPTOR defensive component, DBPM, net rating differential, STL%, BLK% |
+| Versatility | REB%, hustle, foul-drawing rate |
+
+The current weights are explicit in basketball_ai/bb_rating/engine.py. They are
+a versioned product contract and should be recalibrated only after real-data
+validation.
+
+## Contextual peer population
+
+The percentile population is scoped first to:
+
+league + season + competition
+
+The engine then narrows the comparison, when enough players exist, in this
+order:
+
+1. position family + age band + observed combined role;
+2. position family + age band;
+3. position family;
+4. league + season + competition;
+5. limited context when the context itself is small.
+
+This prevents a guard from being directly compared with every player in the
+database when a statistically useful peer population exists.
+
+Age bands are 18–21, 22–25, 26–29, 30–33 and 34+.
+
+Position families are GUARD, WING and BIG, derived from the canonical position
+labels. The exact observed ruolo_combinato is used only when its population is
+large enough.
+
+## USG% semantics
+
+USG% is returned as contextual evidence but has **zero composite weight**.
+
+This is deliberate: a high usage rate describes offensive involvement; it does
+not prove that the player is more effective. A player with a 34% USG can
+therefore be described as having very high offensive involvement relative to
+peers, while the BB-Rating still depends on efficiency, creation, turnovers and
+impact.
+
+The current explanation layer emits this interpretation when USG% is at or
+above the 90th percentile.
+
+## Missing data and quality
+
+The engine renormalises composite weights across usable metrics while exposing
+metric_coverage.
+
+Quality is:
+
+| Condition | Quality |
+|---|---|
+| peer sample >= 50 and coverage >= 80% | high |
+| peer sample >= 25 and coverage >= 60% | medium |
+| peer sample >= 10 and coverage >= 40% | low |
+| otherwise | insufficient |
+
+A low-quality result remains a numerical result, but the response explicitly
+contains the quality flag so Chat/UI can qualify the explanation.
+
+## API
+
+POST /api/v2/bb-rating/player
+
+Request:
+
+{
+  "player_global_id": "46238",
+  "league": "ITA1",
+  "season": 2025,
+  "phase": "RS"
+}
+
+Response shape:
+
+{
+  "player_global_id": "46238",
+  "player_name": "Example Player",
+  "league": "ITA1",
+  "season": 2025,
+  "phase": "RS",
+  "bb_rating": 87,
+  "score_band": "Elite",
+  "dimensions": {
+    "impact": 91,
+    "offense": 84,
+    "defense": 79,
+    "versatility": 70
+  },
+  "metrics": {},
+  "strengths": [],
+  "limitations": [],
+  "explanation": "...",
+  "peer_group": {},
+  "quality": "high",
+  "metric_coverage": 0.93,
+  "bb_rating_version": "1.0"
+}
+
+WordPress remains a pure consumer: no percentile, peer selection or BB-Rating
+logic belongs in PHP.
+
+## Current status
+
+This is **FASE I of the BB-Rating layer**. The implementation is deterministic
+and API-ready, but the weights and peer thresholds must still be validated
+against real production data before treating the 1–100 score as the final
+public methodology.
+
+The next validation should measure score distributions, stability across
+leagues/seasons, position and age groups, missing-metric coverage and whether
+the explanations agree with the underlying percentiles.
