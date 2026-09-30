@@ -340,7 +340,7 @@ def _training_worker(
         metadata = {
             **(metrics or {}),
             "model_run_id": run_id,
-            "model_version": "2.5.0",
+            "model_version": "2.6.0",
             "feature_version": "forecast-t-plus-1-persistence-delta-v1",
             "data_cutoff": datetime.now(timezone.utc).date().isoformat(),
             "latest_observed_season": max(seasons),
