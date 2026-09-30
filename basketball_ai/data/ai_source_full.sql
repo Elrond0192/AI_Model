@@ -456,8 +456,13 @@ BEGIN
         clutch_net_expr := pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['clutchnetrtg']);
         clutch_efg_expr := pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['clutchefgpct']);
 
-        games_started_expr := pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['gamesstarted', 'games_started']);
+        games_expr := pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['games', 'gamesplayed']);
+        games_started_expr := pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['gamesstarted', 'games_started', 'starts']);
         starter_pct_expr := pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['starterpct', 'starter_pct']);
+
+        -- AdvancedStats_Player_<LEAGUE> exposes starter counts as Starts,
+        -- not GamesStarted. When StarterPct is absent, derive it from
+        -- Starts/Games instead of forcing an unnecessary Boxscore scan.
 
         league_key := regexp_replace(r.table_name, '^AdvancedStats_Player_', '', 'i');
         player_table := league_key;
@@ -726,10 +731,26 @@ BEGIN
             END IF;
         END IF;
 
-        -- Boxscore is used only when AdvancedStats does not already contain
-        -- BOTH starter fields. This avoids scanning Boxscore unnecessarily.
-        IF pg_temp.ai_find_column(r.table_schema, r.table_name, ARRAY['gamesstarted','games_started']) IS NULL
-           OR pg_temp.ai_find_column(r.table_schema, r.table_name, ARRAY['starterpct','starter_pct']) IS NULL
+        -- StarterPct is optional: when the source exposes Starts/GamesStarted
+        -- but not StarterPct, derive it from the canonical Games and starter
+        -- count fields before consulting Boxscore.
+        IF pg_temp.ai_find_column(r.table_schema, r.table_name, ARRAY['starterpct','starter_pct']) IS NULL
+           AND pg_temp.ai_find_column(r.table_schema, r.table_name, ARRAY['gamesstarted','games_started','starts']) IS NOT NULL
+        THEN
+            starter_pct_expr := format(
+                '(CASE WHEN coalesce(%1$s, 0) > 0
+                        THEN least(1.0, greatest(0.0, coalesce(%2$s, 0) / %1$s))
+                        ELSE 0 END)',
+                games_expr,
+                games_started_expr
+            );
+        END IF;
+
+        -- Boxscore is the fallback only when AdvancedStats_Player_<LEAGUE>
+        -- has no starter-count field at all. This keeps Starts authoritative
+        -- while still supporting leagues where only game-level starter flags
+        -- are available.
+        IF pg_temp.ai_find_column(r.table_schema, r.table_name, ARRAY['gamesstarted','games_started','starts']) IS NULL
         THEN
             opt_table := league_key;
             IF EXISTS (
@@ -774,10 +795,9 @@ BEGIN
                     comp_expr
                 );
                 games_started_expr := 'bs.games_started';
-                games_expr := pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['games','gamesplayed']);
                 starter_pct_expr := format(
                     '(CASE WHEN coalesce(%1$s, 0) > 0
-                            THEN least(1.0, coalesce(%2$s, 0) / %1$s)
+                            THEN least(1.0, greatest(0.0, coalesce(%2$s, 0) / %1$s))
                             ELSE 0 END)',
                     games_expr,
                     games_started_expr
