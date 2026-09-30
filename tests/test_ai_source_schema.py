@@ -92,6 +92,17 @@ def test_ai_source_resolves_player_team_from_roster_team_id_when_stats_team_id_i
     assert "array['teamname', 'team', 'name']" in sql
 
 
+def test_ai_source_onoff_matches_native_player_team_id():
+    sql = SOURCE_SQL.read_text(encoding="utf-8").lower()
+    assert "select distinct on (" in sql
+    assert "source_team_id" in sql
+    assert "array['teamid', 'idteam']" in sql
+    assert "pg_temp.ai_id_key(oo.source_team_id)" in sql
+    assert "pg_temp.ai_id_key(%16$s)" in sql
+    assert "                comp_expr,\n                team_local_expr\n            );" in sql
+    assert "onoff_team_source_expr" not in sql
+
+
 def test_ai_source_deduplicates_team_player_relations_by_canonical_key():
     sql = SOURCE_SQL.read_text(encoding="utf-8").lower()
     assert "select distinct on (player_id, team_id, season)" in sql
