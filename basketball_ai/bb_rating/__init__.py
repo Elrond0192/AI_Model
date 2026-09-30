@@ -5,6 +5,11 @@ model. It evaluates observed player performance relative to a contextual peer
 population and returns a 1-100 score plus metric-level evidence.
 """
 
+from basketball_ai.bb_rating.calibration import (
+    BBRatingCalibrationConfig,
+    build_calibration_report,
+    write_calibration_report,
+)
 from basketball_ai.bb_rating.engine import (
     BB_RATING_VERSION,
     BBRatingEngine,
@@ -17,4 +22,7 @@ __all__ = [
     "BBRatingEngine",
     "BBRatingResult",
     "MetricEvidence",
+    "BBRatingCalibrationConfig",
+    "build_calibration_report",
+    "write_calibration_report",
 ]
