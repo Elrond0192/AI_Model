@@ -24,6 +24,24 @@ def make_stats() -> pd.DataFrame:
                 "position": "PG",
                 "age": 25,
                 "ruolo_combinato": "Creator",
+                "points": 10.0 + x / 3.0,
+                "assists": 2.0 + x / 20.0,
+                "rebounds": 3.0 + x / 15.0,
+                "fg_pct": 0.40 + x / 300.0,
+                "three_point_pct": 0.25 + x / 400.0,
+                "ft_pct": 0.65 + x / 500.0,
+                "minutes_per_game": 15.0 + x / 6.0,
+                "games_played": 20 + int(x % 10),
+                "starter_pct": x / 59.0,
+                "plus_minus": -5.0 + x / 6.0,
+                "pts_per_40": 15.0 + x / 4.0,
+                "ast_per_40": 4.0 + x / 10.0,
+                "three_par": 0.25 + x / 500.0,
+                "true_usg_pct": 0.18 + x / 350.0,
+                "clutch_ts_pct": 0.45 + x / 800.0,
+                "clutch_net_rtg": -8.0 + x / 4.0,
+                "ortg_diff": -6.0 + x / 3.0,
+                "net_rtg": -3.0 + x / 2.0,
                 "raptor_total": x / 5.0,
                 "lebron_total": x / 6.0,
                 "vorp": x / 12.0,
@@ -74,6 +92,10 @@ def test_bb_rating_is_deterministic_and_contextual():
     assert payload["metrics"]["RAPTOR"]["meaning"]
     assert payload["metrics"]["RAPTOR"]["interpretation"]
     assert result.metrics["TOV%"].direction == "lower_better"
+    payload_metrics = result.to_dict()["metrics"]
+    for key in ("POINTS", "FG%", "MINUTES", "CLUTCH_TS%", "NET_RTG"):
+        assert key in payload_metrics
+        assert payload_metrics[key]["interpretation"]
 
 
 def test_usg_is_explanatory_but_does_not_change_score():
