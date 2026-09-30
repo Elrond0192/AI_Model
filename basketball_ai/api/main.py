@@ -116,19 +116,33 @@ def _load_app_state() -> None:
     app_state["data"] = data
     app_state["engine"] = None
 
-    # BB-Rating is a descriptive/contextual layer built from the canonical
-    # observed player stats. It is intentionally independent from prediction.
+    # BB-Rating is a descriptive/contextual layer built from observed
+    # player stats. Its On/Off enrichment is applied to a copy only, so the
+    # Prediction Model continues to receive the untouched canonical dataset.
     try:
         from basketball_ai.bb_rating import BBRatingEngine
+        from basketball_ai.data.postgres_loader import enrich_bb_rating_player_stats
 
-        app_state["bb_rating_engine"] = BBRatingEngine(
+        bb_rating_stats, bb_rating_enrichment = enrich_bb_rating_player_stats(
             data.get("player_stats"),
+            source_schema=os.environ.get("POSTGRES_SOURCE_SCHEMA", "AI_Source"),
+        )
+        app_state["bb_rating_engine"] = BBRatingEngine(
+            bb_rating_stats,
             data.get("players"),
         )
-        logger.info("[API] BB-Rating engine loaded")
+        app_state["bb_rating_enrichment"] = bb_rating_enrichment
+        logger.info(
+            "[API] BB-Rating engine loaded; On/Off enrichment: %s",
+            bb_rating_enrichment,
+        )
     except Exception as exc:
         logger.warning("[API] BB-Rating engine unavailable: %s", exc)
         app_state["bb_rating_engine"] = None
+        app_state["bb_rating_enrichment"] = {
+            "enabled": False,
+            "error": str(exc),
+        }
 
     # FASE I — precomputed Metric Rating distributions (AI.MetricDistribution).
     # Missing/empty only disables the rating endpoints; forecasts keep working.
@@ -219,6 +233,7 @@ async def lifespan(app: FastAPI):
     app.state.engine = app_state.get("engine")
     app.state.metric_distributions = app_state.get("metric_distributions", [])
     app.state.bb_rating_engine = app_state.get("bb_rating_engine")
+    app.state.bb_rating_enrichment = app_state.get("bb_rating_enrichment", {})
     app.state.model_metadata = _model_metadata(os.environ.get("MODEL_DIR", "models_saved"))
 
     yield
