@@ -85,6 +85,9 @@ BB_RATING_METRICS: tuple[RatingMetricSpec, ...] = (
         description="Scoring efficiency index",
     ),
     RatingMetricSpec("AST%", "ast_pct", "offense", 0.045, description="Assist Percentage"),
+    # USG% is an explicit role/involvement signal. It is deliberately excluded
+    # from the composite weight: high usage is not inherently good or bad.
+    RatingMetricSpec("USG%", "usg_pct", "role_context", 0.0, description="Usage Rate"),
     RatingMetricSpec(
         "TOV%",
         "tov_pct",
@@ -494,6 +497,14 @@ class BBRatingEngine:
         offense = dimensions.get("offense")
         defense = dimensions.get("defense")
         versatility = dimensions.get("versatility")
+        usg_percentile = next(
+            (
+                float(e.percentile)
+                for e in usable
+                if e.metric == "USG%" and e.percentile is not None
+            ),
+            None,
+        )
         explanation = _build_explanation(
             score,
             impact=impact,
@@ -502,6 +513,7 @@ class BBRatingEngine:
             versatility=versatility,
             quality=quality,
             role=role,
+            usg_percentile=usg_percentile,
         )
 
         metrics_dict = {e.metric: e for e in evidences}
@@ -595,7 +607,16 @@ def _build_explanation(
             f"mentre quella relativamente più contenuta è {weakest[0]} ({weakest[1]}/100)."
         )
     if role:
-        parts.append(f"Il confronto delle metriche usa anche il ruolo osservato '{role}' quando la numerosità lo consente.")
+        parts.append(
+            f"Il confronto delle metriche usa anche il ruolo osservato '{role}' "
+            "quando la numerosità lo consente."
+        )
+    if usg_percentile is not None and usg_percentile >= 0.90:
+        parts.append(
+            f"Il suo USG% si colloca al {round(usg_percentile * 100)}° percentile: "
+            "indica un coinvolgimento offensivo molto alto; questo segnale non "
+            "aumenta il BB-Rating da solo e viene letto insieme all'efficienza."
+        )
     if quality != "high":
         parts.append(f"La qualità del confronto è {quality}: il risultato va letto con maggiore cautela.")
     return " ".join(parts)
