@@ -1,0 +1,122 @@
+"""Semantic registry for player-metric explanations.
+
+The registry is intentionally independent from BB-Rating weights: a metric can
+be fully explainable without contributing to the composite score.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any, Optional
+
+
+@dataclass(frozen=True)
+class MetricSemantic:
+    key: str
+    source_column: str
+    label: str
+    meaning: str
+    unit: str = "number"
+    direction: str = "contextual"
+
+
+METRIC_SEMANTICS: dict[str, MetricSemantic] = {
+    "RAPTOR": MetricSemantic("RAPTOR", "raptor_total", "RAPTOR", "stima dell'impatto complessivo", direction="higher_better"),
+    "LEBRON": MetricSemantic("LEBRON", "lebron_total", "LEBRON", "stima dell'impatto complessivo", direction="higher_better"),
+    "VORP": MetricSemantic("VORP", "vorp", "VORP", "valore prodotto rispetto a un giocatore di sostituzione", direction="higher_better"),
+    "PER": MetricSemantic("PER", "per", "PER", "produttività statistica per minuto", direction="higher_better"),
+    "TS%": MetricSemantic("TS%", "ts_pct", "TS%", "efficienza realizzativa considerando il valore dei diversi tipi di tiro", unit="percent", direction="higher_better"),
+    "SCORING_EFFICIENCY": MetricSemantic("SCORING_EFFICIENCY", "scoring_efficiency", "Scoring Efficiency", "efficienza nella produzione di punti", direction="higher_better"),
+    "AST%": MetricSemantic("AST%", "ast_pct", "AST%", "coinvolgimento nella creazione di assist", unit="percent", direction="higher_better"),
+    "USG%": MetricSemantic("USG%", "usg_pct", "USG%", "coinvolgimento offensivo e quota di possessi conclusi dal giocatore", unit="percent"),
+    "TOV%": MetricSemantic("TOV%", "tov_pct", "TOV%", "frequenza con cui il giocatore perde possessi", unit="percent", direction="lower_better"),
+    "RAPTOR_DEF": MetricSemantic("RAPTOR_DEF", "raptor_def", "RAPTOR Def", "stima dell'impatto difensivo", direction="higher_better"),
+    "DBPM": MetricSemantic("DBPM", "dbpm", "DBPM", "impatto difensivo stimato dal box score", direction="higher_better"),
+    "NET_RTG_DIFF": MetricSemantic("NET_RTG_DIFF", "net_rtg_diff", "Net Rating Diff", "differenziale di rendimento della squadra con il giocatore in campo rispetto al riferimento on/off", direction="higher_better"),
+    "STL%": MetricSemantic("STL%", "stl_pct", "STL%", "frequenza di recuperi palla", unit="percent", direction="higher_better"),
+    "BLK%": MetricSemantic("BLK%", "blk_pct", "BLK%", "frequenza di stoppate", unit="percent", direction="higher_better"),
+    "REB%": MetricSemantic("REB%", "reb_pct", "REB%", "quota di rimbalzi disponibili catturati", unit="percent", direction="higher_better"),
+    "HUSTLE": MetricSemantic("HUSTLE", "hustle_index", "Hustle", "indice sintetico delle attività di energia e hustle", direction="higher_better"),
+    "FOUL_DRAWING": MetricSemantic("FOUL_DRAWING", "foul_drawing_rate", "Foul Drawing", "frequenza con cui il giocatore genera falli subiti", direction="higher_better"),
+
+    "POINTS": MetricSemantic("POINTS", "points", "Points", "produzione realizzativa per partita"),
+    "ASSISTS": MetricSemantic("ASSISTS", "assists", "Assists", "creazione di gioco tramite assist per partita"),
+    "REBOUNDS": MetricSemantic("REBOUNDS", "rebounds", "Rebounds", "produzione a rimbalzo per partita"),
+    "OFFENSIVE_REBOUNDS": MetricSemantic("OFFENSIVE_REBOUNDS", "offensive_rebounds", "Offensive Rebounds", "produzione di rimbalzi offensivi per partita"),
+    "DEFENSIVE_REBOUNDS": MetricSemantic("DEFENSIVE_REBOUNDS", "defensive_rebounds", "Defensive Rebounds", "produzione di rimbalzi difensivi per partita"),
+    "STEALS": MetricSemantic("STEALS", "steals", "Steals", "recuperi palla per partita"),
+    "BLOCKS": MetricSemantic("BLOCKS", "blocks", "Blocks", "stoppate per partita"),
+    "TURNOVERS": MetricSemantic("TURNOVERS", "turnovers", "Turnovers", "palle perse per partita", direction="lower_better"),
+    "FG%": MetricSemantic("FG%", "fg_pct", "FG%", "percentuale dal campo", unit="percent", direction="higher_better"),
+    "3P%": MetricSemantic("3P%", "three_point_pct", "3P%", "percentuale da tre punti", unit="percent", direction="higher_better"),
+    "FT%": MetricSemantic("FT%", "free_throw_pct", "FT%", "percentuale ai tiri liberi", unit="percent", direction="higher_better"),
+    "eFG%": MetricSemantic("eFG%", "efg_pct", "eFG%", "efficienza al tiro che valorizza il tiro da tre", unit="percent", direction="higher_better"),
+    "2P%": MetricSemantic("2P%", "two_point_pct", "2P%", "percentuale al tiro da due punti", unit="percent", direction="higher_better"),
+    "MINUTES": MetricSemantic("MINUTES", "minutes_per_game", "Minutes", "volume di impiego medio per partita"),
+    "GAMES": MetricSemantic("GAMES", "games_played", "Games Played", "numero di partite disputate"),
+    "STARTER%": MetricSemantic("STARTER%", "starter_pct", "Starter%", "quota di partite iniziate da titolare", unit="percent"),
+    "PLUS_MINUS": MetricSemantic("PLUS_MINUS", "plus_minus", "+/-", "differenziale di punti durante le presenze in campo"),
+    "PTS_PER_36": MetricSemantic("PTS_PER_36", "pts_per_36", "PTS/36", "produzione di punti normalizzata per 36 minuti"),
+    "AST_PER_36": MetricSemantic("AST_PER_36", "ast_per_36", "AST/36", "produzione di assist normalizzata per 36 minuti"),
+    "REB_PER_36": MetricSemantic("REB_PER_36", "reb_per_36", "REB/36", "produzione a rimbalzo normalizzata per 36 minuti"),
+    "VOLUME_3PA": MetricSemantic("VOLUME_3PA", "three_point_attempts", "3PA", "volume di tentativi da tre"),
+    "VOLUME_FTA": MetricSemantic("VOLUME_FTA", "free_throw_attempts", "FTA", "volume di tiri liberi tentati"),
+}
+
+
+def format_metric_value(semantic: MetricSemantic, value: float) -> str:
+    number = float(value)
+    if semantic.unit == "percent":
+        percent = number * 100.0 if abs(number) <= 1.0 else number
+        return f"{percent:.1f}%"
+    return f"{number:.2f}"
+
+
+def metric_interpretation(
+    semantic: MetricSemantic,
+    value: float,
+    percentile: Optional[float],
+) -> Optional[str]:
+    if percentile is None:
+        return None
+
+    pct = round(float(percentile) * 100)
+    value_text = format_metric_value(semantic, value)
+    if pct >= 90:
+        relative = "molto alto"
+    elif pct >= 75:
+        relative = "alto"
+    elif pct >= 60:
+        relative = "sopra la media"
+    elif pct >= 40:
+        relative = "nella fascia media"
+    elif pct >= 25:
+        relative = "sotto la media"
+    elif pct >= 10:
+        relative = "basso"
+    else:
+        relative = "molto basso"
+
+    if semantic.key == "USG%":
+        return (
+            f"USG% {value_text}: {semantic.meaning}; si colloca al {pct}° percentile "
+            f"del gruppo di confronto, quindi il coinvolgimento è {relative}. "
+            "Questo descrive il ruolo offensivo e non determina da solo la qualità."
+        )
+
+    if semantic.key == "TOV%":
+        return (
+            f"TOV% {value_text}: {semantic.meaning}; il profilo risulta al "
+            f"{pct}° percentile dopo l'inversione della direzione, quindi la "
+            f"gestione dei possessi è {relative}."
+        )
+
+    if semantic.direction == "contextual":
+        return (
+            f"{semantic.label} {value_text}: {semantic.meaning}; si colloca "
+            f"al {pct}° percentile del gruppo di confronto."
+        )
+
+    return (
+        f"{semantic.label} {value_text}: {semantic.meaning}; si colloca al "
+        f"{pct}° percentile, quindi il livello relativo è {relative}."
+    )
