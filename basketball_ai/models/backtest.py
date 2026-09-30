@@ -170,6 +170,102 @@ def _raw_xgb_stage_diagnostics(
     }
 
 
+def _production_ablation_diagnostics(
+    records: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """OOS decomposition of raw target, floor, shrinkage and final clipping.
+
+    A = raw XGB absolute target without a production floor.
+    B = A with the 3.5-10.0 production floor.
+    P = actual pre-shrinkage production input.
+    C = actual production shrinkage without the final floor.
+    D = final production prediction.
+
+    This is diagnostic-only; it never changes inference.
+    """
+    rows = [
+        row for row in records
+        if row.get("actual") is not None
+        and row.get("persistence_prediction") is not None
+        and row.get("raw_target_prediction") is not None
+        and row.get("pre_shrinkage_prediction") is not None
+        and row.get("persistence_shrinkage_alpha") is not None
+    ]
+    if len(rows) < 2:
+        return {"n": len(rows), "valid": False}
+
+    actual = np.asarray([float(row["actual"]) for row in rows], dtype=float)
+    persistence = np.asarray([float(row["persistence_prediction"]) for row in rows], dtype=float)
+    raw_target = np.asarray([float(row["raw_target_prediction"]) for row in rows], dtype=float)
+    pre_shrinkage = np.asarray([float(row["pre_shrinkage_prediction"]) for row in rows], dtype=float)
+    alpha = np.asarray([float(row["persistence_shrinkage_alpha"]) for row in rows], dtype=float)
+
+    raw_xgb_floor = np.clip(raw_target, 3.5, 10.0)
+    post_shrinkage_unclipped = persistence + alpha * (pre_shrinkage - persistence)
+    final_prediction = np.clip(post_shrinkage_unclipped, 3.5, 10.0)
+
+    def _rmse(values: np.ndarray) -> float:
+        return float(np.sqrt(np.mean((values - actual) ** 2)))
+
+    def _mae(values: np.ndarray) -> float:
+        return float(np.mean(np.abs(values - actual)))
+
+    def _bias(values: np.ndarray) -> float:
+        return float(np.mean(values - actual))
+
+    stage_values = {
+        "A_raw_xgb": raw_target,
+        "B_raw_xgb_floor": raw_xgb_floor,
+        "P_pre_shrinkage": pre_shrinkage,
+        "C_shrinkage_unclipped": post_shrinkage_unclipped,
+        "D_final_production": final_prediction,
+    }
+    stages = {
+        name: {"rmse": _rmse(values), "mae": _mae(values), "bias": _bias(values)}
+        for name, values in stage_values.items()
+    }
+
+    return {
+        "n": int(len(rows)),
+        "valid": True,
+        "stages": stages,
+        "effects": {
+            "raw_floor_effect_rmse": stages["B_raw_xgb_floor"]["rmse"] - stages["A_raw_xgb"]["rmse"],
+            "pre_shrinkage_vs_raw_rmse": stages["P_pre_shrinkage"]["rmse"] - stages["A_raw_xgb"]["rmse"],
+            "shrinkage_effect_rmse": stages["C_shrinkage_unclipped"]["rmse"] - stages["P_pre_shrinkage"]["rmse"],
+            "final_floor_effect_rmse": stages["D_final_production"]["rmse"] - stages["C_shrinkage_unclipped"]["rmse"],
+            "total_post_processing_rmse": stages["D_final_production"]["rmse"] - stages["A_raw_xgb"]["rmse"],
+        },
+        "raw_floor": {
+            "low_count": int(np.sum(raw_target < 3.5)),
+            "high_count": int(np.sum(raw_target > 10.0)),
+            "low_pct": float(np.mean(raw_target < 3.5) * 100.0),
+            "high_pct": float(np.mean(raw_target > 10.0) * 100.0),
+        },
+        "pre_shrinkage_floor": {
+            "low_count": int(np.sum(pre_shrinkage < 3.5)),
+            "high_count": int(np.sum(pre_shrinkage > 10.0)),
+            "low_pct": float(np.mean(pre_shrinkage < 3.5) * 100.0),
+            "high_pct": float(np.mean(pre_shrinkage > 10.0) * 100.0),
+        },
+        "final_floor": {
+            "low_count": int(np.sum(post_shrinkage_unclipped < 3.5)),
+            "high_count": int(np.sum(post_shrinkage_unclipped > 10.0)),
+            "low_pct": float(np.mean(post_shrinkage_unclipped < 3.5) * 100.0),
+            "high_pct": float(np.mean(post_shrinkage_unclipped > 10.0) * 100.0),
+        },
+        "alpha": {
+            "mean": float(np.mean(alpha)),
+            "min": float(np.min(alpha)),
+            "max": float(np.max(alpha)),
+            "changed_pct": float(np.mean(alpha < 0.999999) * 100.0),
+        },
+        "shrinkage_movement": {
+            "mean": float(np.mean(post_shrinkage_unclipped - pre_shrinkage)),
+            "mean_abs": float(np.mean(np.abs(post_shrinkage_unclipped - pre_shrinkage))),
+        },
+    }
+
 def _nested_temporal_shrinkage_alpha(
     data: Dict[str, Any],
     outer_source_season: int,
@@ -372,6 +468,7 @@ def run_backtest(
                 )
                 fold["persistence_blend"] = _persistence_blend_diagnostics(records)
                 fold["raw_xgb"] = _raw_xgb_stage_diagnostics(records)
+                fold["production_ablation"] = _production_ablation_diagnostics(records)
                 fold["nested_shrinkage"] = {
                     "valid": bool((nested_shrinkage or {}).get("valid", False)),
                     "alpha": (nested_shrinkage or {}).get("alpha"),
@@ -452,6 +549,7 @@ def run_backtest(
         )
         report["persistence_blend"] = _persistence_blend_diagnostics(all_records)
         report["raw_xgb"] = _raw_xgb_stage_diagnostics(all_records)
+        report["production_ablation"] = _production_ablation_diagnostics(all_records)
         report["nested_shrinkage"] = {
             "valid": bool(nested_overall),
             "rmse": nested_shrinkage_rmse,
