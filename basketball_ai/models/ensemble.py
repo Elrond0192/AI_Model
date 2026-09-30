@@ -590,7 +590,10 @@ class EnsembleModel:
                 1.00,
             ))
 
-        raw_adjusted = float(np.clip(after_context * mpg_factor, 3.5, 10.0))
+        # Keep the unclipped value so OOS diagnostics can separate the
+        # prediction-floor effect from the persistence shrinkage effect.
+        raw_adjusted_unclipped = float(after_context * mpg_factor)
+        raw_adjusted = float(np.clip(raw_adjusted_unclipped, 3.5, 10.0))
 
         # Production uses persistence as the prior and the trained model only as
         # a calibrated delta correction. The shrinkage coefficient is fitted on
@@ -598,11 +601,24 @@ class EnsembleModel:
         persistence_shrinkage_alpha = float(
             np.clip(getattr(self, "_persistence_shrinkage_alpha", 0.0), 0.0, 1.0)
         )
+        post_shrinkage_unclipped = float(
+            last_rating
+            + persistence_shrinkage_alpha * (raw_adjusted - last_rating)
+        )
         adjusted = float(np.clip(
-            last_rating + persistence_shrinkage_alpha * (raw_adjusted - last_rating),
+            post_shrinkage_unclipped,
             3.5,
             10.0,
         ))
+
+        # Absolute target implied by the native model output without any
+        # production post-processing. Delta-mode models predict a one-season
+        # change; legacy absolute models already emit an absolute target.
+        raw_target_prediction = float(
+            last_rating + raw_xgb_prediction
+            if getattr(self.perf_model, "target_mode", "rating") == "delta_vs_prior"
+            else raw_xgb_prediction
+        )
 
         # Confidence interval
         # Prefer split-conformal quantiles from calibration (empirically grounded).
@@ -661,15 +677,22 @@ class EnsembleModel:
         # runner. They are deliberately not dataclass fields, so the public
         # prediction/API contract is unchanged.
         result._diagnostic_stages = {
-            # Minimal walk-forward diagnostics for the current residual-model
-            # investigation. Keep only the raw XGBoost delta and the stage
-            # immediately after the age transformation; later ensemble stages
-            # are already covered by the production prediction itself.
+            # Walk-forward diagnostics for the residual/post-processing
+            # investigation. These remain private and are enabled/consumed only
+            # by the diagnostic runner; the public API contract is unchanged.
             "raw_xgb_prediction": raw_xgb_prediction,
+            "raw_target_prediction": raw_target_prediction,
+            "raw_target_floor_prediction": float(
+                np.clip(raw_target_prediction, 3.5, 10.0)
+            ),
             "base_before_age": base_before_age,
             "base_after_age": base_after_age,
+            "pre_shrinkage_unclipped_prediction": float(raw_adjusted_unclipped),
             "persistence_prediction": float(last_rating),
             "pre_shrinkage_prediction": float(raw_adjusted),
+            "persistence_shrinkage_alpha": persistence_shrinkage_alpha,
+            "post_shrinkage_unclipped_prediction": post_shrinkage_unclipped,
+            "final_prediction": adjusted,
         }
         return result
 
