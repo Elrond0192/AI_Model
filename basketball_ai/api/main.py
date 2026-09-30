@@ -116,6 +116,20 @@ def _load_app_state() -> None:
     app_state["data"] = data
     app_state["engine"] = None
 
+    # BB-Rating is a descriptive/contextual layer built from the canonical
+    # observed player stats. It is intentionally independent from prediction.
+    try:
+        from basketball_ai.bb_rating import BBRatingEngine
+
+        app_state["bb_rating_engine"] = BBRatingEngine(
+            data.get("player_stats", pd.DataFrame()),
+            data.get("players", pd.DataFrame()),
+        )
+        logger.info("[API] BB-Rating engine loaded")
+    except Exception as exc:
+        logger.warning("[API] BB-Rating engine unavailable: %s", exc)
+        app_state["bb_rating_engine"] = None
+
     # FASE I — precomputed Metric Rating distributions (AI.MetricDistribution).
     # Missing/empty only disables the rating endpoints; forecasts keep working.
     metric_distributions: list = []
@@ -204,6 +218,7 @@ async def lifespan(app: FastAPI):
     app.state.data = app_state.get("data", {})
     app.state.engine = app_state.get("engine")
     app.state.metric_distributions = app_state.get("metric_distributions", [])
+    app.state.bb_rating_engine = app_state.get("bb_rating_engine")
     app.state.model_metadata = _model_metadata(os.environ.get("MODEL_DIR", "models_saved"))
 
     yield
@@ -407,10 +422,12 @@ def create_app() -> FastAPI:
     from basketball_ai.api.routes.predictions_v2 import router as predictions_v2_router
     from basketball_ai.api.routes.scenarios_v2 import router as scenarios_v2_router
     from basketball_ai.api.routes.metric_rating_v2 import router as metric_rating_v2_router
+    from basketball_ai.api.routes.bb_rating_v2 import router as bb_rating_v2_router
 
     app.include_router(predictions_v2_router)
     app.include_router(scenarios_v2_router)
     app.include_router(metric_rating_v2_router)
+    app.include_router(bb_rating_v2_router)
 
     @app.get("/health")
     def health(request: Request):
