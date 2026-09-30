@@ -408,7 +408,7 @@ def enrich_bb_rating_player_stats(
                         oo."{season_col}" AS season,
                         {competition_expr},
                         {field_sql}
-                    FROM "{source_schema}"."{table_name}" oo
+                    FROM "Analisi"."{table_name}" oo
                     JOIN "Anagrafiche"."{league_key}" p
                       ON regexp_replace(btrim(oo."{player_col}"::text), '[.]0+
     """Inspect canonical object existence and SELECT access for the current DB user."""
