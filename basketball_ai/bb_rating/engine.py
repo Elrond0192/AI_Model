@@ -588,6 +588,7 @@ def _build_explanation(
     versatility: Optional[int],
     quality: str,
     role: str,
+    usg_percentile: Optional[float] = None,
 ) -> str:
     parts = [
         f"Il BB-Rating di {score}/100 sintetizza le performance osservate nel contesto richiesto.",
