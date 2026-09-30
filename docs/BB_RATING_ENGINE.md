@@ -150,7 +150,7 @@ leagues/seasons, position and age groups, missing-metric coverage and whether
 the explanations agree with the underlying percentiles.
 
 
-## Calibration v1
+## Calibration v1.1
 
 The calibration layer is diagnostic-only and does not train an ML model. It uses the
 same peer-selection hierarchy and empirical percentile convention as BBRatingEngine,
