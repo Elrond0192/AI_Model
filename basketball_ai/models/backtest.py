@@ -208,7 +208,13 @@ def _production_ablation_diagnostics(
 
     raw_xgb_floor = np.clip(raw_target, 3.5, 10.0)
     post_shrinkage_unclipped = persistence + alpha * (pre_shrinkage - persistence)
-    final_prediction = np.clip(post_shrinkage_unclipped, 3.5, 10.0)
+    # D must be the prediction actually served by the production ensemble.
+    # Reconstructing the legacy floor here would make the diagnostic disagree
+    # with native delta production, where the 3.5 floor is no longer applied.
+    final_prediction = np.asarray(
+        [float(row["prediction"]) for row in rows],
+        dtype=float,
+    )
 
     def _rmse(values: np.ndarray) -> float:
         return float(np.sqrt(np.mean((values - actual) ** 2)))
