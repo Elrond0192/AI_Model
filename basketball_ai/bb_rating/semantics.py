@@ -48,7 +48,7 @@ METRIC_SEMANTICS: dict[str, MetricSemantic] = {
     "TURNOVERS": MetricSemantic("TURNOVERS", "turnovers", "Turnovers", "palle perse per partita", direction="lower_better"),
     "FG%": MetricSemantic("FG%", "fg_pct", "FG%", "percentuale dal campo", unit="percent", direction="higher_better"),
     "3P%": MetricSemantic("3P%", "three_point_pct", "3P%", "percentuale da tre punti", unit="percent", direction="higher_better"),
-    "FT%": MetricSemantic("FT%", "free_throw_pct", "FT%", "percentuale ai tiri liberi", unit="percent", direction="higher_better"),
+    "FT%": MetricSemantic("FT%", "ft_pct", "FT%", "percentuale ai tiri liberi", unit="percent", direction="higher_better"),
     "eFG%": MetricSemantic("eFG%", "efg_pct", "eFG%", "efficienza al tiro che valorizza il tiro da tre", unit="percent", direction="higher_better"),
     "2P%": MetricSemantic("2P%", "two_point_pct", "2P%", "percentuale al tiro da due punti", unit="percent", direction="higher_better"),
     "MINUTES": MetricSemantic("MINUTES", "minutes_per_game", "Minutes", "volume di impiego medio per partita"),
