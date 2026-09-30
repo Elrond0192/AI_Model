@@ -188,6 +188,7 @@ def _production_ablation_diagnostics(
         if row.get("actual") is not None
         and row.get("persistence_prediction") is not None
         and row.get("raw_target_prediction") is not None
+        and row.get("pre_shrinkage_unclipped_prediction") is not None
         and row.get("pre_shrinkage_prediction") is not None
         and row.get("persistence_shrinkage_alpha") is not None
     ]
@@ -197,7 +198,12 @@ def _production_ablation_diagnostics(
     actual = np.asarray([float(row["actual"]) for row in rows], dtype=float)
     persistence = np.asarray([float(row["persistence_prediction"]) for row in rows], dtype=float)
     raw_target = np.asarray([float(row["raw_target_prediction"]) for row in rows], dtype=float)
-    pre_shrinkage = np.asarray([float(row["pre_shrinkage_prediction"]) for row in rows], dtype=float)
+    pre_shrinkage_unclipped = np.asarray(
+        [float(row["pre_shrinkage_unclipped_prediction"]) for row in rows], dtype=float
+    )
+    pre_shrinkage = np.asarray(
+        [float(row["pre_shrinkage_prediction"]) for row in rows], dtype=float
+    )
     alpha = np.asarray([float(row["persistence_shrinkage_alpha"]) for row in rows], dtype=float)
 
     raw_xgb_floor = np.clip(raw_target, 3.5, 10.0)
@@ -216,6 +222,7 @@ def _production_ablation_diagnostics(
     stage_values = {
         "A_raw_xgb": raw_target,
         "B_raw_xgb_floor": raw_xgb_floor,
+        "U_pre_floor": pre_shrinkage_unclipped,
         "P_pre_shrinkage": pre_shrinkage,
         "C_shrinkage_unclipped": post_shrinkage_unclipped,
         "D_final_production": final_prediction,
@@ -243,10 +250,10 @@ def _production_ablation_diagnostics(
             "high_pct": float(np.mean(raw_target > 10.0) * 100.0),
         },
         "pre_shrinkage_floor": {
-            "low_count": int(np.sum(pre_shrinkage < 3.5)),
-            "high_count": int(np.sum(pre_shrinkage > 10.0)),
-            "low_pct": float(np.mean(pre_shrinkage < 3.5) * 100.0),
-            "high_pct": float(np.mean(pre_shrinkage > 10.0) * 100.0),
+            "low_count": int(np.sum(pre_shrinkage_unclipped < 3.5)),
+            "high_count": int(np.sum(pre_shrinkage_unclipped > 10.0)),
+            "low_pct": float(np.mean(pre_shrinkage_unclipped < 3.5) * 100.0),
+            "high_pct": float(np.mean(pre_shrinkage_unclipped > 10.0) * 100.0),
         },
         "final_floor": {
             "low_count": int(np.sum(post_shrinkage_unclipped < 3.5)),
