@@ -146,7 +146,7 @@ The season-ahead Prediction Model and BB-Rating are separate contracts.
 
 - Prediction Model 2.6.0 forecasts the next-season rating using the native
   delta_vs_prior target. It is evaluated with OOS forecasting metrics.
-- BB-Rating 1.0 is descriptive: it evaluates observed player performance
+- BB-Rating 1.1 is descriptive: it evaluates observed player performance
   relative to a contextual peer population and returns a 1–100 score with
   dimension scores, metric percentiles and deterministic explanations.
 - BB-Rating does not modify, shrink, floor or otherwise post-process Prediction
