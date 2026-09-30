@@ -579,31 +579,58 @@ BEGIN
         ) THEN
             onoff_join := format(
                 'LEFT JOIN (
-                    SELECT DISTINCT ON (season, source_player_id, competition)
-                           season, source_player_id, competition,
+                    SELECT DISTINCT ON (
+                        season,
+                        source_player_id,
+                        competition,
+                        source_team_id
+                    )
+                           season,
+                           source_player_id,
+                           source_team_id,
+                           competition,
                            on_net_rtg, off_net_rtg, net_rtg_diff,
                            ortg_on, ortg_off, ortg_diff
                     FROM (
                         SELECT
                             %1$s AS season,
                             %2$s AS source_player_id,
-                            %3$s AS competition,
-                            %4$s AS on_net_rtg,
-                            %5$s AS off_net_rtg,
-                            %6$s AS net_rtg_diff,
-                            %7$s AS ortg_on,
-                            %8$s AS ortg_off,
-                            %9$s AS ortg_diff
-                        FROM "Analisi".%10$I oo0
+                            %3$s AS source_team_id,
+                            %4$s AS competition,
+                            %5$s AS on_net_rtg,
+                            %6$s AS off_net_rtg,
+                            %7$s AS net_rtg_diff,
+                            %8$s AS ortg_on,
+                            %9$s AS ortg_off,
+                            %10$s AS ortg_diff
+                        FROM "Analisi".%11$I oo0
                         WHERE %1$s IS NOT NULL AND %2$s IS NOT NULL
                     ) q
-                    ORDER BY season, source_player_id, competition
+                    ORDER BY
+                        season,
+                        source_player_id,
+                        competition,
+                        source_team_id
                 ) oo
-                  ON oo.season = %11$s
-                 AND %12$s = %13$s
-                 AND oo.competition = %14$s',
+                  ON oo.season = %12$s
+                 AND %13$s = %14$s
+                 AND oo.competition = %15$s
+                 AND (
+                      (
+                          oo.source_team_id IS NOT NULL
+                          AND pg_temp.ai_id_key(oo.source_team_id)
+                              =
+                              pg_temp.ai_id_key(%16$s)
+                      )
+                      OR
+                      (
+                          oo.source_team_id IS NULL
+                          AND pg_temp.ai_id_key(%16$s) IS NULL
+                      )
+                 )',
                 pg_temp.ai_expr('Analisi', opt_table, 'oo0', 'int', ARRAY['season']),
                 pg_temp.ai_expr('Analisi', opt_table, 'oo0', 'text', ARRAY['id','playerid','idplayer']),
+                pg_temp.ai_expr('Analisi', opt_table, 'oo0', 'text', ARRAY['teamid','idteam']),
                 pg_temp.ai_comp_expr('Analisi', opt_table, 'oo0', ARRAY['competition']),
                 pg_temp.ai_expr('Analisi', opt_table, 'oo0', 'numeric', ARRAY['netrtg_on']),
                 pg_temp.ai_expr('Analisi', opt_table, 'oo0', 'numeric', ARRAY['netrtg_off']),
@@ -615,7 +642,8 @@ BEGIN
                 season_expr,
                 pg_temp.ai_id_key('oo.source_player_id'),
                 pg_temp.ai_id_key(player_local_expr),
-                comp_expr
+                comp_expr,
+                team_source_expr
             );
             on_net_expr := '(CASE WHEN ' || on_net_expr || ' IS NULL OR ' || on_net_expr || ' = 0
                                   THEN coalesce(oo.on_net_rtg, ' || on_net_expr || ')
