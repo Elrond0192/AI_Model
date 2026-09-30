@@ -429,6 +429,47 @@ def test_persistence_shrinkage_alpha_uses_prior_calibration_only():
     assert result["blended_rmse"] < result["model_rmse"]
 
 
+def test_production_ablation_diagnostics_separates_floor_and_shrinkage():
+    from basketball_ai.models.backtest import _production_ablation_diagnostics
+
+    records = [
+        {
+            "actual": 3.0,
+            "persistence_prediction": 4.0,
+            "raw_xgb_prediction": -1.0,
+            "raw_target_prediction": 3.0,
+            "pre_shrinkage_prediction": 3.5,
+            "persistence_shrinkage_alpha": 0.5,
+        },
+        {
+            "actual": 7.0,
+            "persistence_prediction": 6.0,
+            "raw_xgb_prediction": 1.0,
+            "raw_target_prediction": 7.0,
+            "pre_shrinkage_prediction": 7.0,
+            "persistence_shrinkage_alpha": 1.0,
+        },
+    ]
+
+    result = _production_ablation_diagnostics(records)
+
+    assert result["valid"] is True
+    assert result["n"] == 2
+    assert result["raw_floor"]["low_count"] == 1
+    assert result["raw_floor"]["low_pct"] == pytest.approx(50.0)
+    assert result["final_floor"]["low_count"] == 0
+    assert result["alpha"]["mean"] == pytest.approx(0.75)
+
+    assert result["stages"]["A_raw_xgb"]["rmse"] == pytest.approx(0.0)
+    assert result["stages"]["B_raw_xgb_floor"]["rmse"] == pytest.approx(0.3535533906)
+    assert result["stages"]["P_pre_shrinkage"]["rmse"] == pytest.approx(0.3535533906)
+    assert result["stages"]["C_shrinkage_unclipped"]["rmse"] == pytest.approx(0.5303300859)
+    assert result["stages"]["D_final_production"]["rmse"] == pytest.approx(0.5303300859)
+
+    assert result["effects"]["raw_floor_effect_rmse"] == pytest.approx(0.3535533906)
+    assert result["effects"]["shrinkage_effect_rmse"] == pytest.approx(0.1767766953)
+    assert result["effects"]["final_floor_effect_rmse"] == pytest.approx(0.0)
+
 def test_persistence_shrinkage_can_be_disabled_for_raw_diagnostics():
     from basketball_ai.models.strict_production import StrictProductionEnsembleModel
 
