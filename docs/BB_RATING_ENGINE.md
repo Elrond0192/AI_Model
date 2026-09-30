@@ -54,18 +54,30 @@ Position families are GUARD, WING and BIG, derived from the canonical position
 labels. The exact observed ruolo_combinato is used only when its population is
 large enough.
 
-## USG% semantics
+## Metric semantics and explanations
 
-USG% is returned as contextual evidence but has **zero composite weight**.
+Every registered BB-Rating metric has a semantic definition independent of its
+weight in the composite score. The API therefore returns, for each available
+metric:
 
-This is deliberate: a high usage rate describes offensive involvement; it does
-not prove that the player is more effective. A player with a 34% USG can
-therefore be described as having very high offensive involvement relative to
-peers, while the BB-Rating still depends on efficiency, creation, turnovers and
-impact.
+- raw value;
+- contextual percentile;
+- relative band;
+- metric meaning;
+- a deterministic human-readable interpretation.
 
-The current explanation layer emits this interpretation when USG% is at or
-above the 90th percentile.
+This separation is deliberate. A metric can be important for explanation
+without contributing to the 1–100 score.
+
+USG% is a canonical example. A 34% USG can be described as very high offensive
+involvement relative to peers, but USG% has zero composite weight because usage
+describes role/load rather than effectiveness by itself. The same semantic
+approach is applied to efficiency, creation, turnovers, shooting, rebounding,
+defense, playing time and other registered metrics.
+
+The semantic registry lives in basketball_ai/bb_rating/semantics.py. Adding a
+new explainable metric is therefore a metadata operation first, not a new
+algorithm.
 
 ## Missing data and quality
 
@@ -128,7 +140,7 @@ logic belongs in PHP.
 
 ## Current status
 
-This is **FASE I of the BB-Rating layer**. The implementation is deterministic
+This is **FASE I of the BB-Rating layer** (version 1.1). The implementation is deterministic
 and API-ready, but the weights and peer thresholds must still be validated
 against real production data before treating the 1–100 score as the final
 public methodology.
