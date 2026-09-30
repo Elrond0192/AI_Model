@@ -6,6 +6,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from basketball_ai.bb_rating.calibration import build_calibration_report
 from basketball_ai.bb_rating.engine import BBRatingEngine
 from basketball_ai.api.routes.bb_rating_v2 import router
 
@@ -162,3 +163,42 @@ def test_api_player_endpoint():
     assert payload["bb_rating_version"] == "1.1"
     assert payload["peer_group"]["definition"] == "position+age+role"
     assert payload["metrics"]["USG%"]["percentile"] is not None
+
+
+def test_bb_rating_calibration_reuses_peer_and_percentile_contract():
+    stats = pd.concat(
+        [
+            make_stats(),
+            make_stats().assign(
+                season=2024,
+                player_global_id=lambda frame: frame["player_global_id"] + "-2024",
+            ),
+        ],
+        ignore_index=True,
+    )
+    report = build_calibration_report(
+        {"player_stats": stats, "players": make_players(), "source_contract": "test"}
+    )
+
+    assert report["calibration_version"] == "1.0"
+    assert report["bb_rating_version"] == "1.1"
+    assert report["dataset"]["rows"] == 120
+    assert report["score_distribution"]["n"] == 120
+    assert report["validation_signals"]["registry_columns_ok"] is True
+    assert report["validation_signals"]["scoring_metrics_present"] is True
+    assert report["validation_signals"]["explainable_metric_count"] == len(
+        report["registry_audit"]
+    )
+    assert report["stability"]["n_pairs"] == 0
+
+    metric = next(item for item in report["metrics"] if item["metric"] == "RAPTOR")
+    assert metric["column_exists"] is True
+    assert metric["semantic_source_matches"] is True
+    assert metric["n_available"] == 120
+
+    peer_sources = {item["peer_source"] for item in report["peer_sources"]}
+    assert peer_sources == {"position+age+role"}
+
+    # Explicitly verify that the lower-is-better turnover signal is preserved.
+    tov = next(item for item in report["metrics"] if item["metric"] == "TOV%")
+    assert tov["direction"] == "lower_better"
