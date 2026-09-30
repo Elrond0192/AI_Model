@@ -127,6 +127,12 @@ BB_RATING_METRICS: tuple[RatingMetricSpec, ...] = (
     RatingMetricSpec("PLUS_MINUS", "plus_minus", "explanation_only", 0.0, direction="contextual", description="Plus/minus"),
     RatingMetricSpec("PTS_PER_40", "pts_per_40", "explanation_only", 0.0, direction="contextual", description="Points per 40"),
     RatingMetricSpec("AST_PER_40", "ast_per_40", "explanation_only", 0.0, direction="contextual", description="Assists per 40"),
+    RatingMetricSpec("THREE_PAR", "three_par", "explanation_only", 0.0, direction="contextual", description="Three-point attempt rate"),
+    RatingMetricSpec("TRUE_USG", "true_usg_pct", "explanation_only", 0.0, direction="contextual", description="True usage percentage"),
+    RatingMetricSpec("CLUTCH_TS%", "clutch_ts_pct", "explanation_only", 0.0, direction="higher_better", description="Clutch true shooting"),
+    RatingMetricSpec("CLUTCH_NET_RTG", "clutch_net_rtg", "explanation_only", 0.0, direction="contextual", description="Clutch net rating"),
+    RatingMetricSpec("ORTG_DIFF", "ortg_diff", "explanation_only", 0.0, direction="contextual", description="Offensive rating differential"),
+    RatingMetricSpec("NET_RTG", "net_rtg", "explanation_only", 0.0, direction="contextual", description="Net rating"),
 )
 
 
