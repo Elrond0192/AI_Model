@@ -26,7 +26,7 @@ from basketball_ai.bb_rating.engine import (
 )
 from basketball_ai.bb_rating.semantics import METRIC_SEMANTICS
 
-CALIBRATION_VERSION = "1.0"
+CALIBRATION_VERSION = "1.1"
 
 
 @dataclass(frozen=True)
@@ -257,6 +257,90 @@ def _metric_summary(
     return output
 
 
+
+def _role_peer_population_diagnostics(
+    frame: pd.DataFrame,
+    *,
+    min_peer_samples: int,
+) -> dict[str, Any]:
+    valid = frame.loc[
+        frame["age_band"].astype(str).str.strip().ne("")
+        & frame["ruolo_combinato"].astype(str).str.strip().ne("")
+    ].copy()
+    group_cols = [
+        "league_key",
+        "season",
+        "competition",
+        "position_family",
+        "age_band",
+        "ruolo_combinato",
+    ]
+    if valid.empty:
+        return {
+            "rows_with_role_and_age": 0,
+            "role_present_share": 0.0,
+            "distinct_role_groups": 0,
+            "group_size": {
+                "mean": None,
+                "median": None,
+                "p90": None,
+                "max": None,
+            },
+            "thresholds": {},
+        }
+
+    counts = valid.groupby(group_cols, dropna=False).size().rename("n")
+    thresholds = {}
+    for threshold in (5, 10, 15, 20, 25):
+        eligible = counts.ge(threshold)
+        thresholds[str(threshold)] = {
+            "groups": int(eligible.sum()),
+            "share_groups": float(eligible.mean()),
+            "rows_eligible": int(counts.loc[eligible].sum()) if eligible.any() else 0,
+            "share_rows": (
+                float(counts.loc[eligible].sum() / len(valid))
+                if len(valid) else 0.0
+            ),
+        }
+
+    return {
+        "rows_with_role_and_age": int(len(valid)),
+        "role_present_share": float(len(valid) / len(frame)) if len(frame) else 0.0,
+        "distinct_role_groups": int(len(counts)),
+        "group_size": {
+            "mean": float(counts.mean()),
+            "median": float(counts.median()),
+            "p90": float(counts.quantile(0.90)),
+            "max": int(counts.max()),
+        },
+        "thresholds": thresholds,
+        "configured_min_peer_samples": int(min_peer_samples),
+    }
+
+
+def _exposure_diagnostics(frame: pd.DataFrame) -> dict[str, Any]:
+    def numeric_summary(column: str) -> dict[str, Any]:
+        if column not in frame.columns:
+            return {"n": 0, "mean": None, "p10": None, "p50": None, "p90": None, "max": None}
+        values = pd.to_numeric(frame[column], errors="coerce").dropna()
+        if values.empty:
+            return {"n": 0, "mean": None, "p10": None, "p50": None, "p90": None, "max": None}
+        return {
+            "n": int(len(values)),
+            "mean": float(values.mean()),
+            "p10": float(values.quantile(0.10)),
+            "p50": float(values.quantile(0.50)),
+            "p90": float(values.quantile(0.90)),
+            "max": float(values.max()),
+        }
+
+    return {
+        "games_played": numeric_summary("games_played"),
+        "minutes_per_game": numeric_summary("minutes_per_game"),
+    }
+
+
+
 def _score_summary(frame: pd.DataFrame) -> dict[str, Any]:
     result = _summary(frame["_bb_rating"])
     if not result["n"]:
@@ -364,6 +448,28 @@ def _diagnostic_warnings(report: dict[str, Any]) -> list[str]:
                 f"{metric['metric']}: oltre il 30% delle righe non ha un valore "
                 "utilizzabile; la copertura va verificata prima di fissare il peso."
             )
+        if (
+            metric["rating_enabled"]
+            and metric["n_available"]
+            and metric["zero_pct_available"] is not None
+            and metric["zero_pct_available"] >= 0.99
+        ):
+            warnings.append(
+                f"{metric['metric']}: almeno il 99% dei valori disponibili è esattamente "
+                "zero; verificare se il campo è un placeholder di copertura anziché "
+                "un segnale discriminante."
+            )
+        percentile_summary = metric["percentile_summary"]
+        if (
+            metric["rating_enabled"]
+            and percentile_summary["n"] >= 50
+            and percentile_summary["stddev"] is not None
+            and percentile_summary["stddev"] < 0.02
+        ):
+            warnings.append(
+                f"{metric['metric']}: la distribuzione dei percentili è quasi costante; "
+                "il contributo al BB-Rating è attualmente poco discriminante."
+            )
 
     score = report["score_distribution"]
     if score["n"]:
@@ -428,11 +534,41 @@ def _markdown(report: dict[str, Any]) -> str:
     ]
     for row in report["peer_sources"]:
         lines.append(
-            f"| {row['peer_source']} | {row['rows']} | {row['contexts']} | "
+            f"| {row['peer_source']} | {row['rows']} ({row['share_rows']:.1%}) | "
+            f"{row['contexts']} ({row['share_contexts']:.1%}) | "
             f"{row['median_peer_sample_size']:.1f} |"
         )
 
+    role_diag = report["role_peer_population"]
     lines += [
+        "",
+        "### Role peer population diagnostics",
+        "",
+        f"- Rows with role + age: **{role_diag['rows_with_role_and_age']}** "
+        f"({role_diag['role_present_share']:.1%})",
+        f"- Distinct position+age+role groups: **{role_diag['distinct_role_groups']}**",
+        f"- Median role-group size: **{role_diag['group_size']['median']:.1f}**",
+        f"- P90 role-group size: **{role_diag['group_size']['p90']:.1f}**",
+        "",
+        "| Minimum group size | Groups | Rows eligible |",
+        "|---:|---:|---:|",
+    ]
+    for threshold, row in role_diag["thresholds"].items():
+        lines.append(
+            f"| {threshold} | {row['groups']} ({row['share_groups']:.1%}) | "
+            f"{row['rows_eligible']} ({row['share_rows']:.1%}) |"
+        )
+
+    lines += [
+        "",
+        "### Exposure diagnostics",
+        "",
+        f"- Games played P10/P50/P90: **{report['exposure']['games_played']['p10']} / "
+        f"{report['exposure']['games_played']['p50']} / "
+        f"{report['exposure']['games_played']['p90']}**",
+        f"- Minutes per game P10/P50/P90: **{report['exposure']['minutes_per_game']['p10']} / "
+        f"{report['exposure']['minutes_per_game']['p50']} / "
+        f"{report['exposure']['minutes_per_game']['p90']}**",
         "",
         "## Metric coverage and distributions",
         "",
@@ -552,14 +688,22 @@ def build_calibration_report(
     ) if not context_sizes.empty else 0
 
     peer_sources: list[dict[str, Any]] = []
+    total_rows = len(frame)
+    total_contexts = len(context_sizes)
     for source, group in frame.groupby("_peer_source", dropna=False, sort=True):
+        source_contexts = int(
+            group[["league_key", "season", "competition"]]
+            .drop_duplicates().shape[0]
+        )
         peer_sources.append(
             {
                 "peer_source": str(source),
                 "rows": int(len(group)),
-                "contexts": int(
-                    group[["league_key", "season", "competition"]]
-                    .drop_duplicates().shape[0]
+                "share_rows": float(len(group) / total_rows) if total_rows else 0.0,
+                "contexts": source_contexts,
+                "share_contexts": (
+                    float(source_contexts / total_contexts)
+                    if total_contexts else 0.0
                 ),
                 "median_peer_sample_size": float(group["_peer_sample_size"].median()),
                 "mean_peer_sample_size": float(group["_peer_sample_size"].mean()),
@@ -606,6 +750,11 @@ def build_calibration_report(
             ),
         },
         "peer_sources": peer_sources,
+        "role_peer_population": _role_peer_population_diagnostics(
+            frame,
+            min_peer_samples=min_peer_samples,
+        ),
+        "exposure": _exposure_diagnostics(frame),
         "metrics": metrics,
         "score_distribution": _score_summary(frame),
         "by_league": _group_score_summary(frame, ["league_key"]),
@@ -616,13 +765,32 @@ def build_calibration_report(
     }
 
     report["warnings"] = _diagnostic_warnings(report)
+    scoring_registry_ok = all(
+        row["column_exists"]
+        and row["semantic_exists"]
+        and row["semantic_source_matches"]
+        for row in registry_audit
+        if row["rating_enabled"]
+    )
+    explanation_catalog_ok = all(
+        row["semantic_exists"] and row["semantic_source_matches"]
+        for row in registry_audit
+    )
+    source_by_name = {
+        row["peer_source"]: row["share_rows"] for row in peer_sources
+    }
+    constant_scoring_metrics = [
+        row["metric"]
+        for row in metrics
+        if row["rating_enabled"]
+        and row["n_available"]
+        and row["zero_pct_available"] is not None
+        and row["zero_pct_available"] >= 0.99
+    ]
     report["validation_signals"] = {
-        "registry_columns_ok": all(
-            row["column_exists"]
-            and row["semantic_exists"]
-            and row["semantic_source_matches"]
-            for row in registry_audit
-        ),
+        "registry_columns_ok": scoring_registry_ok,
+        "scoring_registry_ok": scoring_registry_ok,
+        "explanation_catalog_ok": explanation_catalog_ok,
         "scoring_metrics_present": all(
             row["column_exists"]
             for row in registry_audit
@@ -632,9 +800,13 @@ def build_calibration_report(
             float(frame["_bb_rating"].notna().mean()) if len(frame) else 0.0
         ),
         "peer_fallback_share": (
-            float((~frame["_peer_source"].eq("position+age+role")).mean())
+            float(1.0 - source_by_name.get("position+age+role", 0.0))
             if len(frame) else 1.0
         ),
+        "peer_source_shares": source_by_name,
+        "role_peer_share": source_by_name.get("position+age+role", 0.0),
+        "limited_context_share": source_by_name.get("limited_context", 0.0),
+        "constant_scoring_metrics": constant_scoring_metrics,
         "explainable_metric_count": int(
             sum(row["semantic_exists"] for row in registry_audit)
         ),
