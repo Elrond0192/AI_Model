@@ -13,7 +13,7 @@ model and no WordPress rating logic is required.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Iterable, Mapping, Optional
+from typing import Any, Iterable, Optional
 
 import numpy as np
 import pandas as pd
@@ -194,12 +194,20 @@ class BBRatingEngine:
             return frame
 
         if "league_key" not in frame.columns:
-            frame["league_key"] = frame.get("league_id", "").astype(str)
+            if "league_id" in frame.columns:
+                frame["league_key"] = frame["league_id"].astype(str)
+            else:
+                frame["league_key"] = pd.Series("UNKNOWN", index=frame.index, dtype=object)
         frame["league_key"] = frame["league_key"].astype(str).str.strip().str.upper()
 
-        frame["season"] = pd.to_numeric(frame.get("season"), errors="coerce")
+        if "season" in frame.columns:
+            frame["season"] = pd.to_numeric(frame["season"], errors="coerce")
+        else:
+            frame["season"] = pd.Series(np.nan, index=frame.index, dtype=float)
+        if "competition" not in frame.columns:
+            frame["competition"] = "RS"
         frame["competition"] = (
-            frame.get("competition", "RS")
+            frame["competition"]
             .fillna("RS")
             .astype(str)
             .str.strip()
@@ -587,7 +595,7 @@ def _build_explanation(
             f"mentre quella relativamente più contenuta è {weakest[0]} ({weakest[1]}/100)."
         )
     if role:
-        parts.append(f"Il confronto dei metriche usa anche il ruolo osservato '{role}' quando la numerosità lo consente.")
+        parts.append(f"Il confronto delle metriche usa anche il ruolo osservato '{role}' quando la numerosità lo consente.")
     if quality != "high":
         parts.append(f"La qualità del confronto è {quality}: il risultato va letto con maggiore cautela.")
     return " ".join(parts)
