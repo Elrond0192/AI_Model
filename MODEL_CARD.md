@@ -4,7 +4,7 @@
 
 | Field | Value |
 |---|---|
-| Version | 2.5.0 |
+| Version | 2.6.0 |
 | Feature contract | `forecast-t-plus-1-persistence-delta-v1` |
 | Primary target | same-league, same-competition next-season rating (`t -> t+1`), learned as `rating(t+1) - rating(t)` and reconstructed to 0–10 at inference |
 | Competition support | explicit allow-list; `RS,PO,TOT` by default |
@@ -67,6 +67,11 @@ Team-style normalization bounds and the trained competition vocabulary are run-o
 
 ## Production prediction path
 
+The production contract for `delta_vs_prior` is deliberately narrower than the
+scenario/diagnostic layer. Persistence, competition, role, performance and
+source-season context are learned by XGBoost from the source-season feature
+vector. They are not reapplied as heuristic multipliers after inference.
+
 ```text
 league + competition + source season
              |
@@ -76,19 +81,21 @@ isolated player history + team context
              v
        XGBoost t+1 delta
              |
-       add source-season rating
-             |
-       compatibility
-       context / league
-       minutes / age scenario
+       + source-season rating
              |
              v
-    final production rating
+   raw learned t+1 rating
+             |
+      bounded to [0,10]
              |
              v
 competition conformal interval if sufficiently calibrated
 otherwise explicitly reported global conformal fallback
 ```
+
+Compatibility, age, league/context and minutes signals remain available as
+metadata/diagnostics and for scenario analysis; they are not post-processing
+corrections to the learned delta production prediction.
 
 The global interval is calibrated on final-ensemble absolute residuals. Per-competition finite-sample quantiles are used only when that competition reaches the configured calibration minimum. The API reports which calibration scope was used.
 
