@@ -412,7 +412,7 @@ def test_invalid_snapshot_age_uses_neutral_peak_age_instead_of_floor():
     assert adjusted.loc[0, "age"] != 14
 
 
-def test_delta_model_does_not_apply_post_xgb_heuristic_multipliers(monkeypatch):
+def test_delta_model_uses_raw_xgb_target_as_final_prediction(monkeypatch):
     import basketball_ai.models.ensemble as ensemble_module
     from basketball_ai.models.ensemble import EnsembleModel
     from basketball_ai.models.performance_model import PerformanceModel
@@ -440,8 +440,7 @@ def test_delta_model_does_not_apply_post_xgb_heuristic_multipliers(monkeypatch):
     perf.competition_feature_encodings = {}
     perf.feature_names = []
     perf.target_mode = "delta_vs_prior"
-    perf.predict_from_features = lambda features: 0.0
-    perf.predict_target_rating = lambda features: 7.25
+    perf.predict_from_features = lambda features: -4.2
     perf.get_shap_values = lambda features: {}
 
     class Compat:
@@ -449,11 +448,15 @@ def test_delta_model_does_not_apply_post_xgb_heuristic_multipliers(monkeypatch):
             return 0.5
 
     model = EnsembleModel(performance_model=perf, compatibility_model=Compat())
-    model._persistence_shrinkage_alpha = 1.0
-    model._league_factors = {"1": 0.80}
+    model._persistence_shrinkage_alpha = 0.0
+    model._league_factors = {"1": 0.20}
     model._mpg_baseline = 30.0
 
-    monkeypatch.setattr(ensemble_module, "age_performance_factor", lambda *args: 1.0)
+    monkeypatch.setattr(
+        ensemble_module,
+        "age_performance_factor",
+        lambda age, position: 1.0 if age == 27 else 0.40,
+    )
     monkeypatch.setattr(
         ensemble_module,
         "compute_context_features",
@@ -466,8 +469,22 @@ def test_delta_model_does_not_apply_post_xgb_heuristic_multipliers(monkeypatch):
         },
     )
 
-    result = model._predict_uncached(1, 10, data, season=2024, competition="RS")
+    result = model._predict_uncached(
+        1,
+        10,
+        data,
+        season=2024,
+        target_age=22,
+        competition="RS",
+    )
 
-    assert result.predicted_rating == 7.25
+    # 7.1 prior + (-4.2) XGB delta = 2.9. No 3.5 floor, age multiplier,
+    # league/context multiplier, or persistence shrinkage may alter it.
+    assert result.predicted_rating == pytest.approx(2.9)
+    assert result.base_rating == pytest.approx(2.9)
     assert result.league_factor == 1.0
     assert result.context_adjustment == 1.0
+    assert result._diagnostic_stages["final_prediction"] == pytest.approx(2.9)
+    assert result._diagnostic_stages["persistence_shrinkage_alpha"] == pytest.approx(1.0)
+
+
