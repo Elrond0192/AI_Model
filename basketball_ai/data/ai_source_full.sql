@@ -565,66 +565,73 @@ BEGIN
             END IF;
         END IF;
 
-        -- Same principle for on/off and clutch data.
-        IF (
-            pg_temp.ai_find_column(r.table_schema, r.table_name, ARRAY['netrtg_on','onnetrtg']) IS NULL
-            OR pg_temp.ai_find_column(r.table_schema, r.table_name, ARRAY['netrtg_off','offnetrtg']) IS NULL
-            OR pg_temp.ai_find_column(r.table_schema, r.table_name, ARRAY['netrtg_diff']) IS NULL
-            OR pg_temp.ai_find_column(r.table_schema, r.table_name, ARRAY['ortg_on']) IS NULL
-            OR pg_temp.ai_find_column(r.table_schema, r.table_name, ARRAY['ortg_off']) IS NULL
-            OR pg_temp.ai_find_column(r.table_schema, r.table_name, ARRAY['ortg_diff']) IS NULL
+        -- On/Off data is additive and may coexist with the same columns in
+        -- AdvancedStats_Player_<LEAGUE>. The player table can contain zero-filled
+        -- placeholders, so column existence alone is not a valid reason to skip
+        -- AdvancedStatsOnOffCourt_<LEAGUE>. When the authoritative On/Off source
+        -- has a real observation, it replaces only a NULL/zero primary value.
+        opt_table := 'AdvancedStatsOnOffCourt_' || league_key;
+        IF EXISTS (
+            SELECT 1 FROM pg_catalog.pg_class c
+            JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+            WHERE n.nspname='Analisi' AND c.relname=opt_table
+              AND c.relkind IN ('r','p')
         ) THEN
-            opt_table := 'AdvancedStatsOnOffCourt_' || league_key;
-            IF EXISTS (
-                SELECT 1 FROM pg_catalog.pg_class c
-                JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
-                WHERE n.nspname='Analisi' AND c.relname=opt_table
-                  AND c.relkind IN ('r','p')
-            ) THEN
-                onoff_join := format(
-                    'LEFT JOIN (
-                        SELECT DISTINCT ON (season, source_player_id, competition)
-                               season, source_player_id, competition,
-                               on_net_rtg, off_net_rtg, net_rtg_diff,
-                               ortg_on, ortg_off, ortg_diff
-                        FROM (
-                            SELECT
-                                %1$s AS season,
-                                %2$s AS source_player_id,
-                                %3$s AS competition,
-                                %4$s AS on_net_rtg,
-                                %5$s AS off_net_rtg,
-                                %6$s AS net_rtg_diff,
-                                %7$s AS ortg_on,
-                                %8$s AS ortg_off,
-                                %9$s AS ortg_diff
-                            FROM "Analisi".%10$I oo0
-                            WHERE %1$s IS NOT NULL AND %2$s IS NOT NULL
-                        ) q
-                        ORDER BY season, source_player_id, competition
-                    ) oo
-                      ON oo.season = %11$s
-                     AND oo.source_player_id = %12$s
-                     AND oo.competition = %13$s',
-                    pg_temp.ai_expr('Analisi', opt_table, 'oo0', 'int', ARRAY['season']),
-                    pg_temp.ai_expr('Analisi', opt_table, 'oo0', 'text', ARRAY['id','playerid','idplayer']),
-                    pg_temp.ai_comp_expr('Analisi', opt_table, 'oo0', ARRAY['competition']),
-                    pg_temp.ai_expr('Analisi', opt_table, 'oo0', 'numeric', ARRAY['netrtg_on']),
-                    pg_temp.ai_expr('Analisi', opt_table, 'oo0', 'numeric', ARRAY['netrtg_off']),
-                    pg_temp.ai_expr('Analisi', opt_table, 'oo0', 'numeric', ARRAY['netrtg_diff']),
-                    pg_temp.ai_expr('Analisi', opt_table, 'oo0', 'numeric', ARRAY['ortg_on']),
-                    pg_temp.ai_expr('Analisi', opt_table, 'oo0', 'numeric', ARRAY['ortg_off']),
-                    pg_temp.ai_expr('Analisi', opt_table, 'oo0', 'numeric', ARRAY['ortg_diff']),
-                    opt_table,
-                    season_expr, player_local_expr, comp_expr
-                );
-                on_net_expr := 'coalesce(' || on_net_expr || ', oo.on_net_rtg)';
-                off_net_expr := 'coalesce(' || off_net_expr || ', oo.off_net_rtg)';
-                net_diff_expr := 'coalesce(' || net_diff_expr || ', oo.net_rtg_diff)';
-                ortg_on_expr := 'coalesce(' || ortg_on_expr || ', oo.ortg_on)';
-                ortg_off_expr := 'coalesce(' || ortg_off_expr || ', oo.ortg_off)';
-                ortg_diff_expr := 'coalesce(' || ortg_diff_expr || ', oo.ortg_diff)';
-            END IF;
+            onoff_join := format(
+                'LEFT JOIN (
+                    SELECT DISTINCT ON (season, source_player_id, competition)
+                           season, source_player_id, competition,
+                           on_net_rtg, off_net_rtg, net_rtg_diff,
+                           ortg_on, ortg_off, ortg_diff
+                    FROM (
+                        SELECT
+                            %1$s AS season,
+                            %2$s AS source_player_id,
+                            %3$s AS competition,
+                            %4$s AS on_net_rtg,
+                            %5$s AS off_net_rtg,
+                            %6$s AS net_rtg_diff,
+                            %7$s AS ortg_on,
+                            %8$s AS ortg_off,
+                            %9$s AS ortg_diff
+                        FROM "Analisi".%10$I oo0
+                        WHERE %1$s IS NOT NULL AND %2$s IS NOT NULL
+                    ) q
+                    ORDER BY season, source_player_id, competition
+                ) oo
+                  ON oo.season = %11$s
+                 AND oo.source_player_id = %12$s
+                 AND oo.competition = %13$s',
+                pg_temp.ai_expr('Analisi', opt_table, 'oo0', 'int', ARRAY['season']),
+                pg_temp.ai_expr('Analisi', opt_table, 'oo0', 'text', ARRAY['id','playerid','idplayer']),
+                pg_temp.ai_comp_expr('Analisi', opt_table, 'oo0', ARRAY['competition']),
+                pg_temp.ai_expr('Analisi', opt_table, 'oo0', 'numeric', ARRAY['netrtg_on']),
+                pg_temp.ai_expr('Analisi', opt_table, 'oo0', 'numeric', ARRAY['netrtg_off']),
+                pg_temp.ai_expr('Analisi', opt_table, 'oo0', 'numeric', ARRAY['netrtg_diff']),
+                pg_temp.ai_expr('Analisi', opt_table, 'oo0', 'numeric', ARRAY['ortg_on']),
+                pg_temp.ai_expr('Analisi', opt_table, 'oo0', 'numeric', ARRAY['ortg_off']),
+                pg_temp.ai_expr('Analisi', opt_table, 'oo0', 'numeric', ARRAY['ortg_diff']),
+                opt_table,
+                season_expr, player_local_expr, comp_expr
+            );
+            on_net_expr := '(CASE WHEN ' || on_net_expr || ' IS NULL OR ' || on_net_expr || ' = 0
+                                  THEN coalesce(oo.on_net_rtg, ' || on_net_expr || ')
+                                  ELSE ' || on_net_expr || ' END)';
+            off_net_expr := '(CASE WHEN ' || off_net_expr || ' IS NULL OR ' || off_net_expr || ' = 0
+                                   THEN coalesce(oo.off_net_rtg, ' || off_net_expr || ')
+                                   ELSE ' || off_net_expr || ' END)';
+            net_diff_expr := '(CASE WHEN ' || net_diff_expr || ' IS NULL OR ' || net_diff_expr || ' = 0
+                                    THEN coalesce(oo.net_rtg_diff, ' || net_diff_expr || ')
+                                    ELSE ' || net_diff_expr || ' END)';
+            ortg_on_expr := '(CASE WHEN ' || ortg_on_expr || ' IS NULL OR ' || ortg_on_expr || ' = 0
+                                   THEN coalesce(oo.ortg_on, ' || ortg_on_expr || ')
+                                   ELSE ' || ortg_on_expr || ' END)';
+            ortg_off_expr := '(CASE WHEN ' || ortg_off_expr || ' IS NULL OR ' || ortg_off_expr || ' = 0
+                                    THEN coalesce(oo.ortg_off, ' || ortg_off_expr || ')
+                                    ELSE ' || ortg_off_expr || ' END)';
+            ortg_diff_expr := '(CASE WHEN ' || ortg_diff_expr || ' IS NULL OR ' || ortg_diff_expr || ' = 0
+                                     THEN coalesce(oo.ortg_diff, ' || ortg_diff_expr || ')
+                                     ELSE ' || ortg_diff_expr || ' END)';
         END IF;
 
         IF (
