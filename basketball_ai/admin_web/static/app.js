@@ -68,13 +68,16 @@ async function renderData(){
 }
 
 async function renderTraining(){
-  const d=await api('/admin-api/training'),s=d.summary||{},j=d.job||{};
+  const d=await api('/admin-api/training'),s=d.summary||{},ts=d.training_summary||s,j=d.job||{};
   const datasetLoaded=s.player_rows!==undefined&&s.player_rows!==null;
+  const excluded=d.excluded_in_progress_seasons||[];
+  const blocked=d.blocking_seasons||[];
+  const seasonSub=excluded.length?`<span>${esc(excluded.join(', '))} In corso escluse</span>`:'<span>solo stagioni Complete</span>';
   $('#training-kpis').innerHTML=[
     kpi('▤','Snapshot training',d.snapshot?.snapshot_id?shortId(d.snapshot.snapshot_id):'—',`<span class="dot ${datasetLoaded?'green':'yellow'}"></span>${datasetLoaded?'Storico pronto':'Prepara lo storico in Dati e snapshot'}`),
-    kpi('◫','Season range',s.season_min?`${s.season_min}–${s.season_max}`:'—','<span>training history</span>','green'),
-    kpi('◉','Competitions',String((s.competitions||[]).length||'—'),'<span>observed</span>','violet'),
-    kpi('▥','Observations',fmtInt(s.player_rows),'<span>player rows</span>','orange')
+    kpi('◫','Training seasons',ts.season_min?`${ts.season_min}–${ts.season_max}`:'—',seasonSub,'green'),
+    kpi('◉','Competitions',String((ts.competitions||[]).length||'—'),'<span>observed</span>','violet'),
+    kpi('▥','Training observations',fmtInt(ts.player_rows),blocked.length?`<span class="dot red"></span>Bloccato: ${esc(blocked.join(', '))}`:'<span>player rows dopo filtro lifecycle</span>','orange')
   ].join('');
   $('#training-contract').innerHTML=(d.contract||[]).map(r=>`<tr><td><strong>${esc(r.stage)}</strong></td><td>${esc(r.seasons)}</td><td>${esc(r.purpose)}</td></tr>`).join('');
   $('#training-config').innerHTML=Object.entries(d.configuration||{}).map(([a,b])=>`<div class="config-item"><span>${esc(a.replaceAll('_',' '))}</span><strong>${esc(Array.isArray(b)?b.join(', '):b)}</strong></div>`).join('');
@@ -90,8 +93,10 @@ async function renderTraining(){
       if(!datasetLoaded||!d.snapshot?.snapshot_id)throw new Error('Prepara e attiva prima uno snapshot in Dati e snapshot');
       start.textContent='Controllo snapshot…';
       const loaded={summary:s,snapshot:d.snapshot};
-      const seasons=loaded.summary?.seasons||[];
-      if(seasons.length<5)throw new Error(`Servono almeno cinque stagioni per il training. Disponibili: ${seasons.length}.`);
+      const seasons=d.training_seasons||[];
+      const blocked=d.blocking_seasons||[];
+      if(blocked.length)throw new Error(`Stagioni bloccanti: ${blocked.join(', ')}.`);
+      if(seasons.length<5)throw new Error(`Servono almeno cinque stagioni Complete per il training. Disponibili: ${seasons.length}.`);
       start.textContent='Avvio training…';
       await api('/admin-api/training/start',{method:'POST',body:{}});
       toast(`Training avviato sullo snapshot ${loaded.snapshot?.snapshot_id||'attivo'}`);
