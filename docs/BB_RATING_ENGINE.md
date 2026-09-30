@@ -165,7 +165,7 @@ docker compose run --rm admin \
   --output-dir /app/models_saved/bb_rating_calibration
 ```
 
-The command reads the canonical forecasting contract with the normal analysis loader
+The command reads the canonical observed contract with the analysis loader
 and writes:
 
 - `bb_rating_calibration.json`
