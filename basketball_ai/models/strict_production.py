@@ -825,18 +825,55 @@ class StrictProductionEnsembleModel(ProductionEnsembleModel):
             raise RuntimeError(
                 "At least 10 final-ensemble calibration predictions are required"
             )
-        if self._enable_persistence_shrinkage:
+        is_delta_model = (
+            getattr(self.perf_model, "target_mode", "rating") == "delta_vs_prior"
+        )
+        if is_delta_model:
+            # Native delta production is already the calibrated prediction target.
+            # Persistence is a model feature/prior, not a post-processing anchor.
+            self._enable_persistence_shrinkage = False
+            self._persistence_shrinkage_alpha = 1.0
+            self._persistence_shrinkage_calibration = {
+                "target_season": calibration_season,
+                "valid": False,
+                "alpha": 1.0,
+                "n": len(calibration_records),
+                "disabled": True,
+                "reason": "native_delta_prediction",
+            }
+        elif self._enable_persistence_shrinkage:
             shrinkage = self._fit_persistence_shrinkage(calibration_records)
             self._persistence_shrinkage_alpha = float(shrinkage.get("alpha", 0.0))
-            self._persistence_shrinkage_calibration = {"target_season": calibration_season, **shrinkage}
+            self._persistence_shrinkage_calibration = {
+                "target_season": calibration_season,
+                **shrinkage,
+            }
         else:
-            self._persistence_shrinkage_alpha = 0.0
-            self._persistence_shrinkage_calibration = {"target_season": calibration_season, "valid": False, "alpha": 0.0, "n": len(calibration_records), "disabled": True}
+            self._persistence_shrinkage_alpha = 1.0
+            self._persistence_shrinkage_calibration = {
+                "target_season": calibration_season,
+                "valid": False,
+                "alpha": 1.0,
+                "n": len(calibration_records),
+                "disabled": True,
+            }
+
         calibrated_predictions = []
         for row in calibration_records:
-            persistence = float(row["persistence_prediction"])
             raw_prediction = float(row["prediction"])
-            final_prediction = float(np.clip(persistence + self._persistence_shrinkage_alpha * (raw_prediction - persistence), 3.5, 10.0))
+            if is_delta_model or not self._enable_persistence_shrinkage:
+                final_prediction = raw_prediction
+            else:
+                persistence = float(row["persistence_prediction"])
+                final_prediction = float(
+                    np.clip(
+                        persistence
+                        + self._persistence_shrinkage_alpha
+                        * (raw_prediction - persistence),
+                        3.5,
+                        10.0,
+                    )
+                )
             calibrated_predictions.append({**row, "prediction": final_prediction})
         residuals = [abs(row["prediction"] - row["actual"]) for row in calibrated_predictions]
         self._calibrate_conformal(residuals)
