@@ -471,12 +471,20 @@ class BBRatingEngine:
         quality = self._quality(len(peer), coverage)
 
         strength_candidates = sorted(
-            (e for e in usable if e.percentile >= 0.75),
+            (
+                e
+                for e in usable
+                if e.dimension != "role_context" and e.percentile >= 0.75
+            ),
             key=lambda e: (float(e.percentile), float(e.weight)),
             reverse=True,
         )
         limitation_candidates = sorted(
-            (e for e in usable if e.percentile <= 0.35),
+            (
+                e
+                for e in usable
+                if e.dimension != "role_context" and e.percentile <= 0.35
+            ),
             key=lambda e: (float(e.percentile), -float(e.weight)),
         )
 
