@@ -180,7 +180,7 @@ def test_bb_rating_calibration_reuses_peer_and_percentile_contract():
         {"player_stats": stats, "players": make_players(), "source_contract": "test"}
     )
 
-    assert report["calibration_version"] == "1.0"
+    assert report["calibration_version"] == "1.1"
     assert report["bb_rating_version"] == "1.1"
     assert report["dataset"]["rows"] == 120
     assert report["score_distribution"]["n"] == 120
@@ -198,6 +198,14 @@ def test_bb_rating_calibration_reuses_peer_and_percentile_contract():
 
     peer_sources = {item["peer_source"] for item in report["peer_sources"]}
     assert peer_sources == {"position+age+role"}
+
+    role_diag = report["role_peer_population"]
+    assert role_diag["rows_with_role_and_age"] == 120
+    assert role_diag["thresholds"]["25"]["rows_eligible"] == 120
+    assert report["validation_signals"]["role_peer_share"] == pytest.approx(1.0)
+    assert report["validation_signals"]["peer_source_shares"]["position+age+role"] == pytest.approx(1.0)
+    assert report["validation_signals"]["scoring_registry_ok"] is True
+    assert report["validation_signals"]["explanation_catalog_ok"] is True
 
     # Explicitly verify that the lower-is-better turnover signal is preserved.
     tov = next(item for item in report["metrics"] if item["metric"] == "TOV%")
