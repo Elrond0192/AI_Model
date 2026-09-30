@@ -494,61 +494,70 @@ class EnsembleModel:
         if getattr(self, "_capture_diagnostic_features", False):
             self._last_prediction_features = dict(player_feats)
 
-        # 2. Base rating from XGBoost
-        # Keep the raw model output separately for diagnostics. In delta mode
-        # this is the predicted one-season change, not an absolute rating.
+        # 2. Base prediction from XGBoost.
+        # Delta-mode is the production contract: XGBoost predicts the one-season
+        # change and the absolute target is reconstructed from the source rating.
+        # The resulting target is the primary production prediction; no heuristic
+        # post-processing is applied after the learned delta.
         raw_xgb_prediction = float(
             self.perf_model.predict_from_features(player_feats)
+        )
+        is_delta_model = getattr(self.perf_model, "target_mode", "rating") == "delta_vs_prior"
+        raw_target_prediction = float(
+            last_rating + raw_xgb_prediction
+            if is_delta_model
+            else raw_xgb_prediction
         )
         base_rating = self.perf_model.predict_target_rating(player_feats)
         base_before_age = float(base_rating)
 
-        # 3. Age-curve ratio (only for trajectory projections)
-        # Cap the ratio at ×1.5 to prevent unrealistic peak projections for
-        # post-peak players being projected back to their prime years.
+        # 3. Age curve is diagnostic/scenario metadata for the delta production
+        # model. It must not modify the learned t+1 prediction.
         current_af = age_performance_factor(current_age, position)
         target_af  = age_performance_factor(age, position)
         af = target_af
 
-        if target_age is not None and target_age != current_age and current_af > 0.01:
-            age_ratio   = float(np.clip(target_af / current_af, _AGE_RATIO_MIN, _AGE_RATIO_MAX))
+        if (
+            not is_delta_model
+            and target_age is not None
+            and target_age != current_age
+            and current_af > 0.01
+        ):
+            # Legacy absolute-rating trajectory path only.
+            age_ratio = float(
+                np.clip(target_af / current_af, _AGE_RATIO_MIN, _AGE_RATIO_MAX)
+            )
             base_rating = float(np.clip(base_rating * age_ratio, 3.5, 10.0))
         base_after_age = float(base_rating)
 
-        # 4. Compatibility is a contextual signal, not a prediction correction.
-        #
-        # The competition-aware compatibility model is currently trained on
-        # player/team style vectors against an OOF residual target. That makes
-        # its score useful as a fit signal, but it is not sufficiently calibrated
-        # to be added to the rating prediction itself. In particular, the learned
-        # score can be systematically shifted away from 0.50 even when the base
-        # predictor already has a positive/negative bias.
-        #
-        # Keep the score in the public 0–1 contract for diagnostics, scenarios and
-        # the future BB Rating, but do NOT feed it back into the prediction.
+        # 4. Compatibility remains a contextual signal for diagnostics, scenarios
+        # and the future BB Rating. It is not a correction to the delta prediction.
         cf = float(np.clip(self.compat_model.score(player_id, team_id, data), 0.0, 1.0))
         compat_adjustment = 0.0
         after_compatibility = base_after_age
-
-        # In delta mode XGBoost already learns the one-season change from the
-        # source-season feature vector. Applying independent league/context/minutes
-        # multipliers after that learned delta double-counts signals that are already
-        # present in the feature set. The OOS diagnostics also showed these heuristics
-        # systematically hurting PF/C predictions. Keep them neutral for the learned
-        # delta contract; they remain available for legacy absolute-rating models.
-        is_delta_model = getattr(self.perf_model, "target_mode", "rating") == "delta_vs_prior"
 
         team_row = data["team_dict"].get(_normalize_id(team_id), {})
         league_id = str(team_row.get("league_id", ""))
 
         if is_delta_model:
+            # Native delta production path: all post-XGB heuristic adjustments are
+            # deliberately neutral. The source-season feature vector already contains
+            # persistence, role, league/competition and performance context.
             lf = 1.0
             after_league = after_compatibility
             ctx_mult = 1.0
             after_context = after_league
             mpg_factor = 1.0
+
+            # A rating is a bounded domain value, but unlike the legacy 3.5 floor we
+            # only enforce the physical API range [0, 10].
+            raw_adjusted_unclipped = raw_target_prediction
+            raw_adjusted = float(np.clip(raw_adjusted_unclipped, 0.0, 10.0))
+            persistence_shrinkage_alpha = 1.0
+            post_shrinkage_unclipped = raw_adjusted
+            adjusted = raw_adjusted
         else:
-            # Legacy absolute-rating path.
+            # Legacy absolute-rating path remains unchanged.
             lf = self._league_factors.get(league_id, None)
             if lf is None:
                 from basketball_ai.features.team_features import _league_tier_factor as _ltf
@@ -590,35 +599,17 @@ class EnsembleModel:
                 1.00,
             ))
 
-        # Keep the unclipped value so OOS diagnostics can separate the
-        # prediction-floor effect from the persistence shrinkage effect.
-        raw_adjusted_unclipped = float(after_context * mpg_factor)
-        raw_adjusted = float(np.clip(raw_adjusted_unclipped, 3.5, 10.0))
+            raw_adjusted_unclipped = float(after_context * mpg_factor)
+            raw_adjusted = float(np.clip(raw_adjusted_unclipped, 3.5, 10.0))
 
-        # Production uses persistence as the prior and the trained model only as
-        # a calibrated delta correction. The shrinkage coefficient is fitted on
-        # a strictly prior calibration season by StrictProductionEnsembleModel.
-        persistence_shrinkage_alpha = float(
-            np.clip(getattr(self, "_persistence_shrinkage_alpha", 0.0), 0.0, 1.0)
-        )
-        post_shrinkage_unclipped = float(
-            last_rating
-            + persistence_shrinkage_alpha * (raw_adjusted - last_rating)
-        )
-        adjusted = float(np.clip(
-            post_shrinkage_unclipped,
-            3.5,
-            10.0,
-        ))
-
-        # Absolute target implied by the native model output without any
-        # production post-processing. Delta-mode models predict a one-season
-        # change; legacy absolute models already emit an absolute target.
-        raw_target_prediction = float(
-            last_rating + raw_xgb_prediction
-            if getattr(self.perf_model, "target_mode", "rating") == "delta_vs_prior"
-            else raw_xgb_prediction
-        )
+            persistence_shrinkage_alpha = float(
+                np.clip(getattr(self, "_persistence_shrinkage_alpha", 0.0), 0.0, 1.0)
+            )
+            post_shrinkage_unclipped = float(
+                last_rating
+                + persistence_shrinkage_alpha * (raw_adjusted - last_rating)
+            )
+            adjusted = float(np.clip(post_shrinkage_unclipped, 3.5, 10.0))
 
         # Confidence interval
         # Prefer split-conformal quantiles from calibration (empirically grounded).
@@ -647,14 +638,15 @@ class EnsembleModel:
             f"Rating 0–10 basato su: "
             f"XGBoost ({len(self.perf_model.feature_names)} features, base {base_rating:.2f}) "
             f"+ compatibilità stile (score {cf:.3f}, non applicata alla previsione) "
-            f"× qualità lega (league {league_id}, fattore {lf:.3f}) "
-            f"× contesto (posizione+stile+adattamento, fattore {ctx_mult:.3f}) "
-            f"× minuti ({latest_mpg:.0f} min/g, fattore {mpg_factor:.2f}) "
+            f"+ contesto metadata (league {lf:.3f}, context {ctx_mult:.3f}, MPG {mpg_factor:.2f}) "
             f"| età: {age} (curva {af:.3f}) "
             f"| ruolo: {latest_role or '—'} / off: {latest_role_off or '—'} / def: {latest_role_def or '—'} "
-            f"| shrinkage persistence: α {persistence_shrinkage_alpha:.3f} "
-            f"(prior {last_rating:.2f} → final {adjusted:.2f}) "
-            f"| competizione: {competition}"
+            + (
+                f"| produzione delta: XGBoost + prior {last_rating:.2f} → final {adjusted:.2f} (nessun shrinkage/floor)"
+                if is_delta_model
+                else f"| shrinkage persistence: α {persistence_shrinkage_alpha:.3f} (prior {last_rating:.2f} → final {adjusted:.2f})"
+            )
+            + f" | competizione: {competition}"
         )
 
         result = PredictionResult(
