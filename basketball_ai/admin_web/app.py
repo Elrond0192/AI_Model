@@ -862,8 +862,8 @@ def training(user: dict[str, str] = Depends(_operator)) -> dict[str, Any]:
         "can_start": bool(STATE.data is not None and can_train_snapshot and job.get("status") != "running"),
         "lifecycle": lifecycle,
         "contract": [
-            {"stage": "Fit", "seasons": f"through {seasons[-2]}" if len(seasons) >= 2 else "—", "purpose": "Same player + league + competition, exact t → t+1"},
-            {"stage": "Calibration", "seasons": str(seasons[-1]) if seasons else "—", "purpose": "Final ensemble + per-competition intervals"},
+            {"stage": "Fit", "seasons": f"through {training_seasons[-2]}" if len(training_seasons) >= 2 else "—", "purpose": "Same player + league + competition, exact t → t+1"},
+            {"stage": "Calibration", "seasons": str(training_seasons[-1]) if training_seasons else "—", "purpose": "Final ensemble + per-competition intervals"},
             {"stage": "Backtest", "seasons": "expanding OOT folds", "purpose": "Exact production ensemble, including by_competition"},
             {"stage": "Promotion", "seasons": "all OOT folds", "purpose": "Global + league + competition regression gates"},
         ],
