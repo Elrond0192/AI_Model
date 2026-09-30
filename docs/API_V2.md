@@ -119,3 +119,41 @@ label, quality, population_source, fallback_used, distribution_version},
 ## Authentication and network
 
 WordPress calls server-to-server using `X-API-Key` or an externally provisioned Bearer token. Global database IDs must not be returned to the browser. PostgreSQL on the Docker host is reached through `host.docker.internal`; port 5432 must remain private.
+
+
+## BB-Rating contextual endpoint (FASE I)
+
+The BB-Rating is a separate descriptive layer from the season-ahead prediction
+model. It evaluates observed performance against a contextual peer population
+and returns a deterministic 1–100 score plus metric evidence.
+
+### POST /api/v2/bb-rating/player
+
+Request:
+
+```json
+{
+  "player_global_id": "46238",
+  "league": "ITA1",
+  "season": 2025,
+  "phase": "RS"
+}
+```
+
+The peer population is resolved inside AI_Model using league + season +
+competition, narrowed by position family + age band + combined role when the
+sample is large enough. USG% is exposed as a role/involvement signal but has no
+direct composite weight.
+
+The response contains:
+
+- bb_rating (1–100);
+- dimension scores for impact, offense, defense and versatility;
+- raw metric values and contextual percentiles;
+- strengths and limitations derived from those percentiles;
+- deterministic explanation text;
+- peer-group definition, sample size, quality and metric coverage;
+- bb_rating_version.
+
+WordPress / Chat consumes the result and does not implement the rating formula,
+percentile calculation or peer selection.
