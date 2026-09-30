@@ -148,3 +148,42 @@ public methodology.
 The next validation should measure score distributions, stability across
 leagues/seasons, position and age groups, missing-metric coverage and whether
 the explanations agree with the underlying percentiles.
+
+
+## Calibration v1
+
+The calibration layer is diagnostic-only and does not train an ML model. It uses the
+same peer-selection hierarchy and empirical percentile convention as BBRatingEngine,
+but evaluates the complete real-data frame in batch.
+
+Run from the repository/container:
+
+```bash
+docker compose run --rm admin \
+  python main.py --mode bb-rating-calibrate \
+  --database-profile production \
+  --output-dir /app/models_saved/bb_rating_calibration
+```
+
+The command reads the canonical forecasting contract with the normal analysis loader
+and writes:
+
+- `bb_rating_calibration.json`
+- `bb_rating_calibration.md`
+
+The report contains:
+
+- registry/semantic source audit;
+- dataset coverage by league, season and competition;
+- peer population source and fallback frequency;
+- metric availability, missingness and zero-rate diagnostics;
+- contextual percentile distributions;
+- effective weights after missing-data renormalisation;
+- BB-Rating score distribution by league, season and competition;
+- consecutive player-season stability;
+- heuristic diagnostic warnings.
+
+These warnings are investigation signals, not promotion gates. No BB-Rating weight,
+threshold or public methodology should be frozen from the report alone; the next step
+is to review the real-data output and decide whether the peer model, metric set and
+weights need calibration.
