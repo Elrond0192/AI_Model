@@ -202,7 +202,10 @@ _BB_RATING_LEGACY_COMPETITION_MAP = {
 
 
 def _normalise_bb_rating_competition(value: Any) -> str:
-    raw = str(value if value is not None else "").strip().upper()
+    if value is None or pd.isna(value):
+        raw = ""
+    else:
+        raw = str(value).strip().upper()
     if raw in _BB_RATING_LEGACY_COMPETITION_MAP:
         return _BB_RATING_LEGACY_COMPETITION_MAP[raw]
     return re.sub(r"[^A-Z0-9_]", "", re.sub(r"[\s_-]+", "_", raw))
