@@ -1148,6 +1148,7 @@ def evaluate_target_season(
                 "base_prediction": float(result.base_rating),
                 "persistence_prediction": diagnostic_stages.get("persistence_prediction"),
                 "pre_shrinkage_prediction": diagnostic_stages.get("pre_shrinkage_prediction"),
+                "pre_shrinkage_unclipped_prediction": diagnostic_stages.get("pre_shrinkage_unclipped_prediction"),
                 "raw_target_prediction": diagnostic_stages.get("raw_target_prediction"),
                 "raw_target_floor_prediction": diagnostic_stages.get("raw_target_floor_prediction"),
                 "persistence_shrinkage_alpha": diagnostic_stages.get("persistence_shrinkage_alpha"),
