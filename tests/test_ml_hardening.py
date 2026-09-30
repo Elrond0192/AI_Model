@@ -237,7 +237,7 @@ def test_backtest_segment_metrics_expose_promotion_contract():
     segment = _segment_metrics(records, "competition")["RS"]
 
     assert segment["n"] == 2
-    assert np.isclose(segment["rmse"], np.sqrt(0.5))
+    assert np.isclose(segment["rmse"], np.sqrt(0.625))
     assert np.isclose(segment["mae"], 0.75)
     assert np.isclose(segment["bias"], -0.75)
     assert np.isclose(segment["interval_coverage"], 1.0)
