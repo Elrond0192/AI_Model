@@ -473,6 +473,34 @@ def test_production_ablation_diagnostics_separates_floor_and_shrinkage():
     assert result["effects"]["shrinkage_effect_rmse"] == pytest.approx(0.1767766953)
     assert result["effects"]["final_floor_effect_rmse"] == pytest.approx(0.0)
 
+
+def test_nested_shrinkage_comparison_labels_distinguish_final_and_raw_xgb():
+    from basketball_ai.models.backtest import _rmse
+
+    records = [
+        {
+            "actual": 7.0,
+            "base_prediction": 7.5,
+            "raw_target_prediction": 7.2,
+            "prediction": 7.4,
+            "nested_shrinkage_prediction": 7.3,
+        },
+        {
+            "actual": 6.0,
+            "base_prediction": 6.5,
+            "raw_target_prediction": 6.1,
+            "prediction": 6.4,
+            "nested_shrinkage_prediction": 6.2,
+        },
+    ]
+
+    raw_rmse = _rmse(records, "raw_target_prediction")
+    nested_rmse = _rmse(records, "nested_shrinkage_prediction")
+    final_rmse = _rmse(records, "prediction")
+
+    assert raw_rmse != pytest.approx(final_rmse)
+    assert raw_rmse - nested_rmse != pytest.approx(final_rmse - nested_rmse)
+
 def test_persistence_shrinkage_can_be_disabled_for_raw_diagnostics():
     from basketball_ai.models.strict_production import StrictProductionEnsembleModel
 
