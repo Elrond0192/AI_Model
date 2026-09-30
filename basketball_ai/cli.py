@@ -179,7 +179,7 @@ def mode_bb_rating_calibrate(args: argparse.Namespace) -> None:
         raise RuntimeError("No player_stats rows remain after BB-Rating calibration filters")
     stats = stats.reset_index(drop=True)
     enrichment = {"enabled": False}
-    if args.database_profile:
+    if not args.snapshot_id:
         from basketball_ai.data.postgres_loader import enrich_bb_rating_player_stats
 
         stats, enrichment = enrich_bb_rating_player_stats(
