@@ -123,10 +123,14 @@ def _load_app_state() -> None:
         from basketball_ai.bb_rating import BBRatingEngine
         from basketball_ai.data.postgres_loader import enrich_bb_rating_player_stats
 
-        bb_rating_stats, bb_rating_enrichment = enrich_bb_rating_player_stats(
-            data.get("player_stats"),
-            source_schema=os.environ.get("POSTGRES_SOURCE_SCHEMA", "AI_Source"),
-        )
+        if data_source == "postgres":
+            bb_rating_stats, bb_rating_enrichment = enrich_bb_rating_player_stats(
+                data.get("player_stats"),
+                source_schema=os.environ.get("POSTGRES_SOURCE_SCHEMA", "AI_Source"),
+            )
+        else:
+            bb_rating_stats = data.get("player_stats")
+            bb_rating_enrichment = {"enabled": False, "reason": "non-postgres data source"}
         app_state["bb_rating_engine"] = BBRatingEngine(
             bb_rating_stats,
             data.get("players"),
