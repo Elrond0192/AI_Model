@@ -210,6 +210,41 @@ def test_temporal_compatibility_selects_team_state_before_target():
     assert row["pace"] == 70.0
 
 
+def test_backtest_segment_metrics_expose_promotion_contract():
+    import numpy as np
+    from basketball_ai.models.backtest import _segment_metrics
+
+    records = [
+        {
+            "competition": "RS",
+            "actual": 6.0,
+            "prediction": 6.5,
+            "pre_shrinkage_prediction": 6.8,
+            "persistence_prediction": 5.5,
+            "confidence_low": 5.0,
+            "confidence_high": 7.0,
+        },
+        {
+            "competition": "RS",
+            "actual": 7.0,
+            "prediction": 6.0,
+            "pre_shrinkage_prediction": 6.2,
+            "persistence_prediction": 6.5,
+            "confidence_low": 5.5,
+            "confidence_high": 7.5,
+        },
+    ]
+    segment = _segment_metrics(records, "competition")["RS"]
+
+    assert segment["n"] == 2
+    assert np.isclose(segment["rmse"], np.sqrt(0.5))
+    assert np.isclose(segment["mae"], 0.75)
+    assert np.isclose(segment["bias"], -0.75)
+    assert np.isclose(segment["interval_coverage"], 1.0)
+    assert "model_rmse" in segment
+    assert "model_bias" in segment
+
+
 def test_metric_summary_reports_error_bias_and_coverage():
     from basketball_ai.models.production_training import metric_summary
 
