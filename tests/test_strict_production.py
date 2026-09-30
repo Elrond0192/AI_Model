@@ -438,6 +438,7 @@ def test_production_ablation_diagnostics_separates_floor_and_shrinkage():
             "persistence_prediction": 4.0,
             "raw_xgb_prediction": -1.0,
             "raw_target_prediction": 3.0,
+            "pre_shrinkage_unclipped_prediction": 2.5,
             "pre_shrinkage_prediction": 3.5,
             "persistence_shrinkage_alpha": 0.5,
         },
@@ -446,6 +447,7 @@ def test_production_ablation_diagnostics_separates_floor_and_shrinkage():
             "persistence_prediction": 6.0,
             "raw_xgb_prediction": 1.0,
             "raw_target_prediction": 7.0,
+            "pre_shrinkage_unclipped_prediction": 7.0,
             "pre_shrinkage_prediction": 7.0,
             "persistence_shrinkage_alpha": 1.0,
         },
@@ -457,6 +459,7 @@ def test_production_ablation_diagnostics_separates_floor_and_shrinkage():
     assert result["n"] == 2
     assert result["raw_floor"]["low_count"] == 1
     assert result["raw_floor"]["low_pct"] == pytest.approx(50.0)
+    assert result["pre_shrinkage_floor"]["low_count"] == 1
     assert result["final_floor"]["low_count"] == 0
     assert result["alpha"]["mean"] == pytest.approx(0.75)
 
