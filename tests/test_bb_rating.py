@@ -1,3 +1,15 @@
+"""Tests for the deterministic contextual BB-Rating engine and API."""
+from __future__ import annotations
+
+import pandas as pd
+import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+from basketball_ai.bb_rating.calibration import build_calibration_report
+from basketball_ai.bb_rating.engine import BBRatingEngine
+from basketball_ai.api.routes.bb_rating_v2 import router
+
 def test_net_rtg_diff_zero_is_missing_for_bb_rating():
     import pandas as pd
     from basketball_ai.bb_rating.engine import BBRatingEngine
@@ -28,17 +40,6 @@ def test_net_rtg_diff_zero_is_missing_for_bb_rating():
     assert BBRatingEngine._normalise_value("net_rtg_diff", 3.0) == 3.0
 
 
-"""Tests for the deterministic contextual BB-Rating engine and API."""
-from __future__ import annotations
-
-import pandas as pd
-import pytest
-from fastapi import FastAPI
-from fastapi.testclient import TestClient
-
-from basketball_ai.bb_rating.calibration import build_calibration_report
-from basketball_ai.bb_rating.engine import BBRatingEngine
-from basketball_ai.api.routes.bb_rating_v2 import router
 
 
 def make_stats() -> pd.DataFrame:
