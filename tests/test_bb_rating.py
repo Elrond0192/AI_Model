@@ -149,6 +149,21 @@ def test_missing_metrics_are_reported_and_weight_is_renormalised():
 
 
 
+def test_calibration_uses_position_role_fallback():
+    stats = make_stats().copy()
+    stats.loc[:14, "age"] = 25
+    stats.loc[15:, "age"] = 30
+
+    report = build_calibration_report(
+        {"player_stats": stats, "players": make_players(), "source_contract": "test"}
+    )
+
+    peer_sources = {item["peer_source"] for item in report["peer_sources"]}
+    assert peer_sources == {"position+role"}
+    assert report["validation_signals"]["role_peer_share"] == pytest.approx(1.0)
+    assert report["validation_signals"]["peer_source_shares"]["position+role"] == pytest.approx(1.0)
+
+
 def test_calibration_warns_on_constant_scoring_metric():
     stats = make_stats()
     stats["net_rtg_diff"] = 0.0
