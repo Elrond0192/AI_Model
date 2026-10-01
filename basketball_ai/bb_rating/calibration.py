@@ -95,6 +95,11 @@ def _assign_peer_groups(
         role_counts = ctx.groupby(
             ["position_family", "age_band", "ruolo_combinato"], dropna=False
         ).size().to_dict()
+        role_only_counts = ctx.loc[
+            ctx["ruolo_combinato"].astype(str).str.strip().ne("")
+        ].groupby(
+            ["position_family", "ruolo_combinato"], dropna=False
+        ).size().to_dict()
 
         league, season, competition = context_key
         source_values: list[str] = []
@@ -107,6 +112,7 @@ def _assign_peer_groups(
             role = str(getattr(row, "ruolo_combinato", "") or "").strip()
 
             role_count = role_counts.get((position, age_band, role), 0) if role else 0
+            role_only_count = role_only_counts.get((position, role), 0) if role else 0
             pa_count = pa_counts.get((position, age_band), 0)
             position_count = position_counts.get(position, 0)
             context_count = len(ctx)
@@ -117,6 +123,13 @@ def _assign_peer_groups(
                 peer_key = (
                     f"{league}|{int(season)}|{competition}|position+age+role|"
                     f"{position}|{age_band}|{role}"
+                )
+            elif role and role_only_count >= min_peer_samples:
+                source = "position+role"
+                size = role_only_count
+                peer_key = (
+                    f"{league}|{int(season)}|{competition}|position+role|"
+                    f"{position}|{role}"
                 )
             elif pa_count >= min_peer_samples:
                 source = "position+age"
