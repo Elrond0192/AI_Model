@@ -20,7 +20,7 @@ import pandas as pd
 
 from basketball_ai.bb_rating.semantics import METRIC_SEMANTICS, metric_interpretation
 
-BB_RATING_VERSION = "1.5"
+BB_RATING_VERSION = "1.6"
 
 # Minimum peer population before using a narrower peer definition. The engine
 # deliberately falls back to broader cohorts rather than producing unstable
@@ -76,7 +76,16 @@ class RatingMetricSpec:
 
 BB_RATING_METRICS: tuple[RatingMetricSpec, ...] = (
     RatingMetricSpec("RAPTOR", "raptor_total", "impact", 0.18, description="RAPTOR total"),
-    RatingMetricSpec("LEBRON", "lebron_total", "impact", 0.14, description="LEBRON total"),
+    # LEBRON in the authoritative AdvancedStats implementation is not an
+    # independent signal: LebronTotal = RaptorTotal + positional adjustment.
+    # Keep it explanation-only to avoid double-counting RAPTOR in the composite.
+    RatingMetricSpec(
+        "LEBRON",
+        "lebron_total",
+        "explanation_only",
+        0.0,
+        description="LEBRON total; derived from RAPTOR plus positional adjustment",
+    ),
     RatingMetricSpec("VORP", "vorp", "impact", 0.08, description="Value Over Replacement Player"),
     RatingMetricSpec("PER", "per", "offense", 0.06, description="Player efficiency"),
     RatingMetricSpec("TS%", "ts_pct", "offense", 0.075, description="True Shooting Percentage"),
