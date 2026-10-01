@@ -399,6 +399,7 @@ DECLARE
     clutch_efg_expr text;
     games_started_expr text;
     starter_pct_expr text;
+    scoring_eff_expr text;
 
     role_join text := '';
     onoff_join text := '';
@@ -441,6 +442,7 @@ BEGIN
         role_off_expr := pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'text', ARRAY['ruolooffensivo']);
         role_def_expr := pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'text', ARRAY['ruolodifensivo']);
         role_combo_expr := pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'text', ARRAY['ruolocombinato']);
+        scoring_eff_expr := pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['scoringefficiency','scoring_efficiency']);
 
         on_net_expr := pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['netrtg_on', 'onnetrtg']);
         off_net_expr := pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['netrtg_off', 'offnetrtg']);
@@ -865,7 +867,13 @@ BEGIN
             || pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['ftpct','ft_pct']) || ' AS ft_pct, '
             || pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['plusminus','plus_minus']) || ' AS plus_minus, '
             || pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['pie','per']) || ' AS per, '
-            || 'CASE WHEN ' || pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['tspct','ts_pct']) || ' IS NULL THEN NULL WHEN abs(' || pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['tspct','ts_pct']) || ') > 1.0 THEN ' || pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['tspct','ts_pct']) || ' / 100.0 ELSE ' || pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['tspct','ts_pct']) || ' END AS ts_pct, '
+            || 'CASE WHEN ' || pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['tspct','ts_pct']) || ' IS NULL THEN NULL ' 
+            || 'WHEN abs(' || pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['tspct','ts_pct']) || ') > 1.0 ' 
+            || 'AND NOT (abs(' || pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['tspct','ts_pct']) || ') <= 1.5 ' 
+            || 'AND ' || scoring_eff_expr || ' IS NOT NULL ' 
+            || 'AND abs(' || scoring_eff_expr || ') > 2.0) ' 
+            || 'THEN ' || pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['tspct','ts_pct']) || ' / 100.0 ' 
+            || 'ELSE ' || pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['tspct','ts_pct']) || ' END AS ts_pct, '
             || 'CASE WHEN ' || pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['usgpct','usg_pct']) || ' IS NULL THEN NULL WHEN abs(' || pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['usgpct','usg_pct']) || ') > 1.0 THEN ' || pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['usgpct','usg_pct']) || ' / 100.0 ELSE ' || pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['usgpct','usg_pct']) || ' END AS usg_pct, '
             || pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['bpm']) || ' AS bpm, '
             || pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['vorp']) || ' AS vorp, '
