@@ -105,7 +105,9 @@ def test_ai_source_onoff_matches_native_player_team_id():
     assert "array['gamesstarted', 'games_started', 'starts']" in sql
     assert "array['games', 'gamesplayed']" in sql
     assert "least(1.0, greatest(0.0, coalesce(%2$s, 0) / %1$s))" in sql
-    assert "LEFT JOIN LATERAL" in sql
+    assert "LEFT JOIN LATERAL" not in sql
+    assert "oo_exact" in sql
+    assert "oo_fallback" in sql
     assert "q.source_team_id IS NULL" in sql
     assert "ORDER BY" in sql
     # AdvancedStatsOnOffCourt is authoritative for On/Off-specific metrics;
