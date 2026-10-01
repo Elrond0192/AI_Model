@@ -21,8 +21,8 @@ dimensions are:
 
 | Dimension | Main evidence |
 |---|---|
-| Impact | RAPTOR total, LEBRON total, VORP |
-| Offense | PER, TS%, scoring efficiency, AST%, TOV% |
+| Impact | RAPTOR total, VORP |
+| Offense | PER, TS%, AST%, TOV% |
 | Defense | RAPTOR defensive component, DBPM, net rating differential, STL%, BLK% |
 | Versatility | REB%, hustle, foul-drawing rate |
 
@@ -133,7 +133,7 @@ Response shape:
   "peer_group": {},
   "quality": "high",
   "metric_coverage": 0.93,
-  "bb_rating_version": "1.2"
+  "bb_rating_version": "1.6"
 }
 
 WordPress remains a pure consumer: no percentile, peer selection or BB-Rating
@@ -141,7 +141,7 @@ logic belongs in PHP.
 
 ## Current status
 
-This is **FASE I of the BB-Rating layer** (version 1.2). The implementation is deterministic
+This is **FASE I of the BB-Rating layer** (version 1.6). The implementation is deterministic
 and API-ready, but the weights and peer thresholds must still be validated
 against real production data before treating the 1–100 score as the final
 public methodology.
