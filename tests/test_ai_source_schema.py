@@ -115,9 +115,13 @@ def test_ai_source_onoff_matches_native_player_team_id():
     assert "on_net_expr := '(coalesce(oo.on_net_rtg, " in sql
     assert "off_net_expr := '(coalesce(oo.off_net_rtg, " in sql
     assert "net_diff_expr := '(coalesce(oo.net_rtg_diff, " in sql
+    assert "net_diff_expr := format(" in sql
+    assert "THEN (%1$s) - (%2$s) ELSE (%3$s) END)" in sql
+    assert "ortg_diff_expr := format(" in sql
     assert "ortg_on_expr := '(coalesce(oo.ortg_on, " in sql
     assert "ortg_off_expr := '(coalesce(oo.ortg_off, " in sql
     assert "ortg_diff_expr := '(coalesce(oo.ortg_diff, " in sql
+    assert "scoring_eff_expr text" in sql
     # Optional JOIN fragments must be separated so "ON true" cannot become
     # the invalid identifier "trueleft" when another optional source follows.
     assert "|| chr(10)" in sql
