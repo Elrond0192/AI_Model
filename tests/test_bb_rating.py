@@ -99,6 +99,18 @@ def test_bb_rating_is_deterministic_and_contextual():
         assert payload_metrics[key]["interpretation"]
 
 
+def test_position_role_fallback_precedes_position_age_when_role_group_is_large():
+    stats = make_stats().copy()
+    stats.loc[:14, "age"] = 25
+    stats.loc[15:, "age"] = 30
+
+    engine = BBRatingEngine(stats, make_players())
+    result = engine.rate_player("G1", league="ITA1", season=2025, phase="RS")
+
+    assert result.peer_group["definition"] == "position+role"
+    assert result.peer_group["sample_size"] == 60
+
+
 def test_usg_is_explanatory_but_does_not_change_score():
     stats = make_stats()
     engine_a = BBRatingEngine(stats, make_players())
@@ -172,7 +184,7 @@ def test_api_player_endpoint():
     assert response.status_code == 200
     payload = response.json()
     assert 1 <= payload["bb_rating"] <= 100
-    assert payload["bb_rating_version"] == "1.1"
+    assert payload["bb_rating_version"] == "1.2"
     assert payload["peer_group"]["definition"] == "position+age+role"
     assert payload["metrics"]["USG%"]["percentile"] is not None
 
@@ -192,8 +204,8 @@ def test_bb_rating_calibration_reuses_peer_and_percentile_contract():
         {"player_stats": stats, "players": make_players(), "source_contract": "test"}
     )
 
-    assert report["calibration_version"] == "1.1"
-    assert report["bb_rating_version"] == "1.1"
+    assert report["calibration_version"] == "1.2"
+    assert report["bb_rating_version"] == "1.2"
     assert report["dataset"]["rows"] == 120
     assert report["score_distribution"]["n"] == 120
     assert report["validation_signals"]["registry_columns_ok"] is True
