@@ -1,3 +1,33 @@
+def test_net_rtg_diff_zero_is_missing_for_bb_rating():
+    import pandas as pd
+    from basketball_ai.bb_rating.engine import BBRatingEngine
+
+    frame = pd.DataFrame([
+        {
+            "league_key": "ITA1",
+            "season": 2025,
+            "competition": "RS",
+            "player_global_id": "p1",
+            "position": "PG",
+            "age": 25,
+            "ruolo_combinato": "",
+            "net_rtg_diff": 0.0,
+        },
+        {
+            "league_key": "ITA1",
+            "season": 2025,
+            "competition": "RS",
+            "player_global_id": "p2",
+            "position": "PG",
+            "age": 25,
+            "ruolo_combinato": "",
+            "net_rtg_diff": 3.0,
+        },
+    ])
+    assert pd.isna(BBRatingEngine._normalise_value("net_rtg_diff", 0.0))
+    assert BBRatingEngine._normalise_value("net_rtg_diff", 3.0) == 3.0
+
+
 """Tests for the deterministic contextual BB-Rating engine and API."""
 from __future__ import annotations
 
@@ -219,8 +249,8 @@ def test_bb_rating_calibration_reuses_peer_and_percentile_contract():
         {"player_stats": stats, "players": make_players(), "source_contract": "test"}
     )
 
-    assert report["calibration_version"] == "1.2"
-    assert report["bb_rating_version"] == "1.2"
+    assert report["calibration_version"] == "1.3"
+    assert report["bb_rating_version"] == "1.3"
     assert report["dataset"]["rows"] == 120
     assert report["score_distribution"]["n"] == 120
     assert report["validation_signals"]["registry_columns_ok"] is True
