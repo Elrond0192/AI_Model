@@ -108,6 +108,14 @@ def test_ai_source_onoff_matches_native_player_team_id():
     assert "LEFT JOIN LATERAL" in sql
     assert "q.source_team_id IS NULL" in sql
     assert "ORDER BY" in sql
+    # AdvancedStatsOnOffCourt is authoritative for On/Off-specific metrics;
+    # direct player-table columns are only fallback when the On/Off row is absent.
+    assert "on_net_expr := '(coalesce(oo.on_net_rtg, " in sql
+    assert "off_net_expr := '(coalesce(oo.off_net_rtg, " in sql
+    assert "net_diff_expr := '(coalesce(oo.net_rtg_diff, " in sql
+    assert "ortg_on_expr := '(coalesce(oo.ortg_on, " in sql
+    assert "ortg_off_expr := '(coalesce(oo.ortg_off, " in sql
+    assert "ortg_diff_expr := '(coalesce(oo.ortg_diff, " in sql
 
 
 
