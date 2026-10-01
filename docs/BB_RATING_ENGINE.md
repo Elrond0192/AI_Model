@@ -32,22 +32,21 @@ validation.
 
 ## Contextual peer population
 
-The percentile population is scoped first to:
+The primary percentile population is:
 
 league + season + competition
 
-The engine then narrows the comparison, when enough players exist, in this
-order:
+When that context has at least 25 rows, the full requested context is used for
+every scoring percentile. The 25-row threshold is a quality threshold, not a
+reason to substitute a different comparison universe.
 
-1. position family + age band + observed combined role;
-2. position family + observed combined role;
-3. position family + age band;
-4. position family;
-5. league + season + competition;
-6. limited context when the context itself is small.
+For smaller contexts, the engine keeps the same league/season/competition
+population down to 10 rows and reports lower quality. Below 10 rows the result
+is explicitly marked limited_context.
 
-This prevents a guard from being directly compared with every player in the
-database when a statistically useful peer population exists.
+Position family, age band and observed combined role remain part of the
+peer-group metadata and explanation layer, but in v1.8 they do not replace the
+primary competition population used for scoring.
 
 Age bands are 18–21, 22–25, 26–29, 30–33 and 34+.
 
@@ -141,7 +140,7 @@ logic belongs in PHP.
 
 ## Current status
 
-This is **FASE I of the BB-Rating layer** (version 1.7). The implementation is deterministic
+This is **FASE I of the BB-Rating layer** (version 1.8). The implementation is deterministic
 and API-ready, but the weights and peer thresholds must still be validated
 against real production data before treating the 1–100 score as the final
 public methodology.
@@ -151,10 +150,10 @@ leagues/seasons, position and age groups, missing-metric coverage and whether
 the explanations agree with the underlying percentiles.
 
 
-## Calibration v1.2
+## Calibration v1.8
 
 The calibration layer is diagnostic-only and does not train an ML model. It uses the
-same peer-selection hierarchy and empirical percentile convention as BBRatingEngine,
+the same primary-context peer-selection contract and empirical percentile convention as BBRatingEngine,
 but evaluates the complete real-data frame in batch. The BB-Rating reads the canonical
 observed contract; On/Off fields are resolved upstream by ai_source_full.sql.
 
