@@ -20,7 +20,7 @@ import pandas as pd
 
 from basketball_ai.bb_rating.semantics import METRIC_SEMANTICS, metric_interpretation
 
-BB_RATING_VERSION = "1.6"
+BB_RATING_VERSION = "1.7"
 
 # Minimum peer population before using a narrower peer definition. The engine
 # deliberately falls back to broader cohorts rather than producing unstable
@@ -113,7 +113,16 @@ BB_RATING_METRICS: tuple[RatingMetricSpec, ...] = (
         description="Turnover Percentage",
     ),
     RatingMetricSpec("RAPTOR_DEF", "raptor_def", "defense", 0.09, description="RAPTOR defensive component"),
-    RatingMetricSpec("DBPM", "dbpm", "defense", 0.06, description="Defensive Box Plus/Minus"),
+    # DBPM is an input component of RAPTOR_DEF in AdvancedStats. Keeping it
+    # scored alongside RAPTOR_DEF would count the same box-defense signal twice.
+    # Keep DBPM available for explanation, but not in the composite.
+    RatingMetricSpec(
+        "DBPM",
+        "dbpm",
+        "explanation_only",
+        0.0,
+        description="Defensive Box Plus/Minus; component of RAPTOR_DEF",
+    ),
     RatingMetricSpec("NET_RTG_DIFF", "net_rtg_diff", "defense", 0.03, description="On/off net rating differential"),
     RatingMetricSpec("STL%", "stl_pct", "defense", 0.01, description="Steal Percentage"),
     RatingMetricSpec("BLK%", "blk_pct", "defense", 0.01, description="Block Percentage"),
