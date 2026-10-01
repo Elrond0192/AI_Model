@@ -701,14 +701,7 @@ BEGIN
             ortg_off_expr := '(coalesce(oo_exact.ortg_off, oo_fallback.ortg_off, ' || ortg_off_expr || '))';
             ortg_diff_expr := '(coalesce(oo_exact.ortg_diff, oo_fallback.ortg_diff, ' || ortg_diff_expr || '))';
 
-            -- The differential is implied by the resolved On/Off pair.
-            -- Derive it from that same resolved context whenever both sides
-            -- are available; use the native differential only otherwise.
-            net_diff_expr := format(
-                '(CASE WHEN (%1$s) IS NOT NULL AND (%2$s) IS NOT NULL '
-                || 'THEN (%1$s) - (%2$s) ELSE NULL::numeric END)',
-                on_net_expr, off_net_expr
-            );
+            net_diff_expr := '(coalesce(oo_exact.net_rtg_diff, oo_fallback.net_rtg_diff, ' || net_diff_expr || '))';
             ortg_diff_expr := format(
                 '(CASE WHEN (%1$s) IS NOT NULL AND (%2$s) IS NOT NULL '
                 || 'THEN (%1$s) - (%2$s) ELSE (%3$s) END)',
