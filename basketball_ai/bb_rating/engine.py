@@ -20,7 +20,7 @@ import pandas as pd
 
 from basketball_ai.bb_rating.semantics import METRIC_SEMANTICS, metric_interpretation
 
-BB_RATING_VERSION = "1.4"
+BB_RATING_VERSION = "1.5"
 
 # Minimum peer population before using a narrower peer definition. The engine
 # deliberately falls back to broader cohorts rather than producing unstable
@@ -80,12 +80,16 @@ BB_RATING_METRICS: tuple[RatingMetricSpec, ...] = (
     RatingMetricSpec("VORP", "vorp", "impact", 0.08, description="Value Over Replacement Player"),
     RatingMetricSpec("PER", "per", "offense", 0.06, description="Player efficiency"),
     RatingMetricSpec("TS%", "ts_pct", "offense", 0.075, description="True Shooting Percentage"),
+    # Scoring Efficiency is mathematically derived from TS% in the
+    # authoritative AdvancedStats formula (ScoringEfficiency = 2 * TS%).
+    # Keep it explanation-only so the same shooting-efficiency signal is not
+    # double-counted in the composite rating.
     RatingMetricSpec(
         "SCORING_EFFICIENCY",
         "scoring_efficiency",
-        "offense",
-        0.075,
-        description="Scoring efficiency index",
+        "explanation_only",
+        0.0,
+        description="Scoring efficiency index; derived from TS%",
     ),
     RatingMetricSpec("AST%", "ast_pct", "offense", 0.045, description="Assist Percentage"),
     # USG% is an explicit role/involvement signal. It is deliberately excluded
