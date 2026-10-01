@@ -179,6 +179,16 @@ def _metric_percentiles(
     spec: RatingMetricSpec,
 ) -> tuple[pd.Series, pd.Series]:
     values = _normalise_series(frame[spec.source_column], spec.source_column)
+    if spec.key == "NET_RTG_DIFF":
+        on = pd.to_numeric(frame.get("on_net_rtg"), errors="coerce")
+        off = pd.to_numeric(frame.get("off_net_rtg"), errors="coerce")
+        complete_onoff = (
+            on.notna()
+            & off.notna()
+            & on.abs().gt(1e-12)
+            & off.abs().gt(1e-12)
+        )
+        values = values.where(complete_onoff)
     valid = values.notna()
     valid_n = (
         values.where(valid)
