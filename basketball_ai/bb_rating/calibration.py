@@ -26,7 +26,7 @@ from basketball_ai.bb_rating.engine import (
 )
 from basketball_ai.bb_rating.semantics import METRIC_SEMANTICS
 
-CALIBRATION_VERSION = "1.2"
+CALIBRATION_VERSION = "1.3"
 
 
 @dataclass(frozen=True)
@@ -37,6 +37,12 @@ class BBRatingCalibrationConfig:
 
 def _normalise_series(series: pd.Series, column: str) -> pd.Series:
     values = pd.to_numeric(series, errors="coerce").replace([np.inf, -np.inf], np.nan)
+    # Canonical AI_Source stores unavailable NET_RTG_DIFF as 0 to preserve
+    # the Prediction Model's numeric contract. BB-Rating treats that value as
+    # missing because the audited authoritative On/Off source has no genuine
+    # zero differential in 2018-2025.
+    if column == "net_rtg_diff":
+        values = values.mask(values.abs() < 1e-12)
     if column in RATE_COLUMNS:
         values = values.mask(values.abs() > 1.0, values / 100.0)
     return values.astype(float)
