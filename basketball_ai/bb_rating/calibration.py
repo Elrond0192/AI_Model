@@ -26,7 +26,7 @@ from basketball_ai.bb_rating.engine import (
 )
 from basketball_ai.bb_rating.semantics import METRIC_SEMANTICS
 
-CALIBRATION_VERSION = "1.3"
+CALIBRATION_VERSION = "1.4"
 
 
 @dataclass(frozen=True)
@@ -40,7 +40,8 @@ def _normalise_series(series: pd.Series, column: str) -> pd.Series:
     # Canonical AI_Source stores unavailable NET_RTG_DIFF as 0 to preserve
     # the Prediction Model's numeric contract. BB-Rating treats that value as
     # missing because the audited authoritative On/Off source has no genuine
-    # zero differential in 2018-2025.
+    # zero differential in 2018-2025. OnNetRtg/OffNetRtg themselves may
+    # legitimately be exactly zero and must not be masked.
     if column == "net_rtg_diff":
         values = values.mask(values.abs() < 1e-12)
     if column in RATE_COLUMNS:
@@ -182,12 +183,7 @@ def _metric_percentiles(
     if spec.key == "NET_RTG_DIFF":
         on = pd.to_numeric(frame.get("on_net_rtg"), errors="coerce")
         off = pd.to_numeric(frame.get("off_net_rtg"), errors="coerce")
-        complete_onoff = (
-            on.notna()
-            & off.notna()
-            & on.abs().gt(1e-12)
-            & off.abs().gt(1e-12)
-        )
+        complete_onoff = on.notna() & off.notna()
         values = values.where(complete_onoff)
     valid = values.notna()
     valid_n = (
