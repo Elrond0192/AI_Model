@@ -246,7 +246,7 @@ def test_api_player_endpoint():
     assert response.status_code == 200
     payload = response.json()
     assert 1 <= payload["bb_rating"] <= 100
-    assert payload["bb_rating_version"] == "1.4"
+    assert payload["bb_rating_version"] == "1.5"
     assert payload["peer_group"]["definition"] == "position+age+role"
     assert payload["metrics"]["USG%"]["percentile"] is not None
 
@@ -267,7 +267,7 @@ def test_bb_rating_calibration_reuses_peer_and_percentile_contract():
     )
 
     assert report["calibration_version"] == "1.3"
-    assert report["bb_rating_version"] == "1.4"
+    assert report["bb_rating_version"] == "1.5"
     assert report["dataset"]["rows"] == 120
     assert report["score_distribution"]["n"] == 120
     assert report["validation_signals"]["registry_columns_ok"] is True
