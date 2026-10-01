@@ -1069,7 +1069,7 @@ BEGIN
              coalesce(ruolo_combinato,'''') AS ruolo_combinato,
              coalesce(on_net_rtg,0) AS on_net_rtg,
              coalesce(off_net_rtg,0) AS off_net_rtg,
-             net_rtg_diff AS net_rtg_diff,
+             coalesce(net_rtg_diff,0) AS net_rtg_diff,
              competition,
              spm, obpm, dbpm, gm_sc, fic, ows, dws,
              raptor_off, raptor_def, raptor_total,
