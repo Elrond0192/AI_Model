@@ -97,7 +97,7 @@ def test_ai_source_onoff_matches_native_player_team_id():
     assert "select distinct on (" in sql
     assert "source_team_id" in sql
     assert "array['teamid', 'idteam']" in sql
-    assert "pg_temp.ai_id_key(oo.source_team_id)" in sql
+    assert "pg_temp.ai_id_key(oo_exact.source_team_id)" in sql
     assert "pg_temp.ai_id_key(%16$s)" in sql
     assert "                comp_expr,\n                team_local_expr\n            );" in sql
     assert "onoff_team_source_expr" not in sql
@@ -112,15 +112,15 @@ def test_ai_source_onoff_matches_native_player_team_id():
     assert "ORDER BY" in sql
     # AdvancedStatsOnOffCourt is authoritative for On/Off-specific metrics;
     # direct player-table columns are only fallback when the On/Off row is absent.
-    assert "on_net_expr := '(coalesce(oo.on_net_rtg, " in sql
-    assert "off_net_expr := '(coalesce(oo.off_net_rtg, " in sql
-    assert "net_diff_expr := '(coalesce(oo.net_rtg_diff, " in sql
+    assert "on_net_expr := '(coalesce(oo_exact.on_net_rtg, " in sql
+    assert "off_net_expr := '(coalesce(oo_exact.off_net_rtg, " in sql
+    assert "net_diff_expr := '(coalesce(oo_exact.net_rtg_diff, " in sql
     assert "net_diff_expr := format(" in sql
     assert "THEN (%1$s) - (%2$s) ELSE (%3$s) END)" in sql
     assert "ortg_diff_expr := format(" in sql
-    assert "ortg_on_expr := '(coalesce(oo.ortg_on, " in sql
-    assert "ortg_off_expr := '(coalesce(oo.ortg_off, " in sql
-    assert "ortg_diff_expr := '(coalesce(oo.ortg_diff, " in sql
+    assert "ortg_on_expr := '(coalesce(oo_exact.ortg_on, " in sql
+    assert "ortg_off_expr := '(coalesce(oo_exact.ortg_off, " in sql
+    assert "ortg_diff_expr := '(coalesce(oo_exact.ortg_diff, " in sql
     assert "scoring_eff_expr text" in sql
     # Optional JOIN fragments must be separated so "ON true" cannot become
     # the invalid identifier "trueleft" when another optional source follows.
