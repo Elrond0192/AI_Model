@@ -11,9 +11,6 @@ from basketball_ai.bb_rating.engine import BBRatingEngine
 from basketball_ai.api.routes.bb_rating_v2 import router
 
 def test_net_rtg_diff_zero_is_missing_for_bb_rating():
-    import pandas as pd
-    from basketball_ai.bb_rating.engine import BBRatingEngine
-
     frame = pd.DataFrame([
         {
             "league_key": "ITA1",
@@ -38,6 +35,25 @@ def test_net_rtg_diff_zero_is_missing_for_bb_rating():
     ])
     assert pd.isna(BBRatingEngine._normalise_value("net_rtg_diff", 0.0))
     assert BBRatingEngine._normalise_value("net_rtg_diff", 3.0) == 3.0
+
+
+def test_net_rtg_diff_zero_component_remains_valid():
+    stats = make_stats()
+    stats["on_net_rtg"] = 1.0
+    stats["off_net_rtg"] = -2.0
+    stats["net_rtg_diff"] = 3.0
+
+    # Exact zero in one On/Off component is a valid observation, not a
+    # missing-value marker. The player remains eligible for NET_RTG_DIFF.
+    stats.loc[59, "on_net_rtg"] = 0.0
+    stats.loc[59, "off_net_rtg"] = -3.0
+    stats.loc[59, "net_rtg_diff"] = 3.0
+
+    engine = BBRatingEngine(stats, make_players())
+    result = engine.rate_player("G60", league="ITA1", season=2025, phase="RS")
+
+    assert result.metrics["NET_RTG_DIFF"].value == 3.0
+    assert result.metrics["NET_RTG_DIFF"].percentile is not None
 
 
 
@@ -230,7 +246,7 @@ def test_api_player_endpoint():
     assert response.status_code == 200
     payload = response.json()
     assert 1 <= payload["bb_rating"] <= 100
-    assert payload["bb_rating_version"] == "1.2"
+    assert payload["bb_rating_version"] == "1.4"
     assert payload["peer_group"]["definition"] == "position+age+role"
     assert payload["metrics"]["USG%"]["percentile"] is not None
 
@@ -251,7 +267,7 @@ def test_bb_rating_calibration_reuses_peer_and_percentile_contract():
     )
 
     assert report["calibration_version"] == "1.3"
-    assert report["bb_rating_version"] == "1.3"
+    assert report["bb_rating_version"] == "1.4"
     assert report["dataset"]["rows"] == 120
     assert report["score_distribution"]["n"] == 120
     assert report["validation_signals"]["registry_columns_ok"] is True
