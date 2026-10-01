@@ -290,7 +290,14 @@ def _role_peer_population_diagnostics(
         }
 
     counts = valid.groupby(group_cols, dropna=False).size().rename("n")
+    role_only = valid.loc[
+        valid["ruolo_combinato"].astype(str).str.strip().ne("")
+    ].groupby(
+        ["league_key", "season", "competition", "position_family", "ruolo_combinato"],
+        dropna=False,
+    ).size().rename("n")
     thresholds = {}
+    role_only_thresholds = {}
     for threshold in (5, 10, 15, 20, 25):
         eligible = counts.ge(threshold)
         thresholds[str(threshold)] = {
@@ -300,6 +307,21 @@ def _role_peer_population_diagnostics(
             "share_rows": (
                 float(counts.loc[eligible].sum() / len(valid))
                 if len(valid) else 0.0
+            ),
+        }
+        role_eligible = role_only.ge(threshold)
+        role_only_thresholds[str(threshold)] = {
+            "groups": int(role_eligible.sum()),
+            "share_groups": (
+                float(role_eligible.mean()) if len(role_only) else 0.0
+            ),
+            "rows_eligible": (
+                int(role_only.loc[role_eligible].sum())
+                if role_eligible.any() else 0
+            ),
+            "share_rows": (
+                float(role_only.loc[role_eligible].sum() / len(valid))
+                if len(valid) and role_eligible.any() else 0.0
             ),
         }
 
@@ -314,6 +336,14 @@ def _role_peer_population_diagnostics(
             "max": int(counts.max()),
         },
         "thresholds": thresholds,
+        "role_only_groups": int(len(role_only)),
+        "role_only_group_size": {
+            "mean": float(role_only.mean()) if len(role_only) else None,
+            "median": float(role_only.median()) if len(role_only) else None,
+            "p90": float(role_only.quantile(0.90)) if len(role_only) else None,
+            "max": int(role_only.max()) if len(role_only) else None,
+        },
+        "role_only_thresholds": role_only_thresholds,
         "configured_min_peer_samples": int(min_peer_samples),
     }
 
@@ -556,11 +586,25 @@ def _markdown(report: dict[str, Any]) -> str:
         f"- Distinct position+age+role groups: **{role_diag['distinct_role_groups']}**",
         f"- Median role-group size: **{role_diag['group_size']['median']:.1f}**",
         f"- P90 role-group size: **{role_diag['group_size']['p90']:.1f}**",
+        f"- Position+role groups (age ignored): **{role_diag['role_only_groups']}**",
+        f"- Median position+role group size: **{role_diag['role_only_group_size']['median']:.1f}**"
+        if role_diag["role_only_group_size"]["median"] is not None else
+        "- Median position+role group size: **—**",
         "",
-        "| Minimum group size | Groups | Rows eligible |",
+        "| Minimum age+role group size | Groups | Rows eligible |",
         "|---:|---:|---:|",
     ]
     for threshold, row in role_diag["thresholds"].items():
+        lines.append(
+            f"| {threshold} | {row['groups']} ({row['share_groups']:.1%}) | "
+            f"{row['rows_eligible']} ({row['share_rows']:.1%}) |"
+        )
+    lines += [
+        "",
+        "| Minimum position+role group size | Groups | Rows eligible |",
+        "|---:|---:|---:|",
+    ]
+    for threshold, row in role_diag["role_only_thresholds"].items():
         lines.append(
             f"| {threshold} | {row['groups']} ({row['share_groups']:.1%}) | "
             f"{row['rows_eligible']} ({row['share_rows']:.1%}) |"
@@ -794,6 +838,10 @@ def build_calibration_report(
         and row["zero_pct_available"] is not None
         and row["zero_pct_available"] >= 0.99
     ]
+    role_peer_share = (
+        source_by_name.get("position+age+role", 0.0)
+        + source_by_name.get("position+role", 0.0)
+    ) if len(frame) else 0.0
     report["validation_signals"] = {
         "registry_columns_ok": scoring_registry_ok,
         "scoring_registry_ok": scoring_registry_ok,
@@ -807,11 +855,11 @@ def build_calibration_report(
             float(frame["_bb_rating"].notna().mean()) if len(frame) else 0.0
         ),
         "peer_fallback_share": (
-            float(1.0 - source_by_name.get("position+age+role", 0.0))
+            float(1.0 - role_peer_share)
             if len(frame) else 1.0
         ),
         "peer_source_shares": source_by_name,
-        "role_peer_share": source_by_name.get("position+age+role", 0.0),
+        "role_peer_share": role_peer_share,
         "limited_context_share": source_by_name.get("limited_context", 0.0),
         "constant_scoring_metrics": constant_scoring_metrics,
         "explainable_metric_count": int(
