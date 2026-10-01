@@ -26,7 +26,7 @@ from basketball_ai.bb_rating.engine import (
 )
 from basketball_ai.bb_rating.semantics import METRIC_SEMANTICS
 
-CALIBRATION_VERSION = "1.1"
+CALIBRATION_VERSION = "1.2"
 
 
 @dataclass(frozen=True)
