@@ -123,6 +123,10 @@ def test_ai_source_onoff_matches_native_player_team_id():
     assert "|| onoff_join" in sql
     assert "|| clutch_join" in sql
     assert "|| boxscore_join" in sql
+    assert "ai_role_join_end" in sql
+    assert "ai_onoff_join_end" in sql
+    assert "ai_clutch_join_end" in sql
+    assert "ai_boxscore_join_end" in sql
 
 
 
