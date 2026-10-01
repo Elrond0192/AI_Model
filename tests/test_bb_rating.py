@@ -228,6 +228,17 @@ def test_missing_context_raises():
         engine.rate_player("G60", league="ESP1", season=2025, phase="RS")
 
 
+def test_scoring_efficiency_is_explanation_only():
+    stats = make_stats()
+    engine = BBRatingEngine(stats, make_players())
+    result = engine.rate_player("G60", league="ITA1", season=2025, phase="RS")
+
+    metric = result.metrics["SCORING_EFFICIENCY"]
+    assert metric.weight == pytest.approx(0.0)
+    assert metric.percentile is not None
+    assert result.metrics["TS%"].percentile is not None
+
+
 def test_api_player_endpoint():
     app = FastAPI()
     app.state.bb_rating_engine = BBRatingEngine(make_stats(), make_players())
@@ -266,7 +277,7 @@ def test_bb_rating_calibration_reuses_peer_and_percentile_contract():
         {"player_stats": stats, "players": make_players(), "source_contract": "test"}
     )
 
-    assert report["calibration_version"] == "1.3"
+    assert report["calibration_version"] == "1.5"
     assert report["bb_rating_version"] == "1.5"
     assert report["dataset"]["rows"] == 120
     assert report["score_distribution"]["n"] == 120
