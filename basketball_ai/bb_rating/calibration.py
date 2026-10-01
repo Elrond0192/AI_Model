@@ -287,6 +287,15 @@ def _role_peer_population_diagnostics(
                 "max": None,
             },
             "thresholds": {},
+            "role_only_groups": 0,
+            "role_only_group_size": {
+                "mean": None,
+                "median": None,
+                "p90": None,
+                "max": None,
+            },
+            "role_only_thresholds": {},
+            "configured_min_peer_samples": int(min_peer_samples),
         }
 
     counts = valid.groupby(group_cols, dropna=False).size().rename("n")
@@ -499,6 +508,14 @@ def _diagnostic_warnings(report: dict[str, Any]) -> list[str]:
             warnings.append(
                 f"{metric['metric']}: la distribuzione dei percentili è quasi costante; "
                 "il contributo al BB-Rating è attualmente poco discriminante."
+            )
+
+    net_diff = next((m for m in report["metrics"] if m["metric"] == "NET_RTG_DIFF"), None)
+    if net_diff and net_diff["rating_enabled"] and net_diff["zero_pct_available"] is not None:
+        if net_diff["zero_pct_available"] >= 0.30:
+            warnings.append(
+                "NET_RTG_DIFF: oltre il 30% dei valori disponibili è esattamente zero; "
+                "verificare la provenienza On/Off prima di consolidare il peso."
             )
 
     score = report["score_distribution"]
