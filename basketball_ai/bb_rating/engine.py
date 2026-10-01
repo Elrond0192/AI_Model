@@ -510,6 +510,16 @@ class BBRatingEngine:
                 continue
 
             raw_value = self._normalise_value(spec.source_column, player.get(spec.source_column))
+            if spec.key == "NET_RTG_DIFF":
+                player_on = pd.to_numeric(player.get("on_net_rtg"), errors="coerce")
+                player_off = pd.to_numeric(player.get("off_net_rtg"), errors="coerce")
+                if (
+                    not np.isfinite(player_on)
+                    or not np.isfinite(player_off)
+                    or abs(float(player_on)) < 1e-12
+                    or abs(float(player_off)) < 1e-12
+                ):
+                    raw_value = float("nan")
             if not np.isfinite(raw_value):
                 evidences.append(
                     MetricEvidence(
@@ -522,6 +532,16 @@ class BBRatingEngine:
             peer_values = peer[spec.source_column].map(
                 lambda value: self._normalise_value(spec.source_column, value)
             )
+            if spec.key == "NET_RTG_DIFF":
+                peer_on = pd.to_numeric(peer.get("on_net_rtg"), errors="coerce")
+                peer_off = pd.to_numeric(peer.get("off_net_rtg"), errors="coerce")
+                complete_onoff = (
+                    peer_on.notna()
+                    & peer_off.notna()
+                    & peer_on.abs().gt(1e-12)
+                    & peer_off.abs().gt(1e-12)
+                )
+                peer_values = peer_values.where(complete_onoff)
             valid = peer_values.replace([np.inf, -np.inf], np.nan).dropna()
             percentile = self._percentile(valid, raw_value, spec.direction)
             evidences.append(
