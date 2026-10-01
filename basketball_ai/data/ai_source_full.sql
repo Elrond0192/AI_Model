@@ -582,19 +582,29 @@ BEGIN
             WHERE n.nspname='Analisi' AND c.relname=opt_table
               AND c.relkind IN ('r','p')
         ) THEN
+            -- Set-based On/Off resolution:
+            -- 1) exact TeamId match is preferred;
+            -- 2) a team-null/aggregate row is retained as fallback;
+            -- 3) unlike the previous LATERAL implementation, the source table
+            --    is scanned set-wise instead of once per AdvancedStats row.
             onoff_join := format(
-                'LEFT JOIN LATERAL (
-                    SELECT
-                        q.season,
-                        q.source_player_id,
-                        q.source_team_id,
-                        q.competition,
-                        q.on_net_rtg,
-                        q.off_net_rtg,
-                        q.net_rtg_diff,
-                        q.ortg_on,
-                        q.ortg_off,
-                        q.ortg_diff
+                'LEFT JOIN (
+                    SELECT DISTINCT ON (
+                        season,
+                        source_player_id,
+                        source_team_id,
+                        competition
+                    )
+                           season,
+                           source_player_id,
+                           source_team_id,
+                           competition,
+                           on_net_rtg,
+                           off_net_rtg,
+                           net_rtg_diff,
+                           ortg_on,
+                           ortg_off,
+                           ortg_diff
                     FROM (
                         SELECT
                             %1$s AS season,
@@ -610,27 +620,62 @@ BEGIN
                         FROM "Analisi".%11$I oo0
                         WHERE %1$s IS NOT NULL
                           AND %2$s IS NOT NULL
+                          AND %3$s IS NOT NULL
                     ) q
-                    WHERE q.season = %12$s
-                      AND pg_temp.ai_id_key(q.source_player_id)
-                          = pg_temp.ai_id_key(%13$s)
-                      AND q.competition = %14$s
-                      AND (
-                           q.source_team_id IS NULL
-                           OR pg_temp.ai_id_key(q.source_team_id)
-                              = pg_temp.ai_id_key(%15$s)
-                      )
                     ORDER BY
-                        CASE
-                            WHEN q.source_team_id IS NOT NULL
-                             AND pg_temp.ai_id_key(q.source_team_id)
-                                 = pg_temp.ai_id_key(%15$s)
-                            THEN 0
-                            ELSE 1
-                        END,
-                        CASE WHEN q.source_team_id IS NULL THEN 1 ELSE 0 END
-                    LIMIT 1
-                ) oo ON true',
+                        season,
+                        source_player_id,
+                        source_team_id,
+                        competition
+                ) oo_exact
+                  ON oo_exact.season = %12$s
+                 AND pg_temp.ai_id_key(oo_exact.source_player_id)
+                     = pg_temp.ai_id_key(%13$s)
+                 AND oo_exact.competition = %14$s
+                 AND pg_temp.ai_id_key(%15$s) IS NOT NULL
+                 AND pg_temp.ai_id_key(oo_exact.source_team_id)
+                     = pg_temp.ai_id_key(%15$s)
+                LEFT JOIN (
+                    SELECT DISTINCT ON (
+                        season,
+                        source_player_id,
+                        competition
+                    )
+                           season,
+                           source_player_id,
+                           competition,
+                           on_net_rtg,
+                           off_net_rtg,
+                           net_rtg_diff,
+                           ortg_on,
+                           ortg_off,
+                           ortg_diff
+                    FROM (
+                        SELECT
+                            %1$s AS season,
+                            %2$s AS source_player_id,
+                            %3$s AS source_team_id,
+                            %4$s AS competition,
+                            %5$s AS on_net_rtg,
+                            %6$s AS off_net_rtg,
+                            %7$s AS net_rtg_diff,
+                            %8$s AS ortg_on,
+                            %9$s AS ortg_off,
+                            %10$s AS ortg_diff
+                        FROM "Analisi".%11$I oo0
+                        WHERE %1$s IS NOT NULL
+                          AND %2$s IS NOT NULL
+                          AND %3$s IS NULL
+                    ) q
+                    ORDER BY
+                        season,
+                        source_player_id,
+                        competition
+                ) oo_fallback
+                  ON oo_fallback.season = %12$s
+                 AND pg_temp.ai_id_key(oo_fallback.source_player_id)
+                     = pg_temp.ai_id_key(%13$s)
+                 AND oo_fallback.competition = %14$s',
                 pg_temp.ai_expr('Analisi', opt_table, 'oo0', 'int', ARRAY['season']),
                 pg_temp.ai_expr('Analisi', opt_table, 'oo0', 'text', ARRAY['player','id','playerid','idplayer']),
                 pg_temp.ai_expr('Analisi', opt_table, 'oo0', 'text', ARRAY['teamid','idteam']),
@@ -647,12 +692,12 @@ BEGIN
                 comp_expr,
                 team_local_expr
             );
-            on_net_expr := '(coalesce(oo.on_net_rtg, ' || on_net_expr || '))';
-            off_net_expr := '(coalesce(oo.off_net_rtg, ' || off_net_expr || '))';
-            net_diff_expr := '(coalesce(oo.net_rtg_diff, ' || net_diff_expr || '))';
-            ortg_on_expr := '(coalesce(oo.ortg_on, ' || ortg_on_expr || '))';
-            ortg_off_expr := '(coalesce(oo.ortg_off, ' || ortg_off_expr || '))';
-            ortg_diff_expr := '(coalesce(oo.ortg_diff, ' || ortg_diff_expr || '))';
+            on_net_expr := '(coalesce(oo_exact.on_net_rtg, oo_fallback.on_net_rtg, ' || on_net_expr || '))';
+            off_net_expr := '(coalesce(oo_exact.off_net_rtg, oo_fallback.off_net_rtg, ' || off_net_expr || '))';
+            net_diff_expr := '(coalesce(oo_exact.net_rtg_diff, oo_fallback.net_rtg_diff, ' || net_diff_expr || '))';
+            ortg_on_expr := '(coalesce(oo_exact.ortg_on, oo_fallback.ortg_on, ' || ortg_on_expr || '))';
+            ortg_off_expr := '(coalesce(oo_exact.ortg_off, oo_fallback.ortg_off, ' || ortg_off_expr || '))';
+            ortg_diff_expr := '(coalesce(oo_exact.ortg_diff, oo_fallback.ortg_diff, ' || ortg_diff_expr || '))';
 
         END IF;
 
