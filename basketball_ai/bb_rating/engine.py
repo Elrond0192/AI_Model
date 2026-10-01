@@ -20,7 +20,7 @@ import pandas as pd
 
 from basketball_ai.bb_rating.semantics import METRIC_SEMANTICS, metric_interpretation
 
-BB_RATING_VERSION = "1.3"
+BB_RATING_VERSION = "1.4"
 
 # Minimum peer population before using a narrower peer definition. The engine
 # deliberately falls back to broader cohorts rather than producing unstable
@@ -344,6 +344,9 @@ class BBRatingEngine:
         # In the canonical source, NET_RTG_DIFF is stored as 0 when the
         # authoritative On/Off pair is unavailable. The source On/Off tables
         # audited for 2018-2025 contain no genuine zero differential.
+        # OnNetRtg/OffNetRtg themselves are allowed to be exactly zero:
+        # an exact zero component is a valid basketball observation and can
+        # coexist with a nonzero NetRtg_Diff.
         if column == "net_rtg_diff" and abs(number) < 1e-12:
             return float("nan")
         if column in RATE_COLUMNS and abs(number) > 1.0:
@@ -520,8 +523,6 @@ class BBRatingEngine:
                 if (
                     not np.isfinite(player_on)
                     or not np.isfinite(player_off)
-                    or abs(float(player_on)) < 1e-12
-                    or abs(float(player_off)) < 1e-12
                 ):
                     raw_value = float("nan")
             if not np.isfinite(raw_value):
@@ -547,12 +548,7 @@ class BBRatingEngine:
                     if "off_net_rtg" in peer.columns
                     else pd.Series(np.nan, index=peer.index)
                 )
-                complete_onoff = (
-                    peer_on.notna()
-                    & peer_off.notna()
-                    & peer_on.abs().gt(1e-12)
-                    & peer_off.abs().gt(1e-12)
-                )
+                complete_onoff = peer_on.notna() & peer_off.notna()
                 peer_values = peer_values.where(complete_onoff)
             valid = peer_values.replace([np.inf, -np.inf], np.nan).dropna()
             percentile = self._percentile(valid, raw_value, spec.direction)
