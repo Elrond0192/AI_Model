@@ -6,9 +6,10 @@ BB-Rating answers a different question from the season-ahead Prediction Model:
      league/season/competition?"
 
 The score is deterministic. It is built from contextual percentiles of observed
-metrics, with peer selection based on position, age band and role where the
-population is large enough. No post-processing is applied to the prediction
-model and no WordPress rating logic is required.
+metrics, with the league/season/competition context as the primary peer population.
+Position, age band and observed role remain contextual descriptors and do not
+replace the primary competition population. No post-processing is applied to
+the prediction model and no WordPress rating logic is required.
 """
 from __future__ import annotations
 
@@ -20,11 +21,12 @@ import pandas as pd
 
 from basketball_ai.bb_rating.semantics import METRIC_SEMANTICS, metric_interpretation
 
-BB_RATING_VERSION = "1.7"
+BB_RATING_VERSION = "1.8"
 
-# Minimum peer population before using a narrower peer definition. The engine
-# deliberately falls back to broader cohorts rather than producing unstable
-# tiny-sample percentiles.
+# Minimum population preferred for a stable league/season/competition peer
+# context. The primary scoring population remains the requested competition
+# context; small contexts are surfaced through the quality/limited-context
+# flags rather than silently changing the comparison universe.
 MIN_PEER_SAMPLES = 25
 MIN_CONTEXT_SAMPLES = 10
 
@@ -397,37 +399,13 @@ class BBRatingEngine:
         if context.empty:
             return context, "none"
 
-        candidates = context
-        if role:
-            role_mask = (
-                candidates["position_family"].eq(position_family)
-                & candidates["age_band"].eq(age_band)
-                & candidates["ruolo_combinato"].astype(str).str.strip().eq(role)
-            )
-            role_group = candidates.loc[role_mask]
-            if len(role_group) >= self.min_peer_samples:
-                return role_group, "position+age+role"
-
-        role_group = candidates.loc[
-            candidates["position_family"].eq(position_family)
-            & candidates["ruolo_combinato"].astype(str).str.strip().eq(role)
-        ] if role else candidates.iloc[0:0]
-        if len(role_group) >= self.min_peer_samples:
-            return role_group, "position+role"
-
-        pa_group = candidates.loc[
-            candidates["position_family"].eq(position_family)
-            & candidates["age_band"].eq(age_band)
-        ]
-        if len(pa_group) >= self.min_peer_samples:
-            return pa_group, "position+age"
-
-        position_group = candidates.loc[candidates["position_family"].eq(position_family)]
-        if len(position_group) >= self.min_peer_samples:
-            return position_group, "position"
-
-        if len(context) >= MIN_CONTEXT_SAMPLES:
+        context_size = len(context)
+        if context_size >= MIN_CONTEXT_SAMPLES:
+            # The requested league/season/competition remains the scoring
+            # universe. The 25-row threshold is used for quality, not to
+            # replace the context with a position/age/role cohort.
             return context, "league+season+phase"
+
         return context, "limited_context"
 
     def _percentile(self, values: pd.Series, value: float, direction: str) -> Optional[float]:
