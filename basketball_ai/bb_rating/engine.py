@@ -378,6 +378,13 @@ class BBRatingEngine:
             if len(role_group) >= self.min_peer_samples:
                 return role_group, "position+age+role"
 
+        role_group = candidates.loc[
+            candidates["position_family"].eq(position_family)
+            & candidates["ruolo_combinato"].astype(str).str.strip().eq(role)
+        ] if role else candidates.iloc[0:0]
+        if len(role_group) >= self.min_peer_samples:
+            return role_group, "position+role"
+
         pa_group = candidates.loc[
             candidates["position_family"].eq(position_family)
             & candidates["age_band"].eq(age_band)
