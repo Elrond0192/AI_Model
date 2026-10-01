@@ -20,7 +20,7 @@ import pandas as pd
 
 from basketball_ai.bb_rating.semantics import METRIC_SEMANTICS, metric_interpretation
 
-BB_RATING_VERSION = "1.2"
+BB_RATING_VERSION = "1.3"
 
 # Minimum peer population before using a narrower peer definition. The engine
 # deliberately falls back to broader cohorts rather than producing unstable
@@ -340,6 +340,11 @@ class BBRatingEngine:
         except (TypeError, ValueError):
             return float("nan")
         if not np.isfinite(number):
+            return float("nan")
+        # In the canonical source, NET_RTG_DIFF is stored as 0 when the
+        # authoritative On/Off pair is unavailable. The source On/Off tables
+        # audited for 2018-2025 contain no genuine zero differential.
+        if column == "net_rtg_diff" and abs(number) < 1e-12:
             return float("nan")
         if column in RATE_COLUMNS and abs(number) > 1.0:
             number /= 100.0
