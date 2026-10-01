@@ -513,6 +513,10 @@ class BBRatingEngine:
             if spec.key == "NET_RTG_DIFF":
                 player_on = pd.to_numeric(player.get("on_net_rtg"), errors="coerce")
                 player_off = pd.to_numeric(player.get("off_net_rtg"), errors="coerce")
+                if player_on is None:
+                    player_on = float("nan")
+                if player_off is None:
+                    player_off = float("nan")
                 if (
                     not np.isfinite(player_on)
                     or not np.isfinite(player_off)
@@ -533,8 +537,16 @@ class BBRatingEngine:
                 lambda value: self._normalise_value(spec.source_column, value)
             )
             if spec.key == "NET_RTG_DIFF":
-                peer_on = pd.to_numeric(peer.get("on_net_rtg"), errors="coerce")
-                peer_off = pd.to_numeric(peer.get("off_net_rtg"), errors="coerce")
+                peer_on = (
+                    pd.to_numeric(peer["on_net_rtg"], errors="coerce")
+                    if "on_net_rtg" in peer.columns
+                    else pd.Series(np.nan, index=peer.index)
+                )
+                peer_off = (
+                    pd.to_numeric(peer["off_net_rtg"], errors="coerce")
+                    if "off_net_rtg" in peer.columns
+                    else pd.Series(np.nan, index=peer.index)
+                )
                 complete_onoff = (
                     peer_on.notna()
                     & peer_off.notna()
