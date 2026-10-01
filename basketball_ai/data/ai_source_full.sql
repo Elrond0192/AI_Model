@@ -706,8 +706,8 @@ BEGIN
             -- are available; use the native differential only otherwise.
             net_diff_expr := format(
                 '(CASE WHEN (%1$s) IS NOT NULL AND (%2$s) IS NOT NULL '
-                || 'THEN (%1$s) - (%2$s) ELSE (%3$s) END)',
-                on_net_expr, off_net_expr, net_diff_expr
+                || 'THEN (%1$s) - (%2$s) ELSE NULL::numeric END)',
+                on_net_expr, off_net_expr
             );
             ortg_diff_expr := format(
                 '(CASE WHEN (%1$s) IS NOT NULL AND (%2$s) IS NOT NULL '
@@ -1069,7 +1069,7 @@ BEGIN
              coalesce(ruolo_combinato,'''') AS ruolo_combinato,
              coalesce(on_net_rtg,0) AS on_net_rtg,
              coalesce(off_net_rtg,0) AS off_net_rtg,
-             coalesce(net_rtg_diff,0) AS net_rtg_diff,
+             net_rtg_diff AS net_rtg_diff,
              competition,
              spm, obpm, dbpm, gm_sc, fic, ows, dws,
              raptor_off, raptor_def, raptor_total,
