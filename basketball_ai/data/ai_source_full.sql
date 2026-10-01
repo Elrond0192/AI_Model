@@ -913,14 +913,26 @@ BEGIN
             || '::text)) = lower(btrim('
             || pg_temp.ai_expr('Anagrafiche', team_table, 'nt', 'text', ARRAY['teamname','name','shortname'])
             || '::text)) '
-            || chr(10)
-            || role_join
-            || chr(10)
-            || onoff_join
-            || chr(10)
-            || clutch_join
-            || chr(10)
-            || boxscore_join
+            || CASE
+                WHEN role_join <> ''
+                THEN chr(10) || role_join || ' /* ai_role_join_end */'
+                ELSE ''
+               END
+            || CASE
+                WHEN onoff_join <> ''
+                THEN chr(10) || onoff_join || ' /* ai_onoff_join_end */'
+                ELSE ''
+               END
+            || CASE
+                WHEN clutch_join <> ''
+                THEN chr(10) || clutch_join || ' /* ai_clutch_join_end */'
+                ELSE ''
+               END
+            || CASE
+                WHEN boxscore_join <> ''
+                THEN chr(10) || boxscore_join || ' /* ai_boxscore_join_end */'
+                ELSE ''
+               END
             || chr(10)
             || ' WHERE ' || season_expr || ' IS NOT NULL'
             || ' AND ' || player_local_expr || ' IS NOT NULL'
