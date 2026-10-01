@@ -40,10 +40,11 @@ The engine then narrows the comparison, when enough players exist, in this
 order:
 
 1. position family + age band + observed combined role;
-2. position family + age band;
-3. position family;
-4. league + season + competition;
-5. limited context when the context itself is small.
+2. position family + observed combined role;
+3. position family + age band;
+4. position family;
+5. league + season + competition;
+6. limited context when the context itself is small.
 
 This prevents a guard from being directly compared with every player in the
 database when a statistically useful peer population exists.
@@ -132,7 +133,7 @@ Response shape:
   "peer_group": {},
   "quality": "high",
   "metric_coverage": 0.93,
-  "bb_rating_version": "1.0"
+  "bb_rating_version": "1.2"
 }
 
 WordPress remains a pure consumer: no percentile, peer selection or BB-Rating
@@ -140,7 +141,7 @@ logic belongs in PHP.
 
 ## Current status
 
-This is **FASE I of the BB-Rating layer** (version 1.1). The implementation is deterministic
+This is **FASE I of the BB-Rating layer** (version 1.2). The implementation is deterministic
 and API-ready, but the weights and peer thresholds must still be validated
 against real production data before treating the 1–100 score as the final
 public methodology.
@@ -150,7 +151,7 @@ leagues/seasons, position and age groups, missing-metric coverage and whether
 the explanations agree with the underlying percentiles.
 
 
-## Calibration v1.1
+## Calibration v1.2
 
 The calibration layer is diagnostic-only and does not train an ML model. It uses the
 same peer-selection hierarchy and empirical percentile convention as BBRatingEngine,
