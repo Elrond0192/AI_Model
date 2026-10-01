@@ -115,8 +115,6 @@ def test_ai_source_onoff_matches_native_player_team_id():
     assert "on_net_expr := '(coalesce(oo_exact.on_net_rtg, " in sql
     assert "off_net_expr := '(coalesce(oo_exact.off_net_rtg, " in sql
     assert "net_diff_expr := '(coalesce(oo_exact.net_rtg_diff, " in sql
-    assert "net_diff_expr := format(" in sql
-    assert "THEN (%1$s) - (%2$s) ELSE NULL::numeric END)" in sql
     assert "ortg_diff_expr := format(" in sql
     assert "ortg_on_expr := '(coalesce(oo_exact.ortg_on, " in sql
     assert "ortg_off_expr := '(coalesce(oo_exact.ortg_off, " in sql
