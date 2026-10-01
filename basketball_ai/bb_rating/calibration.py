@@ -26,7 +26,7 @@ from basketball_ai.bb_rating.engine import (
 )
 from basketball_ai.bb_rating.semantics import METRIC_SEMANTICS
 
-CALIBRATION_VERSION = "1.7"
+CALIBRATION_VERSION = "1.8"
 
 
 @dataclass(frozen=True)
@@ -95,86 +95,26 @@ def _assign_peer_groups(
         if ctx.empty:
             continue
 
-        position_counts = ctx.groupby("position_family", dropna=False).size().to_dict()
-        pa_counts = ctx.groupby(
-            ["position_family", "age_band"], dropna=False
-        ).size().to_dict()
-        role_counts = ctx.groupby(
-            ["position_family", "age_band", "ruolo_combinato"], dropna=False
-        ).size().to_dict()
-        role_only_counts = ctx.loc[
-            ctx["ruolo_combinato"].astype(str).str.strip().ne("")
-        ].groupby(
-            ["position_family", "ruolo_combinato"], dropna=False
-        ).size().to_dict()
-
         league, season, competition = context_key
-        source_values: list[str] = []
-        peer_sizes: list[int] = []
-        peer_keys: list[str] = []
+        context_count = len(ctx)
+        if context_count >= min_context_samples:
+            source = "league+season+phase"
+            size = context_count
+            peer_key = (
+                f"{league}|{int(season)}|{competition}|league+season+phase"
+            )
+        else:
+            source = "limited_context"
+            size = context_count
+            peer_key = (
+                f"{league}|{int(season)}|{competition}|limited_context"
+            )
 
-        for row in ctx.itertuples(index=False):
-            position = str(getattr(row, "position_family", "") or "OTHER")
-            age_band = str(getattr(row, "age_band", "") or "")
-            role = str(getattr(row, "ruolo_combinato", "") or "").strip()
-
-            role_count = role_counts.get((position, age_band, role), 0) if role else 0
-            role_only_count = role_only_counts.get((position, role), 0) if role else 0
-            pa_count = pa_counts.get((position, age_band), 0)
-            position_count = position_counts.get(position, 0)
-            context_count = len(ctx)
-
-            if role and role_count >= min_peer_samples:
-                source = "position+age+role"
-                size = role_count
-                peer_key = (
-                    f"{league}|{int(season)}|{competition}|position+age+role|"
-                    f"{position}|{age_band}|{role}"
-                )
-            elif role and role_only_count >= min_peer_samples:
-                source = "position+role"
-                size = role_only_count
-                peer_key = (
-                    f"{league}|{int(season)}|{competition}|position+role|"
-                    f"{position}|{role}"
-                )
-            elif pa_count >= min_peer_samples:
-                source = "position+age"
-                size = pa_count
-                peer_key = (
-                    f"{league}|{int(season)}|{competition}|position+age|"
-                    f"{position}|{age_band}"
-                )
-            elif position_count >= min_peer_samples:
-                source = "position"
-                size = position_count
-                peer_key = (
-                    f"{league}|{int(season)}|{competition}|position|{position}"
-                )
-            elif context_count >= min_context_samples:
-                source = "league+season+phase"
-                size = context_count
-                peer_key = (
-                    f"{league}|{int(season)}|{competition}|league+season+phase"
-                )
-            else:
-                source = "limited_context"
-                size = context_count
-                peer_key = (
-                    f"{league}|{int(season)}|{competition}|limited_context"
-                )
-
-            source_values.append(source)
-            peer_sizes.append(int(size))
-            peer_keys.append(peer_key)
-
-        result.loc[ctx.index, "_peer_source"] = source_values
-        result.loc[ctx.index, "_peer_sample_size"] = peer_sizes
-        result.loc[ctx.index, "_peer_key"] = peer_keys
+        result.loc[ctx.index, "_peer_source"] = source
+        result.loc[ctx.index, "_peer_sample_size"] = int(size)
+        result.loc[ctx.index, "_peer_key"] = peer_key
 
     return result
-
-
 def _metric_percentiles(
     frame: pd.DataFrame,
     spec: RatingMetricSpec,
@@ -607,6 +547,8 @@ def _markdown(report: dict[str, Any]) -> str:
         f"- Median context size: **{report['contexts']['median_context_size']:.1f}**",
         f"- Contexts below minimum peer size: **{report['contexts']['n_below_min_peer_samples']}** "
         f"({report['contexts']['share_below_min_peer_samples']:.1%})",
+        f"- Primary league+season+phase share: **{report['validation_signals']['primary_context_share']:.1%}**",
+        f"- Peer fallback share: **{report['validation_signals']['peer_fallback_share']:.1%}**",
         "",
         "| Peer source | Rows | Contexts | Median peer size |",
         "|---|---:|---:|---:|",
@@ -880,6 +822,10 @@ def build_calibration_report(
         and row["zero_pct_available"] is not None
         and row["zero_pct_available"] >= 0.99
     ]
+    primary_context_share = (
+        source_by_name.get("league+season+phase", 0.0)
+        if len(frame) else 0.0
+    )
     role_peer_share = (
         source_by_name.get("position+age+role", 0.0)
         + source_by_name.get("position+role", 0.0)
@@ -896,8 +842,9 @@ def build_calibration_report(
         "score_available_rate": (
             float(frame["_bb_rating"].notna().mean()) if len(frame) else 0.0
         ),
+        "primary_context_share": primary_context_share,
         "peer_fallback_share": (
-            float(1.0 - role_peer_share)
+            float(1.0 - primary_context_share)
             if len(frame) else 1.0
         ),
         "peer_source_shares": source_by_name,
