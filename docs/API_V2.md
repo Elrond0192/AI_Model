@@ -140,10 +140,15 @@ Request:
 }
 ```
 
-The peer population is resolved inside AI_Model using league + season +
-competition, narrowed by position family + age band + combined role when the
-sample is large enough. USG% is exposed as a role/involvement signal but has no
-direct composite weight.
+The primary peer population is the requested league + season + competition.
+When that context contains at least the preferred minimum peer population
+(default 25), the full context is used for scoring percentiles. Smaller
+contexts remain in the same league/season/competition population down to the
+minimum context size (default 10), with lower quality reported rather than
+silently changing the comparison universe. Position family, age band and
+combined role remain available for explanation and diagnostics but do not
+replace the primary competition population. USG% is exposed as a
+role/involvement signal but has no direct composite weight.
 
 The response contains:
 
