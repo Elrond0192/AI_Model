@@ -570,11 +570,11 @@ BEGIN
             END IF;
         END IF;
 
-        -- On/Off data is additive and may coexist with the same columns in
-        -- AdvancedStats_Player_<LEAGUE>. The player table can contain zero-filled
-        -- placeholders, so column existence alone is not a valid reason to skip
-        -- AdvancedStatsOnOffCourt_<LEAGUE>. When the authoritative On/Off source
-        -- has a real observation, it replaces only a NULL/zero primary value.
+        -- On/Off data is authoritative for On/Off-specific metrics and may
+        -- coexist with columns carrying the same names in AdvancedStats_Player.
+        -- Prefer AdvancedStatsOnOffCourt_<LEAGUE> whenever an observation matches;
+        -- only fall back to a direct player-table field when no On/Off observation
+        -- exists. This preserves genuine zero values from the authoritative source.
         opt_table := 'AdvancedStatsOnOffCourt_' || league_key;
         IF EXISTS (
             SELECT 1 FROM pg_catalog.pg_class c
@@ -647,24 +647,12 @@ BEGIN
                 comp_expr,
                 team_local_expr
             );
-            on_net_expr := '(CASE WHEN ' || on_net_expr || ' IS NULL OR ' || on_net_expr || ' = 0
-                                  THEN coalesce(oo.on_net_rtg, ' || on_net_expr || ')
-                                  ELSE ' || on_net_expr || ' END)';
-            off_net_expr := '(CASE WHEN ' || off_net_expr || ' IS NULL OR ' || off_net_expr || ' = 0
-                                   THEN coalesce(oo.off_net_rtg, ' || off_net_expr || ')
-                                   ELSE ' || off_net_expr || ' END)';
-            net_diff_expr := '(CASE WHEN ' || net_diff_expr || ' IS NULL OR ' || net_diff_expr || ' = 0
-                                    THEN coalesce(oo.net_rtg_diff, ' || net_diff_expr || ')
-                                    ELSE ' || net_diff_expr || ' END)';
-            ortg_on_expr := '(CASE WHEN ' || ortg_on_expr || ' IS NULL OR ' || ortg_on_expr || ' = 0
-                                   THEN coalesce(oo.ortg_on, ' || ortg_on_expr || ')
-                                   ELSE ' || ortg_on_expr || ' END)';
-            ortg_off_expr := '(CASE WHEN ' || ortg_off_expr || ' IS NULL OR ' || ortg_off_expr || ' = 0
-                                    THEN coalesce(oo.ortg_off, ' || ortg_off_expr || ')
-                                    ELSE ' || ortg_off_expr || ' END)';
-            ortg_diff_expr := '(CASE WHEN ' || ortg_diff_expr || ' IS NULL OR ' || ortg_diff_expr || ' = 0
-                                     THEN coalesce(oo.ortg_diff, ' || ortg_diff_expr || ')
-                                     ELSE ' || ortg_diff_expr || ' END)';
+            on_net_expr := '(coalesce(oo.on_net_rtg, ' || on_net_expr || '))';
+            off_net_expr := '(coalesce(oo.off_net_rtg, ' || off_net_expr || '))';
+            net_diff_expr := '(coalesce(oo.net_rtg_diff, ' || net_diff_expr || '))';
+            ortg_on_expr := '(coalesce(oo.ortg_on, ' || ortg_on_expr || '))';
+            ortg_off_expr := '(coalesce(oo.ortg_off, ' || ortg_off_expr || '))';
+            ortg_diff_expr := '(coalesce(oo.ortg_diff, ' || ortg_diff_expr || '))';
 
         END IF;
 
