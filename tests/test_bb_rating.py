@@ -130,7 +130,7 @@ def test_bb_rating_is_deterministic_and_contextual():
 
     assert 1 <= result.score <= 100
     assert result.score >= 90
-    assert result.peer_group["definition"] == "position+age+role"
+    assert result.peer_group["definition"] == "league+season+phase"
     assert result.peer_group["sample_size"] == 60
     assert result.quality == "high"
     assert 0.0 <= result.metric_coverage <= 1.0
@@ -146,7 +146,7 @@ def test_bb_rating_is_deterministic_and_contextual():
         assert payload_metrics[key]["interpretation"]
 
 
-def test_position_role_fallback_precedes_position_age_when_role_group_is_large():
+def test_league_context_precedes_position_role_even_when_role_group_is_large():
     stats = make_stats().copy()
     stats.loc[:14, "age"] = 25
     stats.loc[15:, "age"] = 30
@@ -154,8 +154,9 @@ def test_position_role_fallback_precedes_position_age_when_role_group_is_large()
     engine = BBRatingEngine(stats, make_players())
     result = engine.rate_player("G1", league="ITA1", season=2025, phase="RS")
 
-    assert result.peer_group["definition"] == "position+role"
+    assert result.peer_group["definition"] == "league+season+phase"
     assert result.peer_group["sample_size"] == 60
+    assert result.peer_group["context_sample_size"] == 60
 
 
 def test_usg_is_explanatory_but_does_not_change_score():
@@ -196,7 +197,7 @@ def test_missing_metrics_are_reported_and_weight_is_renormalised():
 
 
 
-def test_calibration_uses_position_role_fallback():
+def test_calibration_uses_league_context_as_primary():
     stats = make_stats().copy()
     stats.loc[:14, "age"] = 25
     stats.loc[15:, "age"] = 30
@@ -206,9 +207,11 @@ def test_calibration_uses_position_role_fallback():
     )
 
     peer_sources = {item["peer_source"] for item in report["peer_sources"]}
-    assert peer_sources == {"position+role"}
-    assert report["validation_signals"]["role_peer_share"] == pytest.approx(1.0)
-    assert report["validation_signals"]["peer_source_shares"]["position+role"] == pytest.approx(1.0)
+    assert peer_sources == {"league+season+phase"}
+    assert report["validation_signals"]["role_peer_share"] == pytest.approx(0.0)
+    assert report["validation_signals"]["primary_context_share"] == pytest.approx(1.0)
+    assert report["validation_signals"]["peer_fallback_share"] == pytest.approx(0.0)
+    assert report["validation_signals"]["peer_source_shares"]["league+season+phase"] == pytest.approx(1.0)
 
 
 def test_calibration_warns_on_constant_scoring_metric():
@@ -279,7 +282,7 @@ def test_api_player_endpoint():
     assert response.status_code == 200
     payload = response.json()
     assert 1 <= payload["bb_rating"] <= 100
-    assert payload["bb_rating_version"] == "1.7"
+    assert payload["bb_rating_version"] == "1.8"
     assert payload["peer_group"]["definition"] == "position+age+role"
     assert payload["metrics"]["USG%"]["percentile"] is not None
 
@@ -299,8 +302,8 @@ def test_bb_rating_calibration_reuses_peer_and_percentile_contract():
         {"player_stats": stats, "players": make_players(), "source_contract": "test"}
     )
 
-    assert report["calibration_version"] == "1.5"
-    assert report["bb_rating_version"] == "1.7"
+    assert report["calibration_version"] == "1.8"
+    assert report["bb_rating_version"] == "1.8"
     assert report["dataset"]["rows"] == 120
     assert report["score_distribution"]["n"] == 120
     assert report["validation_signals"]["registry_columns_ok"] is True
@@ -316,16 +319,39 @@ def test_bb_rating_calibration_reuses_peer_and_percentile_contract():
     assert metric["n_available"] == 120
 
     peer_sources = {item["peer_source"] for item in report["peer_sources"]}
-    assert peer_sources == {"position+age+role"}
+    assert peer_sources == {"league+season+phase"}
 
     role_diag = report["role_peer_population"]
     assert role_diag["rows_with_role_and_age"] == 120
     assert role_diag["thresholds"]["25"]["rows_eligible"] == 120
-    assert report["validation_signals"]["role_peer_share"] == pytest.approx(1.0)
-    assert report["validation_signals"]["peer_source_shares"]["position+age+role"] == pytest.approx(1.0)
+    assert report["validation_signals"]["role_peer_share"] == pytest.approx(0.0)
+    assert report["validation_signals"]["primary_context_share"] == pytest.approx(1.0)
+    assert report["validation_signals"]["peer_fallback_share"] == pytest.approx(0.0)
+    assert report["validation_signals"]["peer_source_shares"]["league+season+phase"] == pytest.approx(1.0)
     assert report["validation_signals"]["scoring_registry_ok"] is True
     assert report["validation_signals"]["explanation_catalog_ok"] is True
 
     # Explicitly verify that the lower-is-better turnover signal is preserved.
     tov = next(item for item in report["metrics"] if item["metric"] == "TOV%")
     assert tov["direction"] == "lower_better"
+
+
+def test_small_context_stays_in_requested_context():
+    stats = make_stats().head(12).copy()
+    engine = BBRatingEngine(stats, make_players())
+    result = engine.rate_player("G12", league="ITA1", season=2025, phase="RS")
+
+    assert result.peer_group["definition"] == "league+season+phase"
+    assert result.peer_group["sample_size"] == 12
+    assert result.peer_group["context_sample_size"] == 12
+    assert result.quality == "low"
+
+
+def test_tiny_context_is_explicitly_limited():
+    stats = make_stats().head(9).copy()
+    engine = BBRatingEngine(stats, make_players())
+    result = engine.rate_player("G9", league="ITA1", season=2025, phase="RS")
+
+    assert result.peer_group["definition"] == "limited_context"
+    assert result.peer_group["sample_size"] == 9
+    assert result.peer_group["context_sample_size"] == 9
