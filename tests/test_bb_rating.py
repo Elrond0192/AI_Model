@@ -228,6 +228,17 @@ def test_missing_context_raises():
         engine.rate_player("G60", league="ESP1", season=2025, phase="RS")
 
 
+def test_dbpm_is_explanation_only_when_derived_into_raptor_def():
+    stats = make_stats()
+    engine = BBRatingEngine(stats, make_players())
+    result = engine.rate_player("G60", league="ITA1", season=2025, phase="RS")
+
+    metric = result.metrics["DBPM"]
+    assert metric.weight == pytest.approx(0.0)
+    assert metric.percentile is not None
+    assert result.metrics["RAPTOR_DEF"].weight > 0
+
+
 def test_lebron_is_explanation_only_when_derived_from_raptor():
     stats = make_stats()
     engine = BBRatingEngine(stats, make_players())
@@ -268,7 +279,7 @@ def test_api_player_endpoint():
     assert response.status_code == 200
     payload = response.json()
     assert 1 <= payload["bb_rating"] <= 100
-    assert payload["bb_rating_version"] == "1.6"
+    assert payload["bb_rating_version"] == "1.7"
     assert payload["peer_group"]["definition"] == "position+age+role"
     assert payload["metrics"]["USG%"]["percentile"] is not None
 
@@ -289,7 +300,7 @@ def test_bb_rating_calibration_reuses_peer_and_percentile_contract():
     )
 
     assert report["calibration_version"] == "1.5"
-    assert report["bb_rating_version"] == "1.6"
+    assert report["bb_rating_version"] == "1.7"
     assert report["dataset"]["rows"] == 120
     assert report["score_distribution"]["n"] == 120
     assert report["validation_signals"]["registry_columns_ok"] is True
