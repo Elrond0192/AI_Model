@@ -27,7 +27,7 @@ from basketball_ai.bb_rating.engine import (
 )
 from basketball_ai.bb_rating.semantics import METRIC_SEMANTICS
 
-CALIBRATION_VERSION = "1.13"
+CALIBRATION_VERSION = "1.14"
 
 
 @dataclass(frozen=True)
@@ -672,6 +672,168 @@ def _rank_r2(frame: pd.DataFrame, columns: list[str]) -> float | None:
     return float(max(0.0, min(1.0, 1.0 - ss_res / ss_tot)))
 
 
+def _within_league_exposure_diagnostics(
+    pairs: pd.DataFrame,
+    *,
+    min_pairs_per_league: int = 50,
+) -> dict[str, Any]:
+    required = ["_abs_rating_change", "_exposure_minutes", "league_key"]
+    if pairs.empty or any(column not in pairs.columns for column in required):
+        return {
+            "status": "insufficient_data",
+            "min_pairs_per_league": int(min_pairs_per_league),
+            "n_pairs": 0,
+            "leagues": [],
+            "pooled_within_league_spearman": None,
+            "between_league_eta_squared": None,
+            "within_league_exposure_r2": None,
+            "within_league_exposure_incremental_r2": None,
+            "league_summaries": [],
+        }
+
+    work = pairs[required].copy()
+    work["_abs_rating_change"] = pd.to_numeric(
+        work["_abs_rating_change"], errors="coerce"
+    )
+    work["_exposure_minutes"] = pd.to_numeric(
+        work["_exposure_minutes"], errors="coerce"
+    )
+    work["league_key"] = work["league_key"].astype(str)
+    work = work.dropna(
+        subset=["_abs_rating_change", "_exposure_minutes", "league_key"]
+    )
+    if len(work) < 20:
+        return {
+            "status": "insufficient_data",
+            "min_pairs_per_league": int(min_pairs_per_league),
+            "n_pairs": int(len(work)),
+            "leagues": sorted(work["league_key"].unique().tolist()),
+            "pooled_within_league_spearman": None,
+            "between_league_eta_squared": None,
+            "within_league_exposure_r2": None,
+            "within_league_exposure_incremental_r2": None,
+            "league_summaries": [],
+        }
+
+    work["_rank_outcome"] = work["_abs_rating_change"].rank(method="average")
+    work["_rank_exposure"] = work["_exposure_minutes"].rank(method="average")
+    work["_rank_outcome_within"] = work.groupby("league_key")["_abs_rating_change"].rank(
+        method="average"
+    )
+    work["_rank_exposure_within"] = work.groupby("league_key")["_exposure_minutes"].rank(
+        method="average"
+    )
+
+    centered_outcome = work["_rank_outcome"] - work.groupby("league_key")[
+        "_rank_outcome"
+    ].transform("mean")
+    centered_exposure = work["_rank_exposure"] - work.groupby("league_key")[
+        "_rank_exposure"
+    ].transform("mean")
+    pooled_within = _spearman_association(centered_exposure, centered_outcome)
+
+    total_ss = float(
+        np.sum((work["_rank_outcome"] - work["_rank_outcome"].mean()) ** 2)
+    )
+    between_ss = float(
+        sum(
+            len(group)
+            * (group["_rank_outcome"].mean() - work["_rank_outcome"].mean()) ** 2
+            for _, group in work.groupby("league_key", sort=True)
+        )
+    )
+    between_eta_squared = (
+        float(between_ss / total_ss) if total_ss > 0.0 else None
+    )
+
+    league_summaries: list[dict[str, Any]] = []
+    for league, group in work.groupby("league_key", sort=True):
+        if len(group) < min_pairs_per_league:
+            continue
+        rho = _spearman_association(
+            group["_exposure_minutes"],
+            group["_abs_rating_change"],
+        )
+        within_corr = _spearman_association(
+            group["_rank_exposure_within"],
+            group["_rank_outcome_within"],
+        )
+        league_summaries.append(
+            {
+                "league_key": str(league),
+                "n_pairs": int(len(group)),
+                "median_exposure": float(group["_exposure_minutes"].median()),
+                "mean_abs_change": float(group["_abs_rating_change"].mean()),
+                "median_abs_change": float(group["_abs_rating_change"].median()),
+                "spearman_exposure_vs_abs_change": rho,
+                "within_league_spearman": within_corr,
+            }
+        )
+
+    valid = work.loc[
+        work.groupby("league_key")["_abs_rating_change"].transform("size")
+        >= min_pairs_per_league
+    ].copy()
+    within_r2 = None
+    within_incremental_r2 = None
+    fixed_effect_full_r2 = None
+    league_only_r2 = None
+    if not valid.empty and valid["league_key"].nunique() >= 2:
+        valid["_rank_outcome"] = valid["_abs_rating_change"].rank(method="average")
+        valid["_rank_exposure"] = valid["_exposure_minutes"].rank(method="average")
+        centered = pd.DataFrame(
+            {
+                "outcome_rank": valid["_rank_outcome"],
+                "exposure_within": valid["_rank_exposure"]
+                - valid.groupby("league_key")["_rank_exposure"].transform("mean"),
+            }
+        )
+        centered["_rank_outcome_global"] = centered["outcome_rank"]
+        centered["_rank_exposure_within"] = centered["exposure_within"]
+        centered["_rank_outcome"] = centered["outcome_rank"]
+        # _rank_r2 consumes a global _rank_outcome target. Use centered exposure
+        # as the sole within-league predictor and compare it with league fixed effects.
+        dummy_columns: list[str] = []
+        leagues = sorted(valid["league_key"].unique().tolist())
+        for league in leagues[1:]:
+            column = f"_league_{league}"
+            centered[column] = (
+                valid["league_key"].astype(str) == league
+            ).astype(float)
+            dummy_columns.append(column)
+
+        league_only_r2 = _rank_r2(centered, dummy_columns) if dummy_columns else None
+        fixed_effect_full_r2 = _rank_r2(
+            centered,
+            [*dummy_columns, "_rank_exposure_within"],
+        )
+        if fixed_effect_full_r2 is not None and league_only_r2 is not None:
+            within_incremental_r2 = float(fixed_effect_full_r2 - league_only_r2)
+        if pooled_within is not None:
+            within_r2 = float(pooled_within ** 2)
+
+    return {
+        "status": "diagnostic_only",
+        "min_pairs_per_league": int(min_pairs_per_league),
+        "n_pairs": int(len(work)),
+        "leagues": sorted(work["league_key"].unique().tolist()),
+        "pooled_within_league_spearman": pooled_within,
+        "between_league_eta_squared": between_eta_squared,
+        "within_league_exposure_r2": within_r2,
+        "within_league_exposure_incremental_r2": within_incremental_r2,
+        "league_only_r2": league_only_r2,
+        "league_plus_within_exposure_r2": fixed_effect_full_r2,
+        "league_summaries": league_summaries,
+        "interpretation": (
+            "Within-league association removes league-level mean differences "
+            "before assessing exposure. Between-league eta-squared quantifies "
+            "how much of the global ranked outcome variance is attributable "
+            "to differences between league means. All quantities are descriptive "
+            "and are not production weighting or confidence rules."
+        ),
+    }
+
+
 def _league_exposure_diagnostics(
     pairs: pd.DataFrame,
     *,
@@ -687,6 +849,7 @@ def _league_exposure_diagnostics(
             "status": "insufficient_data",
             "min_pairs_per_cell": int(min_pairs_per_cell),
             "cells": [],
+            "within_league_exposure": _within_league_exposure_diagnostics(pairs),
             "variance_model": {
                 "status": "insufficient_data",
                 "base_exposure_r2": None,
@@ -780,6 +943,7 @@ def _league_exposure_diagnostics(
         "reference_league": reference_league,
         "leagues": leagues,
         "cells": cells,
+        "within_league_exposure": _within_league_exposure_diagnostics(pairs),
         "variance_model": {
             "status": "diagnostic_only",
             "method": (
