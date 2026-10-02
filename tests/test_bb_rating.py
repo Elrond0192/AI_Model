@@ -302,7 +302,7 @@ def test_bb_rating_calibration_reuses_peer_and_percentile_contract():
         {"player_stats": stats, "players": make_players(), "source_contract": "test"}
     )
 
-    assert report["calibration_version"] == "1.10"
+    assert report["calibration_version"] == "1.11"
     assert report["bb_rating_version"] == "1.8"
     assert report["dataset"]["rows"] == 120
     assert report["score_distribution"]["n"] == 120
@@ -409,6 +409,30 @@ def test_empirical_reliability_is_diagnostic_only():
         for point in reliability["exposure_curve"]["points"]
     )
     assert reliability["weighted_active_metric_spearman"] is not None
+
+    profile = reliability["stability_profile"]
+    assert profile["status"] == "diagnostic_only"
+    assert "100" in profile["stability_score_definition"]
+    assert "Q1=low" in profile["confidence_level_definition"]
+    assert "Median absolute next-season BB-Rating change" in profile[
+        "expected_rating_variation_definition"
+    ]
+    assert len(profile["bands"]) == len(reliability["exposure_curve"]["points"])
+    assert {band["confidence_level"] for band in profile["bands"]} == {
+        "low",
+        "moderate",
+        "high",
+        "very_high",
+    }
+    assert all(
+        0.0 <= band["stability_score"] <= 100.0
+        for band in profile["bands"]
+        if band["stability_score"] is not None
+    )
+    assert all(
+        band["expected_rating_variation"] is not None
+        for band in profile["bands"]
+    )
 
 
 def test_stability_diagnostics_has_exposure_source_and_metric_section():
