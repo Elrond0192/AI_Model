@@ -435,6 +435,57 @@ def test_empirical_reliability_is_diagnostic_only():
     )
 
 
+def test_uncertainty_reports_league_exposure_decomposition():
+    stats = pd.concat(
+        [
+            make_stats().assign(
+                league_key="ITA1",
+                player_global_id=lambda df: df["player_global_id"] + "-ita",
+            ),
+            make_stats().assign(
+                league_key="ESP1",
+                player_global_id=lambda df: df["player_global_id"] + "-esp",
+            ),
+        ],
+        ignore_index=True,
+    )
+    next_stats = stats.copy()
+    next_stats["season"] = 2024
+    next_stats["player_global_id"] = stats["player_global_id"].values
+    next_stats.loc[
+        next_stats["league_key"] == "ESP1",
+        "raptor_total",
+    ] += 2.0
+    combined = pd.concat([next_stats, stats], ignore_index=True)
+
+    report = build_calibration_report(
+        {
+            "player_stats": combined,
+            "players": make_players(),
+            "source_contract": "test",
+        }
+    )
+    profile = report["stability_diagnostics"]["uncertainty_profile"]
+    league_exposure = profile["league_exposure"]
+
+    assert league_exposure["status"] == "diagnostic_only"
+    assert set(league_exposure["leagues"]) == {"ESP1", "ITA1"}
+    assert league_exposure["variance_model"]["base_exposure_r2"] is not None
+    assert league_exposure["variance_model"]["league_added_r2"] is not None
+    assert league_exposure["variance_model"]["league_incremental_r2"] is not None
+    assert league_exposure["variance_model"]["league_exposure_interaction_r2"] is not None
+    assert league_exposure["variance_model"]["interaction_incremental_r2"] is not None
+    assert league_exposure["cells"]
+    assert {
+        (cell["league_key"], cell["exposure_group"])
+        for cell in league_exposure["cells"]
+    } == {
+        (league, exposure)
+        for league in ("ESP1", "ITA1")
+        for exposure in ("Q1_low", "Q2", "Q3", "Q4_high")
+    }
+
+
 def test_stability_diagnostics_has_exposure_source_and_metric_section():
     stats = make_stats()
     stats2 = make_stats().assign(
