@@ -372,6 +372,7 @@ class PlayerFuturePerformanceModel:
         years = sorted(int(v) for v in pairs["__meta__target_year"].unique())
         folds: list[Dict[str, Any]] = []
         per_target: Dict[str, list[dict[str, float]]] = {spec.key: [] for spec in TARGET_SPECS}
+        oos_residuals: Dict[str, list[float]] = {spec.key: [] for spec in TARGET_SPECS}
         for target_year in years:
             prior_years = [year for year in years if year < target_year]
             if len(prior_years) < min_train_target_seasons:
@@ -390,12 +391,14 @@ class PlayerFuturePerformanceModel:
                 X_train = train.loc[train_mask, self._feature_columns(pairs["__meta__league_key"])].fillna(0.0)
                 X_test = test.loc[test_mask, X_train.columns].fillna(0.0)
                 model = self._fit_one(X_train, y_train.loc[train_mask])
-                prediction = model.predict(X_test.to_numpy())
-                metrics = self._metrics(y_test.loc[test_mask].to_numpy(dtype=float), prediction)
+                prediction = np.clip(model.predict(X_test.to_numpy()), spec.lower, spec.upper)
+                actual_values = y_test.loc[test_mask].to_numpy(dtype=float)
+                metrics = self._metrics(actual_values, prediction)
                 baseline = pd.to_numeric(test.loc[test_mask, f"__target__{spec.key}"], errors="coerce").to_numpy(dtype=float)
                 source_values = pd.to_numeric(test.loc[test_mask, f"current_{spec.key}"], errors="coerce").to_numpy(dtype=float)
                 metrics["baseline_persistence_rmse"] = float(np.sqrt(np.mean((source_values - baseline) ** 2))) if len(baseline) else float("nan")
                 metrics["model_gain_vs_persistence_rmse"] = metrics["baseline_persistence_rmse"] - metrics["rmse"] if np.isfinite(metrics["baseline_persistence_rmse"]) else float("nan")
+                oos_residuals[spec.key].extend(np.abs(prediction - actual_values).tolist())
                 fold_targets[spec.key] = metrics
                 per_target[spec.key].append(metrics)
                 fold_valid = True
@@ -417,6 +420,8 @@ class PlayerFuturePerformanceModel:
                 "rmse_mean": float(np.average([v["rmse"] for v in values], weights=[max(1, v["n"]) for v in values])),
                 "mae_mean": float(np.average([v["mae"] for v in values], weights=[max(1, v["n"]) for v in values])),
                 "bias_mean": float(np.average([v["bias"] for v in values], weights=[max(1, v["n"]) for v in values])),
+                "baseline_persistence_rmse_mean": float(np.average([v["baseline_persistence_rmse"] for v in values], weights=[max(1, v["n"]) for v in values])),
+                "model_gain_vs_persistence_rmse_mean": float(np.average([v["model_gain_vs_persistence_rmse"] for v in values], weights=[max(1, v["n"]) for v in values])),
             }
         return {
             "status": "validated_oos" if folds else "insufficient_data",
@@ -424,6 +429,16 @@ class PlayerFuturePerformanceModel:
             "target_seasons": years,
             "folds": folds,
             "summary": summary,
+            "uncertainty_by_target": {
+                key: {
+                    "p50": float(np.quantile(values, 0.50)),
+                    "p75": float(np.quantile(values, 0.75)),
+                    "p90": float(np.quantile(values, 0.90)),
+                    "n_oos": int(len(values)),
+                }
+                for key, values in oos_residuals.items()
+                if len(values) >= MIN_OOS_SAMPLES
+            },
         }
 
     def fit(
@@ -463,12 +478,12 @@ class PlayerFuturePerformanceModel:
                 "p75": float(np.quantile(residuals, 0.75)),
                 "p90": float(np.quantile(residuals, 0.90)),
             }
-            self.uncertainty[spec.key] = q
+            oos_q = (backtest_report.get("uncertainty_by_target") or {}).get(spec.key)
+            self.uncertainty[spec.key] = dict(oos_q) if isinstance(oos_q, dict) else q
             all_residuals.extend(residuals.tolist())
             training_targets[spec.key] = {
                 "n_training": int(mask.sum()),
                 "available": True,
-                "n_training": int(mask.sum()),
             }
             bt_summary = backtest_report.get("summary", {}).get(spec.key, {})
             self.target_metrics[spec.key] = {
@@ -494,6 +509,7 @@ class PlayerFuturePerformanceModel:
             "competitions": sorted(pairs["__meta__competition"].unique().tolist()),
             "targets": training_targets,
             "target_metrics": self.target_metrics,
+            "uncertainty_by_target": self.uncertainty,
             "uncertainty_by_target": self.uncertainty,
             "uncertainty_global": {
                 "p50": float(np.quantile(all_residuals, 0.50)) if all_residuals else None,
@@ -617,6 +633,8 @@ class PlayerFuturePerformanceModel:
         model_root.mkdir(parents=True, exist_ok=True)
         manifest = dict(self.metadata)
         manifest["feature_names"] = list(self.feature_names)
+        manifest["target_metrics"] = self.target_metrics
+        manifest["uncertainty_by_target"] = self.uncertainty
         manifest["target_metrics"] = self.target_metrics
         manifest["uncertainty_by_target"] = self.uncertainty
         manifest["model_files"] = {}
