@@ -302,7 +302,7 @@ def test_bb_rating_calibration_reuses_peer_and_percentile_contract():
         {"player_stats": stats, "players": make_players(), "source_contract": "test"}
     )
 
-    assert report["calibration_version"] == "1.11"
+    assert report["calibration_version"] == "1.12"
     assert report["bb_rating_version"] == "1.8"
     assert report["dataset"]["rows"] == 120
     assert report["score_distribution"]["n"] == 120
@@ -457,3 +457,13 @@ def test_stability_diagnostics_has_exposure_source_and_metric_section():
     assert diag["composite_percentile"]["spearman"] is not None
     assert diag["exposure"]["summary"]["source"] == "games_played_x_minutes_per_game"
     assert diag["by_metric"]
+
+    uncertainty = diag["uncertainty_profile"]
+    assert uncertainty["status"] == "diagnostic_only"
+    assert uncertainty["n_pairs"] == 60
+    assert uncertainty["target"].startswith("absolute next-season BB-Rating change")
+    assert uncertainty["overall"]["p50_abs_change"] == pytest.approx(0.0)
+    assert len(uncertainty["by_exposure"]) == 4
+    assert uncertainty["by_peer_sample_size"] == []
+    assert uncertainty["by_metric_coverage"] == []
+    assert uncertainty["by_league"]
