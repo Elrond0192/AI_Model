@@ -158,8 +158,10 @@ The season-ahead Prediction Model and BB-Rating are separate contracts.
 - Calibration 1.10 adds empirical test-retest reliability diagnostics by exposure
   and active-metric persistence. Calibration 1.12 adds empirical uncertainty
   distributions and exposure-controlled diagnostics for context size and metric
-  coverage. These diagnostics are not applied to the public BB-Rating score or
-  to Prediction Model outputs.
+  coverage. Calibration 1.13 tests the incremental contribution of league
+  context beyond exposure, including league × exposure interactions. These
+  diagnostics are not applied to the public BB-Rating score or to Prediction
+  Model outputs.
 
 The initial BB-Rating implementation lives in basketball_ai/bb_rating and is
 API-exposed at POST /api/v2/bb-rating/player. Its weights and peer thresholds
