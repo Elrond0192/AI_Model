@@ -178,6 +178,12 @@ def test_helpers_and_static_assets(monkeypatch, tmp_path):
     assert "renderOverview" in js
     assert "renderBBRating" in js
     assert "/admin-api/bb-rating" in js
+    assert "AbortController" in js
+    assert "App.controllers.forEach" in js
+    future_js = (admin.STATIC_ROOT / "future_performance_ui.js").read_text(encoding="utf-8")
+    assert "renderGeneration" in future_js
+    assert "page.isConnected" in future_js
+    assert "const setHtml" in future_js
     assert "streamlit" not in (html + css + js).lower()
     assert admin.healthz() == {"status": "ok"}
     assert Path(admin.index().path).name == "index.html"
