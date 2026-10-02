@@ -17,11 +17,19 @@ async function api(path,options={}){
   const headers={'Accept':'application/json',...(options.headers||{})};
   if(options.body!==undefined){headers['Content-Type']='application/json';options.body=JSON.stringify(options.body);}
   if((options.method||'GET').toUpperCase()!=='GET'){const token=cookie('hm_ai_admin_csrf');if(token)headers['X-CSRF-Token']=token;}
-  const res=await fetch(path,{credentials:'same-origin',...options,headers});
-  let data={};try{data=await res.json();}catch(_){data={};}
-  if(res.status===401){showLogin();throw new Error('Sessione scaduta');}
-  if(!res.ok)throw new Error(data.detail||data.message||`HTTP ${res.status}`);
-  return data;
+  const controller=new AbortController();
+  App.controllers.add(controller);
+  const fetchOptions={credentials:'same-origin',...options,headers};
+  if(!options.signal)fetchOptions.signal=controller.signal;
+  try{
+    const res=await fetch(path,fetchOptions);
+    let data={};try{data=await res.json();}catch(_){data={};}
+    if(res.status===401){showLogin();throw new Error('Sessione scaduta');}
+    if(!res.ok)throw new Error(data.detail||data.message||`HTTP ${res.status}`);
+    return data;
+  }finally{
+    App.controllers.delete(controller);
+  }
 }
 
 function showLogin(){App.user=null;$('#app-shell').classList.add('hidden');$('#login-screen').classList.remove('hidden');}
@@ -31,7 +39,7 @@ setInterval(updateClock,1000);updateClock();
 
 function activateNav(page){$$('.nav-item').forEach(b=>b.classList.toggle('active',b.dataset.page===page));}
 function mountTemplate(page){const t=$(`#page-${page}`);if(!t){root.innerHTML='<div class="loading">Pagina non disponibile</div>';return;}root.replaceChildren(t.content.cloneNode(true));$$('.jump',root).forEach(b=>b.addEventListener('click',()=>navigate(b.dataset.page)));}
-async function navigate(page){clearTimeout(App.trainingTimer);clearTimeout(App.bbRatingTimer);App.page=page;activateNav(page);mountTemplate(page);try{if(page==='overview')await renderOverview();if(page==='data')await renderData();if(page==='training')await renderTraining();if(page==='backtests')await renderBacktests();if(page==='bb-rating')await renderBBRating();if(page==='future-performance')await renderFuturePerformancePage();if(page==='scenarios')await renderScenarios();if(page==='registry')await renderRegistry();if(page==='health')await renderHealth();if(page==='audit')await renderAudit();if(page==='settings')await renderSettings();}catch(e){toast(e.message,'error');}}
+async function navigate(page){App.controllers.forEach(controller=>controller.abort());App.controllers.clear();clearTimeout(App.trainingTimer);clearTimeout(App.bbRatingTimer);clearTimeout(App.futurePerformanceTimer);App.page=page;activateNav(page);mountTemplate(page);try{if(page==='overview')await renderOverview();if(page==='data')await renderData();if(page==='training')await renderTraining();if(page==='backtests')await renderBacktests();if(page==='bb-rating')await renderBBRating();if(page==='future-performance')await renderFuturePerformancePage();if(page==='scenarios')await renderScenarios();if(page==='registry')await renderRegistry();if(page==='health')await renderHealth();if(page==='audit')await renderAudit();if(page==='settings')await renderSettings();}catch(e){toast(e.message,'error');}}
 
 function kpi(icon,label,value,sub='',tone=''){return `<div class="kpi-card"><div class="kpi-icon ${tone}">${icon}</div><div class="kpi-label">${esc(label)}</div><div class="kpi-value ${tone==='green'?'online':''}">${esc(value)}</div><div class="kpi-sub">${sub}</div></div>`;}
 function updateTop(o){$('#top-db').textContent=o.database||'not selected';$('#top-model').textContent=shortId(o.production?.run_id);const bb=o.bb_rating||{};$('#top-bb-rating').textContent=bb.bb_rating_version?'v'+esc(bb.bb_rating_version):'—';$('#top-api').textContent=o.api?.online?'● V2':'● OFFLINE';$('#top-api').className=o.api?.online?'meta-ok':'';}
