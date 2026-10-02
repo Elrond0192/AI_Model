@@ -105,6 +105,8 @@ def _metric_from_row(row: pd.Series, kind: str, column: str) -> float:
         return float(np.clip(raw / minutes * 36.0, 0.0, _PER36_MAX))
     if kind == "rate":
         value = _safe_rate(column, row.get(column))
+        if column in {"three_point_pct", "ft_pct"} and np.isfinite(value) and abs(value) > 1.0:
+            value /= 100.0
         return value
     value = _finite(row.get(column))
     if kind == "minutes":
