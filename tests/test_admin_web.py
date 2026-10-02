@@ -230,7 +230,7 @@ def test_bb_rating_status_reads_calibration_artifacts(monkeypatch, tmp_path):
         encoding="utf-8",
     )
     (calibration / "bb_rating_uncertainty.json").write_text(
-        json.dumps({"status": "ready", "bb_rating_version": "1.8"}),
+        json.dumps({"status": "fitted", "calibration_version": "1.16", "bb_rating_version": "1.8"}),
         encoding="utf-8",
     )
     monkeypatch.setattr(admin, "MODEL_ROOT", root)
@@ -259,6 +259,7 @@ def test_bb_rating_calibration_start(monkeypatch, tmp_path):
     executor = Executor()
     monkeypatch.setattr(admin.STATE, "bb_rating_executor", executor)
     monkeypatch.setattr(admin, "_utcnow", lambda: "now")
+    monkeypatch.setattr(admin, "_audit", lambda *args, **kwargs: None)
     result = admin.start_bb_rating_calibration(
         {"username": "admin", "role": "admin", "token": "x"}
     )
