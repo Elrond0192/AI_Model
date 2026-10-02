@@ -854,11 +854,7 @@ def _empirical_reliability_diagnostics(
                 and exposure_points[0]["observed_spearman"]
                 < exposure_points[-1]["observed_spearman"]
             ),
-            "application_ready": bool(
-                curve["fitted"]
-                and curve["r2"] is not None
-                and curve["r2"] >= 0.90
-            ),
+            "automatic_application": False,
         },
     }
 
