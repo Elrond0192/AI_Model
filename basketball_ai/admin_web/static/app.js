@@ -31,7 +31,7 @@ setInterval(updateClock,1000);updateClock();
 
 function activateNav(page){$$('.nav-item').forEach(b=>b.classList.toggle('active',b.dataset.page===page));}
 function mountTemplate(page){const t=$(`#page-${page}`);if(!t){root.innerHTML='<div class="loading">Pagina non disponibile</div>';return;}root.replaceChildren(t.content.cloneNode(true));$$('.jump',root).forEach(b=>b.addEventListener('click',()=>navigate(b.dataset.page)));}
-async function navigate(page){clearTimeout(App.trainingTimer);clearTimeout(App.bbRatingTimer);clearTimeout(App.futurePerformanceTimer);App.page=page;activateNav(page);mountTemplate(page);try{if(page==='overview')await renderOverview();if(page==='data')await renderData();if(page==='training')await renderTraining();if(page==='backtests')await renderBacktests();if(page==='bb-rating')await renderBBRating();if(page==='future-performance')await renderFuturePerformancePage();if(page==='scenarios')await renderScenarios();if(page==='registry')await renderRegistry();if(page==='health')await renderHealth();if(page==='audit')await renderAudit();if(page==='settings')await renderSettings();}catch(e){toast(e.message,'error');}}
+async function navigate(page){clearTimeout(App.trainingTimer);clearTimeout(App.bbRatingTimer);App.page=page;activateNav(page);mountTemplate(page);try{if(page==='overview')await renderOverview();if(page==='data')await renderData();if(page==='training')await renderTraining();if(page==='backtests')await renderBacktests();if(page==='bb-rating')await renderBBRating();if(page==='future-performance')await renderFuturePerformancePage();if(page==='scenarios')await renderScenarios();if(page==='registry')await renderRegistry();if(page==='health')await renderHealth();if(page==='audit')await renderAudit();if(page==='settings')await renderSettings();}catch(e){toast(e.message,'error');}}
 
 function kpi(icon,label,value,sub='',tone=''){return `<div class="kpi-card"><div class="kpi-icon ${tone}">${icon}</div><div class="kpi-label">${esc(label)}</div><div class="kpi-value ${tone==='green'?'online':''}">${esc(value)}</div><div class="kpi-sub">${sub}</div></div>`;}
 function updateTop(o){$('#top-db').textContent=o.database||'not selected';$('#top-model').textContent=shortId(o.production?.run_id);const bb=o.bb_rating||{};$('#top-bb-rating').textContent=bb.bb_rating_version?'v'+esc(bb.bb_rating_version):'—';$('#top-api').textContent=o.api?.online?'● V2':'● OFFLINE';$('#top-api').className=o.api?.online?'meta-ok':'';}
@@ -258,3 +258,51 @@ function setupScenarioEntityPicker(picker){
     else menu.classList.remove('hidden');
   });
   document.addEventListener('click',event=>{
+    if(!picker.contains(event.target))menu.classList.add('hidden');
+  },{once:false});
+  renderScenarioChips(picker);
+}
+
+async function renderScenarios(){
+  const form=$('#scenario-form'),result=$('#scenario-result'),submit=$('#scenario-submit');
+  scenarioSelections.player=[];scenarioSelections.team=[];
+  $$('.entity-picker',form).forEach(setupScenarioEntityPicker);
+  const overview=App.overview||await api('/admin-api/overview');
+  form.season.value=overview.summary?.season_max||new Date().getFullYear();
+  form.addEventListener('submit',async ev=>{
+    ev.preventDefault();
+    let parameters={};
+    try{const raw=form.parameters.value.trim();parameters=raw?JSON.parse(raw):{};}
+    catch(_){toast('Parameters JSON non valido','error');return;}
+    const payload={
+      scenario:form.scenario.value,
+      player_selection_ids:scenarioSelections.player.map(item=>item.selection_id),
+      team_selection_ids:scenarioSelections.team.map(item=>item.selection_id),
+      source_league:form.source_league.value.trim()||null,
+      target_league:form.target_league.value.trim()||null,
+      season:Number(form.season.value),
+      competition:form.competition.value.trim()||'RS',
+      top_n:Number(form.top_n.value||5),
+      parameters:{...parameters,simulations:Number(form.simulations.value||5000)}
+    };
+    submit.disabled=true;submit.textContent='Valutazione…';result.textContent='Il motore scenari sta elaborando la richiesta…';
+    try{const data=await api('/admin-api/scenarios/evaluate',{method:'POST',body:payload});result.textContent=JSON.stringify(data,null,2);}
+    catch(e){result.textContent='';toast(e.message,'error');}
+    finally{submit.disabled=false;submit.textContent='Valuta scenario';}
+  });
+}
+
+function registryCard(title,entry,tone=''){if(!entry||!entry.run_id)return `<div class="registry-card">${empty('⬡',`Nessun ${title.toLowerCase()}`,`Non è presente un run ${title.toLowerCase()} nel registry.`)}</div>`;return `<div class="registry-card"><span class="registry-badge ${tone}">${esc(title)}</span><div class="registry-run">${esc(entry.run_id)}</div><div class="registry-meta">Version: ${esc(entry.model_version||'—')}<br>Data cutoff: ${esc(entry.data_cutoff||'—')}<br>OOT RMSE: ${esc(fmt(entry.overall_rmse))}<br>Registered: ${esc(entry.registered_at||entry.promoted_at||'—')}</div></div>`;}
+async function renderRegistry(){const d=await api('/admin-api/registry');$('#top-model').textContent=shortId(d.production?.run_id);$('#registry-cards').innerHTML=registryCard('Production',d.production)+registryCard('Candidate',d.candidate,'candidate');const hist=d.history||[];$('#registry-history').innerHTML=hist.length?[...hist].reverse().map(h=>`<tr><td>${esc(h.at||'—')}</td><td>${esc(h.event||'—')}</td><td>${esc(h.run_id||'—')}</td></tr>`).join(''):'<tr><td colspan="3" class="muted-inline">Nessun evento nel registry.</td></tr>';const check=$('#registry-confirm'),prom=$('#promote-btn'),roll=$('#rollback-btn');check.addEventListener('change',()=>{prom.disabled=!check.checked||!d.candidate;roll.disabled=!check.checked||!d.previous;});prom.addEventListener('click',async()=>{prom.disabled=true;try{const r=await api('/admin-api/registry/promote',{method:'POST',body:{confirm:true}});toast(r.reason||'Candidate promoted');await renderRegistry();}catch(e){toast(e.message,'error');prom.disabled=false;}});roll.addEventListener('click',async()=>{roll.disabled=true;try{const r=await api('/admin-api/registry/rollback',{method:'POST',body:{confirm:true}});toast(r.reason||'Rollback completed');await renderRegistry();}catch(e){toast(e.message,'error');roll.disabled=false;}});}
+
+async function renderHealth(){async function refresh(){const d=await api('/admin-api/api-health');const live=!!d.live?.ok,ready=!!d.ready?.ok,bb=d.bb_rating||{};$('#top-api').textContent=live?'● V2':'● OFFLINE';$('#top-api').className=live?'meta-ok':'';$('#health-kpis').innerHTML=[kpi('⌘','API process',live?'Online':'Offline',`<span class="dot ${live?'green':'red'}"></span>/health/live`,'green'),kpi('✓','Inference ready',ready?'Ready':'Not ready',`<span class="dot ${ready?'green':'yellow'}"></span>/health/ready`),kpi('◆','BB-Rating',bb.loaded?'Loaded':'Not loaded',bb.uncertainty_loaded?'<span class="dot green"></span>uncertainty loaded':'<span class="dot red"></span>uncertainty missing','violet'),kpi('↗','Internal base',d.base_url||'—','<span>Docker network</span>','violet'),kpi('⬡','API contract','V2','<span>server-to-server</span>','orange')].join('');$('#health-checks').innerHTML=[['Live endpoint',d.live],['Readiness endpoint',d.ready]].map(([name,x])=>`<div class="health-item"><div class="health-copy"><strong>${esc(name)}</strong><span>${esc(x?.error||JSON.stringify(x?.body||{}).slice(0,160))}</span></div><span class="status ${x?.ok?'ok':'danger'}">${x?.ok?'✓ OK':'× KO'}</span></div>`).join('');$('#health-endpoints').innerHTML=(d.endpoints||[]).map(e=>`<div class="endpoint-item"><code>${esc(e)}</code><span class="registry-badge">V2</span></div>`).join('');}$('#refresh-health').addEventListener('click',()=>refresh().catch(e=>toast(e.message,'error')));await refresh();}
+
+async function renderAudit(){async function refresh(){const d=await api('/admin-api/audit?limit=200');const rows=d.entries||[];$('#audit-body').innerHTML=rows.length?rows.map(r=>`<tr><td>${esc(r.ts||'—')}</td><td><strong>${esc(r.action||'—')}</strong></td><td>${esc(r.actor||'—')}</td><td>${esc(r.target||'—')}</td><td>${esc(r.details||'')}</td></tr>`).join(''):'<tr><td colspan="5" class="muted-inline">Nessun evento audit disponibile.</td></tr>';}$('#refresh-audit').addEventListener('click',()=>refresh().catch(e=>toast(e.message,'error')));await refresh();}
+
+async function renderSettings(){const d=await api('/admin-api/settings');$('#runtime-settings').innerHTML=Object.entries(d.runtime||{}).map(([k,v])=>`<div class="settings-row"><span>${esc(k.replaceAll('_',' '))}</span><strong>${esc(v??'—')}</strong></div>`).join('');$('#promotion-settings').innerHTML=Object.entries(d.promotion_gates||{}).map(([k,v])=>`<div class="settings-row"><span>${esc(k.replaceAll('_',' '))}</span><strong>${esc(v)}</strong></div>`).join('');$('#password-form').addEventListener('submit',async ev=>{ev.preventDefault();const body=Object.fromEntries(new FormData(ev.currentTarget).entries());const btn=$('button',ev.currentTarget);btn.disabled=true;try{await api('/admin-api/settings/password',{method:'POST',body});toast('Password aggiornata. Effettua nuovamente il login.');showLogin();}catch(e){toast(e.message,'error');btn.disabled=false;}});}
+
+$('#login-form').addEventListener('submit',async ev=>{ev.preventDefault();const error=$('#login-error'),button=$('button',ev.currentTarget);error.textContent='';button.disabled=true;try{const d=await api('/admin-api/login',{method:'POST',body:{username:$('#login-username').value,password:$('#login-password').value}});showApp(d.user);await navigate('overview');}catch(e){error.textContent=e.message;}finally{button.disabled=false;}});
+$('#logout-btn').addEventListener('click',async()=>{try{await api('/admin-api/logout',{method:'POST',body:{}});}catch(_){}showLogin();});
+$$('.nav-item').forEach(b=>b.addEventListener('click',()=>navigate(b.dataset.page)));
+
+(async function boot(){try{const s=await api('/admin-api/session');showApp(s.user);await navigate('overview');}catch(_){showLogin();}})();
