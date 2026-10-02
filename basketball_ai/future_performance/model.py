@@ -322,7 +322,9 @@ class PlayerFuturePerformanceModel:
                 rows.append({**features, **{f"__target__{key}": value for key, value in labels.items() if key in self.target_specs}, **{f"__meta__{key}": value for key, value in labels.items() if key not in self.target_specs}})
         if not rows:
             raise ValueError("No consecutive player/league/competition t -> t+1 samples are available")
-        return pd.DataFrame(rows).fillna(0.0)
+        # Keep target NaNs intact. Missing target observations must be excluded
+        # per metric during training/backtest, never converted to zero.
+        return pd.DataFrame(rows)
 
     @staticmethod
     def _model() -> XGBRegressor:
