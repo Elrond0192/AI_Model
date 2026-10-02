@@ -11,6 +11,7 @@ from basketball_ai.bb_rating.calibration import (
     build_calibration_report,
 )
 from basketball_ai.bb_rating.engine import BBRatingEngine
+from basketball_ai.bb_rating.uncertainty import BBRatingUncertainty
 from basketball_ai.api.routes.bb_rating_v2 import router
 
 def test_net_rtg_diff_zero_is_missing_for_bb_rating():
@@ -439,3 +440,82 @@ def test_final_uncertainty_fit_excludes_latest_target_and_persists_cells():
     assert fit["tables"]["global"]["n"] >= 50
     assert fit["tables"]["league_exposure"]
     assert fit["exposure_band_definition"]["league_edges_minutes"]
+
+
+
+def test_api_player_endpoint_includes_uncertainty_when_loaded():
+    stats = make_stats().copy()
+    stats["minutes_total"] = 800.0
+    app = FastAPI()
+    app.state.bb_rating_engine = BBRatingEngine(stats, make_players())
+    app.state.bb_rating_uncertainty = BBRatingUncertainty(
+        {
+            "status": "fitted",
+            "calibration_version": "1.16",
+            "bb_rating_version": "1.8",
+            "min_samples": 50,
+            "exposure_band_definition": {
+                "global_edges_minutes": [200.0, 400.0, 600.0],
+                "league_edges_minutes": {
+                    "ITA1": [200.0, 400.0, 600.0],
+                },
+            },
+            "tables": {
+                "global": {"n": 60, "p50": 4.0, "p75": 8.0, "p90": 12.0},
+                "league": [
+                    {"league_key": "ITA1", "n": 60, "p50": 3.0, "p75": 7.0, "p90": 11.0},
+                ],
+                "exposure": [
+                    {"exposure_band": 4, "n": 60, "p50": 5.0, "p75": 9.0, "p90": 13.0},
+                ],
+                "league_exposure": [
+                    {"league_key": "ITA1", "exposure_band": 4, "n": 60, "p50": 2.0, "p75": 6.0, "p90": 10.0},
+                ],
+            },
+        }
+    )
+    app.include_router(router)
+
+    client = TestClient(app)
+    response = client.post(
+        "/api/v2/bb-rating/player",
+        json={
+            "player_global_id": "G60",
+            "league": "ITA1",
+            "season": "2025-26",
+            "phase": "RS",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["bb_rating_version"] == "1.8"
+    assert payload["uncertainty"]["available"] is True
+    assert payload["uncertainty"]["calibration_version"] == "1.16"
+    assert payload["uncertainty"]["source"] == "league+exposure"
+    assert payload["uncertainty"]["sample_size"] == 60
+    assert payload["uncertainty"]["exposure_band"] == 4
+    assert payload["uncertainty"]["absolute_change"]["p90"] == 10.0
+    assert payload["uncertainty"]["p90_score_range"] == {"lower": 1, "upper": 100}
+
+
+def test_api_player_endpoint_reports_missing_uncertainty_artifact():
+    app = FastAPI()
+    app.state.bb_rating_engine = BBRatingEngine(make_stats(), make_players())
+    app.state.bb_rating_uncertainty = None
+    app.include_router(router)
+
+    client = TestClient(app)
+    response = client.post(
+        "/api/v2/bb-rating/player",
+        json={
+            "player_global_id": "G60",
+            "league": "ITA1",
+            "season": "2025-26",
+            "phase": "RS",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["uncertainty"]["available"] is False
+    assert response.json()["uncertainty"]["reason"] == "uncertainty_artifact_unavailable"
