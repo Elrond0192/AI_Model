@@ -40,6 +40,7 @@
         <button class="nav-item" data-page="data"><span class="nav-icon"><i class="ph ph-database"></i></span><span>Dati e snapshot</span></button>
         <button class="nav-item" data-page="training"><span class="nav-icon"><i class="ph ph-trend-up"></i></span><span>Training</span></button>
         <button class="nav-item" data-page="backtests"><span class="nav-icon"><i class="ph ph-chart-line-up"></i></span><span>Backtests</span></button>
+        <button class="nav-item" data-page="bb-rating"><span class="nav-icon"><i class="ph-fill ph-star"></i></span><span>BB-Rating</span></button>
         <button class="nav-item" data-page="scenarios"><span class="nav-icon"><i class="ph ph-flask"></i></span><span>Scenario Lab</span></button>
         <button class="nav-item" data-page="registry"><span class="nav-icon"><i class="ph ph-cube"></i></span><span>Model Registry</span></button>
         <button class="nav-item" data-page="health"><span class="nav-icon"><i class="ph ph-heartbeat"></i></span><span>API &amp; Health</span></button>
@@ -63,6 +64,7 @@
         <div class="top-meta"><span>ACTIVE API</span><strong id="top-api" class="meta-ok">● V2</strong></div>
         <div class="top-meta"><span>DATABASE</span><strong id="top-db">not selected</strong></div>
         <div class="top-meta"><span>ACTIVE MODEL</span><strong id="top-model">not promoted</strong></div>
+        <div class="top-meta"><span>BB-RATING</span><strong id="top-bb-rating">—</strong></div>
         <div class="top-meta utc"><span>UTC</span><strong id="top-utc">—</strong></div>
       </header>
 
@@ -74,7 +76,7 @@
   <template id="page-overview">
     <section class="page" data-title="Overview">
       <div class="page-heading"><div><h1>Overview</h1><p>Panoramica dello stato del sistema AI Model</p></div></div>
-      <div id="overview-kpis" class="kpi-grid five"></div>
+      <div id="overview-kpis" class="kpi-grid six"></div>
       <section class="section-block">
         <div class="section-heading"><h2>Operational readiness</h2></div>
         <div class="table-shell"><table><thead><tr><th>Componente</th><th>Stato</th><th>Dettagli</th><th class="right">Azione</th></tr></thead><tbody id="readiness-body"></tbody></table></div>
@@ -150,6 +152,44 @@
     </section>
   </template>
 
+  <template id="page-bb-rating">
+    <section class="page">
+      <div class="page-heading action-heading">
+        <div><h1>BB-Rating</h1><p>Layer descrittivo del rendimento: rating 1–100, calibrazione empirica e uncertainty serving. Separato dal Prediction Model.</p></div>
+        <div class="button-row"><button id="bb-rating-refresh" class="btn btn-secondary" type="button">Aggiorna</button><button id="bb-rating-calibrate" class="btn btn-primary" type="button">Ricalibra BB-Rating</button></div>
+      </div>
+      <div id="bb-rating-kpis" class="kpi-grid four"></div>
+      <section id="bb-rating-job" class="panel job-panel"></section>
+      <div class="split-grid">
+        <section class="panel">
+          <div class="panel-heading"><h2>Serving status</h2></div>
+          <div id="bb-rating-status"></div>
+          <div id="bb-rating-runtime" class="summary-list"></div>
+        </section>
+        <section class="panel">
+          <div class="panel-heading"><h2>Dataset calibration</h2></div>
+          <div id="bb-rating-dataset" class="summary-list"></div>
+        </section>
+      </div>
+      <div class="split-grid">
+        <section class="panel">
+          <div class="panel-heading"><h2>Uncertainty layer</h2></div>
+          <div id="bb-rating-uncertainty" class="summary-list"></div>
+          <p class="microcopy">L'incertezza descrive la variabilità storica tra stagioni consecutive. Non corregge il BB-Rating corrente e non modifica il Prediction Model.</p>
+        </section>
+        <section class="panel">
+          <div class="panel-heading"><h2>Artifacts</h2></div>
+          <div id="bb-rating-files" class="summary-list"></div>
+          <p class="microcopy">Il report è diagnostico; <code>bb_rating_uncertainty.json</code> è l'artifact usato dal serving.</p>
+        </section>
+      </div>
+      <section class="panel">
+        <div class="panel-heading"><h2>Runtime warnings</h2></div>
+        <div id="bb-rating-warnings" class="health-list"></div>
+      </section>
+    </section>
+  </template>
+
   <template id="page-scenarios">
     <section class="page">
       <div class="page-heading"><div><h1>Scenario Lab</h1><p>Valuta scenari con il motore production: ensemble XGBoost e, quando disponibili, feed play-by-play.</p></div></div>
@@ -191,7 +231,7 @@
   <template id="page-health">
     <section class="page">
       <div class="page-heading action-heading"><div><h1>API &amp; Health</h1><p>Stato dell'inference service e modello production attivo</p></div><button id="refresh-health" class="btn btn-secondary">Aggiorna</button></div>
-      <div id="health-kpis" class="kpi-grid four"></div>
+      <div id="health-kpis" class="kpi-grid five"></div>
       <div class="split-grid"><section class="panel"><div class="panel-heading"><h2>Runtime checks</h2></div><div id="health-checks" class="health-list"></div></section><section class="panel"><div class="panel-heading"><h2>Served endpoints</h2></div><div id="health-endpoints" class="endpoint-list"></div></section></div>
     </section>
   </template>
