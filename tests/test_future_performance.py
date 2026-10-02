@@ -62,7 +62,8 @@ def test_build_pairs_only_uses_exact_consecutive_contexts():
 
 def test_missing_targets_are_not_converted_to_zero():
     data = _sample_data()
-    data["player_stats"].loc[0, "ft_pct"] = float("nan")
+    # The 2019 row is the target for the first player/season pair.
+    data["player_stats"].loc[1, "ft_pct"] = float("nan")
     model = PlayerFuturePerformanceModel()
     pairs = model._build_pairs(data)
 
