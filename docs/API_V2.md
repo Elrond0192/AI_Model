@@ -62,6 +62,29 @@ target season = source season + 1
 
 The pooled model can learn shared basketball patterns, but `RS -> PO`, domestic -> European, and gap-year pairs are never training targets.
 
+## BB-Rating uncertainty serving
+
+`POST /api/v2/bb-rating/player` returns the existing deterministic BB-Rating 1–100
+and, when the Calibration 1.16 artifact is loaded, an additional `uncertainty`
+object.
+
+The uncertainty object contains:
+- the calibration and BB-Rating versions;
+- the selected source (normally `league+exposure`, with documented fallbacks);
+- empirical P50/P75/P90 thresholds for absolute next-season rating change;
+- the exposure minutes and exposure band used;
+- a bounded 1–100 P90 range centered on the current BB-Rating.
+
+The uncertainty layer is observational: it does not modify, shrink or replace the
+BB-Rating. The API can continue serving the rating when the uncertainty artifact
+is temporarily unavailable, with `uncertainty.available=false`.
+
+The production API loads the final artifact from `BB_RATING_UNCERTAINTY_PATH` when
+configured, then from the model directory or its parent calibration directory. In
+the standard Compose layout this also supports
+`/app/models_saved/bb_rating_calibration/bb_rating_uncertainty.json` while the
+prediction model remains isolated under `/app/models_saved/production`.
+
 ## Production lifecycle
 
 Production Docker loads only explicitly promoted artifacts from `models_saved/production`. `production_state.joblib` includes run-owned style calibration, competition vocabulary and per-competition conformal state. Backtests report `by_competition`; promotion can reject a candidate that regresses substantially in a competition with enough OOT samples.
