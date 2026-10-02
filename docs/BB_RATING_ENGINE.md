@@ -288,11 +288,11 @@ distribution needed for future uncertainty intervals.
 No uncertainty correction is applied automatically to the public BB-Rating.
 
 
-## Calibration v1.13 — league/exposure uncertainty decomposition
+## Calibration v1.14 — within-league uncertainty decomposition
 
-Calibration 1.13 remains diagnostic-only and keeps the public BB-Rating at
-version 1.8. It tests whether league context contributes information about
-next-season absolute rating variation beyond exposure.
+Calibration 1.14 remains diagnostic-only and keeps the public BB-Rating at
+version 1.8. It separates between-league variation from within-league exposure
+variation when studying next-season absolute rating change.
 
 The report adds:
 - a league × exposure table with empirical P25/P50/P75/P90 absolute rating change;
