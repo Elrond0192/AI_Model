@@ -165,6 +165,8 @@
     if (running) setTimeout(() => render().catch(() => {}), 2200);
   }
 
+  window.renderFuturePerformancePage = render;
+
   function activateNavButton(button) {
     document.querySelectorAll('.nav-item').forEach(item => item.classList.toggle('active', item === button));
   }
