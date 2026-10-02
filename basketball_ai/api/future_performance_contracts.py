@@ -1,6 +1,7 @@
 """API contracts for the Player Future Performance Model."""
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Union
 
 from pydantic import BaseModel, Field
@@ -24,3 +25,4 @@ class FuturePerformancePlayerResponseV2(BaseModel):
     competition: str
     targets: dict[str, dict]
     model_status: str = Field(default="production")
+    generated_at: datetime | None = None
