@@ -1,4 +1,4 @@
-const App={user:null,page:'overview',overview:null,trainingTimer:null};
+const App={user:null,page:'overview',overview:null,trainingTimer:null,bbRatingTimer:null};
 const $=(s,r=document)=>r.querySelector(s);const $$=(s,r=document)=>[...r.querySelectorAll(s)];
 const root=$('#page-root');
 
@@ -31,21 +31,22 @@ setInterval(updateClock,1000);updateClock();
 
 function activateNav(page){$$('.nav-item').forEach(b=>b.classList.toggle('active',b.dataset.page===page));}
 function mountTemplate(page){const t=$(`#page-${page}`);if(!t){root.innerHTML='<div class="loading">Pagina non disponibile</div>';return;}root.replaceChildren(t.content.cloneNode(true));$$('.jump',root).forEach(b=>b.addEventListener('click',()=>navigate(b.dataset.page)));}
-async function navigate(page){clearTimeout(App.trainingTimer);App.page=page;activateNav(page);mountTemplate(page);try{if(page==='overview')await renderOverview();if(page==='data')await renderData();if(page==='training')await renderTraining();if(page==='backtests')await renderBacktests();if(page==='scenarios')await renderScenarios();if(page==='registry')await renderRegistry();if(page==='health')await renderHealth();if(page==='audit')await renderAudit();if(page==='settings')await renderSettings();}catch(e){toast(e.message,'error');}}
+async function navigate(page){clearTimeout(App.trainingTimer);clearTimeout(App.bbRatingTimer);App.page=page;activateNav(page);mountTemplate(page);try{if(page==='overview')await renderOverview();if(page==='data')await renderData();if(page==='training')await renderTraining();if(page==='backtests')await renderBacktests();if(page==='bb-rating')await renderBBRating();if(page==='scenarios')await renderScenarios();if(page==='registry')await renderRegistry();if(page==='health')await renderHealth();if(page==='audit')await renderAudit();if(page==='settings')await renderSettings();}catch(e){toast(e.message,'error');}}
 
 function kpi(icon,label,value,sub='',tone=''){return `<div class="kpi-card"><div class="kpi-icon ${tone}">${icon}</div><div class="kpi-label">${esc(label)}</div><div class="kpi-value ${tone==='green'?'online':''}">${esc(value)}</div><div class="kpi-sub">${sub}</div></div>`;}
-function updateTop(o){$('#top-db').textContent=o.database||'not selected';$('#top-model').textContent=shortId(o.production?.run_id);$('#top-api').textContent=o.api?.online?'● V2':'● OFFLINE';$('#top-api').className=o.api?.online?'meta-ok':'';}
+function updateTop(o){$('#top-db').textContent=o.database||'not selected';$('#top-model').textContent=shortId(o.production?.run_id);const bb=o.bb_rating||{};$('#top-bb-rating').textContent=bb.bb_rating_version?'v'+esc(bb.bb_rating_version):'—';$('#top-api').textContent=o.api?.online?'● V2':'● OFFLINE';$('#top-api').className=o.api?.online?'meta-ok':'';}
 
 async function renderOverview(){
   const o=await api('/admin-api/overview');App.overview=o;updateTop(o);
-  const s=o.summary||{};$('#overview-kpis').innerHTML=[
+  const s=o.summary||{},bb=o.bb_rating||{};$('#overview-kpis').innerHTML=[
     kpi('▤','Database',o.database||'Not selected',`<span class="dot ${o.data_loaded?'green':'yellow'}"></span>${o.data_loaded?'Connesso e caricato':'Da caricare'}`),
     kpi('▥','Dati caricati',fmtInt(s.player_rows),'<span>righe player/competition</span>','green'),
     kpi('◉','Competitions',String((s.competitions||[]).length||'—'),'<span>caricate</span>','violet'),
-    kpi('⬡','Modello attivo',shortId(o.production?.run_id),o.production?'<span class="dot green"></span>Production':'<span class="dot red"></span>Not promoted','orange'),
+    kpi('⬡','Prediction Model',shortId(o.production?.run_id),o.production?'<span class="dot green"></span>Production':'<span class="dot red"></span>Not promoted','orange'),
+    kpi('◆','BB-Rating',bb.bb_rating_version?'v'+bb.bb_rating_version:'—',bb.ready?'<span class="dot green"></span>Ready':'<span class="dot yellow"></span>Da verificare','violet'),
     kpi('⌘','Stato API',o.api?.online?'Online':'Offline',`<span class="dot ${o.api?.online?'green':'red'}"></span>V2`,'green')
   ].join('');
-  $('#readiness-body').innerHTML=o.readiness.map(r=>`<tr><td><strong>${esc(r.component)}</strong></td><td><span class="status ${r.status}"><span class="status-dot">${r.status==='ok'?'✓':r.status==='danger'?'×':'△'}</span>${esc(r.label)}</span></td><td>${esc(r.detail)}</td><td class="right"><button class="btn btn-small btn-secondary readiness-action" data-page="${esc(r.action==='data'?'data':r.action)}">${r.action==='registry'?'Apri registry':r.action==='training'?'Apri training':'Apri dati'}</button></td></tr>`).join('');
+  $('#readiness-body').innerHTML=o.readiness.map(r=>{const page=r.action==='data'?'data':r.action;const label=r.action==='registry'?'Apri registry':r.action==='training'?'Apri training':r.action==='bb-rating'?'Apri BB-Rating':'Apri dati';return `<tr><td><strong>${esc(r.component)}</strong></td><td><span class="status ${r.status}"><span class="status-dot">${r.status==='ok'?'✓':r.status==='danger'?'×':'△'}</span>${esc(r.label)}</span></td><td>${esc(r.detail)}</td><td class="right"><button class="btn btn-small btn-secondary readiness-action" data-page="${esc(page)}">${label}</button></td></tr>`;}).join('');
   $$('.readiness-action').forEach(b=>b.addEventListener('click',()=>navigate(b.dataset.page)));
   const prod=o.production||{},cand=o.candidate||{};
   $('#overview-registry').innerHTML=(prod.run_id||cand.run_id)?summaryRows([['Production',prod.run_id?shortId(prod.run_id):'—'],['Candidate',cand.run_id?shortId(cand.run_id):'—'],['Candidate RMSE',cand.overall_rmse!==undefined?fmt(cand.overall_rmse):'—']]):empty('⬡','Nessun modello registrato','Esegui un training per generare il primo candidate.','Avvia training','training');
@@ -108,6 +109,86 @@ async function renderTraining(){
     }
   });
   if(j.status==='running'&&App.page==='training')App.trainingTimer=setTimeout(()=>renderTraining().catch(e=>toast(e.message,'error')),2200);
+}
+
+async function renderBBRating(){
+  const data=await api('/admin-api/bb-rating');
+  const health=await api('/admin-api/api-health');
+  const u=data.uncertainty||{},ds=data.dataset||{},v=data.validation||{},f=data.files||{},j=data.job||{},apiBB=health.bb_rating||{};
+  $('#top-bb-rating').textContent=data.bb_rating_version?'v'+esc(data.bb_rating_version):'—';
+
+  $('#bb-rating-kpis').innerHTML=[
+    kpi('◆','BB-Rating',data.bb_rating_version?'v'+data.bb_rating_version:'—',data.ready?'<span class="dot green"></span>Ready':'<span class="dot yellow"></span>Artifact da verificare','violet'),
+    kpi('◎','Calibration',data.calibration_version?'v'+data.calibration_version:'—',data.ready?'<span class="dot green"></span>Report disponibile':'<span class="dot yellow"></span>Non disponibile','orange'),
+    kpi('▥','Dataset',fmtInt(ds.rows),ds.players!=null?'<span>'+fmtInt(ds.players)+' giocatori</span>':'<span>righe calibration</span>','green'),
+    kpi('◌','Uncertainty',u.status||'—',apiBB.uncertainty_loaded?'<span class="dot green"></span>Loaded by API':'<span class="dot red"></span>Not loaded','orange')
+  ].join('');
+
+  const readyClass=data.ready?'ok':'warning';
+  $('#bb-rating-status').innerHTML='<div class="model-state '+readyClass+'"><div class="model-state-mark">'+(data.ready?'✓':'△')+'</div><div><strong>'+
+    (data.ready?'BB-Rating serving ready':'BB-Rating artifact da verificare')+
+    '</strong><p>'+(data.ready?'Report di calibrazione e serving artifact presenti e coerenti.':'Il Control Center non trova una coppia completa report + serving artifact.')+
+    '</p></div></div>';
+
+  $('#bb-rating-runtime').innerHTML=summaryRows([
+    ['BB-Rating version',data.bb_rating_version||'—'],
+    ['Calibration version',data.calibration_version||'—'],
+    ['API engine',apiBB.loaded?'Loaded':'Not loaded'],
+    ['API uncertainty',apiBB.uncertainty_loaded?'Loaded':'Not loaded'],
+    ['Source contract',ds.source_contract||'—'],
+    ['Active DB profile',data.active_profile||'—']
+  ]);
+
+  $('#bb-rating-dataset').innerHTML=summaryRows([
+    ['Rows',fmtInt(ds.rows)],
+    ['Players',fmtInt(ds.players)],
+    ['Seasons',ds.season_min!=null&&ds.season_max!=null?ds.season_min+'–'+ds.season_max:'—'],
+    ['Competitions',(ds.competitions||[]).join(', ')||'—'],
+    ['Leagues',String((ds.leagues||[]).length||'—')],
+    ['Score available',pct(v.score_available_rate)],
+    ['Primary context',pct(v.primary_context_share)],
+    ['Explainable metrics',v.explainable_metric_count??'—']
+  ]);
+
+  const support=u.support||{},selected=u.selected_structure||{};
+  $('#bb-rating-uncertainty').innerHTML=summaryRows([
+    ['Status',u.status||'—'],
+    ['Training target seasons',(u.training_target_seasons||[]).join(', ')||'—'],
+    ['Excluded target seasons',(u.excluded_target_seasons||[]).join(', ')||'—'],
+    ['Training rows',fmtInt(u.training_rows)],
+    ['Exact league+exposure cells',support.available_exact_cells??'—'],
+    ['Primary exact share',pct(support.primary_exact_share)],
+    ['Mean P90 interval width',fmt(selected.mean_interval_width_p90,2)],
+    ['Fallback order',(u.fallback_order||[]).join(' → ')]
+  ]);
+
+  $('#bb-rating-files').innerHTML=summaryRows([
+    ['Calibration report',f.report||'—'],
+    ['Serving artifact',f.uncertainty||'—'],
+    ['Report updated',f.report_modified_at||'—'],
+    ['Artifact updated',f.uncertainty_modified_at||'—']
+  ]);
+
+  const warnings=[];
+  if(data.status!=='ready')warnings.push(['Artifact','Verifica report e serving artifact']);
+  if(apiBB.loaded===false)warnings.push(['API engine','BB-Rating engine non caricato nel servizio inference']);
+  if(apiBB.uncertainty_loaded===false)warnings.push(['API uncertainty','Artifact uncertainty non caricato nel servizio inference']);
+  $('#bb-rating-warnings').innerHTML=warnings.length?warnings.map(x=>'<div class="health-item"><div class="health-copy"><strong>'+esc(x[0])+'</strong><span>'+esc(x[1])+'</span></div><span class="status warning">△ Verifica</span></div>').join(''):'<div class="empty-state compact"><strong>Nessuna anomalia</strong><p>Artifact e serving risultano disponibili.</p></div>';
+
+  const calibrate=$('#bb-rating-calibrate');
+  calibrate.disabled=j.status==='running'||!data.active_profile;
+  calibrate.textContent=j.status==='running'?'Calibrazione in corso…':'Ricalibra BB-Rating';
+  calibrate.onclick=async()=>{
+    calibrate.disabled=true;
+    try{
+      await api('/admin-api/bb-rating/calibrate',{method:'POST',body:{}});
+      toast('Calibrazione BB-Rating avviata');
+      await renderBBRating();
+    }catch(e){toast(e.message,'error');calibrate.disabled=false;}
+  };
+
+  $('#bb-rating-job').innerHTML=j.status&&j.status!=='idle'?'<div class="job-head"><div><div class="job-status">'+esc(j.stage||'Calibration')+'</div><div class="job-message">'+esc(j.error||j.message||'')+'</div></div><span class="registry-badge '+((j.status==='running'||j.status==='queued')?'candidate':'')+'">'+esc(j.status)+'</span></div><div class="progress-track"><div class="progress-bar" style="width:'+Math.max(0,Math.min(100,Number(j.progress)||0))+'%"></div></div>':'<div class="job-message">Nessuna calibrazione eseguita dal Control Center in questa sessione.</div>';
+  if((j.status==='running'||j.status==='queued')&&App.page==='bb-rating')App.bbRatingTimer=setTimeout(()=>renderBBRating().catch(e=>toast(e.message,'error')),2200);
 }
 
 function chartSvg(points){if(!points||points.length<1)return empty('⌁','Dati non disponibili','I fold walk-forward appariranno dopo il training.');const vals=points.map(p=>Number(p.rmse)).filter(Number.isFinite);if(!vals.length)return '';const min=Math.min(...vals),max=Math.max(...vals),range=Math.max(max-min,.001),w=640,h=210,pad=34;const coords=points.map((p,i)=>{const x=pad+(i*(w-pad*2)/Math.max(1,points.length-1));const y=h-pad-((Number(p.rmse)-min)/range)*(h-pad*2);return{x,y,p};});return `<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none"><line class="chart-grid-line" x1="${pad}" y1="${h-pad}" x2="${w-pad}" y2="${h-pad}"/><line class="chart-grid-line" x1="${pad}" y1="${pad}" x2="${w-pad}" y2="${pad}"/><polyline class="chart-line" points="${coords.map(c=>`${c.x},${c.y}`).join(' ')}"/>${coords.map(c=>`<circle class="chart-dot" cx="${c.x}" cy="${c.y}" r="5"/><text class="chart-label" x="${c.x}" y="${h-9}" text-anchor="middle">${esc(c.p.target_season??'')}</text>`).join('')}</svg>`;}
@@ -204,7 +285,7 @@ async function renderScenarios(){
 function registryCard(title,entry,tone=''){if(!entry||!entry.run_id)return `<div class="registry-card">${empty('⬡',`Nessun ${title.toLowerCase()}`,`Non è presente un run ${title.toLowerCase()} nel registry.`)}</div>`;return `<div class="registry-card"><span class="registry-badge ${tone}">${esc(title)}</span><div class="registry-run">${esc(entry.run_id)}</div><div class="registry-meta">Version: ${esc(entry.model_version||'—')}<br>Data cutoff: ${esc(entry.data_cutoff||'—')}<br>OOT RMSE: ${esc(fmt(entry.overall_rmse))}<br>Registered: ${esc(entry.registered_at||entry.promoted_at||'—')}</div></div>`;}
 async function renderRegistry(){const d=await api('/admin-api/registry');$('#top-model').textContent=shortId(d.production?.run_id);$('#registry-cards').innerHTML=registryCard('Production',d.production)+registryCard('Candidate',d.candidate,'candidate');const hist=d.history||[];$('#registry-history').innerHTML=hist.length?[...hist].reverse().map(h=>`<tr><td>${esc(h.at||'—')}</td><td>${esc(h.event||'—')}</td><td>${esc(h.run_id||'—')}</td></tr>`).join(''):'<tr><td colspan="3" class="muted-inline">Nessun evento nel registry.</td></tr>';const check=$('#registry-confirm'),prom=$('#promote-btn'),roll=$('#rollback-btn');check.addEventListener('change',()=>{prom.disabled=!check.checked||!d.candidate;roll.disabled=!check.checked||!d.previous;});prom.addEventListener('click',async()=>{prom.disabled=true;try{const r=await api('/admin-api/registry/promote',{method:'POST',body:{confirm:true}});toast(r.reason||'Candidate promoted');await renderRegistry();}catch(e){toast(e.message,'error');prom.disabled=false;}});roll.addEventListener('click',async()=>{roll.disabled=true;try{const r=await api('/admin-api/registry/rollback',{method:'POST',body:{confirm:true}});toast(r.reason||'Rollback completed');await renderRegistry();}catch(e){toast(e.message,'error');roll.disabled=false;}});}
 
-async function renderHealth(){async function refresh(){const d=await api('/admin-api/api-health');const live=!!d.live?.ok,ready=!!d.ready?.ok;$('#top-api').textContent=live?'● V2':'● OFFLINE';$('#top-api').className=live?'meta-ok':'';$('#health-kpis').innerHTML=[kpi('⌘','API process',live?'Online':'Offline',`<span class="dot ${live?'green':'red'}"></span>/health/live`,'green'),kpi('✓','Inference ready',ready?'Ready':'Not ready',`<span class="dot ${ready?'green':'yellow'}"></span>/health/ready`),kpi('↗','Internal base',d.base_url||'—','<span>Docker network</span>','violet'),kpi('⬡','API contract','V2','<span>server-to-server</span>','orange')].join('');$('#health-checks').innerHTML=[['Live endpoint',d.live],['Readiness endpoint',d.ready]].map(([name,x])=>`<div class="health-item"><div class="health-copy"><strong>${esc(name)}</strong><span>${esc(x?.error||JSON.stringify(x?.body||{}).slice(0,160))}</span></div><span class="status ${x?.ok?'ok':'danger'}">${x?.ok?'✓ OK':'× KO'}</span></div>`).join('');$('#health-endpoints').innerHTML=(d.endpoints||[]).map(e=>`<div class="endpoint-item"><code>${esc(e)}</code><span class="registry-badge">V2</span></div>`).join('');}$('#refresh-health').addEventListener('click',()=>refresh().catch(e=>toast(e.message,'error')));await refresh();}
+async function renderHealth(){async function refresh(){const d=await api('/admin-api/api-health');const live=!!d.live?.ok,ready=!!d.ready?.ok,bb=d.bb_rating||{};$('#top-api').textContent=live?'● V2':'● OFFLINE';$('#top-api').className=live?'meta-ok':'';$('#health-kpis').innerHTML=[kpi('⌘','API process',live?'Online':'Offline',`<span class="dot ${live?'green':'red'}"></span>/health/live`,'green'),kpi('✓','Inference ready',ready?'Ready':'Not ready',`<span class="dot ${ready?'green':'yellow'}"></span>/health/ready`),kpi('◆','BB-Rating',bb.loaded?'Loaded':'Not loaded',bb.uncertainty_loaded?'<span class="dot green"></span>uncertainty loaded':'<span class="dot red"></span>uncertainty missing','violet'),kpi('↗','Internal base',d.base_url||'—','<span>Docker network</span>','violet'),kpi('⬡','API contract','V2','<span>server-to-server</span>','orange')].join('');$('#health-checks').innerHTML=[['Live endpoint',d.live],['Readiness endpoint',d.ready]].map(([name,x])=>`<div class="health-item"><div class="health-copy"><strong>${esc(name)}</strong><span>${esc(x?.error||JSON.stringify(x?.body||{}).slice(0,160))}</span></div><span class="status ${x?.ok?'ok':'danger'}">${x?.ok?'✓ OK':'× KO'}</span></div>`).join('');$('#health-endpoints').innerHTML=(d.endpoints||[]).map(e=>`<div class="endpoint-item"><code>${esc(e)}</code><span class="registry-badge">V2</span></div>`).join('');}$('#refresh-health').addEventListener('click',()=>refresh().catch(e=>toast(e.message,'error')));await refresh();}
 
 async function renderAudit(){async function refresh(){const d=await api('/admin-api/audit?limit=200');const rows=d.entries||[];$('#audit-body').innerHTML=rows.length?rows.map(r=>`<tr><td>${esc(r.ts||'—')}</td><td><strong>${esc(r.action||'—')}</strong></td><td>${esc(r.actor||'—')}</td><td>${esc(r.target||'—')}</td><td>${esc(r.details||'')}</td></tr>`).join(''):'<tr><td colspan="5" class="muted-inline">Nessun evento audit disponibile.</td></tr>';}$('#refresh-audit').addEventListener('click',()=>refresh().catch(e=>toast(e.message,'error')));await refresh();}
 
