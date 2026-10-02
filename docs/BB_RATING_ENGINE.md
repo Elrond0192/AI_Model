@@ -188,3 +188,20 @@ These warnings are investigation signals, not promotion gates. No BB-Rating weig
 threshold or public methodology should be frozen from the report alone; the next step
 is to review the real-data output and decide whether the peer model, metric set and
 weights need calibration.
+
+
+## Calibration v1.9 — reliability diagnostics
+
+Calibration 1.9 is diagnostic-only. The public BB-Rating remains version 1.8:
+no score weights, peer rules or Prediction Model outputs are changed.
+
+The v1.9 report adds:
+- Pearson and Spearman stability for the rounded 1–100 score;
+- Pearson and Spearman stability for the continuous composite percentile before rounding;
+- exposure-stratified stability using minutes total when available, otherwise games played × minutes per game;
+- stability by league, position family and age band;
+- stability of each active scoring metric's contextual percentile.
+
+The purpose is to identify whether remaining year-to-year noise is concentrated in
+low-exposure observations or in specific metrics before introducing any reliability
+adjustment into the scoring contract.
