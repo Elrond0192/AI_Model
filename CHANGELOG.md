@@ -7,6 +7,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 ### Added
+- BB-Rating calibration 1.14: separates between-league variation from the
+  within-league exposure signal using league-adjusted rank diagnostics and
+  fixed-effect incremental R². Diagnostic-only; BB-Rating 1.8 and Prediction
+  Model outputs are unchanged.
 - BB-Rating calibration 1.13 league/exposure uncertainty decomposition:
   empirical league × exposure variation tables and rank-based incremental R²
   diagnostics testing whether league context adds information beyond exposure.
