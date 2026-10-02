@@ -197,7 +197,7 @@
         const timer = setTimeout(() => {
           if (generation === renderGeneration && page.isConnected) render().catch(() => {});
         }, 2200);
-        AppFuturePerformanceTimer = timer;
+        App.futurePerformanceTimer = timer;
       }
     } catch (error) {
       if (error?.name === 'AbortError') return;
