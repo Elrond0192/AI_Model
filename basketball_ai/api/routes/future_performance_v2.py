@@ -39,6 +39,19 @@ async def future_player(
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
 
+    canonical_league = str(body.league).strip().upper()
+    leagues = data.get("leagues")
+    if leagues is not None and not getattr(leagues, "empty", True):
+        for row in leagues.to_dict("records"):
+            try:
+                if int(row.get("id")) == int(league_id):
+                    canonical_league = str(
+                        row.get("league_key") or row.get("name") or canonical_league
+                    ).strip().upper()
+                    break
+            except (TypeError, ValueError):
+                continue
+
     player = next(
         (
             value
@@ -54,7 +67,7 @@ async def future_player(
         result = model.predict_player(
             data,
             player_id=int(player["id"]),
-            league_key=str(body.league),
+            league_key=canonical_league,
             season=source_season,
             competition=competition,
         )
@@ -65,6 +78,6 @@ async def future_player(
 
     # resolve_league_id validates the requested league. The numeric ID remains
     # internal to the AI service and is not emitted by this public contract.
-    _ = league_id
-    result["generated_at"] = datetime.now(timezone.utc).isoformat()
+    result["league"] = canonical_league
+    result["generated_at"] = datetime.now(timezone.utc)
     return FuturePerformancePlayerResponseV2(**result)
