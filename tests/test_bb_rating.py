@@ -302,7 +302,7 @@ def test_bb_rating_calibration_reuses_peer_and_percentile_contract():
         {"player_stats": stats, "players": make_players(), "source_contract": "test"}
     )
 
-    assert report["calibration_version"] == "1.12"
+    assert report["calibration_version"] == "1.14"
     assert report["bb_rating_version"] == "1.8"
     assert report["dataset"]["rows"] == 120
     assert report["score_distribution"]["n"] == 120
@@ -476,14 +476,18 @@ def test_uncertainty_reports_league_exposure_decomposition():
     assert league_exposure["variance_model"]["league_exposure_interaction_r2"] is not None
     assert league_exposure["variance_model"]["interaction_incremental_r2"] is not None
     assert league_exposure["cells"]
-    assert {
-        (cell["league_key"], cell["exposure_group"])
-        for cell in league_exposure["cells"]
-    } == {
-        (league, exposure)
-        for league in ("ESP1", "ITA1")
-        for exposure in ("Q1_low", "Q2", "Q3", "Q4_high")
-    }
+    assert all(cell["n_pairs"] >= 50 for cell in league_exposure["cells"])
+
+    within = profile["within_league_exposure"]
+    assert within["status"] == "diagnostic_only"
+    assert within["pooled_within_league_spearman"] is not None
+    assert within["between_league_eta_squared"] is not None
+    assert within["within_league_exposure_r2"] is not None
+    assert within["within_league_exposure_incremental_r2"] is not None
+    assert within["league_only_r2"] is not None
+    assert within["league_plus_within_exposure_r2"] is not None
+    assert set(within["leagues"]) == {"ESP1", "ITA1"}
+    assert {row["league_key"] for row in within["league_summaries"]} == {"ESP1", "ITA1"}
 
 
 def test_stability_diagnostics_has_exposure_source_and_metric_section():
