@@ -13,9 +13,6 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   diagnostics. Diagnostic-only; BB-Rating 1.8 and Prediction Model outputs are
   unchanged.
 
-
-
-### Added
 - Quality-v2 forecast contract: explicit `RS/PO/TOT` training allow-list,
   minimum-games gate, reliability sample weights, and training diagnostics.
 - Automatic fast-source selection: indexed serving tables are used when
