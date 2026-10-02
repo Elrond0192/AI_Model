@@ -178,6 +178,8 @@
     });
   }
   function install() {
+    if (window.__hmFuturePerformanceInstalled) return;
+    window.__hmFuturePerformanceInstalled = true;
     installTemplate();
     const navigation = document.querySelector('.sidebar-nav');
     if (!navigation) return;
