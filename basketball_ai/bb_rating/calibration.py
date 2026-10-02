@@ -27,7 +27,7 @@ from basketball_ai.bb_rating.engine import (
 )
 from basketball_ai.bb_rating.semantics import METRIC_SEMANTICS
 
-CALIBRATION_VERSION = "1.12"
+CALIBRATION_VERSION = "1.13"
 
 
 @dataclass(frozen=True)
@@ -648,6 +648,166 @@ def _exposure_controlled_spearman(
     return float(np.corrcoef(outcome_resid, predictor_resid)[0, 1])
 
 
+def _rank_r2(frame: pd.DataFrame, columns: list[str]) -> float | None:
+    clean = frame.dropna(subset=columns + ["_rank_outcome"]).copy()
+    if len(clean) < max(10, len(columns) + 2):
+        return None
+    matrix = np.column_stack(
+        [np.ones(len(clean))]
+        + [
+            pd.to_numeric(clean[column], errors="coerce").to_numpy(dtype=float)
+            for column in columns
+        ]
+    )
+    y = clean["_rank_outcome"].to_numpy(dtype=float)
+    try:
+        beta = np.linalg.lstsq(matrix, y, rcond=None)[0]
+    except np.linalg.LinAlgError:
+        return None
+    prediction = matrix @ beta
+    ss_res = float(np.sum((y - prediction) ** 2))
+    ss_tot = float(np.sum((y - np.mean(y)) ** 2))
+    if ss_tot <= 0.0:
+        return None
+    return float(max(0.0, min(1.0, 1.0 - ss_res / ss_tot)))
+
+
+def _league_exposure_diagnostics(
+    pairs: pd.DataFrame,
+    *,
+    min_pairs_per_cell: int = 50,
+) -> dict[str, Any]:
+    required = [
+        "_abs_rating_change",
+        "_exposure_minutes",
+        "league_key",
+    ]
+    if pairs.empty or any(column not in pairs.columns for column in required):
+        return {
+            "status": "insufficient_data",
+            "min_pairs_per_cell": int(min_pairs_per_cell),
+            "cells": [],
+            "variance_model": {
+                "status": "insufficient_data",
+                "base_exposure_r2": None,
+                "league_added_r2": None,
+                "league_incremental_r2": None,
+                "league_exposure_interaction_r2": None,
+                "interaction_incremental_r2": None,
+            },
+        }
+
+    work = pairs[required].copy()
+    work["_abs_rating_change"] = pd.to_numeric(
+        work["_abs_rating_change"], errors="coerce"
+    )
+    work["_exposure_minutes"] = pd.to_numeric(
+        work["_exposure_minutes"], errors="coerce"
+    )
+    work = work.dropna(
+        subset=["_abs_rating_change", "_exposure_minutes", "league_key"]
+    )
+    if len(work) < 20:
+        return {
+            "status": "insufficient_data",
+            "min_pairs_per_cell": int(min_pairs_per_cell),
+            "cells": [],
+            "variance_model": {
+                "status": "insufficient_data",
+                "base_exposure_r2": None,
+                "league_added_r2": None,
+                "league_incremental_r2": None,
+                "league_exposure_interaction_r2": None,
+                "interaction_incremental_r2": None,
+            },
+        }
+
+    work["_rank_outcome"] = work["_abs_rating_change"].rank(method="average")
+    work["_rank_exposure"] = work["_exposure_minutes"].rank(method="average")
+
+    leagues = sorted(str(value) for value in work["league_key"].unique())
+    reference_league = leagues[0]
+    dummy_columns: list[str] = []
+    for league in leagues[1:]:
+        column = f"_league_{league}"
+        work[column] = (work["league_key"].astype(str) == league).astype(float)
+        dummy_columns.append(column)
+
+    base_r2 = _rank_r2(work, ["_rank_exposure"])
+    league_r2 = _rank_r2(work, ["_rank_exposure", *dummy_columns])
+
+    interaction_columns: list[str] = []
+    for column in dummy_columns:
+        interaction = f"{column}_x_exposure"
+        work[interaction] = work[column] * work["_rank_exposure"]
+        interaction_columns.append(interaction)
+    full_r2 = _rank_r2(
+        work,
+        ["_rank_exposure", *dummy_columns, *interaction_columns],
+    )
+
+    cells: list[dict[str, Any]] = []
+    ranks = work["_rank_exposure"].rank(method="first")
+    work["_exposure_quartile"] = pd.qcut(
+        ranks,
+        4,
+        labels=["Q1_low", "Q2", "Q3", "Q4_high"],
+    )
+    for (league, exposure_group), group in work.groupby(
+        ["league_key", "_exposure_quartile"],
+        observed=True,
+        sort=True,
+    ):
+        if len(group) < min_pairs_per_cell:
+            continue
+        cells.append(
+            {
+                "league_key": str(league),
+                "exposure_group": str(exposure_group),
+                "n_pairs": int(len(group)),
+                "median_exposure": float(group["_exposure_minutes"].median()),
+                **_variation_summary(group["_abs_rating_change"]),
+                "spearman_exposure_vs_abs_change": _spearman_association(
+                    group["_exposure_minutes"],
+                    group["_abs_rating_change"],
+                ),
+            }
+        )
+
+    return {
+        "status": "diagnostic_only",
+        "min_pairs_per_cell": int(min_pairs_per_cell),
+        "reference_league": reference_league,
+        "leagues": leagues,
+        "cells": cells,
+        "variance_model": {
+            "status": "diagnostic_only",
+            "method": (
+                "rank-based in-sample variance decomposition of absolute "
+                "next-season rating change"
+            ),
+            "base_exposure_r2": base_r2,
+            "league_added_r2": league_r2,
+            "league_incremental_r2": (
+                float(league_r2 - base_r2)
+                if base_r2 is not None and league_r2 is not None
+                else None
+            ),
+            "league_exposure_interaction_r2": full_r2,
+            "interaction_incremental_r2": (
+                float(full_r2 - league_r2)
+                if full_r2 is not None and league_r2 is not None
+                else None
+            ),
+            "interpretation": (
+                "Incremental R² measures descriptive variance explained after "
+                "adding league indicators to exposure ranks; it is not a causal "
+                "effect estimate or production weighting rule."
+            ),
+        },
+    }
+
+
 def _uncertainty_diagnostics(pairs: pd.DataFrame) -> dict[str, Any]:
     if pairs.empty:
         return {
@@ -659,6 +819,7 @@ def _uncertainty_diagnostics(pairs: pd.DataFrame) -> dict[str, Any]:
             "by_peer_sample_size": [],
             "by_metric_coverage": [],
             "by_league": [],
+            "league_exposure": _league_exposure_diagnostics(pairs),
             "associations": {
                 "exposure_vs_abs_change_spearman": None,
                 "peer_sample_size_vs_abs_change_spearman": None,
@@ -708,6 +869,7 @@ def _uncertainty_diagnostics(pairs: pd.DataFrame) -> dict[str, Any]:
         "by_peer_sample_size": by_peer_sample_size,
         "by_metric_coverage": by_metric_coverage,
         "by_league": by_league,
+        "league_exposure": _league_exposure_diagnostics(pairs),
         "associations": {
             "exposure_vs_abs_change_spearman": _spearman_association(
                 exposure, outcome
