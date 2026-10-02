@@ -56,18 +56,26 @@ def test_future_performance_status_reads_fitted_artifact(monkeypatch, tmp_path):
     assert result["targets"]["pts_per_36"]["uncertainty"]["p90"] == 4.0
 
 
-def test_future_performance_start_requires_active_profile(monkeypatch):
+def test_future_performance_start_requires_active_profile():
     with admin.STATE.lock:
+        previous_profile = admin.STATE.active_profile
+        previous_job = dict(admin.STATE.future_performance)
         admin.STATE.active_profile = None
-        admin.STATE.future_performance["status"] = "idle"
+        admin.STATE.future_performance.update(status="idle")
 
     try:
-        admin.start_future_performance_training({
-            "username": "admin",
-            "role": "admin",
-            "token": "x",
-        })
-    except Exception as exc:
-        assert getattr(exc, "status_code", None) == 400
-    else:
-        raise AssertionError("expected active profile validation")
+        try:
+            admin.start_future_performance_training({
+                "username": "admin",
+                "role": "admin",
+                "token": "x",
+            })
+        except Exception as exc:
+            assert getattr(exc, "status_code", None) == 400
+        else:
+            raise AssertionError("expected active profile validation")
+    finally:
+        with admin.STATE.lock:
+            admin.STATE.active_profile = previous_profile
+            admin.STATE.future_performance.clear()
+            admin.STATE.future_performance.update(previous_job)
