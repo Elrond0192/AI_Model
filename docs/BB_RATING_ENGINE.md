@@ -215,5 +215,9 @@ The combined structure uses the fallback order:
 The default empirical-cell minimum is 50 observations. The CLI exposes this as
 `--uncertainty-min-samples`.
 
+By default, the latest observed target season is excluded from OOS validation because
+it may still be incomplete. This can be overridden explicitly with
+`--include-latest-validation-season` when the season is known to be complete.
+
 No uncertainty correction or interval is applied to the public BB-Rating 1.8 by
 this calibration command.
