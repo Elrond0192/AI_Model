@@ -416,9 +416,7 @@ def test_final_uncertainty_fit_excludes_latest_target_and_persists_cells():
     for season in (2018, 2019, 2020, 2021):
         block = make_stats().assign(
             season=season,
-            player_global_id=lambda frame, season=season: (
-                frame["player_global_id"] + f"-{season}"
-            ),
+            player_global_id=lambda frame: frame["player_global_id"],
             minutes_total=lambda frame, season=season: 400 + frame.index * 10,
         )
         rows.append(block)
