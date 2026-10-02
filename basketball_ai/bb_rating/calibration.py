@@ -999,7 +999,7 @@ def _markdown(report: dict[str, Any]) -> str:
         lines.extend(f"- {warning}" for warning in report["warnings"])
     else:
         lines.append("- No heuristic diagnostic warnings triggered.")
-    return "\\n".join(lines) + "\\n"
+    return "\n".join(lines) + "\n"
 
 
 def build_calibration_report(
