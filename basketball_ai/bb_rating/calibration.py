@@ -783,14 +783,11 @@ def _within_league_exposure_diagnostics(
         valid["_rank_exposure"] = valid["_exposure_minutes"].rank(method="average")
         centered = pd.DataFrame(
             {
-                "outcome_rank": valid["_rank_outcome"],
-                "exposure_within": valid["_rank_exposure"]
+                "_rank_outcome": valid["_rank_outcome"],
+                "_rank_exposure_within": valid["_rank_exposure"]
                 - valid.groupby("league_key")["_rank_exposure"].transform("mean"),
             }
         )
-        centered["_rank_outcome_global"] = centered["outcome_rank"]
-        centered["_rank_exposure_within"] = centered["exposure_within"]
-        centered["_rank_outcome"] = centered["outcome_rank"]
         # _rank_r2 consumes a global _rank_outcome target. Use centered exposure
         # as the sole within-league predictor and compare it with league fixed effects.
         dummy_columns: list[str] = []
@@ -849,7 +846,6 @@ def _league_exposure_diagnostics(
             "status": "insufficient_data",
             "min_pairs_per_cell": int(min_pairs_per_cell),
             "cells": [],
-            "within_league_exposure": _within_league_exposure_diagnostics(pairs),
             "variance_model": {
                 "status": "insufficient_data",
                 "base_exposure_r2": None,
@@ -984,6 +980,7 @@ def _uncertainty_diagnostics(pairs: pd.DataFrame) -> dict[str, Any]:
             "by_metric_coverage": [],
             "by_league": [],
             "league_exposure": _league_exposure_diagnostics(pairs),
+            "within_league_exposure": _within_league_exposure_diagnostics(pairs),
             "associations": {
                 "exposure_vs_abs_change_spearman": None,
                 "peer_sample_size_vs_abs_change_spearman": None,
@@ -1034,6 +1031,7 @@ def _uncertainty_diagnostics(pairs: pd.DataFrame) -> dict[str, Any]:
         "by_metric_coverage": by_metric_coverage,
         "by_league": by_league,
         "league_exposure": _league_exposure_diagnostics(pairs),
+        "within_league_exposure": _within_league_exposure_diagnostics(pairs),
         "associations": {
             "exposure_vs_abs_change_spearman": _spearman_association(
                 exposure, outcome
