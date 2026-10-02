@@ -41,6 +41,7 @@
         <button class="nav-item" data-page="training"><span class="nav-icon"><i class="ph ph-trend-up"></i></span><span>Training</span></button>
         <button class="nav-item" data-page="backtests"><span class="nav-icon"><i class="ph ph-chart-line-up"></i></span><span>Backtests</span></button>
         <button class="nav-item" data-page="bb-rating"><span class="nav-icon"><i class="ph-fill ph-star"></i></span><span>BB-Rating</span></button>
+        <button class="nav-item" data-page="future-performance"><span class="nav-icon"><i class="ph ph-crystal-ball"></i></span><span>Future Performance</span></button>
         <button class="nav-item" data-page="scenarios"><span class="nav-icon"><i class="ph ph-flask"></i></span><span>Scenario Lab</span></button>
         <button class="nav-item" data-page="registry"><span class="nav-icon"><i class="ph ph-cube"></i></span><span>Model Registry</span></button>
         <button class="nav-item" data-page="health"><span class="nav-icon"><i class="ph ph-heartbeat"></i></span><span>API &amp; Health</span></button>
@@ -149,6 +150,30 @@
       <div id="registry-cards" class="split-grid"></div>
       <section class="panel"><div class="panel-heading"><h2>Promotion controls</h2></div><div class="control-row"><label class="confirm"><input id="registry-confirm" type="checkbox"><span>Ho verificato il walk-forward report e i promotion gates</span></label><div class="button-row"><button id="promote-btn" class="btn btn-primary" disabled>Promuovi candidate</button><button id="rollback-btn" class="btn btn-danger" disabled>Rollback previous</button></div></div></section>
       <section class="panel"><div class="panel-heading"><h2>Registry history</h2></div><div class="table-shell"><table><thead><tr><th>UTC</th><th>Event</th><th>Run ID</th></tr></thead><tbody id="registry-history"></tbody></table></div></section>
+    </section>
+  </template>
+
+  <template id="page-future-performance">
+    <section class="page">
+      <div class="page-heading action-heading">
+        <div>
+          <h1>Player Future Performance</h1>
+          <p>Modello predittivo multivariato season-ahead. Prevede le performance del giocatore nella stagione successiva, separato da Prediction Model e BB-Rating.</p>
+        </div>
+        <div class="button-row">
+          <button id="future-performance-refresh" class="btn btn-secondary btn-small">Aggiorna</button>
+          <button id="future-performance-train" class="btn btn-primary btn-small">Genera / aggiorna modello</button>
+        </div>
+      </div>
+      <div id="future-performance-kpis" class="kpi-grid four"></div>
+      <div class="split-grid">
+        <section class="panel"><div class="panel-heading"><h2>Stato modello</h2></div><div id="future-performance-status"></div></section>
+        <section class="panel"><div class="panel-heading"><h2>Dataset &amp; finestra temporale</h2></div><div id="future-performance-dataset"></div></section>
+      </div>
+      <section class="panel"><div class="panel-heading"><h2>Target predetti</h2><span class="muted-inline">valori t+1 + incertezza OOS</span></div><div id="future-performance-targets" class="table-shell"></div></section>
+      <section class="panel"><div class="panel-heading"><h2>Walk-forward validation</h2><span class="muted-inline">expanding OOS</span></div><div id="future-performance-backtest" class="table-shell"></div></section>
+      <section class="panel"><div class="panel-heading"><h2>Training job</h2></div><div id="future-performance-job"></div></section>
+      <div id="future-performance-error" class="microcopy"></div>
     </section>
   </template>
 
@@ -293,3 +318,5 @@
   <script src="/assets/app.js" defer></script>
 </body>
 </html>
+
+
