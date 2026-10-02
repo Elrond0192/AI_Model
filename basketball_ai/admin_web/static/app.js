@@ -130,11 +130,15 @@ async function renderBBRating(){
     '</strong><p>'+(data.ready?'Report di calibrazione e serving artifact presenti e coerenti.':'Il Control Center non trova una coppia completa report + serving artifact.')+
     '</p></div></div>';
 
+  const runtimeCal=apiBB.runtime_calibration_version||'—';
+  const runtimeBb=apiBB.runtime_bb_rating_version||'—';
   $('#bb-rating-runtime').innerHTML=summaryRows([
     ['BB-Rating version',data.bb_rating_version||'—'],
     ['Calibration version',data.calibration_version||'—'],
     ['API engine',apiBB.loaded?'Loaded':'Not loaded'],
     ['API uncertainty',apiBB.uncertainty_loaded?'Loaded':'Not loaded'],
+    ['Runtime BB-Rating',runtimeBb],
+    ['Runtime calibration',runtimeCal],
     ['Source contract',ds.source_contract||'—'],
     ['Active DB profile',data.active_profile||'—']
   ]);
@@ -150,7 +154,7 @@ async function renderBBRating(){
     ['Explainable metrics',v.explainable_metric_count??'—']
   ]);
 
-  const support=u.support||{},selected=u.selected_structure||{};
+  const support=u.support||{},selected=u.selected_structure||{},oos=u.oos_models||[];
   $('#bb-rating-uncertainty').innerHTML=summaryRows([
     ['Status',u.status||'—'],
     ['Training target seasons',(u.training_target_seasons||[]).join(', ')||'—'],
@@ -160,7 +164,9 @@ async function renderBBRating(){
     ['Primary exact share',pct(support.primary_exact_share)],
     ['Mean P90 interval width',fmt(selected.mean_interval_width_p90,2)],
     ['Fallback order',(u.fallback_order||[]).join(' → ')]
-  ]);
+  ])+'<div class="bb-rating-oos-table table-shell"><table><thead><tr><th>Model</th><th>OOS N</th><th>P50</th><th>P75</th><th>P90</th></tr></thead><tbody>'+
+  (oos.length?oos.map(m=>'<tr><td><strong>'+esc(m.model||'—')+'</strong></td><td>'+esc(m.n_oos??'—')+'</td><td>'+pct(m.coverage?.p50)+'</td><td>'+pct(m.coverage?.p75)+'</td><td>'+pct(m.coverage?.p90)+'</td></tr>').join(''):'<tr><td colspan="5" class="muted-inline">Nessun modello OOS disponibile.</td></tr>')+
+  '</tbody></table></div>';
 
   $('#bb-rating-files').innerHTML=summaryRows([
     ['Calibration report',f.report||'—'],
@@ -173,6 +179,8 @@ async function renderBBRating(){
   if(data.status!=='ready')warnings.push(['Artifact','Verifica report e serving artifact']);
   if(apiBB.loaded===false)warnings.push(['API engine','BB-Rating engine non caricato nel servizio inference']);
   if(apiBB.uncertainty_loaded===false)warnings.push(['API uncertainty','Artifact uncertainty non caricato nel servizio inference']);
+  if(data.calibration_version&&apiBB.runtime_calibration_version&&data.calibration_version!==apiBB.runtime_calibration_version)
+    warnings.push(['Serving version','Artifact calibration '+data.calibration_version+' presente; API runtime '+apiBB.runtime_calibration_version+'. Riavvia/redeploy l’API per caricare il nuovo artifact.']);
   $('#bb-rating-warnings').innerHTML=warnings.length?warnings.map(x=>'<div class="health-item"><div class="health-copy"><strong>'+esc(x[0])+'</strong><span>'+esc(x[1])+'</span></div><span class="status warning">△ Verifica</span></div>').join(''):'<div class="empty-state compact"><strong>Nessuna anomalia</strong><p>Artifact e serving risultano disponibili.</p></div>';
 
   const refresh=$('#bb-rating-refresh');
