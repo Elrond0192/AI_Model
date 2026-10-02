@@ -817,6 +817,8 @@ def _fit_final_uncertainty_calibration(
     pairs = _consecutive_rating_change_pairs(frame)
     if pairs.empty:
         return {
+            "calibration_version": CALIBRATION_VERSION,
+            "bb_rating_version": BB_RATING_VERSION,
             "status": "insufficient_data",
             "method": "expanding_walk_forward_empirical_quantiles_final_fit",
             "target": "absolute next-season BB-Rating change",
@@ -985,6 +987,8 @@ def _fit_final_uncertainty_calibration(
     }
 
     return {
+        "calibration_version": CALIBRATION_VERSION,
+        "bb_rating_version": BB_RATING_VERSION,
         "status": "fitted",
         "method": "expanding_walk_forward_empirical_quantiles_final_fit",
         "target": "absolute next-season BB-Rating change",
