@@ -496,7 +496,10 @@ def test_api_player_endpoint_includes_uncertainty_when_loaded():
     assert payload["uncertainty"]["sample_size"] == 60
     assert payload["uncertainty"]["exposure_band"] == 4
     assert payload["uncertainty"]["absolute_change"]["p90"] == 10.0
-    assert payload["uncertainty"]["p90_score_range"] == {"lower": 1, "upper": 100}
+    assert payload["uncertainty"]["p90_score_range"] == {
+        "lower": max(1, payload["bb_rating"] - 10),
+        "upper": min(100, payload["bb_rating"] + 10),
+    }
 
 
 def test_api_player_endpoint_reports_missing_uncertainty_artifact():
