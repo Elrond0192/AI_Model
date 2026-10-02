@@ -480,7 +480,7 @@ def test_uncertainty_reports_league_exposure_decomposition():
 
     within = profile["within_league_exposure"]
     assert within["status"] == "diagnostic_only"
-    assert within["pooled_within_league_spearman"] is not None
+    assert within["pooled_within_league_rank_partial_correlation"] is not None
     assert within["between_league_eta_squared"] is not None
     assert within["within_league_exposure_r2"] is not None
     assert within["within_league_exposure_incremental_r2"] is not None
