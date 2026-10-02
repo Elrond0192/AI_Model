@@ -42,7 +42,7 @@ async def rate_player(body: BBRatingPlayerRequestV2, request: Request):
             "available": False,
             "reason": "uncertainty_artifact_unavailable",
             "calibration_version": None,
-            "bb_rating_version": result.version,
+            "bb_rating_version": str(payload.get("bb_rating_version", "1.8")),
         }
     else:
         payload["uncertainty"] = uncertainty.for_player(
