@@ -52,8 +52,7 @@
 
     const page = document.createElement('section');
     page.className = 'page';
-    page.innerHTML = \
-`<div class="page-heading action-heading">
+    page.innerHTML = `<div class="page-heading action-heading">
       <div><h1>Player Future Performance</h1>
       <p>Modello predittivo multivariato season-ahead. Prevede le performance del giocatore nella stagione successiva, separato da Prediction Model e BB-Rating.</p></div>
       <div class="button-row">
@@ -74,7 +73,7 @@
     </section>
     <section class="panel"><div class="panel-heading"><h2>Training job</h2></div><div id="future-performance-job"></div></section>
     <div id="future-performance-error" class="microcopy"></div>
-  </div>\`;
+  </div>`;
     root.replaceChildren(page);
     return page;
   }
