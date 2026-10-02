@@ -1077,6 +1077,30 @@ def _markdown(report: dict[str, Any]) -> str:
             for row in report['stability_diagnostics']['exposure']['quartiles']
         ],
         "",
+        "### Empirical reliability diagnostics",
+        "",
+        f"- Status: **{report['stability_diagnostics']['reliability']['status']}**",
+        f"- Observed composite Spearman: **{report['stability_diagnostics']['reliability']['observed_composite_spearman'] if report['stability_diagnostics']['reliability']['observed_composite_spearman'] is not None else '—'}**",
+        f"- Weighted active-metric Spearman proxy: **{report['stability_diagnostics']['reliability']['weighted_active_metric_spearman'] if report['stability_diagnostics']['reliability']['weighted_active_metric_spearman'] is not None else '—'}**",
+        "",
+        "| Exposure group | Median exposure | Observed Spearman | Fitted reliability proxy | Relative to high exposure |",
+        "|---|---:|---:|---:|---:|",
+        *[
+            f"| {row['exposure_group']} | {row['median_exposure']:.1f} | "
+            f"{'—' if row['observed_spearman'] is None else f'{row['observed_spearman']:.3f}'} | "
+            f"{'—' if row['fitted_reliability_proxy'] is None else f'{row['fitted_reliability_proxy']:.3f}'} | "
+            f"{'—' if row['relative_to_high_exposure'] is None else f'{row['relative_to_high_exposure']:.3f}'} |"
+            for row in report['stability_diagnostics']['reliability']['exposure_curve']['points']
+        ],
+        "",
+        f"- Exposure curve fitted: **{report['stability_diagnostics']['reliability']['exposure_curve']['fitted']}**",
+        f"- Curve asymptote: **{report['stability_diagnostics']['reliability']['exposure_curve']['asymptote'] if report['stability_diagnostics']['reliability']['exposure_curve']['asymptote'] is not None else '—'}**",
+        f"- Curve half-exposure: **{report['stability_diagnostics']['reliability']['exposure_curve']['half_exposure'] if report['stability_diagnostics']['reliability']['exposure_curve']['half_exposure'] is not None else '—'}**",
+        f"- Curve RMSE: **{report['stability_diagnostics']['reliability']['exposure_curve']['rmse'] if report['stability_diagnostics']['reliability']['exposure_curve']['rmse'] is not None else '—'}**",
+        f"- Curve R²: **{report['stability_diagnostics']['reliability']['exposure_curve']['r2'] if report['stability_diagnostics']['reliability']['exposure_curve']['r2'] is not None else '—'}**",
+        "",
+        "No reliability correction is applied to the public BB-Rating.",
+        "",
         "### Stability by league",
         "",
         "| League | N | Mean abs change | Pearson | Spearman |",
