@@ -38,6 +38,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--output-dir", default="models_saved/bb_rating_calibration")
     parser.add_argument("--min-peer-samples", type=int, default=25)
     parser.add_argument("--min-context-samples", type=int, default=10)
+    parser.add_argument("--uncertainty-min-samples", type=int, default=50)
     parser.add_argument("--min-season", type=int, default=None)
     parser.add_argument("--max-season", type=int, default=None)
     return parser.parse_args(argv)
@@ -184,6 +185,7 @@ def mode_bb_rating_calibrate(args: argparse.Namespace) -> None:
         config=BBRatingCalibrationConfig(
             min_peer_samples=args.min_peer_samples,
             min_context_samples=args.min_context_samples,
+            uncertainty_min_samples=args.uncertainty_min_samples,
         ),
     )
     paths = write_calibration_report(report, args.output_dir)
@@ -193,8 +195,7 @@ def mode_bb_rating_calibrate(args: argparse.Namespace) -> None:
         "dataset": report["dataset"],
         "contexts": report["contexts"],
         "score_distribution": report["score_distribution"],
-        "stability": report["stability"],
-        "stability_diagnostics": report["stability_diagnostics"],
+        "uncertainty_validation": report["uncertainty_validation"],
         "validation_signals": report["validation_signals"],
         "warnings": report["warnings"],
         "output": paths,
