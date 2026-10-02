@@ -175,6 +175,8 @@ async function renderBBRating(){
   if(apiBB.uncertainty_loaded===false)warnings.push(['API uncertainty','Artifact uncertainty non caricato nel servizio inference']);
   $('#bb-rating-warnings').innerHTML=warnings.length?warnings.map(x=>'<div class="health-item"><div class="health-copy"><strong>'+esc(x[0])+'</strong><span>'+esc(x[1])+'</span></div><span class="status warning">△ Verifica</span></div>').join(''):'<div class="empty-state compact"><strong>Nessuna anomalia</strong><p>Artifact e serving risultano disponibili.</p></div>';
 
+  const refresh=$('#bb-rating-refresh');
+  refresh.onclick=()=>renderBBRating().catch(e=>toast(e.message,'error'));
   const calibrate=$('#bb-rating-calibrate');
   calibrate.disabled=j.status==='running'||!data.active_profile;
   calibrate.textContent=j.status==='running'?'Calibrazione in corso…':'Ricalibra BB-Rating';
