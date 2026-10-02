@@ -21,7 +21,7 @@ import uuid
 
 import pandas as pd
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from sqlalchemy import text
@@ -101,6 +101,26 @@ class AdminState:
     lock: threading.RLock = field(default_factory=threading.RLock)
     executor: ThreadPoolExecutor = field(default_factory=lambda: ThreadPoolExecutor(max_workers=1, thread_name_prefix="ai-admin-training"))
     bb_rating_executor: ThreadPoolExecutor = field(default_factory=lambda: ThreadPoolExecutor(max_workers=1, thread_name_prefix="ai-admin-bb-rating"))
+    future_performance: dict[str, Any] = field(
+        default_factory=lambda: {
+            "status": "idle",
+            "stage": "Ready",
+            "progress": 0,
+            "message": "No Future Performance training run in progress.",
+            "error": None,
+            "started_at": None,
+            "finished_at": None,
+            "future_performance_version": None,
+            "feature_version": None,
+            "output": None,
+        }
+    )
+    future_performance_executor: ThreadPoolExecutor = field(
+        default_factory=lambda: ThreadPoolExecutor(
+            max_workers=1,
+            thread_name_prefix="ai-admin-future-performance",
+        )
+    )
 
 
 STATE = AdminState()
@@ -345,6 +365,15 @@ def _set_bb_rating(**updates: Any) -> None:
         STATE.bb_rating.update(updates)
 
 
+def _set_future_performance(**updates: Any) -> None:
+    with STATE.lock:
+        STATE.future_performance.update(updates)
+
+
+def _future_performance_path() -> Path:
+    return MODEL_ROOT / "future_performance"
+
+
 def _bb_rating_paths() -> dict[str, Path]:
     root = MODEL_ROOT / "bb_rating_calibration"
     uncertainty = root / "bb_rating_uncertainty.json"
@@ -435,6 +464,165 @@ def _bb_rating_status() -> dict[str, Any]:
         "active_profile": active_profile,
         "job": job,
     }
+
+
+def _future_performance_status() -> dict[str, Any]:
+    root = _future_performance_path()
+    metadata_path = root / "metadata.json"
+    metadata = _read_json(metadata_path) if metadata_path.exists() else None
+    models = metadata.get("model_files") if isinstance(metadata, dict) else {}
+    artifacts_ok = bool(
+        isinstance(metadata, dict)
+        and metadata.get("status") == "fitted"
+        and models
+        and all((root / str(relative)).is_file() for relative in models.values())
+    )
+    backtest = (metadata or {}).get("backtest") or {}
+    target_metrics = (metadata or {}).get("target_metrics") or {}
+    uncertainty = (metadata or {}).get("uncertainty_by_target") or {}
+    with STATE.lock:
+        job = dict(STATE.future_performance)
+        active_profile = STATE.active_profile
+    return {
+        "ready": artifacts_ok,
+        "status": "ready" if artifacts_ok else ("artifact_missing" if not metadata else "incomplete"),
+        "future_performance_version": (metadata or {}).get("future_performance_version"),
+        "feature_version": (metadata or {}).get("feature_version"),
+        "dataset": {
+            "n_pairs": (metadata or {}).get("n_pairs"),
+            "n_players": (metadata or {}).get("n_players"),
+            "leagues": (metadata or {}).get("leagues") or [],
+            "competitions": (metadata or {}).get("competitions") or [],
+            "training_target_seasons": (metadata or {}).get("training_target_seasons") or [],
+        },
+        "targets": {
+            key: {
+                **(target_metrics.get(key) or {}),
+                "uncertainty": uncertainty.get(key) or {},
+            }
+            for key in target_metrics
+        },
+        "validation": {
+            "status": backtest.get("status"),
+            "method": backtest.get("method"),
+            "target_seasons": backtest.get("target_seasons") or [],
+            "folds": backtest.get("folds") or [],
+            "summary": backtest.get("summary") or {},
+        },
+        "files": {
+            "root": str(root),
+            "metadata": str(metadata_path) if metadata_path.exists() else None,
+            "metadata_modified_at": _file_modified_at(metadata_path) if metadata_path.exists() else None,
+        },
+        "active_profile": active_profile,
+        "job": job,
+    }
+
+
+def _future_performance_worker(active_profile: str | None, actor: str) -> None:
+    from basketball_ai.future_performance import PlayerFuturePerformanceModel
+
+    try:
+        if not active_profile:
+            raise RuntimeError("Seleziona prima un profilo PostgreSQL")
+        profile = load_profiles().get(active_profile)
+        if not profile:
+            raise RuntimeError(f"Profilo PostgreSQL '{active_profile}' non disponibile")
+
+        _set_future_performance(
+            status="running",
+            stage="Loading training data",
+            progress=8,
+            message=f"Caricamento dati Future Performance dal profilo {active_profile}…",
+            error=None,
+            started_at=_utcnow(),
+            finished_at=None,
+        )
+        _audit("future_performance_training_started", actor, active_profile)
+
+        data = load_all_data(
+            profile_url(active_profile),
+            str(profile.get("source_schema", "AI_Source")),
+            purpose="training",
+        )
+        stats = data.get("player_stats")
+        if not isinstance(stats, pd.DataFrame) or stats.empty:
+            raise RuntimeError("Nessun dato player_stats disponibile per Future Performance")
+
+        observed_seasons = _seasons(data)
+        training_seasons, excluded_in_progress, blocking = _training_seasons(observed_seasons)
+        if blocking:
+            raise RuntimeError(
+                "Snapshot contiene stagioni non idonee al training: "
+                + ", ".join(map(str, blocking))
+            )
+        if len(training_seasons) < 5:
+            raise RuntimeError("Servono almeno cinque stagioni Complete per Future Performance")
+
+        _set_future_performance(
+            stage="Walk-forward + fitting",
+            progress=25,
+            message=(
+                "Costruzione delle coppie t→t+1, validazione expanding OOS e fit multivariato…"
+                + (
+                    f" ({len(excluded_in_progress)} stagione/i In corso escluse come target)"
+                    if excluded_in_progress
+                    else ""
+                )
+            ),
+        )
+        model = PlayerFuturePerformanceModel()
+        metadata = model.fit(
+            data,
+            target_seasons=training_seasons,
+            backtest=True,
+        )
+
+        _set_future_performance(
+            stage="Saving production artifact",
+            progress=88,
+            message="Scrittura artifact Future Performance separato dal Prediction Model…",
+            future_performance_version=metadata.get("future_performance_version"),
+            feature_version=metadata.get("feature_version"),
+        )
+        root = _future_performance_path()
+        root.mkdir(parents=True, exist_ok=True)
+        paths = model.save(root)
+        details = {
+            "future_performance_version": metadata.get("future_performance_version"),
+            "feature_version": metadata.get("feature_version"),
+            "n_pairs": metadata.get("n_pairs"),
+            "n_players": metadata.get("n_players"),
+            "target_seasons": training_seasons,
+        }
+        _audit(
+            "future_performance_training_completed",
+            actor,
+            active_profile,
+            json.dumps(details, ensure_ascii=False),
+        )
+        _set_future_performance(
+            status="complete",
+            stage="Model ready",
+            progress=100,
+            message="Future Performance model pronto. Prediction Model e BB-Rating non sono stati modificati.",
+            error=None,
+            finished_at=_utcnow(),
+            future_performance_version=metadata.get("future_performance_version"),
+            feature_version=metadata.get("feature_version"),
+            output=paths,
+        )
+    except Exception as exc:  # pragma: no cover
+        error = _safe_error(exc)
+        _audit("future_performance_training_failed", actor, active_profile or "", error)
+        _set_future_performance(
+            status="failed",
+            stage="Failed",
+            progress=100,
+            message="Future Performance training failed.",
+            error=error,
+            finished_at=_utcnow(),
+        )
 
 
 def _bb_rating_worker(active_profile: str | None, actor: str) -> None:
@@ -798,8 +986,15 @@ def healthz() -> dict[str, str]:
 
 
 @app.get("/")
-def index() -> FileResponse:
-    return FileResponse(STATIC_ROOT / "index.html", headers={"Cache-Control": "no-store"})
+def index() -> HTMLResponse:
+    html = (STATIC_ROOT / "index.html").read_text(encoding="utf-8")
+    marker = '<script src="/assets/future_performance_ui.js" defer></script>'
+    if marker not in html:
+        html = html.replace("</body>", marker + "\n</body>")
+    return HTMLResponse(
+        content=html,
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @app.post("/admin-api/login")
@@ -879,6 +1074,16 @@ async def overview(user: dict[str, str] = Depends(_operator)) -> dict[str, Any]:
             "action": "registry",
         },
         {
+            "component": "Player Future Performance",
+            "status": "ok" if _future_performance_status().get("ready") else "warning",
+            "label": "Ready" if _future_performance_status().get("ready") else "Model da generare",
+            "detail": (
+                f"v{_future_performance_status().get('future_performance_version') or '—'} · "
+                f"{(_future_performance_status().get('dataset') or {}).get('n_pairs') or 0} training pairs"
+            ),
+            "action": "future-performance",
+        },
+        {
             "component": "BB-Rating",
             "status": "ok" if _bb_rating_status().get("ready") else "warning",
             "label": "Ready" if _bb_rating_status().get("ready") else "Artifact da verificare",
@@ -898,6 +1103,7 @@ async def overview(user: dict[str, str] = Depends(_operator)) -> dict[str, Any]:
         "candidate": candidate,
         "candidate_quality": _candidate_quality(candidate),
         "bb_rating": _bb_rating_status(),
+        "future_performance": _future_performance_status(),
         "readiness": readiness,
         "api": {"online": bool(api_live.get("ok")), "version": "V2", "detail": api_live},
     }
@@ -1194,6 +1400,44 @@ def start_bb_rating_calibration(user: dict[str, str] = Depends(_csrf)) -> dict[s
     return {"ok": True, "profile": active_profile, "job": current}
 
 
+@app.get("/admin-api/future-performance")
+def future_performance_status(user: dict[str, str] = Depends(_operator)) -> dict[str, Any]:
+    del user
+    return _future_performance_status()
+
+
+@app.post("/admin-api/future-performance/train")
+def start_future_performance_training(
+    user: dict[str, str] = Depends(_csrf),
+) -> dict[str, Any]:
+    actor = user["username"]
+    with STATE.lock:
+        job = dict(STATE.future_performance)
+        active_profile = STATE.active_profile
+    if job.get("status") in {"running", "queued"}:
+        raise HTTPException(status_code=409, detail="Future Performance training already running")
+    if not active_profile:
+        raise HTTPException(status_code=400, detail="Seleziona prima un profilo PostgreSQL")
+    _set_future_performance(
+        status="queued",
+        stage="Queued",
+        progress=0,
+        message="Future Performance training queued.",
+        error=None,
+        started_at=_utcnow(),
+        finished_at=None,
+        actor=actor,
+    )
+    STATE.future_performance_executor.submit(
+        _future_performance_worker,
+        active_profile,
+        actor,
+    )
+    with STATE.lock:
+        current = dict(STATE.future_performance)
+    return {"ok": True, "profile": active_profile, "job": current}
+
+
 @app.get("/admin-api/registry")
 def registry(user: dict[str, str] = Depends(_operator)) -> dict[str, Any]:
     del user
@@ -1232,6 +1476,7 @@ async def api_health(user: dict[str, str] = Depends(_operator)) -> dict[str, Any
     )
     bb_body = bb.get("body") if isinstance(bb.get("body"), dict) else {}
     status = _bb_rating_status()
+    future_status = _future_performance_status()
     return {
         "base_url": API_BASE_URL,
         "live": live,
@@ -1245,12 +1490,20 @@ async def api_health(user: dict[str, str] = Depends(_operator)) -> dict[str, Any
             "runtime_calibration_version": bb_body.get("bb_rating_calibration_version"),
             "runtime_bb_rating_version": bb_body.get("bb_rating_uncertainty_version") or bb_body.get("bb_rating_version"),
         },
+        "future_performance": {
+            "api": bb,
+            "loaded": bool(bb_body.get("future_performance_loaded")),
+            "version": bb_body.get("future_performance_version"),
+            "feature_version": bb_body.get("future_performance_feature_version"),
+            "artifact_version": future_status.get("future_performance_version"),
+        },
         "endpoints": [
             "GET /health/live",
             "GET /health/ready",
             "GET /health",
             "POST /api/v2/predictions/player-team",
             "POST /api/v2/bb-rating/player",
+            "POST /api/v2/future-performance/player",
             "POST /api/v2/scenarios/evaluate",
         ],
     }
