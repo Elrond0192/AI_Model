@@ -360,165 +360,64 @@ def test_tiny_context_is_explicitly_limited():
     assert result.peer_group["context_sample_size"] == 9
 
 
-def test_stability_diagnostics_reports_continuous_and_rank_correlations():
-    stats = pd.concat(
-        [
-            make_stats().assign(age=lambda df: 25),
-            make_stats().assign(
-                season=2024,
-                player_global_id=lambda df: df["player_global_id"] + "-2024",
-                age=26,
-            ),
-            make_stats().assign(
-                season=2023,
-                player_global_id=lambda df: df["player_global_id"] + "-2023",
-                age=24,
-            ),
-        ],
-        ignore_index=True,
-    )
 
-    report = build_calibration_report(
-        {"player_stats": stats, "players": make_players(), "source_contract": "test"}
-    )
-    diag = report["stability_diagnostics"]
+def test_oos_uncertainty_validation_is_temporal_and_exposure_aware():
+    chunks = []
+    for season in range(2020, 2025):
+        chunk = make_stats().copy()
+        chunk["season"] = season
+        # Preserve player identity across seasons so the validator forms true
+        # consecutive player-season transitions.
+        chunk["player_global_id"] = [f"G{i}" for i in range(1, 61)]
+        chunk["player_id"] = list(range(1, 61))
+        # Introduce a modest season-specific change in metric ordering so the
+        # transition target is not mechanically identical in every season.
+        if season % 2:
+            chunk["raptor_total"] = chunk["raptor_total"].iloc[::-1].to_numpy()
+        chunks.append(chunk)
 
-    assert diag["n_pairs"] == 0
-
-
-def test_empirical_reliability_is_diagnostic_only():
-    stats = make_stats()
-    stats2 = make_stats().assign(
-        season=2024,
-    )
-    stats2["player_global_id"] = stats["player_global_id"].values
-    stats2["player_id"] = stats["player_id"].values
-    stats = pd.concat([stats2, stats], ignore_index=True)
-
-    report = build_calibration_report(
-        {"player_stats": stats, "players": make_players(), "source_contract": "test"}
-    )
-    reliability = report["stability_diagnostics"]["reliability"]
-
-    assert reliability["status"] == "diagnostic_only"
-    assert reliability["automatic_application"] is False
-    assert reliability["active_metric_count"] > 0
-    assert reliability["exposure_curve"]["points"]
-    assert all(
-        point["median_exposure"] is not None
-        for point in reliability["exposure_curve"]["points"]
-    )
-    assert reliability["weighted_active_metric_spearman"] is not None
-
-    profile = reliability["stability_profile"]
-    assert profile["status"] == "diagnostic_only"
-    assert "100" in profile["stability_score_definition"]
-    assert "Q1=low" in profile["confidence_level_definition"]
-    assert "Median absolute next-season BB-Rating change" in profile[
-        "expected_rating_variation_definition"
-    ]
-    assert len(profile["bands"]) == len(reliability["exposure_curve"]["points"])
-    assert {band["confidence_level"] for band in profile["bands"]} == {
-        "low",
-        "moderate",
-        "high",
-        "very_high",
-    }
-    assert all(
-        0.0 <= band["stability_score"] <= 100.0
-        for band in profile["bands"]
-        if band["stability_score"] is not None
-    )
-    assert all(
-        band["expected_rating_variation"] is not None
-        for band in profile["bands"]
-    )
-
-
-def test_uncertainty_reports_league_exposure_decomposition():
-    stats = pd.concat(
-        [
-            make_stats().assign(
-                league_key="ITA1",
-                player_global_id=lambda df: df["player_global_id"] + "-ita",
-            ),
-            make_stats().assign(
-                league_key="ESP1",
-                player_global_id=lambda df: df["player_global_id"] + "-esp",
-            ),
-        ],
-        ignore_index=True,
-    )
-    next_stats = stats.copy()
-    next_stats["season"] = 2024
-    next_stats["player_global_id"] = stats["player_global_id"].values
-    next_stats.loc[
-        next_stats["league_key"] == "ESP1",
-        "raptor_total",
-    ] += 2.0
-    combined = pd.concat([next_stats, stats], ignore_index=True)
-
+    stats = pd.concat(chunks, ignore_index=True)
     report = build_calibration_report(
         {
-            "player_stats": combined,
+            "player_stats": stats,
             "players": make_players(),
             "source_contract": "test",
-        }
+        },
+        config=BBRatingCalibrationConfig(
+            min_peer_samples=25,
+            min_context_samples=10,
+            uncertainty_min_samples=10,
+        ),
     )
-    profile = report["stability_diagnostics"]["uncertainty_profile"]
-    league_exposure = profile["league_exposure"]
 
-    assert league_exposure["status"] == "diagnostic_only"
-    assert set(league_exposure["leagues"]) == {"ESP1", "ITA1"}
-    assert league_exposure["variance_model"]["base_exposure_r2"] is not None
-    assert league_exposure["variance_model"]["league_added_r2"] is not None
-    assert league_exposure["variance_model"]["league_incremental_r2"] is not None
-    assert league_exposure["variance_model"]["league_exposure_interaction_r2"] is not None
-    assert league_exposure["variance_model"]["interaction_incremental_r2"] is not None
-    assert league_exposure["cells"]
-    assert all(cell["n_pairs"] >= 50 for cell in league_exposure["cells"])
-
-    within = profile["within_league_exposure"]
-    assert within["status"] == "diagnostic_only"
-    assert within["pooled_within_league_rank_partial_correlation"] is not None
-    assert within["between_league_eta_squared"] is not None
-    assert within["within_league_exposure_r2"] is not None
-    assert within["within_league_exposure_incremental_r2"] is not None
-    assert within["league_only_r2"] is not None
-    assert within["league_plus_within_exposure_r2"] is not None
-    assert set(within["leagues"]) == {"ESP1", "ITA1"}
-    assert {row["league_key"] for row in within["league_summaries"]} == {"ESP1", "ITA1"}
-
-
-def test_stability_diagnostics_has_exposure_source_and_metric_section():
-    stats = make_stats()
-    stats2 = make_stats().assign(
-        season=2024,
-        player_global_id=lambda df: df["player_global_id"] + "-2024",
+    uncertainty = report["uncertainty_validation"]
+    assert uncertainty["status"] == "validated_oos"
+    assert uncertainty["method"] == "expanding_walk_forward_empirical_quantiles"
+    assert uncertainty["first_possible_test_season"] == 2022
+    assert uncertainty["test_seasons"] == [2022, 2023, 2024]
+    assert len(uncertainty["folds"]) == 3
+    assert all(
+        fold["training_target_seasons"]
+        for fold in uncertainty["folds"]
     )
-    # Keep player IDs aligned across adjacent seasons for actual pairs.
-    stats2["player_global_id"] = stats["player_global_id"].values
-    stats = pd.concat([stats2, stats], ignore_index=True)
 
-    report = build_calibration_report(
-        {"player_stats": stats, "players": make_players(), "source_contract": "test"}
+    models = {
+        model["model"]: model
+        for model in uncertainty["models"]
+    }
+    assert set(models) == {"global", "league", "exposure", "league+exposure"}
+    assert all(models[name]["n_oos"] > 0 for name in models)
+    assert all(
+        models[name]["coverage"]["p90"] is not None
+        for name in models
     )
-    diag = report["stability_diagnostics"]
 
-    assert diag["n_pairs"] == 60
-    assert diag["score"]["pearson"] is not None
-    assert diag["score"]["spearman"] is not None
-    assert diag["composite_percentile"]["pearson"] is not None
-    assert diag["composite_percentile"]["spearman"] is not None
-    assert diag["exposure"]["summary"]["source"] == "games_played_x_minutes_per_game"
-    assert diag["by_metric"]
+    selected = uncertainty["selected_structure"]
+    assert selected["features"] == ["league", "exposure_band"]
+    assert selected["primary_share"] > 0.0
+    assert selected["coverage"]["p90"] is not None
 
-    uncertainty = diag["uncertainty_profile"]
-    assert uncertainty["status"] == "diagnostic_only"
-    assert uncertainty["n_pairs"] == 60
-    assert uncertainty["target"].startswith("absolute next-season BB-Rating change")
-    assert uncertainty["overall"]["p50_abs_change"] == pytest.approx(0.0)
-    assert len(uncertainty["by_exposure"]) == 4
-    assert uncertainty["by_peer_sample_size"] == []
-    assert uncertainty["by_metric_coverage"] == []
-    assert uncertainty["by_league"]
+    assert "stability" not in report
+    assert "stability_diagnostics" not in report
+    assert "reliability" not in report
+
