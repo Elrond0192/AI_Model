@@ -19,7 +19,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--mode",
         choices=(
-            "train", "backtest", "validate-data", "bb-rating-calibrate", "publish-batch",
+            "train", "backtest", "validate-data", "bb-rating-calibrate", "future-performance-train", "publish-batch",
             "promote", "rollback", "prepare-snapshot", "refresh-serving", "api",
         ),
         required=True,
@@ -36,6 +36,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument("--output-dir", default="models_saved/bb_rating_calibration")
+    parser.add_argument("--future-performance-model-dir", default=None)
+    parser.add_argument("--future-performance-max-target-season", type=int, default=None)
+    parser.add_argument("--future-performance-include-latest-target-season", action="store_true")
     parser.add_argument("--min-peer-samples", type=int, default=25)
     parser.add_argument("--min-context-samples", type=int, default=10)
     parser.add_argument("--uncertainty-min-samples", type=int, default=50)
@@ -216,6 +219,80 @@ def mode_bb_rating_calibrate(args: argparse.Namespace) -> None:
     print(json.dumps(payload, indent=2, ensure_ascii=False, default=str))
 
 
+def mode_future_performance_train(args: argparse.Namespace) -> None:
+    from basketball_ai.future_performance import PlayerFuturePerformanceModel
+
+    data = _load_data(args)
+    stats = data.get("player_stats")
+    if stats is None or stats.empty:
+        raise RuntimeError(
+            "No player_stats rows are available for Future Performance training"
+        )
+
+    years = sorted(
+        {
+            int(str(value).split("-")[0])
+            for value in stats["season"].dropna()
+        }
+    )
+    if not years:
+        raise RuntimeError(
+            "No season values are available for Future Performance training"
+        )
+
+    max_target = args.future_performance_max_target_season
+    if max_target is not None:
+        target_seasons = {year for year in years if year <= int(max_target)}
+    elif args.future_performance_include_latest_target_season:
+        target_seasons = set(years)
+    else:
+        # The latest observed season may still be in progress. Do not use it as
+        # a target by default; it can remain the source season for live serving.
+        target_seasons = {year for year in years if year < max(years)}
+
+    if len(target_seasons) < 3:
+        raise RuntimeError(
+            "At least three target seasons are required; use "
+            "--future-performance-max-target-season or "
+            "--future-performance-include-latest-target-season."
+        )
+
+    output_dir = Path(
+        args.future_performance_model_dir
+        or (Path(args.model_dir) / "future_performance")
+    )
+    model = PlayerFuturePerformanceModel()
+    metadata = model.fit(
+        data,
+        target_seasons=sorted(target_seasons),
+        backtest=True,
+    )
+    manifest = model.save(output_dir)
+
+    print(
+        json.dumps(
+            {
+                "future_performance_version": metadata.get(
+                    "future_performance_version"
+                ),
+                "feature_version": metadata.get("feature_version"),
+                "output_dir": str(output_dir),
+                "training_target_seasons": metadata.get(
+                    "training_target_seasons"
+                ),
+                "n_pairs": metadata.get("n_pairs"),
+                "n_players": metadata.get("n_players"),
+                "targets": metadata.get("targets"),
+                "backtest": metadata.get("backtest"),
+                "artifact": manifest,
+            },
+            indent=2,
+            ensure_ascii=False,
+            default=str,
+        )
+    )
+
+
 def mode_validate_data(args: argparse.Namespace) -> None:
     data = _load_data(args)
     stats = data["player_stats"].copy()
@@ -360,6 +437,7 @@ def main(argv: list[str] | None = None) -> None:
         "backtest": mode_backtest,
         "validate-data": mode_validate_data,
         "bb-rating-calibrate": mode_bb_rating_calibrate,
+        "future-performance-train": mode_future_performance_train,
         "publish-batch": mode_publish_batch,
         "promote": mode_promote,
         "rollback": mode_rollback,
