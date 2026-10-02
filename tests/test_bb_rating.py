@@ -366,7 +366,7 @@ def test_tiny_context_is_explicitly_limited():
 
 def test_oos_uncertainty_validation_is_temporal_and_exposure_aware():
     chunks = []
-    for season in range(2020, 2025):
+    for season in range(2019, 2026):
         chunk = make_stats().copy()
         chunk["season"] = season
         # Preserve player identity across seasons so the validator forms true
@@ -396,9 +396,10 @@ def test_oos_uncertainty_validation_is_temporal_and_exposure_aware():
     uncertainty = report["uncertainty_validation"]
     assert uncertainty["status"] == "validated_oos"
     assert uncertainty["method"] == "expanding_walk_forward_empirical_quantiles"
-    assert uncertainty["first_possible_test_season"] == 2022
-    assert uncertainty["test_seasons"] == [2022, 2023, 2024]
-    assert len(uncertainty["folds"]) == 3
+    assert uncertainty["first_possible_test_season"] == 2021
+    assert uncertainty["test_seasons"] == [2020, 2021, 2022, 2023, 2024]
+    assert uncertainty["excluded_target_seasons"] == [2025]
+    assert len(uncertainty["folds"]) == 5
     assert all(
         fold["training_target_seasons"]
         for fold in uncertainty["folds"]
