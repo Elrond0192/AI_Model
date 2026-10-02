@@ -26,7 +26,7 @@ from basketball_ai.bb_rating.engine import (
 )
 from basketball_ai.bb_rating.semantics import METRIC_SEMANTICS
 
-CALIBRATION_VERSION = "1.8"
+CALIBRATION_VERSION = "1.9"
 
 
 @dataclass(frozen=True)
@@ -437,6 +437,263 @@ def _stability(frame: pd.DataFrame) -> dict[str, Any]:
     }
 
 
+
+
+def _pair_correlation(
+    current: pd.Series,
+    following: pd.Series,
+) -> dict[str, Any]:
+    pair = pd.DataFrame({"current": current, "following": following}).dropna()
+    if len(pair) < 3:
+        return {
+            "n_pairs": int(len(pair)),
+            "pearson": None,
+            "spearman": None,
+        }
+
+    pearson = None
+    spearman = None
+    if pair["current"].nunique() >= 2 and pair["following"].nunique() >= 2:
+        pearson = float(pair["current"].corr(pair["following"]))
+        spearman = float(
+            pair["current"].rank(method="average").corr(
+                pair["following"].rank(method="average")
+            )
+        )
+    return {
+        "n_pairs": int(len(pair)),
+        "pearson": pearson,
+        "spearman": spearman,
+    }
+
+
+def _stability_group_summary(
+    pairs: pd.DataFrame,
+    group_columns: list[str],
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    if pairs.empty:
+        return rows
+
+    for key, group in pairs.groupby(group_columns, dropna=False, sort=True):
+        keys = key if isinstance(key, tuple) else (key,)
+        clean = group[["current_score", "next_score"]].dropna()
+        changes = (
+            (clean["next_score"] - clean["current_score"]).abs()
+            if not clean.empty
+            else pd.Series(dtype=float)
+        )
+        corr = _pair_correlation(
+            clean["current_score"] if not clean.empty else pd.Series(dtype=float),
+            clean["next_score"] if not clean.empty else pd.Series(dtype=float),
+        )
+        row: dict[str, Any] = {
+            column: (
+                int(value)
+                if column == "season" and pd.notna(value)
+                else value
+            )
+            for column, value in zip(group_columns, keys)
+        }
+        row.update(
+            {
+                "n_pairs": int(len(clean)),
+                "mean_abs_change": float(changes.mean()) if not changes.empty else None,
+                "median_abs_change": float(changes.median()) if not changes.empty else None,
+                "share_abs_change_le_5": (
+                    float((changes <= 5).mean()) if not changes.empty else None
+                ),
+                "share_abs_change_le_10": (
+                    float((changes <= 10).mean()) if not changes.empty else None
+                ),
+                "pearson": corr["pearson"],
+                "spearman": corr["spearman"],
+            }
+        )
+        rows.append(row)
+    return rows
+
+
+def _stability_diagnostics(
+    frame: pd.DataFrame,
+    scoring_specs: list[RatingMetricSpec],
+) -> dict[str, Any]:
+    ordered = frame.sort_values(
+        ["player_global_id", "league_key", "competition", "season"]
+    ).copy()
+    group_cols = ["player_global_id", "league_key", "competition"]
+
+    ordered["_next_season"] = ordered.groupby(group_cols)["season"].shift(-1)
+    ordered["_next_score"] = ordered.groupby(group_cols)["_bb_rating"].shift(-1)
+    ordered["_next_composite_pct"] = ordered.groupby(group_cols)["_composite_pct"].shift(-1)
+
+    exposure_source = None
+    if "minutes_total" in ordered.columns:
+        exposure = pd.to_numeric(ordered["minutes_total"], errors="coerce")
+        if exposure.notna().sum() >= 3:
+            exposure_source = "minutes_total"
+    if exposure_source is None:
+        games = pd.to_numeric(ordered.get("games_played"), errors="coerce")
+        mpg = pd.to_numeric(ordered.get("minutes_per_game"), errors="coerce")
+        exposure = games * mpg
+        exposure_source = "games_played_x_minutes_per_game"
+    ordered["_exposure_minutes"] = exposure
+    ordered["_next_exposure_minutes"] = ordered.groupby(group_cols)["_exposure_minutes"].shift(-1)
+
+    valid_pairs = ordered.loc[
+        ordered["_next_season"].eq(ordered["season"] + 1)
+        & ordered["_bb_rating"].notna()
+        & ordered["_next_score"].notna()
+        & ordered["_composite_pct"].notna()
+        & ordered["_next_composite_pct"].notna()
+    ].copy()
+
+    base = _pair_correlation(
+        valid_pairs["_bb_rating"],
+        valid_pairs["_next_score"],
+    )
+    composite = _pair_correlation(
+        valid_pairs["_composite_pct"],
+        valid_pairs["_next_composite_pct"],
+    )
+
+    score_changes = (
+        (valid_pairs["_next_score"] - valid_pairs["_bb_rating"]).abs()
+        if not valid_pairs.empty
+        else pd.Series(dtype=float)
+    )
+    composite_changes = (
+        (valid_pairs["_next_composite_pct"] - valid_pairs["_composite_pct"]).abs()
+        if not valid_pairs.empty
+        else pd.Series(dtype=float)
+    )
+
+    exposure_source_values = valid_pairs["_exposure_minutes"].dropna()
+    exposure_summary = {
+        "source": exposure_source,
+        "n": int(len(exposure_source_values)),
+        "p10": float(exposure_source_values.quantile(0.10)) if not exposure_source_values.empty else None,
+        "p25": float(exposure_source_values.quantile(0.25)) if not exposure_source_values.empty else None,
+        "p50": float(exposure_source_values.quantile(0.50)) if not exposure_source_values.empty else None,
+        "p75": float(exposure_source_values.quantile(0.75)) if not exposure_source_values.empty else None,
+        "p90": float(exposure_source_values.quantile(0.90)) if not exposure_source_values.empty else None,
+        "max": float(exposure_source_values.max()) if not exposure_source_values.empty else None,
+    }
+
+    exposure_pairs = valid_pairs.loc[valid_pairs["_exposure_minutes"].notna()].copy()
+    exposure_groups: list[dict[str, Any]] = []
+    if len(exposure_pairs) >= 12:
+        ranks = exposure_pairs["_exposure_minutes"].rank(method="first")
+        exposure_pairs["_exposure_quartile"] = pd.qcut(
+            ranks,
+            4,
+            labels=["Q1_low", "Q2", "Q3", "Q4_high"],
+        )
+        exposure_groups = _stability_group_summary(
+            exposure_pairs.rename(
+                columns={
+                    "_bb_rating": "current_score",
+                    "_next_score": "next_score",
+                    "_exposure_quartile": "exposure_group",
+                }
+            ),
+            ["exposure_group"],
+        )
+    else:
+        exposure_groups = _stability_group_summary(
+            exposure_pairs.rename(
+                columns={
+                    "_bb_rating": "current_score",
+                    "_next_score": "next_score",
+                }
+            ),
+            [],
+        )
+
+    by_league = _stability_group_summary(
+        valid_pairs.rename(
+            columns={"_bb_rating": "current_score", "_next_score": "next_score"}
+        ),
+        ["league_key"],
+    )
+
+    by_position = _stability_group_summary(
+        valid_pairs.rename(
+            columns={"_bb_rating": "current_score", "_next_score": "next_score"}
+        ),
+        ["position_family"],
+    )
+
+    by_age_band = _stability_group_summary(
+        valid_pairs.rename(
+            columns={"_bb_rating": "current_score", "_next_score": "next_score"}
+        ),
+        ["age_band"],
+    )
+
+    metric_stability: list[dict[str, Any]] = []
+    for spec in scoring_specs:
+        current_col = f"_pct_{spec.key}"
+        if current_col not in ordered.columns:
+            continue
+        next_col = f"_next_pct_{spec.key}"
+        ordered[next_col] = ordered.groupby(group_cols)[current_col].shift(-1)
+        metric_pairs = ordered.loc[
+            ordered["_next_season"].eq(ordered["season"] + 1)
+            & ordered[current_col].notna()
+            & ordered[next_col].notna()
+        ].copy()
+        corr = _pair_correlation(
+            metric_pairs[current_col],
+            metric_pairs[next_col],
+        )
+        changes = (
+            (metric_pairs[next_col] - metric_pairs[current_col]).abs()
+            if not metric_pairs.empty
+            else pd.Series(dtype=float)
+        )
+        metric_stability.append(
+            {
+                "metric": spec.key,
+                "n_pairs": int(len(metric_pairs)),
+                "mean_abs_percentile_change": (
+                    float(changes.mean()) if not changes.empty else None
+                ),
+                "median_abs_percentile_change": (
+                    float(changes.median()) if not changes.empty else None
+                ),
+                "pearson": corr["pearson"],
+                "spearman": corr["spearman"],
+            }
+        )
+
+    return {
+        "n_pairs": int(len(valid_pairs)),
+        "score": {
+            "pearson": base["pearson"],
+            "spearman": base["spearman"],
+        },
+        "composite_percentile": {
+            "pearson": composite["pearson"],
+            "spearman": composite["spearman"],
+            "mean_abs_change": (
+                float(composite_changes.mean()) if not composite_changes.empty else None
+            ),
+            "median_abs_change": (
+                float(composite_changes.median()) if not composite_changes.empty else None
+            ),
+        },
+        "exposure": {
+            "summary": exposure_summary,
+            "quartiles": exposure_groups,
+        },
+        "by_league": by_league,
+        "by_position": by_position,
+        "by_age_band": by_age_band,
+        "by_metric": metric_stability,
+    }
+
+
 def _diagnostic_warnings(report: dict[str, Any]) -> list[str]:
     warnings: list[str] = []
     contexts = report["contexts"]
@@ -637,6 +894,50 @@ def _markdown(report: dict[str, Any]) -> str:
         "## Stability",
         "",
         f"- Consecutive player-season pairs: **{report['stability']['n_pairs']}**",
+        f"- Pearson correlation (1–100): **{report['stability_diagnostics']['score']['pearson'] if report['stability_diagnostics']['score']['pearson'] is not None else '—'}**",
+        f"- Spearman correlation (1–100): **{report['stability_diagnostics']['score']['spearman'] if report['stability_diagnostics']['score']['spearman'] is not None else '—'}**",
+        f"- Pearson correlation (continuous composite): **{report['stability_diagnostics']['composite_percentile']['pearson'] if report['stability_diagnostics']['composite_percentile']['pearson'] is not None else '—'}**",
+        f"- Spearman correlation (continuous composite): **{report['stability_diagnostics']['composite_percentile']['spearman'] if report['stability_diagnostics']['composite_percentile']['spearman'] is not None else '—'}**",
+        "",
+        "### Exposure stability",
+        "",
+        f"- Exposure source: **{report['stability_diagnostics']['exposure']['summary']['source']}**",
+        "",
+        "| Exposure group | N | Mean abs change | Pearson | Spearman |",
+        "|---|---:|---:|---:|---:|",
+        *[
+            f"| {row['exposure_group']} | {row['n_pairs']} | "
+            f"{'—' if row['mean_abs_change'] is None else f'{row['mean_abs_change']:.3f}'} | "
+            f"{'—' if row['pearson'] is None else f'{row['pearson']:.3f}'} | "
+            f"{'—' if row['spearman'] is None else f'{row['spearman']:.3f}'} |"
+            for row in report['stability_diagnostics']['exposure']['quartiles']
+        ],
+        "",
+        "### Stability by league",
+        "",
+        "| League | N | Mean abs change | Pearson | Spearman |",
+        "|---|---:|---:|---:|---:|",
+        *[
+            f"| {row['league_key']} | {row['n_pairs']} | "
+            f"{'—' if row['mean_abs_change'] is None else f'{row['mean_abs_change']:.3f}'} | "
+            f"{'—' if row['pearson'] is None else f'{row['pearson']:.3f}'} | "
+            f"{'—' if row['spearman'] is None else f'{row['spearman']:.3f}'} |"
+            for row in report['stability_diagnostics']['by_league']
+        ],
+        "",
+        "### Stability by metric",
+        "",
+        "| Metric | N | Mean abs percentile change | Pearson | Spearman |",
+        "|---|---:|---:|---:|---:|",
+        *[
+            f"| {row['metric']} | {row['n_pairs']} | "
+            f"{'—' if row['mean_abs_percentile_change'] is None else f'{row['mean_abs_percentile_change']:.4f}'} | "
+            f"{'—' if row['pearson'] is None else f'{row['pearson']:.3f}'} | "
+            f"{'—' if row['spearman'] is None else f'{row['spearman']:.3f}'} |"
+            for row in report['stability_diagnostics']['by_metric']
+        ],
+        "",
+        f"- Consecutive player-season pairs: **{report['stability']['n_pairs']}**",
         f"- Mean absolute change: **{report['stability']['mean_abs_change'] if report['stability']['mean_abs_change'] is not None else '—'}**",
         f"- Median absolute change: **{report['stability']['median_abs_change'] if report['stability']['median_abs_change'] is not None else '—'}**",
         f"- Correlation: **{report['stability']['score_correlation'] if report['stability']['score_correlation'] is not None else '—'}**",
@@ -797,6 +1098,10 @@ def build_calibration_report(
         "by_competition": _group_score_summary(frame, ["competition"]),
         "by_league_season": _group_score_summary(frame, ["league_key", "season"]),
         "stability": _stability(frame),
+        "stability_diagnostics": _stability_diagnostics(
+            frame,
+            scoring_specs,
+        ),
     }
 
     report["warnings"] = _diagnostic_warnings(report)
