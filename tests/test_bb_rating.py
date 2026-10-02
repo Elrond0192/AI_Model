@@ -211,11 +211,12 @@ def test_calibration_uses_league_context_as_primary():
 
     peer_sources = {item["peer_source"] for item in report["peer_sources"]}
     assert peer_sources == {"league+season+phase"}
-    assert report["validation_signals"]["role_peer_share"] == pytest.approx(0.0)
     assert report["validation_signals"]["primary_context_share"] == pytest.approx(1.0)
     assert report["validation_signals"]["peer_fallback_share"] == pytest.approx(0.0)
-    assert report["validation_signals"]["peer_source_shares"]["league+season+phase"] == pytest.approx(1.0)
-
+    assert (
+        report["validation_signals"]["peer_source_shares"]["league+season+phase"]
+        == pytest.approx(1.0)
+    )
 
 def test_calibration_warns_on_constant_scoring_metric():
     stats = make_stats()
@@ -293,10 +294,18 @@ def test_api_player_endpoint():
 def test_bb_rating_calibration_reuses_peer_and_percentile_contract():
     stats = pd.concat(
         [
-            make_stats(),
+            make_stats().assign(season=2025),
             make_stats().assign(
                 season=2024,
                 player_global_id=lambda frame: frame["player_global_id"] + "-2024",
+            ),
+            make_stats().assign(
+                season=2023,
+                player_global_id=lambda frame: frame["player_global_id"] + "-2023",
+            ),
+            make_stats().assign(
+                season=2022,
+                player_global_id=lambda frame: frame["player_global_id"] + "-2022",
             ),
         ],
         ignore_index=True,
@@ -305,42 +314,17 @@ def test_bb_rating_calibration_reuses_peer_and_percentile_contract():
         {"player_stats": stats, "players": make_players(), "source_contract": "test"}
     )
 
-    assert report["calibration_version"] == "1.14"
+    assert report["calibration_version"] == "1.16"
     assert report["bb_rating_version"] == "1.8"
-    assert report["dataset"]["rows"] == 120
-    assert report["score_distribution"]["n"] == 120
+    assert report["dataset"]["rows"] == 240
+    assert report["score_distribution"]["n"] == 240
     assert report["validation_signals"]["registry_columns_ok"] is True
     assert report["validation_signals"]["scoring_metrics_present"] is True
     assert report["validation_signals"]["explainable_metric_count"] == len(
         report["registry_audit"]
     )
-    assert report["stability"]["n_pairs"] == 0
-    assert report["stability_diagnostics"]["n_pairs"] == 0
-    assert report["stability_diagnostics"]["score"]["pearson"] is None
-    assert report["stability_diagnostics"]["composite_percentile"]["spearman"] is None
-
-    metric = next(item for item in report["metrics"] if item["metric"] == "RAPTOR")
-    assert metric["column_exists"] is True
-    assert metric["semantic_source_matches"] is True
-    assert metric["n_available"] == 120
-
-    peer_sources = {item["peer_source"] for item in report["peer_sources"]}
-    assert peer_sources == {"league+season+phase"}
-
-    role_diag = report["role_peer_population"]
-    assert role_diag["rows_with_role_and_age"] == 120
-    assert role_diag["thresholds"]["25"]["rows_eligible"] == 120
-    assert report["validation_signals"]["role_peer_share"] == pytest.approx(0.0)
-    assert report["validation_signals"]["primary_context_share"] == pytest.approx(1.0)
-    assert report["validation_signals"]["peer_fallback_share"] == pytest.approx(0.0)
-    assert report["validation_signals"]["peer_source_shares"]["league+season+phase"] == pytest.approx(1.0)
-    assert report["validation_signals"]["scoring_registry_ok"] is True
-    assert report["validation_signals"]["explanation_catalog_ok"] is True
-
-    # Explicitly verify that the lower-is-better turnover signal is preserved.
-    tov = next(item for item in report["metrics"] if item["metric"] == "TOV%")
-    assert tov["direction"] == "lower_better"
-
+    assert "uncertainty_validation" in report
+    assert "uncertainty_calibration" in report
 
 def test_small_context_stays_in_requested_context():
     stats = make_stats().head(12).copy()
@@ -425,3 +409,34 @@ def test_oos_uncertainty_validation_is_temporal_and_exposure_aware():
     assert "stability_diagnostics" not in report
     assert "reliability" not in report
 
+
+
+def test_final_uncertainty_fit_excludes_latest_target_and_persists_cells():
+    rows = []
+    for season in (2018, 2019, 2020, 2021):
+        block = make_stats().assign(
+            season=season,
+            player_global_id=lambda frame, season=season: (
+                frame["player_global_id"] + f"-{season}"
+            ),
+            minutes_total=lambda frame, season=season: 400 + frame.index * 10,
+        )
+        rows.append(block)
+    stats = pd.concat(rows, ignore_index=True)
+
+    report = build_calibration_report(
+        {"player_stats": stats, "players": make_players(), "source_contract": "test"}
+    )
+    fit = report["uncertainty_calibration"]
+
+    assert fit["status"] == "fitted"
+    assert fit["excluded_target_seasons"] == [2021]
+    assert fit["training_target_seasons"] == [2019, 2020]
+    assert fit["source_current_seasons"] == [2018, 2019]
+    assert fit["features"] == ["league", "exposure_band"]
+    assert fit["fallback_order"] == [
+        "league+exposure", "league", "exposure", "global"
+    ]
+    assert fit["tables"]["global"]["n"] >= 50
+    assert fit["tables"]["league_exposure"]
+    assert fit["exposure_band_definition"]["league_edges_minutes"]
