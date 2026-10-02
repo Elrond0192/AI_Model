@@ -423,7 +423,8 @@ def test_final_uncertainty_fit_excludes_latest_target_and_persists_cells():
     stats = pd.concat(rows, ignore_index=True)
 
     report = build_calibration_report(
-        {"player_stats": stats, "players": make_players(), "source_contract": "test"}
+        {"player_stats": stats, "players": make_players(), "source_contract": "test"},
+        config=BBRatingCalibrationConfig(uncertainty_min_samples=25),
     )
     fit = report["uncertainty_calibration"]
 
