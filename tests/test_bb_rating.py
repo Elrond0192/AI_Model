@@ -283,7 +283,7 @@ def test_api_player_endpoint():
     payload = response.json()
     assert 1 <= payload["bb_rating"] <= 100
     assert payload["bb_rating_version"] == "1.8"
-    assert payload["peer_group"]["definition"] == "position+age+role"
+    assert payload["peer_group"]["definition"] == "league+season+phase"
     assert payload["metrics"]["USG%"]["percentile"] is not None
 
 
@@ -312,6 +312,9 @@ def test_bb_rating_calibration_reuses_peer_and_percentile_contract():
         report["registry_audit"]
     )
     assert report["stability"]["n_pairs"] == 0
+    assert report["stability_diagnostics"]["n_pairs"] == 0
+    assert report["stability_diagnostics"]["score"]["pearson"] is None
+    assert report["stability_diagnostics"]["composite_percentile"]["spearman"] is None
 
     metric = next(item for item in report["metrics"] if item["metric"] == "RAPTOR")
     assert metric["column_exists"] is True
@@ -355,3 +358,53 @@ def test_tiny_context_is_explicitly_limited():
     assert result.peer_group["definition"] == "limited_context"
     assert result.peer_group["sample_size"] == 9
     assert result.peer_group["context_sample_size"] == 9
+
+
+def test_stability_diagnostics_reports_continuous_and_rank_correlations():
+    stats = pd.concat(
+        [
+            make_stats().assign(age=lambda df: 25),
+            make_stats().assign(
+                season=2024,
+                player_global_id=lambda df: df["player_global_id"] + "-2024",
+                age=26,
+            ),
+            make_stats().assign(
+                season=2023,
+                player_global_id=lambda df: df["player_global_id"] + "-2023",
+                age=24,
+            ),
+        ],
+        ignore_index=True,
+    )
+
+    report = build_calibration_report(
+        {"player_stats": stats, "players": make_players(), "source_contract": "test"}
+    )
+    diag = report["stability_diagnostics"]
+
+    assert diag["n_pairs"] == 0
+
+
+def test_stability_diagnostics_has_exposure_source_and_metric_section():
+    stats = make_stats()
+    stats2 = make_stats().assign(
+        season=2024,
+        player_global_id=lambda df: df["player_global_id"] + "-2024",
+    )
+    # Keep player IDs aligned across adjacent seasons for actual pairs.
+    stats2["player_global_id"] = stats["player_global_id"].values
+    stats = pd.concat([stats2, stats], ignore_index=True)
+
+    report = build_calibration_report(
+        {"player_stats": stats, "players": make_players(), "source_contract": "test"}
+    )
+    diag = report["stability_diagnostics"]
+
+    assert diag["n_pairs"] == 60
+    assert diag["score"]["pearson"] is not None
+    assert diag["score"]["spearman"] is not None
+    assert diag["composite_percentile"]["pearson"] is not None
+    assert diag["composite_percentile"]["spearman"] is not None
+    assert diag["exposure"]["summary"]["source"] == "games_played_x_minutes_per_game"
+    assert diag["by_metric"]
