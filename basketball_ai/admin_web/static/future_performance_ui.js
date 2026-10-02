@@ -46,62 +46,71 @@
 
   function mountPage() {
     const root = document.querySelector('#page-root');
-    if (!root) return;
-    root.innerHTML = `
-      <section class="page">
-        <div class="page-heading action-heading">
-          <div><h1>Player Future Performance</h1>
-          <p>Modello predittivo multivariato season-ahead. Prevede le performance del giocatore nella stagione successiva, separato da Prediction Model e BB-Rating.</p></div>
-          <div class="button-row">
-            <button id="future-performance-refresh" class="btn btn-secondary btn-small">Aggiorna</button>
-            <button id="future-performance-train" class="btn btn-primary btn-small">Genera / aggiorna modello</button>
-          </div>
-        </div>
-        <div id="future-performance-kpis" class="kpi-grid four"></div>
-        <div class="split-grid">
-          <section class="panel"><div class="panel-heading"><h2>Stato modello</h2></div><div id="future-performance-status"></div></section>
-          <section class="panel"><div class="panel-heading"><h2>Dataset &amp; finestra temporale</h2></div><div id="future-performance-dataset"></div></section>
-        </div>
-        <section class="panel"><div class="panel-heading"><h2>Target predetti</h2><span class="muted-inline">valori t+1 + incertezza OOS</span></div>
-          <div id="future-performance-targets" class="table-shell"></div>
-        </section>
-        <section class="panel"><div class="panel-heading"><h2>Walk-forward validation</h2><span class="muted-inline">expanding OOS</span></div>
-          <div id="future-performance-backtest" class="table-shell"></div>
-        </section>
-        <section class="panel"><div class="panel-heading"><h2>Training job</h2></div><div id="future-performance-job"></div></section>
-        <div id="future-performance-error" class="microcopy"></div>
-      </section>`;
+    if (!root) return null;
+    const existing = root.querySelector('#future-performance-kpis');
+    if (existing) return existing.closest('.page');
+
+    const page = document.createElement('section');
+    page.className = 'page';
+    page.innerHTML = \
+`<div class="page-heading action-heading">
+      <div><h1>Player Future Performance</h1>
+      <p>Modello predittivo multivariato season-ahead. Prevede le performance del giocatore nella stagione successiva, separato da Prediction Model e BB-Rating.</p></div>
+      <div class="button-row">
+        <button id="future-performance-refresh" class="btn btn-secondary btn-small">Aggiorna</button>
+        <button id="future-performance-train" class="btn btn-primary btn-small">Genera / aggiorna modello</button>
+      </div>
+    </div>
+    <div id="future-performance-kpis" class="kpi-grid four"></div>
+    <div class="split-grid">
+      <section class="panel"><div class="panel-heading"><h2>Stato modello</h2></div><div id="future-performance-status"></div></section>
+      <section class="panel"><div class="panel-heading"><h2>Dataset &amp; finestra temporale</h2></div><div id="future-performance-dataset"></div></section>
+    </div>
+    <section class="panel"><div class="panel-heading"><h2>Target predetti</h2><span class="muted-inline">valori t+1 + incertezza OOS</span></div>
+      <div id="future-performance-targets" class="table-shell"></div>
+    </section>
+    <section class="panel"><div class="panel-heading"><h2>Walk-forward validation</h2><span class="muted-inline">expanding OOS</span></div>
+      <div id="future-performance-backtest" class="table-shell"></div>
+    </section>
+    <section class="panel"><div class="panel-heading"><h2>Training job</h2></div><div id="future-performance-job"></div></section>
+    <div id="future-performance-error" class="microcopy"></div>
+  </div>\`;
+    root.replaceChildren(page);
+    return page;
   }
+
   let renderGeneration = 0;
   let activeController = null;
 
   async function render() {
     const generation = ++renderGeneration;
     if (activeController) activeController.abort();
-    activeController = new AbortController();
+    const controller = new AbortController();
+    activeController = controller;
     mountPage();
 
     const pageRoot = document.querySelector('#page-root');
-    const page = pageRoot ? pageRoot.querySelector('.page') : null;
+    const page = pageRoot ? pageRoot.querySelector('#future-performance-kpis')?.closest('.page') : null;
     if (!page) return;
     const q = selector => page.querySelector(selector);
+    const isLive = () => generation === renderGeneration && page.isConnected;
     const setHtml = (selector, html) => {
-      if (generation !== renderGeneration || !page.isConnected) return;
+      if (!isLive()) return;
       const node = q(selector);
       if (node) node.innerHTML = html;
     };
     const setText = (selector, value) => {
-      if (generation !== renderGeneration || !page.isConnected) return;
+      if (!isLive()) return;
       const node = q(selector);
       if (node) node.textContent = value;
     };
 
     try {
       const [status, health] = await Promise.all([
-        request('/admin-api/future-performance', { signal: activeController.signal }),
-        request('/admin-api/api-health', { signal: activeController.signal })
+        request('/admin-api/future-performance', { signal: controller.signal }),
+        request('/admin-api/api-health', { signal: controller.signal })
       ]);
-      if (generation !== renderGeneration || !page.isConnected) return;
+      if (!isLive()) return;
 
       const ds = status.dataset || {};
       const job = status.job || {};
@@ -182,22 +191,22 @@
       trainButton.onclick = async () => {
         trainButton.disabled = true;
         try {
-          await request('/admin-api/future-performance/train', { method:'POST', body: JSON.stringify({}), signal: activeController.signal });
-          if (generation === renderGeneration && page.isConnected) await render();
+          await request('/admin-api/future-performance/train', { method:'POST', body: JSON.stringify({}), signal: controller.signal });
+          if (isLive()) await render();
         } catch (error) {
           if (error?.name === 'AbortError') return;
           setText('#future-performance-error', error.message);
-          if (generation === renderGeneration && page.isConnected) trainButton.disabled = false;
+          if (isLive()) trainButton.disabled = false;
         }
       };
       refreshButton.onclick = () => render().catch(error => {
         if (error?.name !== 'AbortError') setText('#future-performance-error', error.message);
       });
-      if (running && generation === renderGeneration) {
-        const timer = setTimeout(() => {
-          if (generation === renderGeneration && page.isConnected) render().catch(() => {});
+      if (running && isLive()) {
+        clearTimeout(App.futurePerformanceTimer);
+        App.futurePerformanceTimer = setTimeout(() => {
+          if (isLive()) render().catch(() => {});
         }, 2200);
-        App.futurePerformanceTimer = timer;
       }
     } catch (error) {
       if (error?.name === 'AbortError') return;
