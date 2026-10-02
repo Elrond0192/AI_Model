@@ -488,7 +488,14 @@ def create_app() -> FastAPI:
     @app.get("/health")
     def health(request: Request):
         data = getattr(request.app.state, "data", {})
-        return {"status": "ok", "data_loaded": bool(data.get("player_dict"))}
+        return {
+            "status": "ok",
+            "data_loaded": bool(data.get("player_dict")),
+            "bb_rating_loaded": getattr(request.app.state, "bb_rating_engine", None) is not None,
+            "bb_rating_uncertainty_loaded": getattr(
+                request.app.state, "bb_rating_uncertainty", None
+            ) is not None,
+        }
 
     @app.get("/health/live")
     def health_live():
