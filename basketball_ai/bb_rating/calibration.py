@@ -34,6 +34,7 @@ class BBRatingCalibrationConfig:
     min_peer_samples: int = MIN_PEER_SAMPLES
     min_context_samples: int = MIN_CONTEXT_SAMPLES
     uncertainty_min_samples: int = 50
+    exclude_latest_target_season: bool = True
 
 
 def _normalise_series(series: pd.Series, column: str) -> pd.Series:
@@ -577,6 +578,7 @@ def _oos_uncertainty_validation(
     frame: pd.DataFrame,
     *,
     min_samples: int,
+    exclude_latest_target_season: bool = True,
 ) -> dict[str, Any]:
     """Validate empirical uncertainty using only earlier target seasons."""
     pairs = _consecutive_rating_change_pairs(frame)
@@ -587,6 +589,8 @@ def _oos_uncertainty_validation(
             "target": "absolute next-season BB-Rating change",
             "quantiles": [0.50, 0.75, 0.90],
             "min_samples": int(min_samples),
+            "exclude_latest_target_season": bool(exclude_latest_target_season),
+            "excluded_target_seasons": [],
             "first_possible_test_season": None,
             "test_seasons": [],
             "folds": [],
@@ -605,11 +609,20 @@ def _oos_uncertainty_validation(
             },
         }
 
-    target_seasons = sorted(
+    target_seasons_all = sorted(
         int(value) for value in pd.to_numeric(
             pairs["target_season"], errors="coerce"
         ).dropna().unique()
     )
+    excluded_latest_target_season = (
+        target_seasons_all[-1]
+        if exclude_latest_target_season and target_seasons_all
+        else None
+    )
+
+    target_seasons = target_seasons_all.copy()
+    if excluded_latest_target_season is not None:
+        target_seasons = target_seasons[:-1]
     first_possible = target_seasons[1] if len(target_seasons) >= 2 else None
 
     model_rows = {name: [] for name in (
@@ -753,6 +766,12 @@ def _oos_uncertainty_validation(
         ),
         "quantiles": [0.50, 0.75, 0.90],
         "min_samples": int(min_samples),
+        "exclude_latest_target_season": bool(exclude_latest_target_season),
+        "excluded_target_seasons": (
+            [int(excluded_latest_target_season)]
+            if excluded_latest_target_season is not None
+            else []
+        ),
         "first_possible_test_season": first_possible,
         "test_seasons": [int(meta["target_season"]) for meta in fold_metadata],
         "folds": fold_metadata,
@@ -1140,6 +1159,7 @@ def build_calibration_report(
             "min_peer_samples": min_peer_samples,
             "min_context_samples": min_context_samples,
             "uncertainty_min_samples": max(25, int(config.uncertainty_min_samples)),
+            "exclude_latest_target_season": bool(config.exclude_latest_target_season),
             "age_bands": [list(v) for v in AGE_BANDS],
         },
         "registry_audit": registry_audit,
@@ -1169,6 +1189,7 @@ def build_calibration_report(
         "uncertainty_validation": _oos_uncertainty_validation(
             frame,
             min_samples=max(25, int(config.uncertainty_min_samples)),
+            exclude_latest_target_season=config.exclude_latest_target_season,
         ),
     }
 
