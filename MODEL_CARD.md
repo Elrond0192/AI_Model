@@ -155,6 +155,9 @@ The season-ahead Prediction Model and BB-Rating are separate contracts.
   Model outputs.
 - USG% is a contextual role/involvement signal and has no standalone positive
   weight in the composite score.
+- Calibration 1.10 adds empirical test-retest reliability diagnostics by exposure
+  and active-metric persistence. These diagnostics are not applied to the public
+  BB-Rating score or to Prediction Model outputs.
 
 The initial BB-Rating implementation lives in basketball_ai/bb_rating and is
 API-exposed at POST /api/v2/bb-rating/player. Its weights and peer thresholds
