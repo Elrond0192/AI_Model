@@ -217,3 +217,38 @@ proxy; exposure quartiles are fitted with a saturating curve of the form
 Active metric persistence is also aggregated using configured weight and metric
 availability. These outputs are evidence for a future reliability policy and
 are not applied as score shrinkage or weight adjustments.
+
+
+## Calibration v1.11 — empirical stability profile
+
+Calibration 1.11 keeps the BB-Rating public contract at version 1.8 and remains
+diagnostic-only. It does not modify the 1–100 score, metric weights, peer
+selection, source data or Prediction Model.
+
+In addition to the v1.10 persistence diagnostics, the report exposes an empirical
+stability profile by exposure quartile:
+
+- `stability_score`: a relative persistence index where the highest observed
+  exposure-quartile persistence in the calibration dataset is 100;
+- `confidence_level`: the empirical exposure band (`low`, `moderate`,
+  `high`, `very_high`) mapped from Q1–Q4;
+- `expected_rating_variation`: the median absolute next-season BB-Rating change
+  observed within that exposure quartile.
+
+This profile is deliberately descriptive. It provides a candidate foundation
+for a future UI confidence/uncertainty layer without shrinking or otherwise
+altering the BB-Rating itself.
+
+The 1.11 JSON therefore contains:
+
+```json
+"stability_profile": {
+  "status": "diagnostic_only",
+  "stability_score_definition": "...",
+  "confidence_level_definition": "...",
+  "expected_rating_variation_definition": "...",
+  "bands": []
+}
+```
+
+No reliability or stability correction is applied automatically.
