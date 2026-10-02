@@ -51,8 +51,8 @@ primary competition population used for scoring.
 Age bands are 18–21, 22–25, 26–29, 30–33 and 34+.
 
 Position families are GUARD, WING and BIG, derived from the canonical position
-labels. The exact observed ruolo_combinato is used only when its population is
-large enough.
+labels. Position family, age band and observed ruolo_combinato remain descriptive
+context; they no longer replace the primary competition population.
 
 ## Metric semantics and explanations
 
