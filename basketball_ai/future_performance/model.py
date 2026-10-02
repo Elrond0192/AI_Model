@@ -514,7 +514,6 @@ class PlayerFuturePerformanceModel:
             "targets": training_targets,
             "target_metrics": self.target_metrics,
             "uncertainty_by_target": self.uncertainty,
-            "uncertainty_by_target": self.uncertainty,
             "uncertainty_global": {
                 "p50": float(np.quantile(all_residuals, 0.50)) if all_residuals else None,
                 "p75": float(np.quantile(all_residuals, 0.75)) if all_residuals else None,
