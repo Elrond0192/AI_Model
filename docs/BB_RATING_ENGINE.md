@@ -181,8 +181,8 @@ The report contains:
 - contextual percentile distributions;
 - effective weights after missing-data renormalisation;
 - BB-Rating score distribution by league, season and competition;
-- consecutive player-season stability;
-- heuristic diagnostic warnings.
+- heuristic data-quality warnings;
+- expanding walk-forward OOS uncertainty validation.
 
 These warnings are investigation signals, not promotion gates. No BB-Rating weight,
 threshold or public methodology should be frozen from the report alone; the next step
@@ -190,102 +190,7 @@ is to review the real-data output and decide whether the peer model, metric set 
 weights need calibration.
 
 
-## Calibration v1.10 — empirical reliability diagnostics
 
-Calibration 1.10 is diagnostic-only. The public BB-Rating remains version 1.8:
-no score weights, peer rules or Prediction Model outputs are changed.
-
-The v1.10 report adds:
-- Pearson and Spearman stability for the rounded 1–100 score;
-- Pearson and Spearman stability for the continuous composite percentile before rounding;
-- exposure-stratified stability using minutes total when available, otherwise games played × minutes per game;
-- stability by league, position family and age band;
-- stability of each active scoring metric's contextual percentile;
-- an empirical reliability proxy by exposure and active-metric persistence, with no automatic score correction.
-
-The purpose is to identify whether remaining year-to-year noise is concentrated in
-low-exposure observations or in specific metrics before introducing any reliability
-adjustment into the scoring contract.
-
-
-### Empirical reliability
-
-Calibration 1.10 estimates persistence diagnostically rather than changing the
-public score. Consecutive-season Spearman persistence is used as a test-retest
-proxy; exposure quartiles are fitted with a saturating curve of the form
-`reliability_proxy = asymptote × exposure / (exposure + half_exposure)`.
-Active metric persistence is also aggregated using configured weight and metric
-availability. These outputs are evidence for a future reliability policy and
-are not applied as score shrinkage or weight adjustments.
-
-
-## Calibration v1.11 — empirical stability profile
-
-Calibration 1.11 keeps the BB-Rating public contract at version 1.8 and remains
-diagnostic-only. It does not modify the 1–100 score, metric weights, peer
-selection, source data or Prediction Model.
-
-In addition to the v1.10 persistence diagnostics, the report exposes an empirical
-stability profile by exposure quartile:
-
-- `stability_score`: a relative persistence index where the highest observed
-  exposure-quartile persistence in the calibration dataset is 100;
-- `confidence_level`: the empirical exposure band (`low`, `moderate`,
-  `high`, `very_high`) mapped from Q1–Q4;
-- `expected_rating_variation`: the median absolute next-season BB-Rating change
-  observed within that exposure quartile.
-
-This profile is deliberately descriptive. It provides a candidate foundation
-for a future UI confidence/uncertainty layer without shrinking or otherwise
-altering the BB-Rating itself.
-
-The 1.11 JSON therefore contains:
-
-```json
-"stability_profile": {
-  "status": "diagnostic_only",
-  "stability_score_definition": "...",
-  "confidence_level_definition": "...",
-  "expected_rating_variation_definition": "...",
-  "bands": []
-}
-```
-
-No reliability or stability correction is applied automatically.
-
-
-## Calibration v1.12 — empirical uncertainty profile
-
-Calibration 1.12 remains diagnostic-only and leaves the public BB-Rating at
-version 1.8. It does not change production weights, peer selection, the 1–100
-score, source data, or Prediction Model outputs.
-
-The report adds an empirical uncertainty profile based on consecutive
-player-season absolute BB-Rating changes:
-
-- overall P25/P50/P75/P90 variation;
-- variation by exposure quartile;
-- variation by peer-context sample-size quartile when there is sufficient
-  observed variation;
-- variation by metric-coverage quartile when there is sufficient observed
-  variation;
-- variation by league;
-- Spearman association between each signal and absolute rating change;
-- exposure-controlled rank association for peer sample size and metric coverage.
-
-The exposure-controlled association is a diagnostic partial Spearman-style
-measure: rank the outcome and predictor, remove the linear rank component
-explained by exposure, then correlate the residuals. It is used only to test
-whether context size or metric coverage contains information beyond exposure;
-it does not assign production weights.
-
-The uncertainty profile intentionally reports empirical variation rather than
-claiming a probability that a rating is correct. In particular,
-`expected_rating_variation` from calibration 1.11 is retained as a historical
-median change by exposure band, while 1.12 adds the broader empirical
-distribution needed for future uncertainty intervals.
-
-No uncertainty correction is applied automatically to the public BB-Rating.
 
 
 ## Calibration v1.15 — temporal uncertainty validation
