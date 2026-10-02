@@ -288,24 +288,27 @@ distribution needed for future uncertainty intervals.
 No uncertainty correction is applied automatically to the public BB-Rating.
 
 
-## Calibration v1.14 — within-league uncertainty decomposition
+## Calibration v1.15 — temporal uncertainty validation
 
-Calibration 1.14 remains diagnostic-only and keeps the public BB-Rating at
-version 1.8. It separates between-league variation from within-league exposure
-variation when studying next-season absolute rating change.
+Calibration 1.15 keeps the public BB-Rating at version 1.8 and moves uncertainty
+validation from descriptive in-sample diagnostics to expanding walk-forward
+out-of-sample testing.
 
-The report adds:
-- a league × exposure table with empirical P25/P50/P75/P90 absolute rating change;
-- a rank-based in-sample variance decomposition for exposure alone;
-- the incremental R² obtained by adding league indicators;
-- the additional incremental R² from league × exposure interactions.
+The report:
+- estimates empirical P50/P75/P90 absolute next-season BB-Rating change;
+- fits each OOS season using only earlier target seasons;
+- compares global, league-only, exposure-only, and league + exposure structures;
+- uses league-specific exposure quartile thresholds for the combined structure;
+- records fallback usage when an exact league × exposure cell has insufficient
+  training support;
+- reports OOS coverage and P90 interval width by season and in aggregate.
 
-The decomposition is descriptive rather than causal and is not converted into
-production weights. The main decision signal is the incremental contribution of
-league after exposure: if it is negligible, future uncertainty can remain
-exposure-conditioned only; if it is material, a league-aware uncertainty layer
-can be evaluated separately.
+The combined structure uses the fallback order:
 
-The cell table uses a minimum support threshold of 50 consecutive player-season
-pairs per league × exposure cell. Smaller cells are omitted rather than being
-presented as stable estimates.
+`league + exposure → league → exposure → global`
+
+The default empirical-cell minimum is 50 observations. The CLI exposes this as
+`--uncertainty-min-samples`.
+
+No uncertainty correction or interval is applied to the public BB-Rating 1.8 by
+this calibration command.
