@@ -194,6 +194,7 @@ def mode_bb_rating_calibrate(args: argparse.Namespace) -> None:
         "contexts": report["contexts"],
         "score_distribution": report["score_distribution"],
         "stability": report["stability"],
+        "stability_diagnostics": report["stability_diagnostics"],
         "validation_signals": report["validation_signals"],
         "warnings": report["warnings"],
         "output": paths,
