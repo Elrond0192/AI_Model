@@ -27,7 +27,7 @@ from basketball_ai.bb_rating.engine import (
 )
 from basketball_ai.bb_rating.semantics import METRIC_SEMANTICS
 
-CALIBRATION_VERSION = "1.11"
+CALIBRATION_VERSION = "1.12"
 
 
 @dataclass(frozen=True)
@@ -517,6 +517,217 @@ def _stability_group_summary(
     return rows
 
 
+def _variation_summary(values: pd.Series) -> dict[str, Any]:
+    clean = pd.to_numeric(values, errors="coerce").dropna()
+    if clean.empty:
+        return {
+            "n": 0,
+            "mean_abs_change": None,
+            "p25_abs_change": None,
+            "p50_abs_change": None,
+            "p75_abs_change": None,
+            "p90_abs_change": None,
+            "share_abs_change_le_5": None,
+            "share_abs_change_le_10": None,
+        }
+    return {
+        "n": int(len(clean)),
+        "mean_abs_change": float(clean.mean()),
+        "p25_abs_change": float(clean.quantile(0.25)),
+        "p50_abs_change": float(clean.quantile(0.50)),
+        "p75_abs_change": float(clean.quantile(0.75)),
+        "p90_abs_change": float(clean.quantile(0.90)),
+        "share_abs_change_le_5": float((clean <= 5).mean()),
+        "share_abs_change_le_10": float((clean <= 10).mean()),
+    }
+
+
+def _bucket_variation_summary(
+    pairs: pd.DataFrame,
+    source_column: str,
+    *,
+    labels: list[str],
+    min_unique_values: int = 4,
+) -> list[dict[str, Any]]:
+    if pairs.empty or source_column not in pairs.columns:
+        return []
+    source = pd.to_numeric(pairs[source_column], errors="coerce")
+    clean = pairs.loc[source.notna() & pairs["_abs_rating_change"].notna()].copy()
+    if len(clean) < 4 or clean[source_column].nunique(dropna=True) < min_unique_values:
+        return []
+
+    ranks = pd.to_numeric(clean[source_column], errors="coerce").rank(
+        method="first",
+    )
+    clean["_bucket"] = pd.qcut(
+        ranks,
+        len(labels),
+        labels=labels,
+    )
+
+    rows: list[dict[str, Any]] = []
+    for bucket in labels:
+        group = clean.loc[clean["_bucket"] == bucket]
+        summary = _variation_summary(group["_abs_rating_change"])
+        summary.update(
+            {
+                "bucket": str(bucket),
+                "n": int(len(group)),
+                "source_median": float(
+                    pd.to_numeric(group[source_column], errors="coerce").median()
+                ),
+            }
+        )
+        rows.append(summary)
+    return rows
+
+
+def _spearman_association(
+    left: pd.Series,
+    right: pd.Series,
+) -> float | None:
+    pair = pd.DataFrame({"left": left, "right": right}).dropna()
+    if len(pair) < 3 or pair["left"].nunique() < 2 or pair["right"].nunique() < 2:
+        return None
+    return float(
+        pair["left"].rank(method="average").corr(
+            pair["right"].rank(method="average")
+        )
+    )
+
+
+def _exposure_controlled_spearman(
+    outcome: pd.Series,
+    predictor: pd.Series,
+    exposure: pd.Series,
+) -> float | None:
+    frame = pd.DataFrame(
+        {
+            "outcome": outcome,
+            "predictor": predictor,
+            "exposure": exposure,
+        }
+    ).dropna()
+    if (
+        len(frame) < 5
+        or frame["outcome"].nunique() < 2
+        or frame["predictor"].nunique() < 2
+        or frame["exposure"].nunique() < 2
+    ):
+        return None
+
+    ranked = frame.rank(method="average")
+    control = np.column_stack(
+        [
+            np.ones(len(ranked)),
+            ranked["exposure"].to_numpy(dtype=float),
+        ]
+    )
+    try:
+        outcome_resid = ranked["outcome"].to_numpy(dtype=float) - (
+            control
+            @ np.linalg.lstsq(
+                control,
+                ranked["outcome"].to_numpy(dtype=float),
+                rcond=None,
+            )[0]
+        )
+        predictor_resid = ranked["predictor"].to_numpy(dtype=float) - (
+            control
+            @ np.linalg.lstsq(
+                control,
+                ranked["predictor"].to_numpy(dtype=float),
+                rcond=None,
+            )[0]
+        )
+    except np.linalg.LinAlgError:
+        return None
+
+    if np.std(outcome_resid) <= 0.0 or np.std(predictor_resid) <= 0.0:
+        return None
+    return float(np.corrcoef(outcome_resid, predictor_resid)[0, 1])
+
+
+def _uncertainty_diagnostics(pairs: pd.DataFrame) -> dict[str, Any]:
+    if pairs.empty:
+        return {
+            "status": "diagnostic_only",
+            "n_pairs": 0,
+            "target": "absolute next-season BB-Rating change",
+            "overall": _variation_summary(pd.Series(dtype=float)),
+            "by_exposure": [],
+            "by_peer_sample_size": [],
+            "by_metric_coverage": [],
+            "by_league": [],
+            "associations": {
+                "exposure_vs_abs_change_spearman": None,
+                "peer_sample_size_vs_abs_change_spearman": None,
+                "peer_sample_size_exposure_controlled_spearman": None,
+                "metric_coverage_vs_abs_change_spearman": None,
+                "metric_coverage_exposure_controlled_spearman": None,
+            },
+        }
+
+    outcome = pd.to_numeric(pairs["_abs_rating_change"], errors="coerce")
+    exposure = pd.to_numeric(pairs["_exposure_minutes"], errors="coerce")
+    peer_size = pd.to_numeric(pairs["_peer_sample_size"], errors="coerce")
+    coverage = pd.to_numeric(pairs["_metric_coverage"], errors="coerce")
+
+    by_exposure = _bucket_variation_summary(
+        pairs,
+        "_exposure_minutes",
+        labels=["Q1_low", "Q2", "Q3", "Q4_high"],
+    )
+    by_peer_sample_size = _bucket_variation_summary(
+        pairs,
+        "_peer_sample_size",
+        labels=["Q1_small", "Q2", "Q3", "Q4_large"],
+    )
+    by_metric_coverage = _bucket_variation_summary(
+        pairs,
+        "_metric_coverage",
+        labels=["Q1_low", "Q2", "Q3", "Q4_high"],
+    )
+
+    by_league: list[dict[str, Any]] = []
+    if "league_key" in pairs.columns:
+        for league, group in pairs.groupby("league_key", dropna=False, sort=True):
+            summary = _variation_summary(group["_abs_rating_change"])
+            summary["league_key"] = str(league)
+            by_league.append(summary)
+
+    return {
+        "status": "diagnostic_only",
+        "n_pairs": int(len(pairs)),
+        "target": (
+            "absolute next-season BB-Rating change; lower values mean a tighter "
+            "historical year-to-year variation"
+        ),
+        "overall": _variation_summary(outcome),
+        "by_exposure": by_exposure,
+        "by_peer_sample_size": by_peer_sample_size,
+        "by_metric_coverage": by_metric_coverage,
+        "by_league": by_league,
+        "associations": {
+            "exposure_vs_abs_change_spearman": _spearman_association(
+                exposure, outcome
+            ),
+            "peer_sample_size_vs_abs_change_spearman": _spearman_association(
+                peer_size, outcome
+            ),
+            "peer_sample_size_exposure_controlled_spearman": _exposure_controlled_spearman(
+                outcome, peer_size, exposure
+            ),
+            "metric_coverage_vs_abs_change_spearman": _spearman_association(
+                coverage, outcome
+            ),
+            "metric_coverage_exposure_controlled_spearman": _exposure_controlled_spearman(
+                outcome, coverage, exposure
+            ),
+        },
+    }
+
+
 def _stability_diagnostics(
     frame: pd.DataFrame,
     scoring_specs: list[RatingMetricSpec],
@@ -558,6 +769,10 @@ def _stability_diagnostics(
         & ordered["_composite_pct"].notna()
         & ordered["_next_composite_pct"].notna()
     ].copy()
+
+    valid_pairs["_abs_rating_change"] = (
+        valid_pairs["_next_score"] - valid_pairs["_bb_rating"]
+    ).abs()
 
     base = _pair_correlation(
         valid_pairs["_bb_rating"],
@@ -705,6 +920,7 @@ def _stability_diagnostics(
         "by_position": by_position,
         "by_age_band": by_age_band,
         "by_metric": metric_stability,
+        "uncertainty_profile": _uncertainty_diagnostics(valid_pairs),
         "reliability": _empirical_reliability_diagnostics(
             {
                 "score": {
@@ -1258,6 +1474,12 @@ def build_calibration_report(
         numerator / used_weight.replace(0.0, np.nan)
     ).clip(0.0, 1.0)
     frame["_bb_rating"] = _score_from_percentile(frame["_composite_pct"])
+    total_scoring_weight = float(sum(spec.weight for spec in scoring_specs))
+    frame["_metric_coverage"] = (
+        (used_weight / total_scoring_weight).clip(0.0, 1.0)
+        if total_scoring_weight > 0.0
+        else 0.0
+    )
 
     effective_columns: dict[str, pd.Series] = {}
     for spec in scoring_specs:
