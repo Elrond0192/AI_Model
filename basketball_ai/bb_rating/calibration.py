@@ -1209,9 +1209,23 @@ def _markdown(report: dict[str, Any]) -> str:
         )
 
     selected = uncertainty["selected_structure"]
+    fitted = report["uncertainty_calibration"]
     lines += [
         "",
-        "### League + exposure OOS structure",
+        "## Final uncertainty fit",
+        "",
+        f"- Status: **{fitted['status']}**",
+        f"- Training target seasons: **{', '.join(str(v) for v in fitted['training_target_seasons']) if fitted['training_target_seasons'] else '—'}**",
+        f"- Excluded target seasons: **{', '.join(str(v) for v in fitted['excluded_target_seasons']) if fitted['excluded_target_seasons'] else '—'}**",
+        f"- Training rows: **{fitted['training_rows']}**",
+        f"- Available exact league+exposure cells: **{fitted['support']['available_exact_cells']}**",
+        f"- Exact league+exposure training share: **{fitted['support']['primary_exact_share']:.1%}**",
+        "",
+        "The serving artifact is written to bb_rating_uncertainty.json and contains "
+        "the global, league, exposure-band and league+exposure empirical P50/P75/P90 "
+        "tables plus the exposure thresholds used to assign bands.",
+        "",
+        "## League + exposure OOS structure",
         "",
         f"- Primary exact league+exposure share: **{selected['primary_share']:.1%}**",
         f"- P50/P75/P90 coverage: **{selected['coverage']['p50']:.1%} / "
