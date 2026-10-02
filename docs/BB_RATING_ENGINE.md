@@ -252,3 +252,37 @@ The 1.11 JSON therefore contains:
 ```
 
 No reliability or stability correction is applied automatically.
+
+
+## Calibration v1.12 — empirical uncertainty profile
+
+Calibration 1.12 remains diagnostic-only and leaves the public BB-Rating at
+version 1.8. It does not change production weights, peer selection, the 1–100
+score, source data, or Prediction Model outputs.
+
+The report adds an empirical uncertainty profile based on consecutive
+player-season absolute BB-Rating changes:
+
+- overall P25/P50/P75/P90 variation;
+- variation by exposure quartile;
+- variation by peer-context sample-size quartile when there is sufficient
+  observed variation;
+- variation by metric-coverage quartile when there is sufficient observed
+  variation;
+- variation by league;
+- Spearman association between each signal and absolute rating change;
+- exposure-controlled rank association for peer sample size and metric coverage.
+
+The exposure-controlled association is a diagnostic partial Spearman-style
+measure: rank the outcome and predictor, remove the linear rank component
+explained by exposure, then correlate the residuals. It is used only to test
+whether context size or metric coverage contains information beyond exposure;
+it does not assign production weights.
+
+The uncertainty profile intentionally reports empirical variation rather than
+claiming a probability that a rating is correct. In particular,
+`expected_rating_variation` from calibration 1.11 is retained as a historical
+median change by exposure band, while 1.12 adds the broader empirical
+distribution needed for future uncertainty intervals.
+
+No uncertainty correction is applied automatically to the public BB-Rating.
