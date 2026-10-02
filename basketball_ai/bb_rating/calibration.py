@@ -684,7 +684,7 @@ def _within_league_exposure_diagnostics(
             "min_pairs_per_league": int(min_pairs_per_league),
             "n_pairs": 0,
             "leagues": [],
-            "pooled_within_league_spearman": None,
+            "pooled_within_league_rank_partial_correlation": None,
             "between_league_eta_squared": None,
             "within_league_exposure_r2": None,
             "within_league_exposure_incremental_r2": None,
@@ -1703,6 +1703,22 @@ def _markdown(report: dict[str, Any]) -> str:
         f"- Curve R²: **{report['stability_diagnostics']['reliability']['exposure_curve']['r2'] if report['stability_diagnostics']['reliability']['exposure_curve']['r2'] is not None else '—'}**",
         "",
         "No reliability correction is applied to the public BB-Rating.",
+        "",
+        "### Uncertainty: league vs within-league exposure",
+        "",
+        f"- Pooled within-league rank partial correlation: **{report['stability_diagnostics']['uncertainty_profile']['within_league_exposure']['pooled_within_league_rank_partial_correlation'] if report['stability_diagnostics']['uncertainty_profile']['within_league_exposure']['pooled_within_league_rank_partial_correlation'] is not None else '—'}**",
+        f"- Between-league eta-squared: **{report['stability_diagnostics']['uncertainty_profile']['within_league_exposure']['between_league_eta_squared'] if report['stability_diagnostics']['uncertainty_profile']['within_league_exposure']['between_league_eta_squared'] is not None else '—'}**",
+        f"- Within-league exposure R²: **{report['stability_diagnostics']['uncertainty_profile']['within_league_exposure']['within_league_exposure_r2'] if report['stability_diagnostics']['uncertainty_profile']['within_league_exposure']['within_league_exposure_r2'] is not None else '—'}**",
+        f"- Exposure increment after league fixed effects: **{report['stability_diagnostics']['uncertainty_profile']['within_league_exposure']['within_league_exposure_incremental_r2'] if report['stability_diagnostics']['uncertainty_profile']['within_league_exposure']['within_league_exposure_incremental_r2'] is not None else '—'}**",
+        "",
+        "| League | N | Median exposure | Median abs change | Within-league Spearman |",
+        "|---|---:|---:|---:|---:|",
+        *[
+            f"| {row['league_key']} | {row['n_pairs']} | {row['median_exposure']:.1f} | "
+            f"{row['median_abs_change']:.1f} | "
+            f"{'—' if row['within_league_spearman'] is None else f'{row['within_league_spearman']:.3f}'} |"
+            for row in report['stability_diagnostics']['uncertainty_profile']['within_league_exposure']['league_summaries']
+        ],
         "",
         "### Stability by league",
         "",
