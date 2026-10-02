@@ -12,6 +12,7 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
+from scipy.optimize import least_squares
 
 from basketball_ai.bb_rating.engine import (
     AGE_BANDS,
@@ -26,7 +27,7 @@ from basketball_ai.bb_rating.engine import (
 )
 from basketball_ai.bb_rating.semantics import METRIC_SEMANTICS
 
-CALIBRATION_VERSION = "1.9"
+CALIBRATION_VERSION = "1.10"
 
 
 @dataclass(frozen=True)
@@ -609,6 +610,13 @@ def _stability_diagnostics(
             ),
             ["exposure_group"],
         )
+        exposure_medians = exposure_pairs.groupby(
+            "_exposure_quartile", observed=True
+        )["_exposure_minutes"].median()
+        for row in exposure_groups:
+            row["median_exposure"] = float(
+                exposure_medians.loc[row["exposure_group"]]
+            )
     else:
         exposure_groups = []
 
@@ -638,26 +646,26 @@ def _stability_diagnostics(
         current_col = f"_pct_{spec.key}"
         if current_col not in ordered.columns:
             continue
-        next_col = f"_next_pct_{spec.key}"
-        ordered[next_col] = ordered.groupby(group_cols)[current_col].shift(-1)
-        metric_pairs = ordered.loc[
+
+        next_percentiles = ordered.groupby(group_cols)[current_col].shift(-1)
+        pair_mask = (
             ordered["_next_season"].eq(ordered["season"] + 1)
             & ordered[current_col].notna()
-            & ordered[next_col].notna()
-        ].copy()
-        corr = _pair_correlation(
-            metric_pairs[current_col],
-            metric_pairs[next_col],
+            & next_percentiles.notna()
         )
+        current_values = ordered.loc[pair_mask, current_col]
+        next_values = next_percentiles.loc[pair_mask]
+        corr = _pair_correlation(current_values, next_values)
         changes = (
-            (metric_pairs[next_col] - metric_pairs[current_col]).abs()
-            if not metric_pairs.empty
+            (next_values - current_values).abs()
+            if not current_values.empty
             else pd.Series(dtype=float)
         )
+        coverage_n = int(ordered[current_col].notna().sum())
         metric_stability.append(
             {
                 "metric": spec.key,
-                "n_pairs": int(len(metric_pairs)),
+                "n_pairs": int(len(current_values)),
                 "mean_abs_percentile_change": (
                     float(changes.mean()) if not changes.empty else None
                 ),
@@ -666,6 +674,10 @@ def _stability_diagnostics(
                 ),
                 "pearson": corr["pearson"],
                 "spearman": corr["spearman"],
+                "coverage": (
+                    float(coverage_n / len(ordered)) if len(ordered) else 0.0
+                ),
+                "weight": float(spec.weight),
             }
         )
 
@@ -693,8 +705,162 @@ def _stability_diagnostics(
         "by_position": by_position,
         "by_age_band": by_age_band,
         "by_metric": metric_stability,
+        "reliability": _empirical_reliability_diagnostics(
+            {
+                "score": {
+                    "spearman": base["spearman"],
+                },
+                "exposure": {
+                    "quartiles": exposure_groups,
+                },
+            },
+            metric_stability,
+        ),
     }
 
+
+
+
+def _empirical_reliability_diagnostics(
+    stability: dict[str, Any],
+    metric_stability: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Compute empirical persistence proxies without changing production scores.
+
+    Exposure reliability is fitted from observed consecutive-season Spearman
+    persistence by exposure quartile. Metric reliability uses each active metric's
+    consecutive-season Spearman persistence. The output is diagnostic only and
+    is intentionally not applied as score shrinkage or weight adjustment.
+    """
+    active_metrics = [
+        row for row in metric_stability
+        if row["n_pairs"] >= 3 and row["spearman"] is not None
+    ]
+    weighted_parts = []
+    for row in active_metrics:
+        reliability = max(0.0, min(1.0, float(row["spearman"])))
+        coverage = max(0.0, min(1.0, float(row["coverage"])))
+        weight = max(0.0, float(row["weight"]))
+        weighted_parts.append((weight, coverage, reliability))
+
+    denominator = sum(weight * coverage for weight, coverage, _ in weighted_parts)
+    weighted_metric_reliability = (
+        sum(weight * coverage * reliability for weight, coverage, reliability in weighted_parts)
+        / denominator
+        if denominator > 0
+        else None
+    )
+
+    exposure_points = []
+    for row in stability.get("exposure", {}).get("quartiles", []):
+        spearman = row.get("spearman")
+        median_exposure = row.get("median_exposure")
+        if spearman is None or median_exposure is None:
+            continue
+        if not np.isfinite(float(spearman)) or not np.isfinite(float(median_exposure)):
+            continue
+        exposure_points.append(
+            {
+                "exposure_group": row["exposure_group"],
+                "median_exposure": float(median_exposure),
+                "observed_spearman": max(0.0, min(1.0, float(spearman))),
+                "n_pairs": int(row["n_pairs"]),
+            }
+        )
+
+    curve = {
+        "method": "saturating_exposure_curve",
+        "formula": "reliability_proxy = asymptote * exposure / (exposure + half_exposure)",
+        "fitted": False,
+        "asymptote": None,
+        "half_exposure": None,
+        "rmse": None,
+        "r2": None,
+    }
+    fitted_by_group: dict[str, float] = {}
+
+    if len(exposure_points) >= 3:
+        x = np.array([point["median_exposure"] for point in exposure_points], dtype=float)
+        y = np.array([point["observed_spearman"] for point in exposure_points], dtype=float)
+
+        def residuals(params: np.ndarray) -> np.ndarray:
+            asymptote, half_exposure = params
+            return asymptote * x / (x + half_exposure) - y
+
+        max_y = float(np.max(y))
+        median_x = float(np.median(x))
+        initial_asymptote = min(0.99, max(0.5, max_y + 0.05))
+        initial_half_exposure = max(
+            1.0,
+            median_x * max(initial_asymptote / max(max_y, 1e-6) - 1.0, 0.25),
+        )
+        fitted = least_squares(
+            residuals,
+            x0=np.array([initial_asymptote, initial_half_exposure], dtype=float),
+            bounds=(
+                np.array([0.0, 1e-6], dtype=float),
+                np.array([1.0, np.inf], dtype=float),
+            ),
+        )
+        asymptote, half_exposure = (float(value) for value in fitted.x)
+        predicted = asymptote * x / (x + half_exposure)
+        rmse = float(np.sqrt(np.mean((predicted - y) ** 2)))
+        ss_res = float(np.sum((predicted - y) ** 2))
+        ss_tot = float(np.sum((y - np.mean(y)) ** 2))
+        r2 = float(1.0 - ss_res / ss_tot) if ss_tot > 0 else None
+
+        curve.update(
+            {
+                "fitted": bool(fitted.success),
+                "asymptote": asymptote,
+                "half_exposure": half_exposure,
+                "rmse": rmse,
+                "r2": r2,
+            }
+        )
+        for point, prediction in zip(exposure_points, predicted):
+            fitted_by_group[point["exposure_group"]] = float(
+                max(0.0, min(1.0, prediction))
+            )
+
+    max_observed = max(
+        (point["observed_spearman"] for point in exposure_points),
+        default=None,
+    )
+    for point in exposure_points:
+        point["fitted_reliability_proxy"] = fitted_by_group.get(point["exposure_group"])
+        point["relative_to_high_exposure"] = (
+            float(point["observed_spearman"] / max_observed)
+            if max_observed and max_observed > 0
+            else None
+        )
+
+    return {
+        "status": "diagnostic_only",
+        "meaning": (
+            "Test-retest persistence proxies only. No reliability correction is "
+            "applied to BB-Rating v1.8."
+        ),
+        "observed_composite_spearman": stability.get("score", {}).get("spearman"),
+        "weighted_active_metric_spearman": weighted_metric_reliability,
+        "active_metric_count": int(len(active_metrics)),
+        "exposure_curve": {
+            **curve,
+            "points": exposure_points,
+        },
+        "interpretation": {
+            "low_exposure_has_lower_persistence": bool(
+                len(exposure_points) >= 2
+                and exposure_points[0]["observed_spearman"]
+                < exposure_points[-1]["observed_spearman"]
+            ),
+            "application_ready": bool(
+                curve["fitted"]
+                and curve["r2"] is not None
+                and curve["r2"] >= 0.90
+            ),
+        },
+    }
 
 def _diagnostic_warnings(report: dict[str, Any]) -> list[str]:
     warnings: list[str] = []
@@ -979,22 +1145,31 @@ def build_calibration_report(
     )
 
     registry_audit = _registry_audit(frame)
+    scoring_specs = [spec for spec in BB_RATING_METRICS if spec.weight > 0]
 
+    metric_columns: dict[str, pd.Series] = {}
     for spec in BB_RATING_METRICS:
         if spec.source_column not in frame.columns:
-            frame[f"_value_{spec.key}"] = np.nan
-            frame[f"_pct_{spec.key}"] = np.nan
-            if spec.weight > 0:
-                frame[f"_effective_weight_{spec.key}"] = np.nan
+            metric_columns[f"_value_{spec.key}"] = pd.Series(
+                np.nan, index=frame.index, dtype=float
+            )
+            metric_columns[f"_pct_{spec.key}"] = pd.Series(
+                np.nan, index=frame.index, dtype=float
+            )
             continue
 
         values, percentiles = _metric_percentiles(frame, spec)
-        frame[f"_value_{spec.key}"] = values
-        frame[f"_pct_{spec.key}"] = percentiles
+        metric_columns[f"_value_{spec.key}"] = values
+        metric_columns[f"_pct_{spec.key}"] = percentiles
 
-    scoring_specs = [spec for spec in BB_RATING_METRICS if spec.weight > 0]
-    used_weight = pd.Series(0.0, index=frame.index)
-    numerator = pd.Series(0.0, index=frame.index)
+    if metric_columns:
+        frame = pd.concat(
+            [frame, pd.DataFrame(metric_columns, index=frame.index)],
+            axis=1,
+        )
+
+    used_weight = pd.Series(0.0, index=frame.index, dtype=float)
+    numerator = pd.Series(0.0, index=frame.index, dtype=float)
 
     for spec in scoring_specs:
         percentiles = frame[f"_pct_{spec.key}"]
@@ -1008,11 +1183,18 @@ def build_calibration_report(
     ).clip(0.0, 1.0)
     frame["_bb_rating"] = _score_from_percentile(frame["_composite_pct"])
 
+    effective_columns: dict[str, pd.Series] = {}
     for spec in scoring_specs:
         available = frame[f"_pct_{spec.key}"].notna() & used_weight.gt(0)
         effective = pd.Series(np.nan, index=frame.index, dtype=float)
         effective.loc[available] = float(spec.weight) / used_weight.loc[available]
-        frame[f"_effective_weight_{spec.key}"] = effective
+        effective_columns[f"_effective_weight_{spec.key}"] = effective
+
+    if effective_columns:
+        frame = pd.concat(
+            [frame, pd.DataFrame(effective_columns, index=frame.index)],
+            axis=1,
+        )
 
     metrics = _metric_summary(frame, registry_audit)
 
