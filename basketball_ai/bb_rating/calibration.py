@@ -730,7 +730,14 @@ def _within_league_exposure_diagnostics(
     centered_exposure = work["_rank_exposure"] - work.groupby("league_key")[
         "_rank_exposure"
     ].transform("mean")
-    pooled_within = _spearman_association(centered_exposure, centered_outcome)
+    pooled_within = None
+    if (
+        np.std(centered_exposure) > 0.0
+        and np.std(centered_outcome) > 0.0
+    ):
+        pooled_within = float(
+            np.corrcoef(centered_exposure, centered_outcome)[0, 1]
+        )
 
     total_ss = float(
         np.sum((work["_rank_outcome"] - work["_rank_outcome"].mean()) ** 2)
@@ -814,7 +821,7 @@ def _within_league_exposure_diagnostics(
         "min_pairs_per_league": int(min_pairs_per_league),
         "n_pairs": int(len(work)),
         "leagues": sorted(work["league_key"].unique().tolist()),
-        "pooled_within_league_spearman": pooled_within,
+        "pooled_within_league_rank_partial_correlation": pooled_within,
         "between_league_eta_squared": between_eta_squared,
         "within_league_exposure_r2": within_r2,
         "within_league_exposure_incremental_r2": within_incremental_r2,
