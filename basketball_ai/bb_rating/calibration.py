@@ -623,7 +623,7 @@ def _oos_uncertainty_validation(
     target_seasons = target_seasons_all.copy()
     if excluded_latest_target_season is not None:
         target_seasons = target_seasons[:-1]
-    first_possible = target_seasons[1] if len(target_seasons) >= 2 else None
+    first_possible = None
 
     model_rows = {name: [] for name in (
         "global", "league", "exposure", "league+exposure"
@@ -738,6 +738,9 @@ def _oos_uncertainty_validation(
                 "usage_by_model": fold_usage,
             }
         )
+
+    if fold_metadata:
+        first_possible = int(fold_metadata[0]["target_season"])
 
     models = [
         _aggregate_uncertainty_results(model_rows[name], model_name=name)
