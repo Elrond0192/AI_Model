@@ -159,7 +159,9 @@ The season-ahead Prediction Model and BB-Rating are separate contracts.
   and active-metric persistence. Calibration 1.12 adds empirical uncertainty
   distributions and exposure-controlled diagnostics for context size and metric
   coverage. Calibration 1.13 tests the incremental contribution of league
-  context beyond exposure, including league × exposure interactions. These
+  context beyond exposure, including league × exposure interactions. Calibration
+  1.14 separates between-league variation from within-league exposure signal
+  using league-adjusted diagnostics. These
   diagnostics are not applied to the public BB-Rating score or to Prediction
   Model outputs.
 
