@@ -302,7 +302,7 @@ def test_bb_rating_calibration_reuses_peer_and_percentile_contract():
         {"player_stats": stats, "players": make_players(), "source_contract": "test"}
     )
 
-    assert report["calibration_version"] == "1.8"
+    assert report["calibration_version"] == "1.9"
     assert report["bb_rating_version"] == "1.8"
     assert report["dataset"]["rows"] == 120
     assert report["score_distribution"]["n"] == 120
