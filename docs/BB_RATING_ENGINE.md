@@ -286,3 +286,26 @@ median change by exposure band, while 1.12 adds the broader empirical
 distribution needed for future uncertainty intervals.
 
 No uncertainty correction is applied automatically to the public BB-Rating.
+
+
+## Calibration v1.13 — league/exposure uncertainty decomposition
+
+Calibration 1.13 remains diagnostic-only and keeps the public BB-Rating at
+version 1.8. It tests whether league context contributes information about
+next-season absolute rating variation beyond exposure.
+
+The report adds:
+- a league × exposure table with empirical P25/P50/P75/P90 absolute rating change;
+- a rank-based in-sample variance decomposition for exposure alone;
+- the incremental R² obtained by adding league indicators;
+- the additional incremental R² from league × exposure interactions.
+
+The decomposition is descriptive rather than causal and is not converted into
+production weights. The main decision signal is the incremental contribution of
+league after exposure: if it is negligible, future uncertainty can remain
+exposure-conditioned only; if it is material, a league-aware uncertainty layer
+can be evaluated separately.
+
+The cell table uses a minimum support threshold of 50 consecutive player-season
+pairs per league × exposure cell. Smaller cells are omitted rather than being
+presented as stable estimates.
