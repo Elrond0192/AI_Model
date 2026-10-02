@@ -30,3 +30,4 @@ class BBRatingPlayerResponseV2(BaseModel):
     quality: str
     metric_coverage: float = Field(ge=0.0, le=1.0)
     bb_rating_version: str
+    uncertainty: dict | None = None
