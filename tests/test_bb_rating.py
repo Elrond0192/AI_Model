@@ -6,7 +6,10 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from basketball_ai.bb_rating.calibration import build_calibration_report
+from basketball_ai.bb_rating.calibration import (
+    BBRatingCalibrationConfig,
+    build_calibration_report,
+)
 from basketball_ai.bb_rating.engine import BBRatingEngine
 from basketball_ai.api.routes.bb_rating_v2 import router
 
