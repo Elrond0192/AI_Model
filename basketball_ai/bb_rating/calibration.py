@@ -115,6 +115,8 @@ def _assign_peer_groups(
         result.loc[ctx.index, "_peer_key"] = peer_key
 
     return result
+
+
 def _metric_percentiles(
     frame: pd.DataFrame,
     spec: RatingMetricSpec,
@@ -533,8 +535,16 @@ def _stability_diagnostics(
         if exposure.notna().sum() >= 3:
             exposure_source = "minutes_total"
     if exposure_source is None:
-        games = pd.to_numeric(ordered.get("games_played"), errors="coerce")
-        mpg = pd.to_numeric(ordered.get("minutes_per_game"), errors="coerce")
+        games = (
+            pd.to_numeric(ordered["games_played"], errors="coerce")
+            if "games_played" in ordered.columns
+            else pd.Series(np.nan, index=ordered.index)
+        )
+        mpg = (
+            pd.to_numeric(ordered["minutes_per_game"], errors="coerce")
+            if "minutes_per_game" in ordered.columns
+            else pd.Series(np.nan, index=ordered.index)
+        )
         exposure = games * mpg
         exposure_source = "games_played_x_minutes_per_game"
     ordered["_exposure_minutes"] = exposure
@@ -600,15 +610,7 @@ def _stability_diagnostics(
             ["exposure_group"],
         )
     else:
-        exposure_groups = _stability_group_summary(
-            exposure_pairs.rename(
-                columns={
-                    "_bb_rating": "current_score",
-                    "_next_score": "next_score",
-                }
-            ),
-            [],
-        )
+        exposure_groups = []
 
     by_league = _stability_group_summary(
         valid_pairs.rename(
@@ -700,7 +702,7 @@ def _diagnostic_warnings(report: dict[str, Any]) -> list[str]:
     if contexts["share_below_min_peer_samples"] > 0.50:
         warnings.append(
             "Oltre il 50% dei contesti ha meno del numero minimo di peer; "
-            "il fallback può essere frequente."
+            "la qualità del confronto può essere frequentemente inferiore a medium."
         )
 
     for metric in report["metrics"]:
