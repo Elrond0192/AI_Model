@@ -132,7 +132,7 @@ Response shape:
   "peer_group": {},
   "quality": "high",
   "metric_coverage": 0.93,
-  "bb_rating_version": "1.7"
+  "bb_rating_version": "1.8"
 }
 
 WordPress remains a pure consumer: no percentile, peer selection or BB-Rating
@@ -190,18 +190,30 @@ is to review the real-data output and decide whether the peer model, metric set 
 weights need calibration.
 
 
-## Calibration v1.9 — reliability diagnostics
+## Calibration v1.10 — empirical reliability diagnostics
 
-Calibration 1.9 is diagnostic-only. The public BB-Rating remains version 1.8:
+Calibration 1.10 is diagnostic-only. The public BB-Rating remains version 1.8:
 no score weights, peer rules or Prediction Model outputs are changed.
 
-The v1.9 report adds:
+The v1.10 report adds:
 - Pearson and Spearman stability for the rounded 1–100 score;
 - Pearson and Spearman stability for the continuous composite percentile before rounding;
 - exposure-stratified stability using minutes total when available, otherwise games played × minutes per game;
 - stability by league, position family and age band;
-- stability of each active scoring metric's contextual percentile.
+- stability of each active scoring metric's contextual percentile;
+- an empirical reliability proxy by exposure and active-metric persistence, with no automatic score correction.
 
 The purpose is to identify whether remaining year-to-year noise is concentrated in
 low-exposure observations or in specific metrics before introducing any reliability
 adjustment into the scoring contract.
+
+
+### Empirical reliability
+
+Calibration 1.10 estimates persistence diagnostically rather than changing the
+public score. Consecutive-season Spearman persistence is used as a test-retest
+proxy; exposure quartiles are fitted with a saturating curve of the form
+`reliability_proxy = asymptote × exposure / (exposure + half_exposure)`.
+Active metric persistence is also aggregated using configured weight and metric
+availability. These outputs are evidence for a future reliability policy and
+are not applied as score shrinkage or weight adjustments.
