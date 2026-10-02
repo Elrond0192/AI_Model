@@ -134,3 +134,20 @@ footer{padding:15px 36px 20px;font-size:11px}
 .entity-result-status.fallback{border-color:#6b5520;background:#352b0f;color:#f3c969}
 .entity-picker-empty{padding:12px;color:#7892a9;font-size:9px;text-align:center}
 .entity-picker-hint{display:block;margin-top:7px;color:#718ba1;font-size:9px;line-height:1.45}
+
+
+/* BB-Rating Control Center */
+.kpi-grid.six{grid-template-columns:repeat(6,minmax(0,1fr))}
+.model-state{display:flex;align-items:flex-start;gap:13px;padding:15px;border:1px solid #2b5773;border-radius:12px;background:#0a1c2c;margin-bottom:15px}
+.model-state.ok{border-color:#1f6747;background:#0b241d}
+.model-state.warning{border-color:#6b5520;background:#2a220f}
+.model-state-mark{width:31px;height:31px;flex:none;border-radius:9px;display:grid;place-items:center;background:#103e2b;color:#4ade83;border:1px solid #1f6747;font-weight:800}
+.model-state.warning .model-state-mark{background:#4a3514;color:#f3c969;border-color:#6b5520}
+.model-state strong{font-size:13px}
+.model-state p{margin:4px 0 0;color:#8da4b8;font-size:10px;line-height:1.55}
+#bb-rating-files .summary-row strong{max-width:70%;overflow-wrap:anywhere}
+.empty-state.compact{min-height:100px}
+#bb-rating-job{margin-bottom:20px}
+@media(max-width:1300px){.kpi-grid.six{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media(max-width:860px){.kpi-grid.six{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:520px){.kpi-grid.six{grid-template-columns:1fr}}
