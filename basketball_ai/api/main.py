@@ -125,6 +125,43 @@ def _load_bb_rating_uncertainty(model_dir: str):
     return None
 
 
+def _load_future_performance_model(model_dir: str):
+    from basketball_ai.future_performance import PlayerFuturePerformanceModel
+
+    configured = os.environ.get("FUTURE_PERFORMANCE_MODEL_DIR", "").strip()
+    candidates: list[Path] = []
+    if configured:
+        candidates.append(Path(configured))
+    model_path = Path(model_dir)
+    candidates.extend(
+        [
+            model_path / "future_performance",
+            model_path.parent / "future_performance",
+        ]
+    )
+    seen: set[str] = set()
+    for path in candidates:
+        key = str(path)
+        if key in seen:
+            continue
+        seen.add(key)
+        if not (path / "metadata.json").exists():
+            continue
+        try:
+            model = PlayerFuturePerformanceModel.load(path)
+            logger.info("[API] Loaded Player Future Performance Model from %s", path)
+            return model
+        except Exception as exc:
+            logger.warning(
+                "[API] Player Future Performance Model invalid at %s: %s",
+                path,
+                exc,
+            )
+            return None
+    logger.warning("[API] Player Future Performance Model artifact not found")
+    return None
+
+
 def _load_app_state() -> None:
     """Load PostgreSQL data and the exact production model implementation.
 
@@ -160,6 +197,7 @@ def _load_app_state() -> None:
         app_state["engine"] = None
         app_state["bb_rating_engine"] = None
         app_state["bb_rating_uncertainty"] = None
+        app_state["future_performance_model"] = None
         return
 
     app_state["data"] = data
@@ -184,6 +222,12 @@ def _load_app_state() -> None:
     except Exception as exc:
         logger.warning("[API] BB-Rating uncertainty unavailable: %s", exc)
         app_state["bb_rating_uncertainty"] = None
+
+    try:
+        app_state["future_performance_model"] = _load_future_performance_model(model_dir)
+    except Exception as exc:
+        logger.warning("[API] Player Future Performance Model unavailable: %s", exc)
+        app_state["future_performance_model"] = None
 
     # FASE I — precomputed Metric Rating distributions (AI.MetricDistribution).
     # Missing/empty only disables the rating endpoints; forecasts keep working.
@@ -275,6 +319,7 @@ async def lifespan(app: FastAPI):
     app.state.metric_distributions = app_state.get("metric_distributions", [])
     app.state.bb_rating_engine = app_state.get("bb_rating_engine")
     app.state.bb_rating_uncertainty = app_state.get("bb_rating_uncertainty")
+    app.state.future_performance_model = app_state.get("future_performance_model")
     app.state.model_metadata = _model_metadata(os.environ.get("MODEL_DIR", "models_saved"))
 
     yield
@@ -479,17 +524,20 @@ def create_app() -> FastAPI:
     from basketball_ai.api.routes.scenarios_v2 import router as scenarios_v2_router
     from basketball_ai.api.routes.metric_rating_v2 import router as metric_rating_v2_router
     from basketball_ai.api.routes.bb_rating_v2 import router as bb_rating_v2_router
+    from basketball_ai.api.routes.future_performance_v2 import router as future_performance_v2_router
 
     app.include_router(predictions_v2_router)
     app.include_router(scenarios_v2_router)
     app.include_router(metric_rating_v2_router)
     app.include_router(bb_rating_v2_router)
+    app.include_router(future_performance_v2_router)
 
     @app.get("/health")
     def health(request: Request):
         data = getattr(request.app.state, "data", {})
         bb_rating = getattr(request.app.state, "bb_rating_engine", None)
         uncertainty = getattr(request.app.state, "bb_rating_uncertainty", None)
+        future_model = getattr(request.app.state, "future_performance_model", None)
         return {
             "status": "ok",
             "data_loaded": bool(data.get("player_dict")),
@@ -498,6 +546,9 @@ def create_app() -> FastAPI:
             "bb_rating_version": getattr(bb_rating, "VERSION", None) or getattr(bb_rating, "version", None) or "1.8",
             "bb_rating_calibration_version": getattr(uncertainty, "calibration_version", None),
             "bb_rating_uncertainty_version": getattr(uncertainty, "bb_rating_version", None),
+            "future_performance_loaded": future_model is not None,
+            "future_performance_version": getattr(future_model, "metadata", {}).get("future_performance_version"),
+            "future_performance_feature_version": getattr(future_model, "metadata", {}).get("feature_version"),
         }
 
     @app.get("/health/live")
