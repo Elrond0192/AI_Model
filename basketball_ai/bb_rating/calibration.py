@@ -1,7 +1,7 @@
-"""BB-Rating calibration and real-data validation.
+"""BB-Rating calibration and out-of-sample uncertainty validation.
 
-Diagnostic only: this module never changes production weights, peer thresholds,
-model artifacts, PostgreSQL source data, or the Prediction Model.
+This module does not change production weights, peer thresholds, model artifacts,
+PostgreSQL source data, or the Prediction Model.
 """
 from __future__ import annotations
 
@@ -12,7 +12,6 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
-from scipy.optimize import least_squares
 
 from basketball_ai.bb_rating.engine import (
     AGE_BANDS,
@@ -27,13 +26,14 @@ from basketball_ai.bb_rating.engine import (
 )
 from basketball_ai.bb_rating.semantics import METRIC_SEMANTICS
 
-CALIBRATION_VERSION = "1.14"
+CALIBRATION_VERSION = "1.15"
 
 
 @dataclass(frozen=True)
 class BBRatingCalibrationConfig:
     min_peer_samples: int = MIN_PEER_SAMPLES
     min_context_samples: int = MIN_CONTEXT_SAMPLES
+    uncertainty_min_samples: int = 50
 
 
 def _normalise_series(series: pd.Series, column: str) -> pd.Series:
@@ -226,105 +226,6 @@ def _metric_summary(
 
 
 
-def _role_peer_population_diagnostics(
-    frame: pd.DataFrame,
-    *,
-    min_peer_samples: int,
-) -> dict[str, Any]:
-    valid = frame.loc[
-        frame["age_band"].astype(str).str.strip().ne("")
-        & frame["ruolo_combinato"].astype(str).str.strip().ne("")
-    ].copy()
-    group_cols = [
-        "league_key",
-        "season",
-        "competition",
-        "position_family",
-        "age_band",
-        "ruolo_combinato",
-    ]
-    if valid.empty:
-        return {
-            "rows_with_role_and_age": 0,
-            "role_present_share": 0.0,
-            "distinct_role_groups": 0,
-            "group_size": {
-                "mean": None,
-                "median": None,
-                "p90": None,
-                "max": None,
-            },
-            "thresholds": {},
-            "role_only_groups": 0,
-            "role_only_group_size": {
-                "mean": None,
-                "median": None,
-                "p90": None,
-                "max": None,
-            },
-            "role_only_thresholds": {},
-            "configured_min_peer_samples": int(min_peer_samples),
-        }
-
-    counts = valid.groupby(group_cols, dropna=False).size().rename("n")
-    role_only = valid.loc[
-        valid["ruolo_combinato"].astype(str).str.strip().ne("")
-    ].groupby(
-        ["league_key", "season", "competition", "position_family", "ruolo_combinato"],
-        dropna=False,
-    ).size().rename("n")
-    thresholds = {}
-    role_only_thresholds = {}
-    for threshold in (5, 10, 15, 20, 25):
-        eligible = counts.ge(threshold)
-        thresholds[str(threshold)] = {
-            "groups": int(eligible.sum()),
-            "share_groups": float(eligible.mean()),
-            "rows_eligible": int(counts.loc[eligible].sum()) if eligible.any() else 0,
-            "share_rows": (
-                float(counts.loc[eligible].sum() / len(valid))
-                if len(valid) else 0.0
-            ),
-        }
-        role_eligible = role_only.ge(threshold)
-        role_only_thresholds[str(threshold)] = {
-            "groups": int(role_eligible.sum()),
-            "share_groups": (
-                float(role_eligible.mean()) if len(role_only) else 0.0
-            ),
-            "rows_eligible": (
-                int(role_only.loc[role_eligible].sum())
-                if role_eligible.any() else 0
-            ),
-            "share_rows": (
-                float(role_only.loc[role_eligible].sum() / len(valid))
-                if len(valid) and role_eligible.any() else 0.0
-            ),
-        }
-
-    return {
-        "rows_with_role_and_age": int(len(valid)),
-        "role_present_share": float(len(valid) / len(frame)) if len(frame) else 0.0,
-        "distinct_role_groups": int(len(counts)),
-        "group_size": {
-            "mean": float(counts.mean()),
-            "median": float(counts.median()),
-            "p90": float(counts.quantile(0.90)),
-            "max": int(counts.max()),
-        },
-        "thresholds": thresholds,
-        "role_only_groups": int(len(role_only)),
-        "role_only_group_size": {
-            "mean": float(role_only.mean()) if len(role_only) else None,
-            "median": float(role_only.median()) if len(role_only) else None,
-            "p90": float(role_only.quantile(0.90)) if len(role_only) else None,
-            "max": int(role_only.max()) if len(role_only) else None,
-        },
-        "role_only_thresholds": role_only_thresholds,
-        "configured_min_peer_samples": int(min_peer_samples),
-    }
-
-
 def _exposure_diagnostics(frame: pd.DataFrame) -> dict[str, Any]:
     def numeric_summary(column: str) -> dict[str, Any]:
         if column not in frame.columns:
@@ -396,127 +297,6 @@ def _group_score_summary(
     return rows
 
 
-def _stability(frame: pd.DataFrame) -> dict[str, Any]:
-    ordered = frame.sort_values(
-        ["player_global_id", "league_key", "competition", "season"]
-    ).copy()
-    group_cols = ["player_global_id", "league_key", "competition"]
-    ordered["_next_season"] = ordered.groupby(group_cols)["season"].shift(-1)
-    ordered["_next_score"] = ordered.groupby(group_cols)["_bb_rating"].shift(-1)
-
-    pairs = ordered.loc[
-        ordered["_next_season"].eq(ordered["season"] + 1)
-        & ordered["_bb_rating"].notna()
-        & ordered["_next_score"].notna()
-    ]
-    if pairs.empty:
-        return {
-            "n_pairs": 0,
-            "mean_abs_change": None,
-            "median_abs_change": None,
-            "share_abs_change_le_5": None,
-            "share_abs_change_le_10": None,
-            "score_correlation": None,
-        }
-
-    changes = (pairs["_next_score"] - pairs["_bb_rating"]).abs()
-    correlation = None
-    if (
-        len(pairs) >= 3
-        and pairs["_bb_rating"].nunique() >= 2
-        and pairs["_next_score"].nunique() >= 2
-    ):
-        correlation = float(
-            pairs[["_bb_rating", "_next_score"]].corr().iloc[0, 1]
-        )
-
-    return {
-        "n_pairs": int(len(pairs)),
-        "mean_abs_change": float(changes.mean()),
-        "median_abs_change": float(changes.median()),
-        "share_abs_change_le_5": float((changes <= 5).mean()),
-        "share_abs_change_le_10": float((changes <= 10).mean()),
-        "score_correlation": correlation,
-    }
-
-
-
-
-def _pair_correlation(
-    current: pd.Series,
-    following: pd.Series,
-) -> dict[str, Any]:
-    pair = pd.DataFrame({"current": current, "following": following}).dropna()
-    if len(pair) < 3:
-        return {
-            "n_pairs": int(len(pair)),
-            "pearson": None,
-            "spearman": None,
-        }
-
-    pearson = None
-    spearman = None
-    if pair["current"].nunique() >= 2 and pair["following"].nunique() >= 2:
-        pearson = float(pair["current"].corr(pair["following"]))
-        spearman = float(
-            pair["current"].rank(method="average").corr(
-                pair["following"].rank(method="average")
-            )
-        )
-    return {
-        "n_pairs": int(len(pair)),
-        "pearson": pearson,
-        "spearman": spearman,
-    }
-
-
-def _stability_group_summary(
-    pairs: pd.DataFrame,
-    group_columns: list[str],
-) -> list[dict[str, Any]]:
-    rows: list[dict[str, Any]] = []
-    if pairs.empty:
-        return rows
-
-    for key, group in pairs.groupby(group_columns, dropna=False, sort=True):
-        keys = key if isinstance(key, tuple) else (key,)
-        clean = group[["current_score", "next_score"]].dropna()
-        changes = (
-            (clean["next_score"] - clean["current_score"]).abs()
-            if not clean.empty
-            else pd.Series(dtype=float)
-        )
-        corr = _pair_correlation(
-            clean["current_score"] if not clean.empty else pd.Series(dtype=float),
-            clean["next_score"] if not clean.empty else pd.Series(dtype=float),
-        )
-        row: dict[str, Any] = {
-            column: (
-                int(value)
-                if column == "season" and pd.notna(value)
-                else value
-            )
-            for column, value in zip(group_columns, keys)
-        }
-        row.update(
-            {
-                "n_pairs": int(len(clean)),
-                "mean_abs_change": float(changes.mean()) if not changes.empty else None,
-                "median_abs_change": float(changes.median()) if not changes.empty else None,
-                "share_abs_change_le_5": (
-                    float((changes <= 5).mean()) if not changes.empty else None
-                ),
-                "share_abs_change_le_10": (
-                    float((changes <= 10).mean()) if not changes.empty else None
-                ),
-                "pearson": corr["pearson"],
-                "spearman": corr["spearman"],
-            }
-        )
-        rows.append(row)
-    return rows
-
-
 def _variation_summary(values: pd.Series) -> dict[str, Any]:
     clean = pd.to_numeric(values, errors="coerce").dropna()
     if clean.empty:
@@ -542,527 +322,10 @@ def _variation_summary(values: pd.Series) -> dict[str, Any]:
     }
 
 
-def _bucket_variation_summary(
-    pairs: pd.DataFrame,
-    source_column: str,
-    *,
-    labels: list[str],
-    min_unique_values: int = 4,
-) -> list[dict[str, Any]]:
-    if pairs.empty or source_column not in pairs.columns:
-        return []
-    source = pd.to_numeric(pairs[source_column], errors="coerce")
-    clean = pairs.loc[source.notna() & pairs["_abs_rating_change"].notna()].copy()
-    if len(clean) < 4 or clean[source_column].nunique(dropna=True) < min_unique_values:
-        return []
-
-    ranks = pd.to_numeric(clean[source_column], errors="coerce").rank(
-        method="first",
-    )
-    clean["_bucket"] = pd.qcut(
-        ranks,
-        len(labels),
-        labels=labels,
-    )
-
-    rows: list[dict[str, Any]] = []
-    for bucket in labels:
-        group = clean.loc[clean["_bucket"] == bucket]
-        summary = _variation_summary(group["_abs_rating_change"])
-        summary.update(
-            {
-                "bucket": str(bucket),
-                "n": int(len(group)),
-                "source_median": float(
-                    pd.to_numeric(group[source_column], errors="coerce").median()
-                ),
-            }
-        )
-        rows.append(summary)
-    return rows
 
 
-def _spearman_association(
-    left: pd.Series,
-    right: pd.Series,
-) -> float | None:
-    pair = pd.DataFrame({"left": left, "right": right}).dropna()
-    if len(pair) < 3 or pair["left"].nunique() < 2 or pair["right"].nunique() < 2:
-        return None
-    return float(
-        pair["left"].rank(method="average").corr(
-            pair["right"].rank(method="average")
-        )
-    )
-
-
-def _exposure_controlled_spearman(
-    outcome: pd.Series,
-    predictor: pd.Series,
-    exposure: pd.Series,
-) -> float | None:
-    frame = pd.DataFrame(
-        {
-            "outcome": outcome,
-            "predictor": predictor,
-            "exposure": exposure,
-        }
-    ).dropna()
-    if (
-        len(frame) < 5
-        or frame["outcome"].nunique() < 2
-        or frame["predictor"].nunique() < 2
-        or frame["exposure"].nunique() < 2
-    ):
-        return None
-
-    ranked = frame.rank(method="average")
-    control = np.column_stack(
-        [
-            np.ones(len(ranked)),
-            ranked["exposure"].to_numpy(dtype=float),
-        ]
-    )
-    try:
-        outcome_resid = ranked["outcome"].to_numpy(dtype=float) - (
-            control
-            @ np.linalg.lstsq(
-                control,
-                ranked["outcome"].to_numpy(dtype=float),
-                rcond=None,
-            )[0]
-        )
-        predictor_resid = ranked["predictor"].to_numpy(dtype=float) - (
-            control
-            @ np.linalg.lstsq(
-                control,
-                ranked["predictor"].to_numpy(dtype=float),
-                rcond=None,
-            )[0]
-        )
-    except np.linalg.LinAlgError:
-        return None
-
-    if np.std(outcome_resid) <= 0.0 or np.std(predictor_resid) <= 0.0:
-        return None
-    return float(np.corrcoef(outcome_resid, predictor_resid)[0, 1])
-
-
-def _rank_r2(frame: pd.DataFrame, columns: list[str]) -> float | None:
-    clean = frame.dropna(subset=columns + ["_rank_outcome"]).copy()
-    if len(clean) < max(10, len(columns) + 2):
-        return None
-    matrix = np.column_stack(
-        [np.ones(len(clean))]
-        + [
-            pd.to_numeric(clean[column], errors="coerce").to_numpy(dtype=float)
-            for column in columns
-        ]
-    )
-    y = clean["_rank_outcome"].to_numpy(dtype=float)
-    try:
-        beta = np.linalg.lstsq(matrix, y, rcond=None)[0]
-    except np.linalg.LinAlgError:
-        return None
-    prediction = matrix @ beta
-    ss_res = float(np.sum((y - prediction) ** 2))
-    ss_tot = float(np.sum((y - np.mean(y)) ** 2))
-    if ss_tot <= 0.0:
-        return None
-    return float(max(0.0, min(1.0, 1.0 - ss_res / ss_tot)))
-
-
-def _within_league_exposure_diagnostics(
-    pairs: pd.DataFrame,
-    *,
-    min_pairs_per_league: int = 50,
-) -> dict[str, Any]:
-    required = ["_abs_rating_change", "_exposure_minutes", "league_key"]
-    if pairs.empty or any(column not in pairs.columns for column in required):
-        return {
-            "status": "insufficient_data",
-            "min_pairs_per_league": int(min_pairs_per_league),
-            "n_pairs": 0,
-            "leagues": [],
-            "pooled_within_league_rank_partial_correlation": None,
-            "between_league_eta_squared": None,
-            "within_league_exposure_r2": None,
-            "within_league_exposure_incremental_r2": None,
-            "league_summaries": [],
-        }
-
-    work = pairs[required].copy()
-    work["_abs_rating_change"] = pd.to_numeric(
-        work["_abs_rating_change"], errors="coerce"
-    )
-    work["_exposure_minutes"] = pd.to_numeric(
-        work["_exposure_minutes"], errors="coerce"
-    )
-    work["league_key"] = work["league_key"].astype(str)
-    work = work.dropna(
-        subset=["_abs_rating_change", "_exposure_minutes", "league_key"]
-    )
-    if len(work) < 20:
-        return {
-            "status": "insufficient_data",
-            "min_pairs_per_league": int(min_pairs_per_league),
-            "n_pairs": int(len(work)),
-            "leagues": sorted(work["league_key"].unique().tolist()),
-            "pooled_within_league_spearman": None,
-            "between_league_eta_squared": None,
-            "within_league_exposure_r2": None,
-            "within_league_exposure_incremental_r2": None,
-            "league_summaries": [],
-        }
-
-    work["_rank_outcome"] = work["_abs_rating_change"].rank(method="average")
-    work["_rank_exposure"] = work["_exposure_minutes"].rank(method="average")
-    work["_rank_outcome_within"] = work.groupby("league_key")["_abs_rating_change"].rank(
-        method="average"
-    )
-    work["_rank_exposure_within"] = work.groupby("league_key")["_exposure_minutes"].rank(
-        method="average"
-    )
-
-    centered_outcome = work["_rank_outcome"] - work.groupby("league_key")[
-        "_rank_outcome"
-    ].transform("mean")
-    centered_exposure = work["_rank_exposure"] - work.groupby("league_key")[
-        "_rank_exposure"
-    ].transform("mean")
-    pooled_within = None
-    if (
-        np.std(centered_exposure) > 0.0
-        and np.std(centered_outcome) > 0.0
-    ):
-        pooled_within = float(
-            np.corrcoef(centered_exposure, centered_outcome)[0, 1]
-        )
-
-    total_ss = float(
-        np.sum((work["_rank_outcome"] - work["_rank_outcome"].mean()) ** 2)
-    )
-    between_ss = float(
-        sum(
-            len(group)
-            * (group["_rank_outcome"].mean() - work["_rank_outcome"].mean()) ** 2
-            for _, group in work.groupby("league_key", sort=True)
-        )
-    )
-    between_eta_squared = (
-        float(between_ss / total_ss) if total_ss > 0.0 else None
-    )
-
-    league_summaries: list[dict[str, Any]] = []
-    for league, group in work.groupby("league_key", sort=True):
-        if len(group) < min_pairs_per_league:
-            continue
-        rho = _spearman_association(
-            group["_exposure_minutes"],
-            group["_abs_rating_change"],
-        )
-        within_corr = _spearman_association(
-            group["_rank_exposure_within"],
-            group["_rank_outcome_within"],
-        )
-        league_summaries.append(
-            {
-                "league_key": str(league),
-                "n_pairs": int(len(group)),
-                "median_exposure": float(group["_exposure_minutes"].median()),
-                "mean_abs_change": float(group["_abs_rating_change"].mean()),
-                "median_abs_change": float(group["_abs_rating_change"].median()),
-                "spearman_exposure_vs_abs_change": rho,
-                "within_league_spearman": within_corr,
-            }
-        )
-
-    valid = work.loc[
-        work.groupby("league_key")["_abs_rating_change"].transform("size")
-        >= min_pairs_per_league
-    ].copy()
-    within_r2 = None
-    within_incremental_r2 = None
-    fixed_effect_full_r2 = None
-    league_only_r2 = None
-    if not valid.empty and valid["league_key"].nunique() >= 2:
-        valid["_rank_outcome"] = valid["_abs_rating_change"].rank(method="average")
-        valid["_rank_exposure"] = valid["_exposure_minutes"].rank(method="average")
-        centered = pd.DataFrame(
-            {
-                "_rank_outcome": valid["_rank_outcome"],
-                "_rank_exposure_within": valid["_rank_exposure"]
-                - valid.groupby("league_key")["_rank_exposure"].transform("mean"),
-            }
-        )
-        # _rank_r2 consumes a global _rank_outcome target. Use centered exposure
-        # as the sole within-league predictor and compare it with league fixed effects.
-        dummy_columns: list[str] = []
-        leagues = sorted(valid["league_key"].unique().tolist())
-        for league in leagues[1:]:
-            column = f"_league_{league}"
-            centered[column] = (
-                valid["league_key"].astype(str) == league
-            ).astype(float)
-            dummy_columns.append(column)
-
-        league_only_r2 = _rank_r2(centered, dummy_columns) if dummy_columns else None
-        fixed_effect_full_r2 = _rank_r2(
-            centered,
-            [*dummy_columns, "_rank_exposure_within"],
-        )
-        if fixed_effect_full_r2 is not None and league_only_r2 is not None:
-            within_incremental_r2 = float(fixed_effect_full_r2 - league_only_r2)
-        if pooled_within is not None:
-            within_r2 = float(pooled_within ** 2)
-
-    return {
-        "status": "diagnostic_only",
-        "min_pairs_per_league": int(min_pairs_per_league),
-        "n_pairs": int(len(work)),
-        "leagues": sorted(work["league_key"].unique().tolist()),
-        "pooled_within_league_rank_partial_correlation": pooled_within,
-        "between_league_eta_squared": between_eta_squared,
-        "within_league_exposure_r2": within_r2,
-        "within_league_exposure_incremental_r2": within_incremental_r2,
-        "league_only_r2": league_only_r2,
-        "league_plus_within_exposure_r2": fixed_effect_full_r2,
-        "league_summaries": league_summaries,
-        "interpretation": (
-            "Within-league association removes league-level mean differences "
-            "before assessing exposure. Between-league eta-squared quantifies "
-            "how much of the global ranked outcome variance is attributable "
-            "to differences between league means. All quantities are descriptive "
-            "and are not production weighting or confidence rules."
-        ),
-    }
-
-
-def _league_exposure_diagnostics(
-    pairs: pd.DataFrame,
-    *,
-    min_pairs_per_cell: int = 50,
-) -> dict[str, Any]:
-    required = [
-        "_abs_rating_change",
-        "_exposure_minutes",
-        "league_key",
-    ]
-    if pairs.empty or any(column not in pairs.columns for column in required):
-        return {
-            "status": "insufficient_data",
-            "min_pairs_per_cell": int(min_pairs_per_cell),
-            "cells": [],
-            "variance_model": {
-                "status": "insufficient_data",
-                "base_exposure_r2": None,
-                "league_added_r2": None,
-                "league_incremental_r2": None,
-                "league_exposure_interaction_r2": None,
-                "interaction_incremental_r2": None,
-            },
-        }
-
-    work = pairs[required].copy()
-    work["_abs_rating_change"] = pd.to_numeric(
-        work["_abs_rating_change"], errors="coerce"
-    )
-    work["_exposure_minutes"] = pd.to_numeric(
-        work["_exposure_minutes"], errors="coerce"
-    )
-    work = work.dropna(
-        subset=["_abs_rating_change", "_exposure_minutes", "league_key"]
-    )
-    if len(work) < 20:
-        return {
-            "status": "insufficient_data",
-            "min_pairs_per_cell": int(min_pairs_per_cell),
-            "cells": [],
-            "variance_model": {
-                "status": "insufficient_data",
-                "base_exposure_r2": None,
-                "league_added_r2": None,
-                "league_incremental_r2": None,
-                "league_exposure_interaction_r2": None,
-                "interaction_incremental_r2": None,
-            },
-        }
-
-    work["_rank_outcome"] = work["_abs_rating_change"].rank(method="average")
-    work["_rank_exposure"] = work["_exposure_minutes"].rank(method="average")
-
-    leagues = sorted(str(value) for value in work["league_key"].unique())
-    reference_league = leagues[0]
-    dummy_columns: list[str] = []
-    for league in leagues[1:]:
-        column = f"_league_{league}"
-        work[column] = (work["league_key"].astype(str) == league).astype(float)
-        dummy_columns.append(column)
-
-    base_r2 = _rank_r2(work, ["_rank_exposure"])
-    league_r2 = _rank_r2(work, ["_rank_exposure", *dummy_columns])
-
-    interaction_columns: list[str] = []
-    for column in dummy_columns:
-        interaction = f"{column}_x_exposure"
-        work[interaction] = work[column] * work["_rank_exposure"]
-        interaction_columns.append(interaction)
-    full_r2 = _rank_r2(
-        work,
-        ["_rank_exposure", *dummy_columns, *interaction_columns],
-    )
-
-    cells: list[dict[str, Any]] = []
-    ranks = work["_rank_exposure"].rank(method="first")
-    work["_exposure_quartile"] = pd.qcut(
-        ranks,
-        4,
-        labels=["Q1_low", "Q2", "Q3", "Q4_high"],
-    )
-    for (league, exposure_group), group in work.groupby(
-        ["league_key", "_exposure_quartile"],
-        observed=True,
-        sort=True,
-    ):
-        if len(group) < min_pairs_per_cell:
-            continue
-        cells.append(
-            {
-                "league_key": str(league),
-                "exposure_group": str(exposure_group),
-                "n_pairs": int(len(group)),
-                "median_exposure": float(group["_exposure_minutes"].median()),
-                **_variation_summary(group["_abs_rating_change"]),
-                "spearman_exposure_vs_abs_change": _spearman_association(
-                    group["_exposure_minutes"],
-                    group["_abs_rating_change"],
-                ),
-            }
-        )
-
-    return {
-        "status": "diagnostic_only",
-        "min_pairs_per_cell": int(min_pairs_per_cell),
-        "reference_league": reference_league,
-        "leagues": leagues,
-        "cells": cells,
-        "within_league_exposure": _within_league_exposure_diagnostics(pairs),
-        "variance_model": {
-            "status": "diagnostic_only",
-            "method": (
-                "rank-based in-sample variance decomposition of absolute "
-                "next-season rating change"
-            ),
-            "base_exposure_r2": base_r2,
-            "league_added_r2": league_r2,
-            "league_incremental_r2": (
-                float(league_r2 - base_r2)
-                if base_r2 is not None and league_r2 is not None
-                else None
-            ),
-            "league_exposure_interaction_r2": full_r2,
-            "interaction_incremental_r2": (
-                float(full_r2 - league_r2)
-                if full_r2 is not None and league_r2 is not None
-                else None
-            ),
-            "interpretation": (
-                "Incremental R² measures descriptive variance explained after "
-                "adding league indicators to exposure ranks; it is not a causal "
-                "effect estimate or production weighting rule."
-            ),
-        },
-    }
-
-
-def _uncertainty_diagnostics(pairs: pd.DataFrame) -> dict[str, Any]:
-    if pairs.empty:
-        return {
-            "status": "diagnostic_only",
-            "n_pairs": 0,
-            "target": "absolute next-season BB-Rating change",
-            "overall": _variation_summary(pd.Series(dtype=float)),
-            "by_exposure": [],
-            "by_peer_sample_size": [],
-            "by_metric_coverage": [],
-            "by_league": [],
-            "league_exposure": _league_exposure_diagnostics(pairs),
-            "within_league_exposure": _within_league_exposure_diagnostics(pairs),
-            "associations": {
-                "exposure_vs_abs_change_spearman": None,
-                "peer_sample_size_vs_abs_change_spearman": None,
-                "peer_sample_size_exposure_controlled_spearman": None,
-                "metric_coverage_vs_abs_change_spearman": None,
-                "metric_coverage_exposure_controlled_spearman": None,
-            },
-        }
-
-    outcome = pd.to_numeric(pairs["_abs_rating_change"], errors="coerce")
-    exposure = pd.to_numeric(pairs["_exposure_minutes"], errors="coerce")
-    peer_size = pd.to_numeric(pairs["_peer_sample_size"], errors="coerce")
-    coverage = pd.to_numeric(pairs["_metric_coverage"], errors="coerce")
-
-    by_exposure = _bucket_variation_summary(
-        pairs,
-        "_exposure_minutes",
-        labels=["Q1_low", "Q2", "Q3", "Q4_high"],
-    )
-    by_peer_sample_size = _bucket_variation_summary(
-        pairs,
-        "_peer_sample_size",
-        labels=["Q1_small", "Q2", "Q3", "Q4_large"],
-    )
-    by_metric_coverage = _bucket_variation_summary(
-        pairs,
-        "_metric_coverage",
-        labels=["Q1_low", "Q2", "Q3", "Q4_high"],
-    )
-
-    by_league: list[dict[str, Any]] = []
-    if "league_key" in pairs.columns:
-        for league, group in pairs.groupby("league_key", dropna=False, sort=True):
-            summary = _variation_summary(group["_abs_rating_change"])
-            summary["league_key"] = str(league)
-            by_league.append(summary)
-
-    return {
-        "status": "diagnostic_only",
-        "n_pairs": int(len(pairs)),
-        "target": (
-            "absolute next-season BB-Rating change; lower values mean a tighter "
-            "historical year-to-year variation"
-        ),
-        "overall": _variation_summary(outcome),
-        "by_exposure": by_exposure,
-        "by_peer_sample_size": by_peer_sample_size,
-        "by_metric_coverage": by_metric_coverage,
-        "by_league": by_league,
-        "league_exposure": _league_exposure_diagnostics(pairs),
-        "within_league_exposure": _within_league_exposure_diagnostics(pairs),
-        "associations": {
-            "exposure_vs_abs_change_spearman": _spearman_association(
-                exposure, outcome
-            ),
-            "peer_sample_size_vs_abs_change_spearman": _spearman_association(
-                peer_size, outcome
-            ),
-            "peer_sample_size_exposure_controlled_spearman": _exposure_controlled_spearman(
-                outcome, peer_size, exposure
-            ),
-            "metric_coverage_vs_abs_change_spearman": _spearman_association(
-                coverage, outcome
-            ),
-            "metric_coverage_exposure_controlled_spearman": _exposure_controlled_spearman(
-                outcome, coverage, exposure
-            ),
-        },
-    }
-
-
-def _stability_diagnostics(
-    frame: pd.DataFrame,
-    scoring_specs: list[RatingMetricSpec],
-) -> dict[str, Any]:
+def _consecutive_rating_change_pairs(frame: pd.DataFrame) -> pd.DataFrame:
+    """Build one row per player/league/competition t -> t+1 transition."""
     ordered = frame.sort_values(
         ["player_global_id", "league_key", "competition", "season"]
     ).copy()
@@ -1070,396 +333,456 @@ def _stability_diagnostics(
 
     ordered["_next_season"] = ordered.groupby(group_cols)["season"].shift(-1)
     ordered["_next_score"] = ordered.groupby(group_cols)["_bb_rating"].shift(-1)
-    ordered["_next_composite_pct"] = ordered.groupby(group_cols)["_composite_pct"].shift(-1)
 
-    exposure_source = None
     if "minutes_total" in ordered.columns:
         exposure = pd.to_numeric(ordered["minutes_total"], errors="coerce")
-        if exposure.notna().sum() >= 3:
-            exposure_source = "minutes_total"
-    if exposure_source is None:
+        if exposure.notna().sum() < 3:
+            exposure = pd.Series(np.nan, index=ordered.index, dtype=float)
+    else:
+        exposure = pd.Series(np.nan, index=ordered.index, dtype=float)
+
+    if exposure.isna().all():
         games = (
             pd.to_numeric(ordered["games_played"], errors="coerce")
             if "games_played" in ordered.columns
-            else pd.Series(np.nan, index=ordered.index)
+            else pd.Series(np.nan, index=ordered.index, dtype=float)
         )
         mpg = (
             pd.to_numeric(ordered["minutes_per_game"], errors="coerce")
             if "minutes_per_game" in ordered.columns
-            else pd.Series(np.nan, index=ordered.index)
+            else pd.Series(np.nan, index=ordered.index, dtype=float)
         )
         exposure = games * mpg
-        exposure_source = "games_played_x_minutes_per_game"
-    ordered["_exposure_minutes"] = exposure
-    ordered["_next_exposure_minutes"] = ordered.groupby(group_cols)["_exposure_minutes"].shift(-1)
 
-    valid_pairs = ordered.loc[
+    ordered["_exposure_minutes"] = exposure
+
+    pairs = ordered.loc[
         ordered["_next_season"].eq(ordered["season"] + 1)
         & ordered["_bb_rating"].notna()
         & ordered["_next_score"].notna()
-        & ordered["_composite_pct"].notna()
-        & ordered["_next_composite_pct"].notna()
+        & ordered["_exposure_minutes"].notna()
     ].copy()
+    if pairs.empty:
+        return pd.DataFrame(
+            columns=[
+                "player_global_id", "league_key", "competition", "season",
+                "target_season", "current_rating", "next_rating",
+                "abs_rating_change", "exposure_minutes",
+            ]
+        )
 
-    valid_pairs["_abs_rating_change"] = (
-        valid_pairs["_next_score"] - valid_pairs["_bb_rating"]
+    pairs["target_season"] = pd.to_numeric(
+        pairs["_next_season"], errors="coerce"
+    ).astype("Int64")
+    pairs["current_rating"] = pd.to_numeric(
+        pairs["_bb_rating"], errors="coerce"
+    )
+    pairs["next_rating"] = pd.to_numeric(
+        pairs["_next_score"], errors="coerce"
+    )
+    pairs["abs_rating_change"] = (
+        pairs["next_rating"] - pairs["current_rating"]
     ).abs()
-
-    base = _pair_correlation(
-        valid_pairs["_bb_rating"],
-        valid_pairs["_next_score"],
+    pairs["exposure_minutes"] = pd.to_numeric(
+        pairs["_exposure_minutes"], errors="coerce"
     )
-    composite = _pair_correlation(
-        valid_pairs["_composite_pct"],
-        valid_pairs["_next_composite_pct"],
-    )
-
-    score_changes = (
-        (valid_pairs["_next_score"] - valid_pairs["_bb_rating"]).abs()
-        if not valid_pairs.empty
-        else pd.Series(dtype=float)
-    )
-    composite_changes = (
-        (valid_pairs["_next_composite_pct"] - valid_pairs["_composite_pct"]).abs()
-        if not valid_pairs.empty
-        else pd.Series(dtype=float)
+    return pairs[
+        [
+            "player_global_id", "league_key", "competition", "season",
+            "target_season", "current_rating", "next_rating",
+            "abs_rating_change", "exposure_minutes",
+        ]
+    ].dropna(
+        subset=[
+            "target_season", "current_rating", "next_rating",
+            "abs_rating_change", "exposure_minutes", "league_key",
+        ]
     )
 
-    exposure_source_values = valid_pairs["_exposure_minutes"].dropna()
-    exposure_summary = {
-        "source": exposure_source,
-        "n": int(len(exposure_source_values)),
-        "p10": float(exposure_source_values.quantile(0.10)) if not exposure_source_values.empty else None,
-        "p25": float(exposure_source_values.quantile(0.25)) if not exposure_source_values.empty else None,
-        "p50": float(exposure_source_values.quantile(0.50)) if not exposure_source_values.empty else None,
-        "p75": float(exposure_source_values.quantile(0.75)) if not exposure_source_values.empty else None,
-        "p90": float(exposure_source_values.quantile(0.90)) if not exposure_source_values.empty else None,
-        "max": float(exposure_source_values.max()) if not exposure_source_values.empty else None,
-    }
 
-    exposure_pairs = valid_pairs.loc[valid_pairs["_exposure_minutes"].notna()].copy()
-    exposure_groups: list[dict[str, Any]] = []
-    if len(exposure_pairs) >= 12:
-        ranks = exposure_pairs["_exposure_minutes"].rank(method="first")
-        exposure_pairs["_exposure_quartile"] = pd.qcut(
-            ranks,
-            4,
-            labels=["Q1_low", "Q2", "Q3", "Q4_high"],
+def _quantile_edges(values: pd.Series) -> np.ndarray | None:
+    clean = pd.to_numeric(values, errors="coerce").dropna()
+    if len(clean) < 8 or clean.nunique() < 4:
+        return None
+    return np.asarray(
+        np.quantile(clean.to_numpy(dtype=float), [0.25, 0.50, 0.75]),
+        dtype=float,
+    )
+
+
+def _assign_exposure_band(
+    values: pd.Series,
+    edges: np.ndarray | None,
+) -> pd.Series:
+    if edges is None:
+        return pd.Series(pd.NA, index=values.index, dtype="Int64")
+    numeric = pd.to_numeric(values, errors="coerce")
+    result = pd.Series(pd.NA, index=values.index, dtype="Int64")
+    valid = numeric.notna()
+    if valid.any():
+        codes = np.searchsorted(
+            edges,
+            numeric.loc[valid].to_numpy(dtype=float),
+            side="right",
+        ) + 1
+        result.loc[valid] = pd.Series(
+            np.clip(codes, 1, 4),
+            index=numeric.loc[valid].index,
+            dtype="Int64",
         )
-        exposure_groups = _stability_group_summary(
-            exposure_pairs.rename(
-                columns={
-                    "_bb_rating": "current_score",
-                    "_next_score": "next_score",
-                    "_exposure_quartile": "exposure_group",
-                }
-            ),
-            ["exposure_group"],
-        )
-        exposure_medians = exposure_pairs.groupby(
-            "_exposure_quartile", observed=True
-        )["_exposure_minutes"].median()
-        for row in exposure_groups:
-            row["median_exposure"] = float(
-                exposure_medians.loc[row["exposure_group"]]
-            )
-    else:
-        exposure_groups = []
+    return result
 
-    by_league = _stability_group_summary(
-        valid_pairs.rename(
-            columns={"_bb_rating": "current_score", "_next_score": "next_score"}
-        ),
-        ["league_key"],
-    )
 
-    by_position = _stability_group_summary(
-        valid_pairs.rename(
-            columns={"_bb_rating": "current_score", "_next_score": "next_score"}
-        ),
-        ["position_family"],
-    )
+def _fit_exposure_edges(
+    training: pd.DataFrame,
+) -> tuple[np.ndarray | None, dict[str, np.ndarray]]:
+    global_edges = _quantile_edges(training["exposure_minutes"])
+    league_edges: dict[str, np.ndarray] = {}
+    for league, group in training.groupby("league_key", sort=True):
+        edges = _quantile_edges(group["exposure_minutes"])
+        if edges is not None:
+            league_edges[str(league)] = edges
+    return global_edges, league_edges
 
-    by_age_band = _stability_group_summary(
-        valid_pairs.rename(
-            columns={"_bb_rating": "current_score", "_next_score": "next_score"}
-        ),
-        ["age_band"],
-    )
 
-    metric_stability: list[dict[str, Any]] = []
-    for spec in scoring_specs:
-        current_col = f"_pct_{spec.key}"
-        if current_col not in ordered.columns:
+def _quantile_table(
+    frame: pd.DataFrame,
+    group_columns: list[str],
+    *,
+    min_samples: int,
+) -> dict[tuple[str, ...], dict[str, Any]]:
+    tables: dict[tuple[str, ...], dict[str, Any]] = {}
+    if frame.empty:
+        return tables
+    for key, group in frame.groupby(group_columns, dropna=False, sort=True):
+        keys = key if isinstance(key, tuple) else (key,)
+        clean = pd.to_numeric(group["abs_rating_change"], errors="coerce").dropna()
+        if len(clean) < min_samples:
             continue
+        tables[tuple(str(v) for v in keys)] = {
+            "n": int(len(clean)),
+            "p50": float(clean.quantile(0.50)),
+            "p75": float(clean.quantile(0.75)),
+            "p90": float(clean.quantile(0.90)),
+        }
+    return tables
 
-        next_percentiles = ordered.groupby(group_cols)[current_col].shift(-1)
-        pair_mask = (
-            ordered["_next_season"].eq(ordered["season"] + 1)
-            & ordered[current_col].notna()
-            & next_percentiles.notna()
-        )
-        current_values = ordered.loc[pair_mask, current_col]
-        next_values = next_percentiles.loc[pair_mask]
-        corr = _pair_correlation(current_values, next_values)
-        changes = (
-            (next_values - current_values).abs()
-            if not current_values.empty
-            else pd.Series(dtype=float)
-        )
-        coverage_n = int(ordered[current_col].notna().sum())
-        metric_stability.append(
-            {
-                "metric": spec.key,
-                "n_pairs": int(len(current_values)),
-                "mean_abs_percentile_change": (
-                    float(changes.mean()) if not changes.empty else None
-                ),
-                "median_abs_percentile_change": (
-                    float(changes.median()) if not changes.empty else None
-                ),
-                "pearson": corr["pearson"],
-                "spearman": corr["spearman"],
-                "coverage": (
-                    float(coverage_n / len(ordered)) if len(ordered) else 0.0
-                ),
-                "weight": float(spec.weight),
-            }
-        )
 
+def _global_quantile_table(
+    frame: pd.DataFrame,
+    *,
+    min_samples: int,
+) -> dict[str, Any] | None:
+    clean = pd.to_numeric(frame["abs_rating_change"], errors="coerce").dropna()
+    if len(clean) < min_samples:
+        return None
     return {
-        "n_pairs": int(len(valid_pairs)),
-        "score": {
-            "pearson": base["pearson"],
-            "spearman": base["spearman"],
-        },
-        "composite_percentile": {
-            "pearson": composite["pearson"],
-            "spearman": composite["spearman"],
-            "mean_abs_change": (
-                float(composite_changes.mean()) if not composite_changes.empty else None
-            ),
-            "median_abs_change": (
-                float(composite_changes.median()) if not composite_changes.empty else None
-            ),
-        },
-        "exposure": {
-            "summary": exposure_summary,
-            "quartiles": exposure_groups,
-        },
-        "by_league": by_league,
-        "by_position": by_position,
-        "by_age_band": by_age_band,
-        "by_metric": metric_stability,
-        "uncertainty_profile": _uncertainty_diagnostics(valid_pairs),
-        "reliability": _empirical_reliability_diagnostics(
-            {
-                "score": {
-                    "spearman": base["spearman"],
-                },
-                "exposure": {
-                    "quartiles": exposure_groups,
-                },
-            },
-            metric_stability,
-        ),
+        "n": int(len(clean)),
+        "p50": float(clean.quantile(0.50)),
+        "p75": float(clean.quantile(0.75)),
+        "p90": float(clean.quantile(0.90)),
     }
 
 
+def _predict_league_exposure(
+    row: pd.Series,
+    *,
+    global_table: dict[str, Any] | None,
+    league_tables: dict[tuple[str, ...], dict[str, Any]],
+    exposure_tables: dict[tuple[str, ...], dict[str, Any]],
+    league_exposure_tables: dict[tuple[str, ...], dict[str, Any]],
+    global_band: Any,
+    league_band: Any,
+) -> tuple[dict[str, Any] | None, str]:
+    league = str(row["league_key"])
+    lb = int(league_band) if pd.notna(league_band) else None
+    gb = int(global_band) if pd.notna(global_band) else None
+
+    if lb is not None:
+        table = league_exposure_tables.get((league, str(lb)))
+        if table is not None:
+            return table, "league+exposure"
+
+    table = league_tables.get((league,))
+    if table is not None:
+        return table, "league"
+
+    if gb is not None:
+        table = exposure_tables.get((str(gb),))
+        if table is not None:
+            return table, "exposure"
+
+    if global_table is not None:
+        return global_table, "global"
+
+    return None, "unavailable"
 
 
-def _empirical_reliability_diagnostics(
-    stability: dict[str, Any],
-    metric_stability: list[dict[str, Any]],
+def _aggregate_uncertainty_results(
+    rows: list[dict[str, Any]],
+    *,
+    model_name: str,
 ) -> dict[str, Any]:
-    """Compute empirical persistence proxies without changing production scores.
+    if not rows:
+        return {
+            "model": model_name,
+            "n_oos": 0,
+            "coverage": {"p50": None, "p75": None, "p90": None},
+            "coverage_error": {"p50": None, "p75": None, "p90": None},
+            "mean_interval_width_p90": None,
+            "median_interval_width_p90": None,
+            "folds": [],
+        }
 
-    Exposure reliability is fitted from observed consecutive-season Spearman
-    persistence by exposure quartile. Metric reliability uses each active metric's
-    consecutive-season Spearman persistence. The output is diagnostic only and
-    is intentionally not applied as score shrinkage or weight adjustment.
-    """
-    active_metrics = [
-        row for row in metric_stability
-        if row["n_pairs"] >= 3 and row["spearman"] is not None
-    ]
-    weighted_parts = []
-    for row in active_metrics:
-        reliability = max(0.0, min(1.0, float(row["spearman"])))
-        coverage = max(0.0, min(1.0, float(row["coverage"])))
-        weight = max(0.0, float(row["weight"]))
-        weighted_parts.append((weight, coverage, reliability))
+    observed = pd.DataFrame(rows)
+    actual = pd.to_numeric(observed["abs_rating_change"], errors="coerce")
+    coverage: dict[str, float] = {}
+    errors: dict[str, float] = {}
+    targets = {"p50": 0.50, "p75": 0.75, "p90": 0.90}
 
-    denominator = sum(weight * coverage for weight, coverage, _ in weighted_parts)
-    weighted_metric_reliability = (
-        sum(weight * coverage * reliability for weight, coverage, reliability in weighted_parts)
-        / denominator
-        if denominator > 0
-        else None
-    )
+    for quantile, target in targets.items():
+        threshold = pd.to_numeric(observed[quantile], errors="coerce")
+        observed_coverage = float(actual.le(threshold).mean())
+        coverage[quantile] = observed_coverage
+        errors[quantile] = observed_coverage - target
 
-    exposure_points = []
-    for row in stability.get("exposure", {}).get("quartiles", []):
-        spearman = row.get("spearman")
-        median_exposure = row.get("median_exposure")
-        if spearman is None or median_exposure is None:
-            continue
-        if not np.isfinite(float(spearman)) or not np.isfinite(float(median_exposure)):
-            continue
-        exposure_points.append(
-            {
-                "exposure_group": row["exposure_group"],
-                "median_exposure": float(median_exposure),
-                "observed_spearman": max(0.0, min(1.0, float(spearman))),
-                "n_pairs": int(row["n_pairs"]),
-            }
-        )
-
-    curve = {
-        "method": "saturating_exposure_curve",
-        "formula": "reliability_proxy = asymptote * exposure / (exposure + half_exposure)",
-        "fitted": False,
-        "asymptote": None,
-        "half_exposure": None,
-        "rmse": None,
-        "r2": None,
-    }
-    fitted_by_group: dict[str, float] = {}
-
-    if len(exposure_points) >= 3:
-        x = np.array([point["median_exposure"] for point in exposure_points], dtype=float)
-        y = np.array([point["observed_spearman"] for point in exposure_points], dtype=float)
-
-        def residuals(params: np.ndarray) -> np.ndarray:
-            asymptote, half_exposure = params
-            return asymptote * x / (x + half_exposure) - y
-
-        max_y = float(np.max(y))
-        median_x = float(np.median(x))
-        initial_asymptote = min(0.99, max(0.5, max_y + 0.05))
-        initial_half_exposure = max(
-            1.0,
-            median_x * max(initial_asymptote / max(max_y, 1e-6) - 1.0, 0.25),
-        )
-        fitted = least_squares(
-            residuals,
-            x0=np.array([initial_asymptote, initial_half_exposure], dtype=float),
-            bounds=(
-                np.array([0.0, 1e-6], dtype=float),
-                np.array([1.0, np.inf], dtype=float),
-            ),
-        )
-        asymptote, half_exposure = (float(value) for value in fitted.x)
-        predicted = asymptote * x / (x + half_exposure)
-        rmse = float(np.sqrt(np.mean((predicted - y) ** 2)))
-        ss_res = float(np.sum((predicted - y) ** 2))
-        ss_tot = float(np.sum((y - np.mean(y)) ** 2))
-        r2 = float(1.0 - ss_res / ss_tot) if ss_tot > 0 else None
-
-        curve.update(
-            {
-                "fitted": bool(fitted.success),
-                "asymptote": asymptote,
-                "half_exposure": half_exposure,
-                "rmse": rmse,
-                "r2": r2,
-            }
-        )
-        for point, prediction in zip(exposure_points, predicted):
-            fitted_by_group[point["exposure_group"]] = float(
-                max(0.0, min(1.0, prediction))
-            )
-
-    max_observed = max(
-        (point["observed_spearman"] for point in exposure_points),
-        default=None,
-    )
-    quartile_by_group = {
-        str(row["exposure_group"]): row
-        for row in stability.get("exposure", {}).get("quartiles", [])
-    }
-
-    confidence_levels = {
-        "Q1_low": "low",
-        "Q2": "moderate",
-        "Q3": "high",
-        "Q4_high": "very_high",
-    }
-
-    stability_profile: list[dict[str, Any]] = []
-    for point in exposure_points:
-        point["fitted_reliability_proxy"] = fitted_by_group.get(point["exposure_group"])
-        point["relative_to_high_exposure"] = (
-            float(point["observed_spearman"] / max_observed)
-            if max_observed and max_observed > 0
-            else None
-        )
-
-        quartile = quartile_by_group.get(str(point["exposure_group"]), {})
-        median_abs_change = quartile.get("median_abs_change")
-        relative = point["relative_to_high_exposure"]
-        stability_profile.append(
-            {
-                "exposure_group": point["exposure_group"],
-                "median_exposure": point["median_exposure"],
-                "n_pairs": point["n_pairs"],
-                "observed_spearman": point["observed_spearman"],
-                "fitted_reliability_proxy": point["fitted_reliability_proxy"],
-                "stability_score": (
-                    float(relative * 100.0)
-                    if relative is not None
-                    else None
-                ),
-                "confidence_level": confidence_levels.get(
-                    str(point["exposure_group"]),
-                    "unknown",
-                ),
-                "expected_rating_variation": (
-                    float(median_abs_change)
-                    if median_abs_change is not None
-                    else None
-                ),
-            }
-        )
+    widths = 2.0 * pd.to_numeric(observed["p90"], errors="coerce")
+    by_fold = []
+    for fold, group in observed.groupby("target_season", sort=True):
+        actual_fold = pd.to_numeric(group["abs_rating_change"], errors="coerce")
+        fold_row = {
+            "target_season": int(fold),
+            "n_oos": int(len(group)),
+            "coverage": {},
+        }
+        for quantile, target in targets.items():
+            threshold = pd.to_numeric(group[quantile], errors="coerce")
+            observed_coverage = float(actual_fold.le(threshold).mean())
+            fold_row["coverage"][quantile] = observed_coverage
+            fold_row[f"{quantile}_error"] = observed_coverage - target
+        by_fold.append(fold_row)
 
     return {
-        "status": "diagnostic_only",
-        "meaning": (
-            "Test-retest persistence proxies only. No reliability correction is "
-            "applied to BB-Rating v1.8."
-        ),
-        "observed_composite_spearman": stability.get("score", {}).get("spearman"),
-        "weighted_active_metric_spearman": weighted_metric_reliability,
-        "active_metric_count": int(len(active_metrics)),
-        "exposure_curve": {
-            **curve,
-            "points": exposure_points,
-        },
-        "stability_profile": {
-            "status": "diagnostic_only",
-            "stability_score_definition": (
-                "Relative persistence index where the highest observed "
-                "exposure-quartile persistence in this calibration dataset equals 100."
-            ),
-            "confidence_level_definition": (
-                "Empirical exposure bands: Q1=low, Q2=moderate, "
-                "Q3=high, Q4=very_high."
-            ),
-            "expected_rating_variation_definition": (
-                "Median absolute next-season BB-Rating change observed within "
-                "the same exposure quartile."
-            ),
-            "bands": stability_profile,
-        },
-        "interpretation": {
-            "low_exposure_has_lower_persistence": bool(
-                len(exposure_points) >= 2
-                and exposure_points[0]["observed_spearman"]
-                < exposure_points[-1]["observed_spearman"]
-            ),
-            "automatic_application": False,
-        },
+        "model": model_name,
+        "n_oos": int(len(observed)),
+        "coverage": coverage,
+        "coverage_error": errors,
+        "mean_interval_width_p90": float(widths.mean()),
+        "median_interval_width_p90": float(widths.median()),
+        "folds": by_fold,
     }
+
+
+def _oos_uncertainty_validation(
+    frame: pd.DataFrame,
+    *,
+    min_samples: int,
+) -> dict[str, Any]:
+    """Validate empirical uncertainty using only earlier target seasons."""
+    pairs = _consecutive_rating_change_pairs(frame)
+    if pairs.empty:
+        return {
+            "status": "insufficient_data",
+            "method": "expanding_walk_forward_empirical_quantiles",
+            "target": "absolute next-season BB-Rating change",
+            "quantiles": [0.50, 0.75, 0.90],
+            "min_samples": int(min_samples),
+            "first_possible_test_season": None,
+            "test_seasons": [],
+            "folds": [],
+            "models": [],
+            "selected_structure": {
+                "features": ["league", "exposure_band"],
+                "fallback_order": [
+                    "league+exposure", "league", "exposure", "global"
+                ],
+                "primary_share": 0.0,
+                "fallback_shares": {},
+                "coverage": {"p50": None, "p75": None, "p90": None},
+                "coverage_error": {"p50": None, "p75": None, "p90": None},
+                "mean_interval_width_p90": None,
+                "median_interval_width_p90": None,
+            },
+        }
+
+    target_seasons = sorted(
+        int(value) for value in pd.to_numeric(
+            pairs["target_season"], errors="coerce"
+        ).dropna().unique()
+    )
+    first_possible = target_seasons[1] if len(target_seasons) >= 2 else None
+
+    model_rows = {name: [] for name in (
+        "global", "league", "exposure", "league+exposure"
+    )}
+    fold_metadata: list[dict[str, Any]] = []
+
+    for target_season in target_seasons:
+        training = pairs.loc[pairs["target_season"] < target_season].copy()
+        test = pairs.loc[pairs["target_season"] == target_season].copy()
+        if training.empty or test.empty:
+            continue
+
+        training_seasons = sorted(
+            int(value) for value in pd.to_numeric(
+                training["target_season"], errors="coerce"
+            ).dropna().unique()
+        )
+        global_edges, league_edges = _fit_exposure_edges(training)
+
+        training["global_band"] = _assign_exposure_band(
+            training["exposure_minutes"], global_edges
+        )
+        training["league_band"] = pd.Series(
+            pd.NA, index=training.index, dtype="Int64"
+        )
+        for league, indices in training.groupby("league_key", sort=False).groups.items():
+            training.loc[indices, "league_band"] = _assign_exposure_band(
+                training.loc[indices, "exposure_minutes"],
+                league_edges.get(str(league)),
+            )
+
+        test["global_band"] = _assign_exposure_band(
+            test["exposure_minutes"], global_edges
+        )
+        test["league_band"] = pd.Series(
+            pd.NA, index=test.index, dtype="Int64"
+        )
+        for league, indices in test.groupby("league_key", sort=False).groups.items():
+            test.loc[indices, "league_band"] = _assign_exposure_band(
+                test.loc[indices, "exposure_minutes"],
+                league_edges.get(str(league)),
+            )
+
+        global_table = _global_quantile_table(training, min_samples=min_samples)
+        league_tables = _quantile_table(
+            training, ["league_key"], min_samples=min_samples
+        )
+        exposure_tables = _quantile_table(
+            training.dropna(subset=["global_band"]),
+            ["global_band"], min_samples=min_samples
+        )
+        league_exposure_tables = _quantile_table(
+            training.dropna(subset=["league_band"]),
+            ["league_key", "league_band"], min_samples=min_samples
+        )
+
+        fold_usage = {name: {} for name in model_rows}
+        for _, row in test.iterrows():
+            predictions = {
+                "global": (
+                    global_table,
+                    "global",
+                ),
+                "league": (
+                    league_tables.get((str(row["league_key"]),))
+                    or global_table,
+                    "league" if (str(row["league_key"]),) in league_tables else "global",
+                ),
+                "exposure": (
+                    exposure_tables.get(
+                        (str(int(row["global_band"])),)
+                    ) if pd.notna(row["global_band"]) else global_table,
+                    "exposure" if pd.notna(row["global_band"]) and
+                    (str(int(row["global_band"])),) in exposure_tables else "global",
+                ),
+                "league+exposure": _predict_league_exposure(
+                    row,
+                    global_table=global_table,
+                    league_tables=league_tables,
+                    exposure_tables=exposure_tables,
+                    league_exposure_tables=league_exposure_tables,
+                    global_band=row["global_band"],
+                    league_band=row["league_band"],
+                ),
+            }
+
+            for model_name, (table, source) in predictions.items():
+                if table is None:
+                    continue
+                model_rows[model_name].append(
+                    {
+                        "target_season": int(target_season),
+                        "league_key": str(row["league_key"]),
+                        "abs_rating_change": float(row["abs_rating_change"]),
+                        "p50": float(table["p50"]),
+                        "p75": float(table["p75"]),
+                        "p90": float(table["p90"]),
+                        "source": source,
+                    }
+                )
+                fold_usage[model_name][source] = (
+                    fold_usage[model_name].get(source, 0) + 1
+                )
+
+        fold_metadata.append(
+            {
+                "target_season": int(target_season),
+                "training_target_seasons": training_seasons,
+                "training_rows": int(len(training)),
+                "test_rows": int(len(test)),
+                "usable_global_table": global_table is not None,
+                "usage_by_model": fold_usage,
+            }
+        )
+
+    models = [
+        _aggregate_uncertainty_results(model_rows[name], model_name=name)
+        for name in ("global", "league", "exposure", "league+exposure")
+    ]
+    selected = next(
+        model for model in models if model["model"] == "league+exposure"
+    )
+
+    source_counts: dict[str, int] = {}
+    for row in model_rows["league+exposure"]:
+        source = str(row["source"])
+        source_counts[source] = source_counts.get(source, 0) + 1
+    total_selected = len(model_rows["league+exposure"])
+
+    return {
+        "status": (
+            "validated_oos"
+            if any(model["n_oos"] > 0 for model in models)
+            else "insufficient_data"
+        ),
+        "method": "expanding_walk_forward_empirical_quantiles",
+        "target": (
+            "absolute next-season BB-Rating change; quantiles for each OOS "
+            "season are fitted only from earlier target seasons"
+        ),
+        "quantiles": [0.50, 0.75, 0.90],
+        "min_samples": int(min_samples),
+        "first_possible_test_season": first_possible,
+        "test_seasons": [int(meta["target_season"]) for meta in fold_metadata],
+        "folds": fold_metadata,
+        "models": models,
+        "selected_structure": {
+            "features": ["league", "exposure_band"],
+            "fallback_order": [
+                "league+exposure", "league", "exposure", "global"
+            ],
+            "primary_share": (
+                float(source_counts.get("league+exposure", 0) / total_selected)
+                if total_selected else 0.0
+            ),
+            "fallback_shares": {
+                source: float(count / total_selected)
+                for source, count in sorted(source_counts.items())
+                if source != "league+exposure" and total_selected
+            },
+            "coverage": selected["coverage"],
+            "coverage_error": selected["coverage_error"],
+            "mean_interval_width_p90": selected["mean_interval_width_p90"],
+            "median_interval_width_p90": selected["median_interval_width_p90"],
+        },
+        "interpretation": (
+            "Coverage is evaluated out-of-sample by applying empirical P50/P75/P90 "
+            "thresholds fitted only on earlier target seasons. The public "
+            "BB-Rating value is unchanged."
+        ),
+    }
+
 
 def _diagnostic_warnings(report: dict[str, Any]) -> list[str]:
     warnings: list[str] = []
@@ -1539,15 +862,9 @@ def _markdown(report: dict[str, Any]) -> str:
         "",
         "## Scope",
         "",
-        "Diagnostic only. No production weights, peer thresholds, model artifacts, "
-        "PostgreSQL source data, or Prediction Model logic is changed.",
-        "",
-        "## BB-Rating data source",
-        "",
-        "BB-Rating reads the canonical observed contract. On/Off fields are "
-        "resolved upstream by ai_source_full.sql from the Analisi On/Off tables "
-        "when the primary observation is NULL/zero and an authoritative source "
-        "value is available.",
+        "Calibration and temporal uncertainty validation only. No production "
+        "weights, peer thresholds, model artifacts, PostgreSQL source data, "
+        "or Prediction Model logic is changed.",
         "",
         "## Registry audit",
         "",
@@ -1584,43 +901,9 @@ def _markdown(report: dict[str, Any]) -> str:
             f"{row['median_peer_sample_size']:.1f} |"
         )
 
-    role_diag = report["role_peer_population"]
     lines += [
         "",
-        "### Role peer population diagnostics",
-        "",
-        f"- Rows with role + age: **{role_diag['rows_with_role_and_age']}** "
-        f"({role_diag['role_present_share']:.1%})",
-        f"- Distinct position+age+role groups: **{role_diag['distinct_role_groups']}**",
-        f"- Median role-group size: **{role_diag['group_size']['median']:.1f}**",
-        f"- P90 role-group size: **{role_diag['group_size']['p90']:.1f}**",
-        f"- Position+role groups (age ignored): **{role_diag['role_only_groups']}**",
-        f"- Median position+role group size: **{role_diag['role_only_group_size']['median']:.1f}**"
-        if role_diag["role_only_group_size"]["median"] is not None else
-        "- Median position+role group size: **—**",
-        "",
-        "| Minimum age+role group size | Groups | Rows eligible |",
-        "|---:|---:|---:|",
-    ]
-    for threshold, row in role_diag["thresholds"].items():
-        lines.append(
-            f"| {threshold} | {row['groups']} ({row['share_groups']:.1%}) | "
-            f"{row['rows_eligible']} ({row['share_rows']:.1%}) |"
-        )
-    lines += [
-        "",
-        "| Minimum position+role group size | Groups | Rows eligible |",
-        "|---:|---:|---:|",
-    ]
-    for threshold, row in role_diag["role_only_thresholds"].items():
-        lines.append(
-            f"| {threshold} | {row['groups']} ({row['share_groups']:.1%}) | "
-            f"{row['rows_eligible']} ({row['share_rows']:.1%}) |"
-        )
-
-    lines += [
-        "",
-        "### Exposure diagnostics",
+        "## Exposure distribution",
         "",
         f"- Games played P10/P50/P90: **{report['exposure']['games_played']['p10']} / "
         f"{report['exposure']['games_played']['p50']} / "
@@ -1647,6 +930,7 @@ def _markdown(report: dict[str, Any]) -> str:
         )
 
     score = report["score_distribution"]
+    uncertainty = report["uncertainty_validation"]
     lines += [
         "",
         "## BB-Rating distribution",
@@ -1658,96 +942,55 @@ def _markdown(report: dict[str, Any]) -> str:
         f"- Share 81–100: **{score['share_81_100']:.1%}**",
         f"- Share 1–20: **{score['share_1_20']:.1%}**",
         "",
-        "## Stability",
+        "## Temporal uncertainty validation",
         "",
-        f"- Consecutive player-season pairs: **{report['stability']['n_pairs']}**",
-        f"- Pearson correlation (1–100): **{report['stability_diagnostics']['score']['pearson'] if report['stability_diagnostics']['score']['pearson'] is not None else '—'}**",
-        f"- Spearman correlation (1–100): **{report['stability_diagnostics']['score']['spearman'] if report['stability_diagnostics']['score']['spearman'] is not None else '—'}**",
-        f"- Pearson correlation (continuous composite): **{report['stability_diagnostics']['composite_percentile']['pearson'] if report['stability_diagnostics']['composite_percentile']['pearson'] is not None else '—'}**",
-        f"- Spearman correlation (continuous composite): **{report['stability_diagnostics']['composite_percentile']['spearman'] if report['stability_diagnostics']['composite_percentile']['spearman'] is not None else '—'}**",
+        f"- Method: **{uncertainty['method']}**",
+        f"- First possible OOS target season: **{uncertainty['first_possible_test_season'] or '—'}**",
+        f"- OOS target seasons: **{', '.join(str(v) for v in uncertainty['test_seasons']) if uncertainty['test_seasons'] else '—'}**",
+        f"- Minimum samples per empirical cell: **{uncertainty['min_samples']}**",
         "",
-        "### Exposure stability",
+        "| Model | OOS N | P50 coverage | P75 coverage | P90 coverage | P90 mean interval width |",
+        "|---|---:|---:|---:|---:|---:|",
+    ]
+    for model in uncertainty["models"]:
+        lines.append(
+            f"| {model['model']} | {model['n_oos']} | "
+            f"{'—' if model['coverage']['p50'] is None else f'{model['coverage']['p50']:.1%}'} | "
+            f"{'—' if model['coverage']['p75'] is None else f'{model['coverage']['p75']:.1%}'} | "
+            f"{'—' if model['coverage']['p90'] is None else f'{model['coverage']['p90']:.1%}'} | "
+            f"{'—' if model['mean_interval_width_p90'] is None else f'{model['mean_interval_width_p90']:.2f}'} |"
+        )
+
+    selected = uncertainty["selected_structure"]
+    lines += [
         "",
-        f"- Exposure source: **{report['stability_diagnostics']['exposure']['summary']['source']}**",
+        "### League + exposure OOS structure",
         "",
-        "| Exposure group | N | Mean abs change | Pearson | Spearman |",
-        "|---|---:|---:|---:|---:|",
-        *[
-            f"| {row['exposure_group']} | {row['n_pairs']} | "
-            f"{'—' if row['mean_abs_change'] is None else f'{row['mean_abs_change']:.3f}'} | "
-            f"{'—' if row['pearson'] is None else f'{row['pearson']:.3f}'} | "
-            f"{'—' if row['spearman'] is None else f'{row['spearman']:.3f}'} |"
-            for row in report['stability_diagnostics']['exposure']['quartiles']
-        ],
+        f"- Primary exact league+exposure share: **{selected['primary_share']:.1%}**",
+        f"- P50/P75/P90 coverage: **{selected['coverage']['p50']:.1%} / "
+        f"{selected['coverage']['p75']:.1%} / {selected['coverage']['p90']:.1%}**"
+        if selected["coverage"]["p50"] is not None else
+        "- P50/P75/P90 coverage: **—**",
+        f"- P50/P75/P90 coverage error: **{selected['coverage_error']['p50']:+.1%} / "
+        f"{selected['coverage_error']['p75']:+.1%} / {selected['coverage_error']['p90']:+.1%}**"
+        if selected["coverage_error"]["p50"] is not None else
+        "- P50/P75/P90 coverage error: **—**",
+        f"- Mean P90 interval width: **{selected['mean_interval_width_p90']:.2f}**"
+        if selected["mean_interval_width_p90"] is not None else
+        "- Mean P90 interval width: **—**",
         "",
-        "### Empirical reliability diagnostics",
+        "Fallback order: league+exposure → league → exposure → global.",
         "",
-        f"- Status: **{report['stability_diagnostics']['reliability']['status']}**",
-        f"- Observed composite Spearman: **{report['stability_diagnostics']['reliability']['observed_composite_spearman'] if report['stability_diagnostics']['reliability']['observed_composite_spearman'] is not None else '—'}**",
-        f"- Weighted active-metric Spearman proxy: **{report['stability_diagnostics']['reliability']['weighted_active_metric_spearman'] if report['stability_diagnostics']['reliability']['weighted_active_metric_spearman'] is not None else '—'}**",
+        "No uncertainty correction is applied to the public BB-Rating.",
         "",
-        "| Exposure group | Median exposure | Observed Spearman | Fitted reliability proxy | Relative to high exposure |",
-        "|---|---:|---:|---:|---:|",
-        *[
-            f"| {row['exposure_group']} | {row['median_exposure']:.1f} | "
-            f"{'—' if row['observed_spearman'] is None else f'{row['observed_spearman']:.3f}'} | "
-            f"{'—' if row['fitted_reliability_proxy'] is None else f'{row['fitted_reliability_proxy']:.3f}'} | "
-            f"{'—' if row['relative_to_high_exposure'] is None else f'{row['relative_to_high_exposure']:.3f}'} |"
-            for row in report['stability_diagnostics']['reliability']['exposure_curve']['points']
-        ],
+        "## Validation signals",
         "",
-        f"- Exposure curve fitted: **{report['stability_diagnostics']['reliability']['exposure_curve']['fitted']}**",
-        f"- Curve asymptote: **{report['stability_diagnostics']['reliability']['exposure_curve']['asymptote'] if report['stability_diagnostics']['reliability']['exposure_curve']['asymptote'] is not None else '—'}**",
-        f"- Curve half-exposure: **{report['stability_diagnostics']['reliability']['exposure_curve']['half_exposure'] if report['stability_diagnostics']['reliability']['exposure_curve']['half_exposure'] is not None else '—'}**",
-        f"- Curve RMSE: **{report['stability_diagnostics']['reliability']['exposure_curve']['rmse'] if report['stability_diagnostics']['reliability']['exposure_curve']['rmse'] is not None else '—'}**",
-        f"- Curve R²: **{report['stability_diagnostics']['reliability']['exposure_curve']['r2'] if report['stability_diagnostics']['reliability']['exposure_curve']['r2'] is not None else '—'}**",
-        "",
-        "No reliability correction is applied to the public BB-Rating.",
-        "",
-        "### Uncertainty: league vs within-league exposure",
-        "",
-        f"- Pooled within-league rank partial correlation: **{report['stability_diagnostics']['uncertainty_profile']['within_league_exposure']['pooled_within_league_rank_partial_correlation'] if report['stability_diagnostics']['uncertainty_profile']['within_league_exposure']['pooled_within_league_rank_partial_correlation'] is not None else '—'}**",
-        f"- Between-league eta-squared: **{report['stability_diagnostics']['uncertainty_profile']['within_league_exposure']['between_league_eta_squared'] if report['stability_diagnostics']['uncertainty_profile']['within_league_exposure']['between_league_eta_squared'] is not None else '—'}**",
-        f"- Within-league exposure R²: **{report['stability_diagnostics']['uncertainty_profile']['within_league_exposure']['within_league_exposure_r2'] if report['stability_diagnostics']['uncertainty_profile']['within_league_exposure']['within_league_exposure_r2'] is not None else '—'}**",
-        f"- Exposure increment after league fixed effects: **{report['stability_diagnostics']['uncertainty_profile']['within_league_exposure']['within_league_exposure_incremental_r2'] if report['stability_diagnostics']['uncertainty_profile']['within_league_exposure']['within_league_exposure_incremental_r2'] is not None else '—'}**",
-        "",
-        "| League | N | Median exposure | Median abs change | Within-league Spearman |",
-        "|---|---:|---:|---:|---:|",
-        *[
-            f"| {row['league_key']} | {row['n_pairs']} | {row['median_exposure']:.1f} | "
-            f"{row['median_abs_change']:.1f} | "
-            f"{'—' if row['within_league_spearman'] is None else f'{row['within_league_spearman']:.3f}'} |"
-            for row in report['stability_diagnostics']['uncertainty_profile']['within_league_exposure']['league_summaries']
-        ],
-        "",
-        "### Stability by league",
-        "",
-        "| League | N | Mean abs change | Pearson | Spearman |",
-        "|---|---:|---:|---:|---:|",
-        *[
-            f"| {row['league_key']} | {row['n_pairs']} | "
-            f"{'—' if row['mean_abs_change'] is None else f'{row['mean_abs_change']:.3f}'} | "
-            f"{'—' if row['pearson'] is None else f'{row['pearson']:.3f}'} | "
-            f"{'—' if row['spearman'] is None else f'{row['spearman']:.3f}'} |"
-            for row in report['stability_diagnostics']['by_league']
-        ],
-        "",
-        "### Stability by metric",
-        "",
-        "| Metric | N | Mean abs percentile change | Pearson | Spearman |",
-        "|---|---:|---:|---:|---:|",
-        *[
-            f"| {row['metric']} | {row['n_pairs']} | "
-            f"{'—' if row['mean_abs_percentile_change'] is None else f'{row['mean_abs_percentile_change']:.4f}'} | "
-            f"{'—' if row['pearson'] is None else f'{row['pearson']:.3f}'} | "
-            f"{'—' if row['spearman'] is None else f'{row['spearman']:.3f}'} |"
-            for row in report['stability_diagnostics']['by_metric']
-        ],
-        "",
-        f"- Consecutive player-season pairs: **{report['stability']['n_pairs']}**",
-        f"- Mean absolute change: **{report['stability']['mean_abs_change'] if report['stability']['mean_abs_change'] is not None else '—'}**",
-        f"- Median absolute change: **{report['stability']['median_abs_change'] if report['stability']['median_abs_change'] is not None else '—'}**",
-        f"- Correlation: **{report['stability']['score_correlation'] if report['stability']['score_correlation'] is not None else '—'}**",
+        f"- Registry columns OK: **{report['validation_signals']['registry_columns_ok']}**",
+        f"- Scoring registry OK: **{report['validation_signals']['scoring_registry_ok']}**",
+        f"- Explanation catalog OK: **{report['validation_signals']['explanation_catalog_ok']}**",
+        f"- Score available rate: **{report['validation_signals']['score_available_rate']:.1%}**",
+        f"- Primary context share: **{report['validation_signals']['primary_context_share']:.1%}**",
+        f"- Limited-context share: **{report['validation_signals']['limited_context_share']:.1%}**",
         "",
         "## Diagnostic warnings",
         "",
@@ -1756,7 +999,7 @@ def _markdown(report: dict[str, Any]) -> str:
         lines.extend(f"- {warning}" for warning in report["warnings"])
     else:
         lines.append("- No heuristic diagnostic warnings triggered.")
-    return "\n".join(lines) + "\n"
+    return "\\n".join(lines) + "\\n"
 
 
 def build_calibration_report(
@@ -1896,6 +1139,7 @@ def build_calibration_report(
         "configuration": {
             "min_peer_samples": min_peer_samples,
             "min_context_samples": min_context_samples,
+            "uncertainty_min_samples": max(25, int(config.uncertainty_min_samples)),
             "age_bands": [list(v) for v in AGE_BANDS],
         },
         "registry_audit": registry_audit,
@@ -1915,10 +1159,6 @@ def build_calibration_report(
             ),
         },
         "peer_sources": peer_sources,
-        "role_peer_population": _role_peer_population_diagnostics(
-            frame,
-            min_peer_samples=min_peer_samples,
-        ),
         "exposure": _exposure_diagnostics(frame),
         "metrics": metrics,
         "score_distribution": _score_summary(frame),
@@ -1926,10 +1166,9 @@ def build_calibration_report(
         "by_season": _group_score_summary(frame, ["season"]),
         "by_competition": _group_score_summary(frame, ["competition"]),
         "by_league_season": _group_score_summary(frame, ["league_key", "season"]),
-        "stability": _stability(frame),
-        "stability_diagnostics": _stability_diagnostics(
+        "uncertainty_validation": _oos_uncertainty_validation(
             frame,
-            scoring_specs,
+            min_samples=max(25, int(config.uncertainty_min_samples)),
         ),
     }
 
@@ -1960,10 +1199,7 @@ def build_calibration_report(
         source_by_name.get("league+season+phase", 0.0)
         if len(frame) else 0.0
     )
-    role_peer_share = (
-        source_by_name.get("position+age+role", 0.0)
-        + source_by_name.get("position+role", 0.0)
-    ) if len(frame) else 0.0
+    role_peer_share = 0.0
     report["validation_signals"] = {
         "registry_columns_ok": scoring_registry_ok,
         "scoring_registry_ok": scoring_registry_ok,
