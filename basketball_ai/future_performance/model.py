@@ -63,7 +63,7 @@ TARGET_SPECS: tuple[TargetSpec, ...] = (
 )
 
 POSITION_FEATURES = ("PG", "SG", "SF", "PF", "C", "hybrid")
-COMPETITION_FEATURES = ("RS", "PO", "CUP", "SUPERCUP", "TOT")
+COMPETITION_FEATURES = ("RS", "PO", "PI", "PLO", "FF", "CUP", "SUPERCUP", "TOT")
 HISTORY_FEATURES = (
     ("pts_per_36", "per36", "points"),
     ("ast_per_36", "per36", "assists"),
