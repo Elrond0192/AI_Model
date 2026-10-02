@@ -78,6 +78,53 @@ def _empty_data() -> Dict[str, Any]:
     }
 
 
+
+def _load_bb_rating_uncertainty(model_dir: str):
+    from basketball_ai.bb_rating.uncertainty import BBRatingUncertainty
+
+    configured = os.environ.get("BB_RATING_UNCERTAINTY_PATH", "").strip()
+    candidates: list[Path] = []
+    if configured:
+        candidates.append(Path(configured))
+    model_path = Path(model_dir)
+    candidates.extend(
+        [
+            model_path / "bb_rating_uncertainty.json",
+            model_path / "bb_rating_calibration" / "bb_rating_uncertainty.json",
+            model_path.parent / "bb_rating_uncertainty.json",
+            model_path.parent / "bb_rating_calibration" / "bb_rating_uncertainty.json",
+        ]
+    )
+
+    seen: set[str] = set()
+    for path in candidates:
+        key = str(path)
+        if key in seen:
+            continue
+        seen.add(key)
+        if not path.exists():
+            continue
+        try:
+            service = BBRatingUncertainty.from_file(path)
+            logger.info(
+                "[API] Loaded BB-Rating uncertainty artifact from %s",
+                path,
+            )
+            return service
+        except Exception as exc:
+            logger.warning(
+                "[API] BB-Rating uncertainty artifact invalid at %s: %s",
+                path,
+                exc,
+            )
+            return None
+
+    logger.warning(
+        "[API] BB-Rating uncertainty artifact not found; uncertainty is unavailable"
+    )
+    return None
+
+
 def _load_app_state() -> None:
     """Load PostgreSQL data and the exact production model implementation.
 
@@ -111,6 +158,8 @@ def _load_app_state() -> None:
         logger.error("[API] Data load failed: %s", exc, exc_info=True)
         app_state["data"] = _empty_data()
         app_state["engine"] = None
+        app_state["bb_rating_engine"] = None
+        app_state["bb_rating_uncertainty"] = None
         return
 
     app_state["data"] = data
@@ -129,6 +178,12 @@ def _load_app_state() -> None:
     except Exception as exc:
         logger.warning("[API] BB-Rating engine unavailable: %s", exc)
         app_state["bb_rating_engine"] = None
+
+    try:
+        app_state["bb_rating_uncertainty"] = _load_bb_rating_uncertainty(model_dir)
+    except Exception as exc:
+        logger.warning("[API] BB-Rating uncertainty unavailable: %s", exc)
+        app_state["bb_rating_uncertainty"] = None
 
     # FASE I — precomputed Metric Rating distributions (AI.MetricDistribution).
     # Missing/empty only disables the rating endpoints; forecasts keep working.
@@ -219,6 +274,7 @@ async def lifespan(app: FastAPI):
     app.state.engine = app_state.get("engine")
     app.state.metric_distributions = app_state.get("metric_distributions", [])
     app.state.bb_rating_engine = app_state.get("bb_rating_engine")
+    app.state.bb_rating_uncertainty = app_state.get("bb_rating_uncertainty")
     app.state.model_metadata = _model_metadata(os.environ.get("MODEL_DIR", "models_saved"))
 
     yield
