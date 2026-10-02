@@ -202,6 +202,13 @@ def mode_bb_rating_calibrate(args: argparse.Namespace) -> None:
         "contexts": report["contexts"],
         "score_distribution": report["score_distribution"],
         "uncertainty_validation": report["uncertainty_validation"],
+        "uncertainty_calibration": {
+            "status": report["uncertainty_calibration"]["status"],
+            "training_target_seasons": report["uncertainty_calibration"]["training_target_seasons"],
+            "excluded_target_seasons": report["uncertainty_calibration"]["excluded_target_seasons"],
+            "training_rows": report["uncertainty_calibration"]["training_rows"],
+            "support": report["uncertainty_calibration"]["support"],
+        },
         "validation_signals": report["validation_signals"],
         "warnings": report["warnings"],
         "output": paths,
