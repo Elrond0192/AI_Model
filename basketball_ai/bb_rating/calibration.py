@@ -1199,7 +1199,6 @@ def build_calibration_report(
         source_by_name.get("league+season+phase", 0.0)
         if len(frame) else 0.0
     )
-    role_peer_share = 0.0
     report["validation_signals"] = {
         "registry_columns_ok": scoring_registry_ok,
         "scoring_registry_ok": scoring_registry_ok,
@@ -1218,7 +1217,6 @@ def build_calibration_report(
             if len(frame) else 1.0
         ),
         "peer_source_shares": source_by_name,
-        "role_peer_share": role_peer_share,
         "limited_context_share": source_by_name.get("limited_context", 0.0),
         "constant_scoring_metrics": constant_scoring_metrics,
         "explainable_metric_count": int(
