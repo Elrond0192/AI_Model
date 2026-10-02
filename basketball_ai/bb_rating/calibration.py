@@ -26,7 +26,7 @@ from basketball_ai.bb_rating.engine import (
 )
 from basketball_ai.bb_rating.semantics import METRIC_SEMANTICS
 
-CALIBRATION_VERSION = "1.15"
+CALIBRATION_VERSION = "1.16"
 
 
 @dataclass(frozen=True)
@@ -806,6 +806,231 @@ def _oos_uncertainty_validation(
     }
 
 
+
+def _fit_final_uncertainty_calibration(
+    frame: pd.DataFrame,
+    *,
+    min_samples: int,
+    exclude_latest_target_season: bool = True,
+) -> dict[str, Any]:
+    """Fit the final uncertainty serving artifact on completed target seasons."""
+    pairs = _consecutive_rating_change_pairs(frame)
+    if pairs.empty:
+        return {
+            "status": "insufficient_data",
+            "method": "expanding_walk_forward_empirical_quantiles_final_fit",
+            "target": "absolute next-season BB-Rating change",
+            "quantiles": [0.50, 0.75, 0.90],
+            "min_samples": int(min_samples),
+            "exclude_latest_target_season": bool(exclude_latest_target_season),
+            "training_target_seasons": [],
+            "excluded_target_seasons": [],
+            "source_current_seasons": [],
+            "training_rows": 0,
+            "exposure_band_definition": {
+                "method": "quartiles_of_exposure_minutes",
+                "global_edges_minutes": None,
+                "league_edges_minutes": {},
+            },
+            "tables": {
+                "global": None,
+                "league": [],
+                "exposure": [],
+                "league_exposure": [],
+            },
+            "support": {
+                "primary_exact_rows": 0,
+                "primary_exact_share": 0.0,
+                "fallback_shares": {},
+                "available_exact_cells": 0,
+                "available_leagues": 0,
+                "available_exposure_bands": 0,
+            },
+        }
+
+    target_seasons_all = sorted(
+        int(value)
+        for value in pd.to_numeric(
+            pairs["target_season"], errors="coerce"
+        ).dropna().unique()
+    )
+    excluded_latest = (
+        target_seasons_all[-1]
+        if exclude_latest_target_season and target_seasons_all
+        else None
+    )
+    training_target_seasons = (
+        target_seasons_all[:-1] if excluded_latest is not None else target_seasons_all
+    )
+    training = pairs.loc[
+        pairs["target_season"].isin(training_target_seasons)
+    ].copy()
+
+    if training.empty:
+        return {
+            "status": "insufficient_data",
+            "method": "expanding_walk_forward_empirical_quantiles_final_fit",
+            "target": "absolute next-season BB-Rating change",
+            "quantiles": [0.50, 0.75, 0.90],
+            "min_samples": int(min_samples),
+            "exclude_latest_target_season": bool(exclude_latest_target_season),
+            "training_target_seasons": [int(v) for v in training_target_seasons],
+            "excluded_target_seasons": (
+                [int(excluded_latest)] if excluded_latest is not None else []
+            ),
+            "source_current_seasons": [],
+            "training_rows": 0,
+            "exposure_band_definition": {
+                "method": "quartiles_of_exposure_minutes",
+                "global_edges_minutes": None,
+                "league_edges_minutes": {},
+            },
+            "tables": {
+                "global": None,
+                "league": [],
+                "exposure": [],
+                "league_exposure": [],
+            },
+            "support": {
+                "primary_exact_rows": 0,
+                "primary_exact_share": 0.0,
+                "fallback_shares": {},
+                "available_exact_cells": 0,
+                "available_leagues": 0,
+                "available_exposure_bands": 0,
+            },
+        }
+
+    source_current_seasons = sorted(
+        int(value)
+        for value in pd.to_numeric(
+            training["season"], errors="coerce"
+        ).dropna().unique()
+    )
+    global_edges, league_edges = _fit_exposure_edges(training)
+
+    training["global_band"] = _assign_exposure_band(
+        training["exposure_minutes"], global_edges
+    )
+    training["league_band"] = pd.Series(
+        pd.NA, index=training.index, dtype="Int64"
+    )
+    for league, indices in training.groupby("league_key", sort=False).groups.items():
+        training.loc[indices, "league_band"] = _assign_exposure_band(
+            training.loc[indices, "exposure_minutes"],
+            league_edges.get(str(league)),
+        )
+
+    global_table = _global_quantile_table(training, min_samples=min_samples)
+    league_tables = _quantile_table(
+        training, ["league_key"], min_samples=min_samples
+    )
+    exposure_tables = _quantile_table(
+        training.dropna(subset=["global_band"]),
+        ["global_band"],
+        min_samples=min_samples,
+    )
+    league_exposure_tables = _quantile_table(
+        training.dropna(subset=["league_band"]),
+        ["league_key", "league_band"],
+        min_samples=min_samples,
+    )
+
+    source_counts: dict[str, int] = {}
+    total_rows = len(training)
+    exact_rows = 0
+    for _, row in training.iterrows():
+        table, source = _predict_league_exposure(
+            row,
+            global_table=global_table,
+            league_tables=league_tables,
+            exposure_tables=exposure_tables,
+            league_exposure_tables=league_exposure_tables,
+            global_band=row["global_band"],
+            league_band=row["league_band"],
+        )
+        if table is not None:
+            source_counts[source] = source_counts.get(source, 0) + 1
+            if source == "league+exposure":
+                exact_rows += 1
+
+    def _table_rows(
+        table: dict[tuple[str, ...], dict[str, Any]],
+        dimensions: list[str],
+    ) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        for key, values in sorted(table.items()):
+            row = dict(values)
+            for dimension, value in zip(dimensions, key):
+                if dimension == "exposure_band" or dimension.endswith("_band"):
+                    row[dimension] = int(value)
+                else:
+                    row[dimension] = str(value)
+            rows.append(row)
+        return rows
+
+    support = {
+        "primary_exact_rows": int(exact_rows),
+        "primary_exact_share": (
+            float(exact_rows / total_rows) if total_rows else 0.0
+        ),
+        "fallback_shares": {
+            source: float(count / total_rows)
+            for source, count in sorted(source_counts.items())
+            if source != "league+exposure" and total_rows
+        },
+        "available_exact_cells": int(len(league_exposure_tables)),
+        "available_leagues": int(len(league_tables)),
+        "available_exposure_bands": int(len(exposure_tables)),
+    }
+
+    return {
+        "status": "fitted",
+        "method": "expanding_walk_forward_empirical_quantiles_final_fit",
+        "target": "absolute next-season BB-Rating change",
+        "quantiles": [0.50, 0.75, 0.90],
+        "min_samples": int(min_samples),
+        "exclude_latest_target_season": bool(exclude_latest_target_season),
+        "training_target_seasons": [int(v) for v in training_target_seasons],
+        "excluded_target_seasons": (
+            [int(excluded_latest)] if excluded_latest is not None else []
+        ),
+        "source_current_seasons": source_current_seasons,
+        "training_rows": int(total_rows),
+        "features": ["league", "exposure_band"],
+        "fallback_order": [
+            "league+exposure", "league", "exposure", "global"
+        ],
+        "exposure_band_definition": {
+            "method": "quartiles_of_exposure_minutes",
+            "bands": {
+                "1": "Q1 — lowest exposure",
+                "2": "Q2",
+                "3": "Q3",
+                "4": "Q4 — highest exposure",
+            },
+            "global_edges_minutes": (
+                [float(v) for v in global_edges.tolist()]
+                if global_edges is not None
+                else None
+            ),
+            "league_edges_minutes": {
+                str(league): [float(v) for v in edges.tolist()]
+                for league, edges in sorted(league_edges.items())
+            },
+        },
+        "tables": {
+            "global": global_table,
+            "league": _table_rows(league_tables, ["league_key"]),
+            "exposure": _table_rows(exposure_tables, ["exposure_band"]),
+            "league_exposure": _table_rows(
+                league_exposure_tables, ["league_key", "exposure_band"]
+            ),
+        },
+        "support": support,
+    }
+
+
 def _diagnostic_warnings(report: dict[str, Any]) -> list[str]:
     warnings: list[str] = []
     contexts = report["contexts"]
@@ -1194,6 +1419,11 @@ def build_calibration_report(
             min_samples=max(25, int(config.uncertainty_min_samples)),
             exclude_latest_target_season=config.exclude_latest_target_season,
         ),
+        "uncertainty_calibration": _fit_final_uncertainty_calibration(
+            frame,
+            min_samples=max(25, int(config.uncertainty_min_samples)),
+            exclude_latest_target_season=config.exclude_latest_target_season,
+        ),
     }
 
     report["warnings"] = _diagnostic_warnings(report)
@@ -1263,4 +1493,18 @@ def write_calibration_report(
         encoding="utf-8",
     )
     md_path.write_text(_markdown(report), encoding="utf-8")
-    return {"json": str(json_path), "markdown": str(md_path)}
+    uncertainty_path = root / "bb_rating_uncertainty.json"
+    uncertainty_path.write_text(
+        json.dumps(
+            report["uncertainty_calibration"],
+            indent=2,
+            ensure_ascii=False,
+            default=str,
+        ),
+        encoding="utf-8",
+    )
+    return {
+        "json": str(json_path),
+        "markdown": str(md_path),
+        "uncertainty": str(uncertainty_path),
+    }
