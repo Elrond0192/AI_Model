@@ -7,7 +7,7 @@ and from the descriptive BB-Rating engine.
 """
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
 import logging
@@ -55,6 +55,10 @@ TARGET_SPECS: tuple[TargetSpec, ...] = (
     TargetSpec("ast_pct", "AST%", "rate", "ast_pct", 0.0, 1.0),
     TargetSpec("orb_pct", "ORB%", "rate", "orb_pct", 0.0, 1.0),
     TargetSpec("drb_pct", "DRB%", "rate", "drb_pct", 0.0, 1.0),
+    TargetSpec("three_point_pct", "3P%", "rate", "three_point_pct", 0.0, 1.0),
+    TargetSpec("ft_pct", "FT%", "rate", "ft_pct", 0.0, 1.0),
+    TargetSpec("three_point_attempts_per_36", "3PA / 36", "per36", "three_point_attempts", 0.0, 20.0),
+    TargetSpec("free_throw_attempts_per_36", "FTA / 36", "per36", "free_throw_attempts", 0.0, 20.0),
     TargetSpec("minutes_per_game", "Minutes / game", "minutes", "minutes_per_game", 0.0, 48.0),
 )
 
@@ -72,6 +76,10 @@ HISTORY_FEATURES = (
     ("ast_pct", "rate", "ast_pct"),
     ("orb_pct", "rate", "orb_pct"),
     ("drb_pct", "rate", "drb_pct"),
+    ("three_point_pct", "rate", "three_point_pct"),
+    ("ft_pct", "rate", "ft_pct"),
+    ("three_point_attempts_per_36", "per36", "three_point_attempts"),
+    ("free_throw_attempts_per_36", "per36", "free_throw_attempts"),
     ("minutes_per_game", "minutes", "minutes_per_game"),
 )
 
@@ -186,7 +194,7 @@ class PlayerFuturePerformanceModel:
             "age_vs_peak": age - float(_peak_age(position)),
             "minutes_per_game": float(np.clip(_finite(source.get("minutes_per_game")) if np.isfinite(_finite(source.get("minutes_per_game"))) else 0.0, 0.0, 48.0)),
             "games_played": float(max(0.0, _finite(source.get("games_played")) if np.isfinite(_finite(source.get("games_played"))) else 0.0)),
-            "starter_pct": _safe_rate("starter_pct", source.get("starter_pct")) if "starter_pct" in source.index else 0.0,
+            "starter_pct": (lambda v: v / 100.0 if np.isfinite(v) and abs(v) > 1.0 else v)(_safe_rate("starter_pct", source.get("starter_pct"))) if "starter_pct" in source.index else 0.0,
             "rating": float(np.clip(_finite(source.get("rating")) if np.isfinite(_finite(source.get("rating"))) else 6.5, 0.0, 10.0)),
             "rating_delta_1": 0.0,
             "rating_delta_2": 0.0,
@@ -384,8 +392,10 @@ class PlayerFuturePerformanceModel:
                 model = self._fit_one(X_train, y_train.loc[train_mask])
                 prediction = model.predict(X_test.to_numpy())
                 metrics = self._metrics(y_test.loc[test_mask].to_numpy(dtype=float), prediction)
-                persistence = train.loc[test_mask, f"__target__{spec.key}"] if False else None
-                metrics["baseline_persistence_rmse"] = float("nan")
+                baseline = pd.to_numeric(test.loc[test_mask, f"__target__{spec.key}"], errors="coerce").to_numpy(dtype=float)
+                source_values = pd.to_numeric(test.loc[test_mask, f"current_{spec.key}"], errors="coerce").to_numpy(dtype=float)
+                metrics["baseline_persistence_rmse"] = float(np.sqrt(np.mean((source_values - baseline) ** 2))) if len(baseline) else float("nan")
+                metrics["model_gain_vs_persistence_rmse"] = metrics["baseline_persistence_rmse"] - metrics["rmse"] if np.isfinite(metrics["baseline_persistence_rmse"]) else float("nan")
                 fold_targets[spec.key] = metrics
                 per_target[spec.key].append(metrics)
                 fold_valid = True
@@ -458,6 +468,7 @@ class PlayerFuturePerformanceModel:
             training_targets[spec.key] = {
                 "n_training": int(mask.sum()),
                 "available": True,
+                "n_training": int(mask.sum()),
             }
             bt_summary = backtest_report.get("summary", {}).get(spec.key, {})
             self.target_metrics[spec.key] = {
@@ -482,6 +493,8 @@ class PlayerFuturePerformanceModel:
             "leagues": league_values,
             "competitions": sorted(pairs["__meta__competition"].unique().tolist()),
             "targets": training_targets,
+            "target_metrics": self.target_metrics,
+            "uncertainty_by_target": self.uncertainty,
             "uncertainty_global": {
                 "p50": float(np.quantile(all_residuals, 0.50)) if all_residuals else None,
                 "p75": float(np.quantile(all_residuals, 0.75)) if all_residuals else None,
@@ -604,6 +617,8 @@ class PlayerFuturePerformanceModel:
         model_root.mkdir(parents=True, exist_ok=True)
         manifest = dict(self.metadata)
         manifest["feature_names"] = list(self.feature_names)
+        manifest["target_metrics"] = self.target_metrics
+        manifest["uncertainty_by_target"] = self.uncertainty
         manifest["model_files"] = {}
         for key, model in self.models.items():
             path = model_root / f"{key}.joblib"
