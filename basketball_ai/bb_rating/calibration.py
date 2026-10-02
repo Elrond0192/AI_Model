@@ -27,7 +27,7 @@ from basketball_ai.bb_rating.engine import (
 )
 from basketball_ai.bb_rating.semantics import METRIC_SEMANTICS
 
-CALIBRATION_VERSION = "1.10"
+CALIBRATION_VERSION = "1.11"
 
 
 @dataclass(frozen=True)
@@ -827,12 +827,52 @@ def _empirical_reliability_diagnostics(
         (point["observed_spearman"] for point in exposure_points),
         default=None,
     )
+    quartile_by_group = {
+        str(row["exposure_group"]): row
+        for row in stability.get("exposure", {}).get("quartiles", [])
+    }
+
+    confidence_levels = {
+        "Q1_low": "low",
+        "Q2": "moderate",
+        "Q3": "high",
+        "Q4_high": "very_high",
+    }
+
+    stability_profile: list[dict[str, Any]] = []
     for point in exposure_points:
         point["fitted_reliability_proxy"] = fitted_by_group.get(point["exposure_group"])
         point["relative_to_high_exposure"] = (
             float(point["observed_spearman"] / max_observed)
             if max_observed and max_observed > 0
             else None
+        )
+
+        quartile = quartile_by_group.get(str(point["exposure_group"]), {})
+        median_abs_change = quartile.get("median_abs_change")
+        relative = point["relative_to_high_exposure"]
+        stability_profile.append(
+            {
+                "exposure_group": point["exposure_group"],
+                "median_exposure": point["median_exposure"],
+                "n_pairs": point["n_pairs"],
+                "observed_spearman": point["observed_spearman"],
+                "fitted_reliability_proxy": point["fitted_reliability_proxy"],
+                "stability_score": (
+                    float(relative * 100.0)
+                    if relative is not None
+                    else None
+                ),
+                "confidence_level": confidence_levels.get(
+                    str(point["exposure_group"]),
+                    "unknown",
+                ),
+                "expected_rating_variation": (
+                    float(median_abs_change)
+                    if median_abs_change is not None
+                    else None
+                ),
+            }
         )
 
     return {
@@ -847,6 +887,22 @@ def _empirical_reliability_diagnostics(
         "exposure_curve": {
             **curve,
             "points": exposure_points,
+        },
+        "stability_profile": {
+            "status": "diagnostic_only",
+            "stability_score_definition": (
+                "Relative persistence index where the highest observed "
+                "exposure-quartile persistence in this calibration dataset equals 100."
+            ),
+            "confidence_level_definition": (
+                "Empirical exposure bands: Q1=low, Q2=moderate, "
+                "Q3=high, Q4=very_high."
+            ),
+            "expected_rating_variation_definition": (
+                "Median absolute next-season BB-Rating change observed within "
+                "the same exposure quartile."
+            ),
+            "bands": stability_profile,
         },
         "interpretation": {
             "low_exposure_has_lower_persistence": bool(
