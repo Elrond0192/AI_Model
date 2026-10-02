@@ -140,84 +140,58 @@ logic belongs in PHP.
 
 ## Current status
 
-This is **FASE I of the BB-Rating layer** (version 1.8). The implementation is deterministic
-and API-ready, but the weights and peer thresholds must still be validated
-against real production data before treating the 1–100 score as the final
-public methodology.
+This is **FASE I of the BB-Rating layer (version 1.8)**. The implementation is deterministic
+and API-ready. Calibration validates the existing methodology against real production
+data without changing the public 1–100 rating.
 
-The next validation should measure score distributions, stability across
-leagues/seasons, position and age groups, missing-metric coverage and whether
-the explanations agree with the underlying percentiles.
+## Calibration 1.16
 
+The calibration command performs two separate operations:
 
-## Calibration v1.8
-
-The calibration layer is diagnostic-only and does not train an ML model. It uses the
-the same primary-context peer-selection contract and empirical percentile convention as BBRatingEngine,
-but evaluates the complete real-data frame in batch. The BB-Rating reads the canonical
-observed contract; On/Off fields are resolved upstream by ai_source_full.sql.
+1. **Temporal OOS validation** of uncertainty using expanding walk-forward empirical
+   P50/P75/P90 thresholds.
+2. **Final production fit** of the validated league × exposure uncertainty structure
+   on all completed target seasons available before the latest observed target season.
 
 Run from the repository/container:
 
-```bash
+\`\`\`bash
 docker compose run --rm admin \
   python main.py --mode bb-rating-calibrate \
   --database-profile production \
   --output-dir /app/models_saved/bb_rating_calibration
-```
+\`\`\`
 
-The command reads the canonical observed contract with the analysis loader
-and writes:
+The command writes:
 
-- `bb_rating_calibration.json`
-- `bb_rating_calibration.md`
+- bb_rating_calibration.json — complete diagnostic and validation report;
+- bb_rating_calibration.md — human-readable report;
+- bb_rating_uncertainty.json — final serving artifact for the uncertainty layer.
 
-The report contains:
+### Final uncertainty artifact
 
-- registry/semantic source audit;
-- dataset coverage by league, season and competition;
-- peer population source and fallback frequency;
-- metric availability, missingness and zero-rate diagnostics;
-- contextual percentile distributions;
-- effective weights after missing-data renormalisation;
-- BB-Rating score distribution by league, season and competition;
-- heuristic data-quality warnings;
-- expanding walk-forward OOS uncertainty validation.
+The production fit keeps the public **BB-Rating 1.8** unchanged. It estimates the
+absolute next-season BB-Rating change with empirical P50/P75/P90 thresholds.
 
-These warnings are investigation signals, not promotion gates. No BB-Rating weight,
-threshold or public methodology should be frozen from the report alone; the next step
-is to review the real-data output and decide whether the peer model, metric set and
-weights need calibration.
+The fitted structure is:
 
+league + exposure_band
 
+where exposure is divided into four quartile bands. League-specific exposure
+thresholds are used when enough historical exposure observations exist; otherwise the
+serving logic follows the documented fallback order:
 
+league+exposure → league → exposure → global
 
+Each persisted table includes its empirical sample size n and P50/P75/P90 values.
+The artifact also records the exposure thresholds used to assign bands, the completed
+target seasons used for fitting, the excluded latest target season, source/current
+seasons, available exact cells and fallback usage.
 
-## Calibration v1.15 — temporal uncertainty validation
+By default the latest observed target season is excluded because it may still be
+incomplete. For the current production dataset this means that 2026 is excluded from
+the final fit and the completed target history through 2025 is used.
 
-Calibration 1.15 keeps the public BB-Rating at version 1.8 and moves uncertainty
-validation from descriptive in-sample diagnostics to expanding walk-forward
-out-of-sample testing.
-
-The report:
-- estimates empirical P50/P75/P90 absolute next-season BB-Rating change;
-- fits each OOS season using only earlier target seasons;
-- compares global, league-only, exposure-only, and league + exposure structures;
-- uses league-specific exposure quartile thresholds for the combined structure;
-- records fallback usage when an exact league × exposure cell has insufficient
-  training support;
-- reports OOS coverage and P90 interval width by season and in aggregate.
-
-The combined structure uses the fallback order:
-
-`league + exposure → league → exposure → global`
-
-The default empirical-cell minimum is 50 observations. The CLI exposes this as
-`--uncertainty-min-samples`.
-
-By default, the latest observed target season is excluded from OOS validation because
-it may still be incomplete. This can be overridden explicitly with
-`--include-latest-validation-season` when the season is known to be complete.
-
-No uncertainty correction or interval is applied to the public BB-Rating 1.8 by
-this calibration command.
+No uncertainty correction, shrinkage or alteration of the 1–100 BB-Rating is applied
+by the calibration command itself. The persisted uncertainty artifact is a separate
+serving layer.
