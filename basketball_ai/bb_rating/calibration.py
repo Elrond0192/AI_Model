@@ -1512,9 +1512,14 @@ def write_calibration_report(
     )
     md_path.write_text(_markdown(report), encoding="utf-8")
     uncertainty_path = root / "bb_rating_uncertainty.json"
+    uncertainty_artifact = {
+        **report["uncertainty_calibration"],
+        "calibration_version": report["calibration_version"],
+        "bb_rating_version": report["bb_rating_version"],
+    }
     uncertainty_path.write_text(
         json.dumps(
-            report["uncertainty_calibration"],
+            uncertainty_artifact,
             indent=2,
             ensure_ascii=False,
             default=str,
