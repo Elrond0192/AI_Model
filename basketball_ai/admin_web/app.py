@@ -422,6 +422,7 @@ def _bb_rating_status() -> dict[str, Any]:
             "training_rows": fitted.get("training_rows") or uncertainty.get("training_rows"),
             "support": support,
             "selected_structure": ((report or {}).get("uncertainty_validation") or {}).get("selected_structure") or {},
+            "oos_models": ((report or {}).get("uncertainty_validation") or {}).get("models") or [],
             "fallback_order": ["league+exposure", "league", "exposure", "global"],
         },
         "files": {
@@ -1241,6 +1242,8 @@ async def api_health(user: dict[str, str] = Depends(_operator)) -> dict[str, Any
             "uncertainty_loaded": bool(bb_body.get("bb_rating_uncertainty_loaded")),
             "calibration_version": status.get("calibration_version"),
             "bb_rating_version": status.get("bb_rating_version"),
+            "runtime_calibration_version": bb_body.get("bb_rating_calibration_version"),
+            "runtime_bb_rating_version": bb_body.get("bb_rating_uncertainty_version") or bb_body.get("bb_rating_version"),
         },
         "endpoints": [
             "GET /health/live",
