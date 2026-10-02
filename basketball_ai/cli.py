@@ -39,6 +39,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--min-peer-samples", type=int, default=25)
     parser.add_argument("--min-context-samples", type=int, default=10)
     parser.add_argument("--uncertainty-min-samples", type=int, default=50)
+    parser.add_argument(
+        "--include-latest-validation-season",
+        action="store_true",
+        help="Include the latest observed target season in OOS uncertainty validation.",
+    )
     parser.add_argument("--min-season", type=int, default=None)
     parser.add_argument("--max-season", type=int, default=None)
     return parser.parse_args(argv)
@@ -186,6 +191,7 @@ def mode_bb_rating_calibrate(args: argparse.Namespace) -> None:
             min_peer_samples=args.min_peer_samples,
             min_context_samples=args.min_context_samples,
             uncertainty_min_samples=args.uncertainty_min_samples,
+            exclude_latest_target_season=not args.include_latest_validation_season,
         ),
     )
     paths = write_calibration_report(report, args.output_dir)
