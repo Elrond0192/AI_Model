@@ -72,97 +72,137 @@
         <div id="future-performance-error" class="microcopy"></div>
       </section>`;
   }
+  let renderGeneration = 0;
+  let activeController = null;
+
   async function render() {
+    const generation = ++renderGeneration;
+    if (activeController) activeController.abort();
+    activeController = new AbortController();
     mountPage();
-    const [status, health] = await Promise.all([
-      request('/admin-api/future-performance'),
-      request('/admin-api/api-health')
-    ]);
-    const ds = status.dataset || {};
-    const validation = status.validation || {};
-    const job = status.job || {};
-    const runtime = health.future_performance || {};
 
-    document.querySelector('#future-performance-kpis').innerHTML = [
-      kpi('Versione', status.future_performance_version || '—', '<span>Future Performance</span>'),
-      kpi('Feature contract', status.feature_version || '—', '<span>separate</span>'),
-      kpi('Training pairs', fmtInt(ds.n_pairs), '<span>' + fmtInt(ds.n_players) + ' giocatori</span>'),
-      kpi('Serving API', runtime.loaded ? 'Loaded' : 'Not loaded', runtime.loaded ? '<span class="dot green"></span>artifact caricato' : '<span class="dot yellow"></span>riavvio API necessario')
-    ].join('');
-
-    const ready = !!status.ready;
-    document.querySelector('#future-performance-status').innerHTML =
-      '<div class="model-state ' + (ready ? 'ok' : 'warning') + '">' +
-        '<div class="model-state-mark">' + (ready ? '✓' : '△') + '</div><div><strong>' +
-        (ready ? 'Future Performance serving ready' : 'Modello non ancora pronto') +
-        '</strong><p>' +
-        (ready ? 'Artifact fitted, target disponibili e walk-forward report presente.' : 'Esegui il training dal Control Center per creare l’artifact.') +
-        '</p></div></div>' +
-      '<div class="summary-list"><div class="summary-row"><span>API runtime version</span><strong>' + esc(runtime.version || '—') + '</strong></div>' +
-      '<div class="summary-row"><span>API feature version</span><strong>' + esc(runtime.feature_version || '—') + '</strong></div></div>';
-
-    document.querySelector('#future-performance-dataset').innerHTML =
-      '<div class="summary-list">' +
-      '<div class="summary-row"><span>Pairs</span><strong>' + esc(fmtInt(ds.n_pairs)) + '</strong></div>' +
-      '<div class="summary-row"><span>Players</span><strong>' + esc(fmtInt(ds.n_players)) + '</strong></div>' +
-      '<div class="summary-row"><span>Target seasons</span><strong>' + esc((ds.training_target_seasons || []).join(', ') || '—') + '</strong></div>' +
-      '<div class="summary-row"><span>Leagues</span><strong>' + esc((ds.leagues || []).join(', ') || '—') + '</strong></div>' +
-      '<div class="summary-row"><span>Competitions</span><strong>' + esc((ds.competitions || []).join(', ') || '—') + '</strong></div>' +
-      '</div>';
-
-    const targets = status.targets || {};
-    const targetRows = Object.entries(targets).map(([key, item]) => {
-      const oos = item.oos || {};
-      const uncertainty = item.uncertainty || {};
-      return '<tr><td><strong>' + esc(item.label || key) + '</strong><br><span class="muted-inline">' + esc(key) + '</span></td>' +
-        '<td>' + esc(fmtInt(item.n_training)) + '</td>' +
-        '<td>' + esc(fmt(oos.rmse_mean, 4)) + '</td>' +
-        '<td>' + esc(fmt(oos.mae_mean, 4)) + '</td>' +
-        '<td>' + esc(fmt(uncertainty.p50, 4)) + '</td>' +
-        '<td>' + esc(fmt(uncertainty.p90, 4)) + '</td></tr>';
-    }).join('');
-    document.querySelector('#future-performance-targets').innerHTML =
-      '<table><thead><tr><th>Target</th><th>Train N</th><th>OOS RMSE</th><th>OOS MAE</th><th>P50 abs err</th><th>P90 abs err</th></tr></thead><tbody>' +
-      (targetRows || '<tr><td colspan="6" class="muted-inline">Nessun target disponibile.</td></tr>') +
-      '</tbody></table>';
-
-    const folds = status.backtest?.folds || [];
-    const foldRows = folds.map(fold => {
-      return '<tr><td><strong>' + esc(fold.target_season) + '</strong></td><td>' +
-        esc(fold.train_through_target) + '</td><td>' + esc(fmtInt(fold.n_test_rows)) +
-        '</td><td>' + esc(Object.keys(fold.targets || {}).length) + '</td></tr>';
-    }).join('');
-    document.querySelector('#future-performance-backtest').innerHTML =
-      '<table><thead><tr><th>Target season</th><th>Train through</th><th>OOS rows</th><th>Targets validated</th></tr></thead><tbody>' +
-      (foldRows || '<tr><td colspan="4" class="muted-inline">Nessun fold OOS disponibile.</td></tr>') +
-      '</tbody></table>';
-
-    const running = job.status === 'running' || job.status === 'queued';
-    document.querySelector('#future-performance-job').innerHTML =
-      '<div class="job-head"><div><div class="job-status">' + esc(job.stage || 'Ready') + '</div>' +
-      '<div class="job-message">' + esc(job.error || job.message || 'Nessun training in corso.') + '</div></div>' +
-      '<span class="registry-badge ' + (running ? 'candidate' : '') + '">' + esc(job.status || 'idle') + '</span></div>' +
-      '<div class="progress-track"><div class="progress-bar" style="width:' +
-      Math.max(0, Math.min(100, Number(job.progress) || 0)) + '%"></div></div>';
-
-    const trainButton = document.querySelector('#future-performance-train');
-    trainButton.disabled = running || !status.active_profile;
-    trainButton.textContent = running ? 'Training in corso…' : 'Genera / aggiorna modello';
-    trainButton.onclick = async () => {
-      trainButton.disabled = true;
-      try {
-        await request('/admin-api/future-performance/train', { method:'POST', body: JSON.stringify({}) });
-        await render();
-      } catch (error) {
-        const box = document.querySelector('#future-performance-error');
-        if (box) box.textContent = error.message;
-        trainButton.disabled = false;
-      }
+    const pageRoot = document.querySelector('#page-root');
+    const page = pageRoot ? pageRoot.querySelector('.page') : null;
+    if (!page) return;
+    const q = selector => page.querySelector(selector);
+    const setHtml = (selector, html) => {
+      if (generation !== renderGeneration || !page.isConnected) return;
+      const node = q(selector);
+      if (node) node.innerHTML = html;
     };
-    document.querySelector('#future-performance-refresh').onclick = () => render().catch(error => {
-      document.querySelector('#future-performance-error').textContent = error.message;
-    });
-    if (running) setTimeout(() => render().catch(() => {}), 2200);
+    const setText = (selector, value) => {
+      if (generation !== renderGeneration || !page.isConnected) return;
+      const node = q(selector);
+      if (node) node.textContent = value;
+    };
+
+    try {
+      const [status, health] = await Promise.all([
+        request('/admin-api/future-performance', { signal: activeController.signal }),
+        request('/admin-api/api-health', { signal: activeController.signal })
+      ]);
+      if (generation !== renderGeneration || !page.isConnected) return;
+
+      const ds = status.dataset || {};
+      const job = status.job || {};
+      const runtime = health.future_performance || {};
+      const ready = !!status.ready;
+      const targets = status.targets || {};
+      const folds = status.backtest?.folds || [];
+
+      setHtml('#future-performance-kpis', [
+        kpi('Versione', status.future_performance_version || '—', '<span>Future Performance</span>'),
+        kpi('Feature contract', status.feature_version || '—', '<span>separate</span>'),
+        kpi('Training pairs', fmtInt(ds.n_pairs), '<span>' + fmtInt(ds.n_players) + ' giocatori</span>'),
+        kpi('Serving API', runtime.loaded ? 'Loaded' : 'Not loaded', runtime.loaded ? '<span class="dot green"></span>artifact caricato' : '<span class="dot yellow"></span>riavvio API necessario')
+      ].join(''));
+
+      setHtml('#future-performance-status',
+        '<div class="model-state ' + (ready ? 'ok' : 'warning') + '">' +
+          '<div class="model-state-mark">' + (ready ? '✓' : '△') + '</div><div><strong>' +
+          (ready ? 'Future Performance serving ready' : 'Modello non ancora pronto') +
+          '</strong><p>' +
+          (ready ? 'Artifact fitted, target disponibili e walk-forward report presente.' : 'Esegui il training dal Control Center per creare l’artifact.') +
+          '</p></div></div>' +
+          '<div class="summary-list"><div class="summary-row"><span>API runtime version</span><strong>' + esc(runtime.version || '—') + '</strong></div>' +
+          '<div class="summary-row"><span>API feature version</span><strong>' + esc(runtime.feature_version || '—') + '</strong></div></div>'
+      );
+
+      setHtml('#future-performance-dataset',
+        '<div class="summary-list">' +
+        '<div class="summary-row"><span>Pairs</span><strong>' + esc(fmtInt(ds.n_pairs)) + '</strong></div>' +
+        '<div class="summary-row"><span>Players</span><strong>' + esc(fmtInt(ds.n_players)) + '</strong></div>' +
+        '<div class="summary-row"><span>Target seasons</span><strong>' + esc((ds.training_target_seasons || []).join(', ') || '—') + '</strong></div>' +
+        '<div class="summary-row"><span>Leagues</span><strong>' + esc((ds.leagues || []).join(', ') || '—') + '</strong></div>' +
+        '<div class="summary-row"><span>Competitions</span><strong>' + esc((ds.competitions || []).join(', ') || '—') + '</strong></div>' +
+        '</div>'
+      );
+
+      const targetRows = Object.entries(targets).map(([key, item]) => {
+        const oos = item.oos || {};
+        const uncertainty = item.uncertainty || {};
+        return '<tr><td><strong>' + esc(item.label || key) + '</strong><br><span class="muted-inline">' + esc(key) + '</span></td>' +
+          '<td>' + esc(fmtInt(item.n_training)) + '</td>' +
+          '<td>' + esc(fmt(oos.rmse_mean, 4)) + '</td>' +
+          '<td>' + esc(fmt(oos.mae_mean, 4)) + '</td>' +
+          '<td>' + esc(fmt(uncertainty.p50, 4)) + '</td>' +
+          '<td>' + esc(fmt(uncertainty.p90, 4)) + '</td></tr>';
+      }).join('');
+      setHtml('#future-performance-targets',
+        '<table><thead><tr><th>Target</th><th>Train N</th><th>OOS RMSE</th><th>OOS MAE</th><th>P50 abs err</th><th>P90 abs err</th></tr></thead><tbody>' +
+        (targetRows || '<tr><td colspan="6" class="muted-inline">Nessun target disponibile.</td></tr>') +
+        '</tbody></table>'
+      );
+
+      const foldRows = folds.map(fold =>
+        '<tr><td><strong>' + esc(fold.target_season) + '</strong></td><td>' +
+        esc(fold.train_through_target) + '</td><td>' + esc(fmtInt(fold.n_test_rows)) +
+        '</td><td>' + esc(Object.keys(fold.targets || {}).length) + '</td></tr>'
+      ).join('');
+      setHtml('#future-performance-backtest',
+        '<table><thead><tr><th>Target season</th><th>Train through</th><th>OOS rows</th><th>Targets validated</th></tr></thead><tbody>' +
+        (foldRows || '<tr><td colspan="4" class="muted-inline">Nessun fold OOS disponibile.</td></tr>') +
+        '</tbody></table>'
+      );
+
+      const running = job.status === 'running' || job.status === 'queued';
+      setHtml('#future-performance-job',
+        '<div class="job-head"><div><div class="job-status">' + esc(job.stage || 'Ready') + '</div>' +
+        '<div class="job-message">' + esc(job.error || job.message || 'Nessun training in corso.') + '</div></div>' +
+        '<span class="registry-badge ' + (running ? 'candidate' : '') + '">' + esc(job.status || 'idle') + '</span></div>' +
+        '<div class="progress-track"><div class="progress-bar" style="width:' +
+        Math.max(0, Math.min(100, Number(job.progress) || 0)) + '%"></div></div>'
+      );
+
+      const trainButton = q('#future-performance-train');
+      const refreshButton = q('#future-performance-refresh');
+      if (!trainButton || !refreshButton) return;
+      trainButton.disabled = running || !status.active_profile;
+      trainButton.textContent = running ? 'Training in corso…' : 'Genera / aggiorna modello';
+      trainButton.onclick = async () => {
+        trainButton.disabled = true;
+        try {
+          await request('/admin-api/future-performance/train', { method:'POST', body: JSON.stringify({}), signal: activeController.signal });
+          if (generation === renderGeneration && page.isConnected) await render();
+        } catch (error) {
+          if (error?.name === 'AbortError') return;
+          setText('#future-performance-error', error.message);
+          if (generation === renderGeneration && page.isConnected) trainButton.disabled = false;
+        }
+      };
+      refreshButton.onclick = () => render().catch(error => {
+        if (error?.name !== 'AbortError') setText('#future-performance-error', error.message);
+      });
+      if (running && generation === renderGeneration) {
+        const timer = setTimeout(() => {
+          if (generation === renderGeneration && page.isConnected) render().catch(() => {});
+        }, 2200);
+        AppFuturePerformanceTimer = timer;
+      }
+    } catch (error) {
+      if (error?.name === 'AbortError') return;
+      setText('#future-performance-error', error.message);
+    }
   }
 
   window.renderFuturePerformancePage = render;
