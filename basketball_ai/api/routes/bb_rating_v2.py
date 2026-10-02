@@ -35,4 +35,23 @@ async def rate_player(body: BBRatingPlayerRequestV2, request: Request):
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
 
-    return BBRatingPlayerResponseV2(**result.to_dict())
+    payload = result.to_dict()
+    uncertainty = getattr(request.app.state, "bb_rating_uncertainty", None)
+    if uncertainty is None:
+        payload["uncertainty"] = {
+            "available": False,
+            "reason": "uncertainty_artifact_unavailable",
+            "calibration_version": None,
+            "bb_rating_version": result.version,
+        }
+    else:
+        payload["uncertainty"] = uncertainty.for_player(
+            engine.frame,
+            player_global_id=body.player_global_id,
+            league=body.league,
+            season=season,
+            phase=body.phase,
+            score=result.score,
+        )
+
+    return BBRatingPlayerResponseV2(**payload)
