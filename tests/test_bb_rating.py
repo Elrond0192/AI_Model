@@ -519,3 +519,59 @@ def test_api_player_endpoint_reports_missing_uncertainty_artifact():
     assert response.status_code == 200
     assert response.json()["uncertainty"]["available"] is False
     assert response.json()["uncertainty"]["reason"] == "uncertainty_artifact_unavailable"
+
+
+
+def test_uncertainty_serving_uses_league_exposure_then_fallback():
+    stats = make_stats().copy()
+    stats["minutes_total"] = 800.0
+    service = BBRatingUncertainty(
+        {
+            "status": "fitted",
+            "calibration_version": "1.16",
+            "bb_rating_version": "1.8",
+            "min_samples": 50,
+            "exposure_band_definition": {
+                "global_edges_minutes": [200.0, 400.0, 600.0],
+                "league_edges_minutes": {"ITA1": [200.0, 400.0, 600.0]},
+            },
+            "tables": {
+                "global": {"n": 60, "p50": 4.0, "p75": 8.0, "p90": 12.0},
+                "league": [
+                    {"league_key": "ITA1", "n": 60, "p50": 3.0, "p75": 7.0, "p90": 11.0}
+                ],
+                "exposure": [
+                    {"exposure_band": 4, "n": 60, "p50": 5.0, "p75": 9.0, "p90": 13.0}
+                ],
+                "league_exposure": [
+                    {"league_key": "ITA1", "exposure_band": 4, "n": 60, "p50": 2.0, "p75": 6.0, "p90": 10.0}
+                ],
+            },
+        }
+    )
+    result = service.for_player(
+        stats,
+        player_global_id="G60",
+        league="ITA1",
+        season=2025,
+        phase="RS",
+        score=74,
+    )
+    assert result["available"] is True
+    assert result["source"] == "league+exposure"
+    assert result["absolute_change"] == {"p50": 2.0, "p75": 6.0, "p90": 10.0}
+    assert result["p90_score_range"] == {"lower": 64, "upper": 84}
+
+    # Remove the exact cell but keep the league table: the documented fallback
+    # must become league rather than skipping directly to global.
+    service.league_exposure_tables.clear()
+    fallback = service.for_player(
+        stats,
+        player_global_id="G60",
+        league="ITA1",
+        season=2025,
+        phase="RS",
+        score=74,
+    )
+    assert fallback["source"] == "league"
+    assert fallback["absolute_change"]["p90"] == 11.0
