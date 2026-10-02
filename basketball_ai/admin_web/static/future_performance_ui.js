@@ -37,6 +37,13 @@
       '</div><div class="kpi-value">' + esc(value) +
       '</div><div class="kpi-sub">' + sub + '</div></div>';
   }
+  function installTemplate() {
+    if (document.querySelector('#page-future-performance')) return;
+    const holder = document.createElement('div');
+    holder.innerHTML = "<template id=\"page-future-performance\"><section class=\"page\">\n  <div class=\"page-heading action-heading\">\n    <div><h1>Player Future Performance</h1>\n    <p>Modello predittivo multivariato season-ahead. Prevede le performance del giocatore nella stagione successiva, separato da Prediction Model e BB-Rating.</p></div>\n  </div>\n  <div id=\"future-performance-kpis\" class=\"kpi-grid four\"></div>\n  <div class=\"split-grid\">\n    <section class=\"panel\"><div class=\"panel-heading\"><h2>Stato modello</h2></div><div id=\"future-performance-status\"></div></section>\n    <section class=\"panel\"><div class=\"panel-heading\"><h2>Dataset &amp; finestra temporale</h2></div><div id=\"future-performance-dataset\"></div></section>\n  </div>\n  <section class=\"panel\"><div class=\"panel-heading\"><h2>Target predetti</h2><span class=\"muted-inline\">valori t+1 + incertezza OOS</span></div>\n    <div id=\"future-performance-targets\" class=\"table-shell\"></div>\n  </section>\n  <section class=\"panel\"><div class=\"panel-heading\"><h2>Walk-forward validation</h2><span class=\"muted-inline\">expanding OOS</span></div>\n    <div id=\"future-performance-backtest\" class=\"table-shell\"></div>\n  </section>\n  <section class=\"panel\"><div class=\"panel-heading\"><h2>Training job</h2></div><div id=\"future-performance-job\"></div></section>\n  <div id=\"future-performance-error\" class=\"microcopy\"></div>\n</section></template>";
+    document.body.appendChild(holder.firstElementChild);
+  }
+
   function mountPage() {
     const root = document.querySelector('#page-root');
     if (!root) return;
@@ -171,6 +178,7 @@
     });
   }
   function install() {
+    installTemplate();
     const navigation = document.querySelector('.sidebar-nav');
     if (!navigation) return;
     if (!document.querySelector('[data-page="future-performance"]')) {
@@ -188,6 +196,15 @@
         event.preventDefault();
         open();
       }
+    });
+    const labelObserver = new MutationObserver(() => {
+      document.querySelectorAll('[data-page="future-performance"]').forEach(item => {
+        if (!item.classList.contains('nav-item')) item.textContent = 'Apri Future Performance';
+      });
+    });
+    labelObserver.observe(document.body, { childList: true, subtree: true });
+    document.querySelectorAll('[data-page="future-performance"]').forEach(item => {
+      if (!item.classList.contains('nav-item')) item.textContent = 'Apri Future Performance';
     });
   }
   window.addEventListener('DOMContentLoaded', install);
