@@ -302,7 +302,7 @@ def test_bb_rating_calibration_reuses_peer_and_percentile_contract():
         {"player_stats": stats, "players": make_players(), "source_contract": "test"}
     )
 
-    assert report["calibration_version"] == "1.9"
+    assert report["calibration_version"] == "1.10"
     assert report["bb_rating_version"] == "1.8"
     assert report["dataset"]["rows"] == 120
     assert report["score_distribution"]["n"] == 120
@@ -384,6 +384,31 @@ def test_stability_diagnostics_reports_continuous_and_rank_correlations():
     diag = report["stability_diagnostics"]
 
     assert diag["n_pairs"] == 0
+
+
+def test_empirical_reliability_is_diagnostic_only():
+    stats = make_stats()
+    stats2 = make_stats().assign(
+        season=2024,
+    )
+    stats2["player_global_id"] = stats["player_global_id"].values
+    stats2["player_id"] = stats["player_id"].values
+    stats = pd.concat([stats2, stats], ignore_index=True)
+
+    report = build_calibration_report(
+        {"player_stats": stats, "players": make_players(), "source_contract": "test"}
+    )
+    reliability = report["stability_diagnostics"]["reliability"]
+
+    assert reliability["status"] == "diagnostic_only"
+    assert reliability["automatic_application"] is False
+    assert reliability["active_metric_count"] > 0
+    assert reliability["exposure_curve"]["points"]
+    assert all(
+        point["median_exposure"] is not None
+        for point in reliability["exposure_curve"]["points"]
+    )
+    assert reliability["weighted_active_metric_spearman"] is not None
 
 
 def test_stability_diagnostics_has_exposure_source_and_metric_section():
