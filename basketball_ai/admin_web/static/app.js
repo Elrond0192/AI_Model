@@ -32,7 +32,7 @@ async function api(path,options={}){
   }
 }
 
-function showLogin(){App.user=null;$('#app-shell').classList.add('hidden');$('#login-screen').classList.remove('hidden');}
+function showLogin(){App.controllers.forEach(controller=>controller.abort());App.controllers.clear();App.user=null;$('#app-shell').classList.add('hidden');$('#login-screen').classList.remove('hidden');}
 function showApp(user){App.user=user;$('#login-screen').classList.add('hidden');$('#app-shell').classList.remove('hidden');$('#user-name').textContent=user.username;$('#user-role').textContent=user.role==='admin'?'Administrator':user.role;$('#user-avatar').textContent=(user.username||'A')[0].toUpperCase();$$('.admin-only').forEach(el=>el.classList.toggle('hidden',user.role!=='admin'));}
 function updateClock(){const d=new Date();$('#top-utc').textContent=d.toISOString().replace('T',' ').slice(0,19);}
 setInterval(updateClock,1000);updateClock();
