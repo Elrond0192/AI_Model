@@ -7,6 +7,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 ### Added
+- AI_Model Control Center v2.5.0: dedicated BB-Rating operations page with
+  calibration/artifact status, dataset and uncertainty diagnostics, runtime
+  version checks, and a separate calibration job. BB-Rating remains outside
+  the Prediction Model candidate/promotion lifecycle.
+- BB-Rating calibration can now persist `calibration_version` and
+  `bb_rating_version` directly in `bb_rating_uncertainty.json`.
+
+### Previously added
 - BB-Rating calibration 1.14: separates between-league variation from the
   within-league exposure signal using league-adjusted rank diagnostics and
   fixed-effect incremental R². Diagnostic-only; BB-Rating 1.8 and Prediction
