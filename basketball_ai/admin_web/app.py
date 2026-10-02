@@ -29,6 +29,7 @@ from sqlalchemy import text
 from basketball_ai.auth.auth import (
     ADMIN_CREDENTIALS_FILE,
     AUDIT_LOG_FILE,
+    _audit,
     change_password,
     check_credentials,
     create_session_token,
@@ -83,8 +84,23 @@ class AdminState:
             "finished_at": None,
         }
     )
+    bb_rating: dict[str, Any] = field(
+        default_factory=lambda: {
+            "status": "idle",
+            "stage": "Ready",
+            "progress": 0,
+            "message": "No BB-Rating calibration run in progress.",
+            "error": None,
+            "started_at": None,
+            "finished_at": None,
+            "calibration_version": None,
+            "bb_rating_version": None,
+            "output": None,
+        }
+    )
     lock: threading.RLock = field(default_factory=threading.RLock)
     executor: ThreadPoolExecutor = field(default_factory=lambda: ThreadPoolExecutor(max_workers=1, thread_name_prefix="ai-admin-training"))
+    bb_rating_executor: ThreadPoolExecutor = field(default_factory=lambda: ThreadPoolExecutor(max_workers=1, thread_name_prefix="ai-admin-bb-rating"))
 
 
 STATE = AdminState()
@@ -322,6 +338,179 @@ def _audit_rows(limit: int = 200) -> list[dict[str, Any]]:
 def _set_training(**updates: Any) -> None:
     with STATE.lock:
         STATE.training.update(updates)
+
+
+def _set_bb_rating(**updates: Any) -> None:
+    with STATE.lock:
+        STATE.bb_rating.update(updates)
+
+
+def _bb_rating_paths() -> dict[str, Path]:
+    root = MODEL_ROOT / "bb_rating_calibration"
+    uncertainty = root / "bb_rating_uncertainty.json"
+    if not uncertainty.exists():
+        uncertainty = MODEL_ROOT / "bb_rating_uncertainty.json"
+    return {
+        "root": root,
+        "report": root / "bb_rating_calibration.json",
+        "markdown": root / "bb_rating_calibration.md",
+        "uncertainty": uncertainty,
+    }
+
+
+def _read_json(path: Path) -> dict[str, Any] | None:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def _file_modified_at(path: Path) -> str | None:
+    try:
+        return datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc).isoformat()
+    except OSError:
+        return None
+
+
+def _bb_rating_status() -> dict[str, Any]:
+    paths = _bb_rating_paths()
+    report_path = paths["report"]
+    uncertainty_path = paths["uncertainty"]
+    report = _read_json(report_path) if report_path.exists() else None
+    uncertainty = _read_json(uncertainty_path) if uncertainty_path.exists() else None
+    fitted = (report or {}).get("uncertainty_calibration") or {}
+    dataset = (report or {}).get("dataset") or {}
+    validation = (report or {}).get("validation_signals") or {}
+    support = fitted.get("support") or {}
+    ready = bool(
+        report
+        and uncertainty
+        and report.get("calibration_version")
+        and report.get("bb_rating_version")
+        and uncertainty.get("status")
+    )
+    with STATE.lock:
+        job = dict(STATE.bb_rating)
+        active_profile = STATE.active_profile
+    return {
+        "ready": ready,
+        "status": "ready" if ready else ("artifact_missing" if not report and not uncertainty else "incomplete"),
+        "calibration_version": report.get("calibration_version") if report else None,
+        "bb_rating_version": report.get("bb_rating_version") if report else None,
+        "dataset": {
+            "rows": dataset.get("rows"),
+            "players": dataset.get("players"),
+            "leagues": dataset.get("leagues") or [],
+            "seasons": dataset.get("seasons") or [],
+            "season_min": dataset.get("season_min"),
+            "season_max": dataset.get("season_max"),
+            "competitions": dataset.get("competitions") or [],
+            "source_contract": dataset.get("source_contract"),
+        },
+        "configuration": (report or {}).get("configuration") or {},
+        "validation": {
+            "score_available_rate": validation.get("score_available_rate"),
+            "primary_context_share": validation.get("primary_context_share"),
+            "limited_context_share": validation.get("limited_context_share"),
+            "explainable_metric_count": validation.get("explainable_metric_count"),
+        },
+        "uncertainty": {
+            "status": fitted.get("status") or uncertainty.get("status"),
+            "training_target_seasons": fitted.get("training_target_seasons") or uncertainty.get("training_target_seasons") or [],
+            "excluded_target_seasons": fitted.get("excluded_target_seasons") or uncertainty.get("excluded_target_seasons") or [],
+            "training_rows": fitted.get("training_rows") or uncertainty.get("training_rows"),
+            "support": support,
+            "selected_structure": ((report or {}).get("uncertainty_validation") or {}).get("selected_structure") or {},
+            "fallback_order": ["league+exposure", "league", "exposure", "global"],
+        },
+        "files": {
+            "report": str(report_path) if report_path.exists() else None,
+            "markdown": str(paths["markdown"]) if paths["markdown"].exists() else None,
+            "uncertainty": str(uncertainty_path) if uncertainty_path.exists() else None,
+            "report_modified_at": _file_modified_at(report_path) if report_path.exists() else None,
+            "uncertainty_modified_at": _file_modified_at(uncertainty_path) if uncertainty_path.exists() else None,
+        },
+        "active_profile": active_profile,
+        "job": job,
+    }
+
+
+def _bb_rating_worker(active_profile: str | None, actor: str) -> None:
+    from basketball_ai.bb_rating.calibration import (
+        BBRatingCalibrationConfig,
+        build_calibration_report,
+        write_calibration_report,
+    )
+
+    try:
+        if not active_profile:
+            raise RuntimeError("Seleziona prima un profilo PostgreSQL")
+        profile = load_profiles().get(active_profile)
+        if not profile:
+            raise RuntimeError(f"Profilo PostgreSQL '{active_profile}' non disponibile")
+        _set_bb_rating(
+            status="running",
+            stage="Loading analysis data",
+            progress=10,
+            message=f"Caricamento dati BB-Rating dal profilo {active_profile}…",
+            error=None,
+            started_at=_utcnow(),
+            finished_at=None,
+        )
+        _audit("bb_rating_calibration_started", actor, active_profile)
+        data = load_all_data(
+            profile_url(active_profile),
+            str(profile.get("source_schema", "AI_Source")),
+            purpose="analysis",
+        )
+        stats = data.get("player_stats")
+        if not isinstance(stats, pd.DataFrame) or stats.empty:
+            raise RuntimeError("Nessun dato player_stats disponibile per la calibrazione BB-Rating")
+        _set_bb_rating(
+            stage="Building calibration report",
+            progress=42,
+            message="Calcolo percentili, validazione OOS e struttura uncertainty…",
+        )
+        report = build_calibration_report(data, config=BBRatingCalibrationConfig())
+        _set_bb_rating(
+            stage="Writing serving artifact",
+            progress=82,
+            message="Scrittura report e artifact di serving…",
+            calibration_version=report.get("calibration_version"),
+            bb_rating_version=report.get("bb_rating_version"),
+        )
+        output_dir = MODEL_ROOT / "bb_rating_calibration"
+        paths = write_calibration_report(report, str(output_dir))
+        details = {
+            "calibration_version": report.get("calibration_version"),
+            "bb_rating_version": report.get("bb_rating_version"),
+            "rows": (report.get("dataset") or {}).get("rows"),
+            "uncertainty_status": (report.get("uncertainty_calibration") or {}).get("status"),
+        }
+        _audit("bb_rating_calibration_completed", actor, active_profile, json.dumps(details, ensure_ascii=False))
+        _set_bb_rating(
+            status="complete",
+            stage="Calibration ready",
+            progress=100,
+            message="BB-Rating calibration and uncertainty artifact ready. Public BB-Rating is unchanged.",
+            error=None,
+            finished_at=_utcnow(),
+            calibration_version=report.get("calibration_version"),
+            bb_rating_version=report.get("bb_rating_version"),
+            output=paths,
+        )
+    except Exception as exc:  # pragma: no cover
+        error = _safe_error(exc)
+        _audit("bb_rating_calibration_failed", actor, active_profile or "", error)
+        _set_bb_rating(
+            status="failed",
+            stage="Failed",
+            progress=100,
+            message="BB-Rating calibration failed.",
+            error=error,
+            finished_at=_utcnow(),
+        )
 
 
 def _training_worker(
@@ -688,6 +877,16 @@ async def overview(user: dict[str, str] = Depends(_operator)) -> dict[str, Any]:
             "detail": production.get("run_id") or "Nessun modello in produzione",
             "action": "registry",
         },
+        {
+            "component": "BB-Rating",
+            "status": "ok" if _bb_rating_status().get("ready") else "warning",
+            "label": "Ready" if _bb_rating_status().get("ready") else "Artifact da verificare",
+            "detail": (
+                f"v{_bb_rating_status().get('bb_rating_version') or '—'} · "
+                f"calibration {_bb_rating_status().get('calibration_version') or '—'}"
+            ),
+            "action": "bb-rating",
+        },
     ]
     return {
         "utc": _utcnow(),
@@ -697,6 +896,7 @@ async def overview(user: dict[str, str] = Depends(_operator)) -> dict[str, Any]:
         "production": production,
         "candidate": candidate,
         "candidate_quality": _candidate_quality(candidate),
+        "bb_rating": _bb_rating_status(),
         "readiness": readiness,
         "api": {"online": bool(api_live.get("ok")), "version": "V2", "detail": api_live},
     }
@@ -961,6 +1161,38 @@ async def evaluate_scenario(payload: dict[str, Any], user: dict[str, str] = Depe
         raise HTTPException(status_code=502, detail=_safe_error(exc)) from exc
 
 
+@app.get("/admin-api/bb-rating")
+def bb_rating_status(user: dict[str, str] = Depends(_operator)) -> dict[str, Any]:
+    del user
+    return _bb_rating_status()
+
+
+@app.post("/admin-api/bb-rating/calibrate")
+def start_bb_rating_calibration(user: dict[str, str] = Depends(_csrf)) -> dict[str, Any]:
+    actor = user["username"]
+    with STATE.lock:
+        job = dict(STATE.bb_rating)
+        active_profile = STATE.active_profile
+    if job.get("status") == "running":
+        raise HTTPException(status_code=409, detail="BB-Rating calibration already running")
+    if not active_profile:
+        raise HTTPException(status_code=400, detail="Seleziona prima un profilo PostgreSQL")
+    with STATE.lock:
+        STATE.bb_rating.update(
+            status="queued",
+            stage="Queued",
+            progress=0,
+            message="BB-Rating calibration queued.",
+            error=None,
+            started_at=_utcnow(),
+            finished_at=None,
+        )
+    STATE.bb_rating_executor.submit(_bb_rating_worker, active_profile, actor)
+    with STATE.lock:
+        current = dict(STATE.bb_rating)
+    return {"ok": True, "profile": active_profile, "job": current}
+
+
 @app.get("/admin-api/registry")
 def registry(user: dict[str, str] = Depends(_operator)) -> dict[str, Any]:
     del user
@@ -992,18 +1224,30 @@ def rollback(payload: ConfirmPayload, user: dict[str, str] = Depends(_csrf)) -> 
 @app.get("/admin-api/api-health")
 async def api_health(user: dict[str, str] = Depends(_operator)) -> dict[str, Any]:
     del user
-    live, ready = await asyncio.gather(
+    live, ready, bb = await asyncio.gather(
         asyncio.to_thread(_probe, "/health/live"),
         asyncio.to_thread(_probe, "/health/ready"),
+        asyncio.to_thread(_probe, "/health"),
     )
+    bb_body = bb.get("body") if isinstance(bb.get("body"), dict) else {}
+    status = _bb_rating_status()
     return {
         "base_url": API_BASE_URL,
         "live": live,
         "ready": ready,
+        "bb_rating": {
+            "api": bb,
+            "loaded": bool(bb_body.get("bb_rating_loaded")),
+            "uncertainty_loaded": bool(bb_body.get("bb_rating_uncertainty_loaded")),
+            "calibration_version": status.get("calibration_version"),
+            "bb_rating_version": status.get("bb_rating_version"),
+        },
         "endpoints": [
             "GET /health/live",
             "GET /health/ready",
+            "GET /health",
             "POST /api/v2/predictions/player-team",
+            "POST /api/v2/bb-rating/player",
             "POST /api/v2/scenarios/evaluate",
         ],
     }
