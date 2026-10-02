@@ -104,6 +104,18 @@ def _reset_state():
         admin.STATE.active_profile = None
         admin.STATE.summary = {}
         admin.STATE.snapshot = None
+        admin.STATE.bb_rating = {
+            "status": "idle",
+            "stage": "Ready",
+            "progress": 0,
+            "message": "No BB-Rating calibration run in progress.",
+            "error": None,
+            "started_at": None,
+            "finished_at": None,
+            "calibration_version": None,
+            "bb_rating_version": None,
+            "output": None,
+        }
         admin.STATE.training = {
             "status": "idle",
             "stage": "Ready",
@@ -160,11 +172,100 @@ def test_helpers_and_static_assets(monkeypatch, tmp_path):
     assert "Prepara storico modello" in html
     assert "Dati e snapshot" in html
     assert "Model Registry" in html
+    assert "BB-Rating" in html
+    assert "bb-rating-calibrate" in html
     assert "--sidebar" in css
     assert "renderOverview" in js
+    assert "renderBBRating" in js
+    assert "/admin-api/bb-rating" in js
     assert "streamlit" not in (html + css + js).lower()
     assert admin.healthz() == {"status": "ok"}
     assert Path(admin.index().path).name == "index.html"
+
+
+
+def test_bb_rating_status_reads_calibration_artifacts(monkeypatch, tmp_path):
+    _reset_state()
+    root = tmp_path / "models_saved"
+    calibration = root / "bb_rating_calibration"
+    calibration.mkdir(parents=True)
+    (calibration / "bb_rating_calibration.json").write_text(
+        json.dumps(
+            {
+                "calibration_version": "1.16",
+                "bb_rating_version": "1.8",
+                "dataset": {
+                    "rows": 53625,
+                    "players": 4337,
+                    "season_min": 2018,
+                    "season_max": 2026,
+                    "leagues": ["ITA1"],
+                    "competitions": ["RS", "PO", "TOT"],
+                    "source_contract": "competition-v2:canonical",
+                },
+                "configuration": {"uncertainty_min_samples": 50},
+                "validation_signals": {
+                    "score_available_rate": 0.99,
+                    "primary_context_share": 0.95,
+                    "limited_context_share": 0.01,
+                    "explainable_metric_count": 25,
+                },
+                "uncertainty_calibration": {
+                    "status": "ready",
+                    "training_target_seasons": [2019, 2020, 2021, 2022, 2023, 2024, 2025],
+                    "excluded_target_seasons": [2026],
+                    "training_rows": 49000,
+                    "support": {
+                        "available_exact_cells": 120,
+                        "primary_exact_share": 0.91,
+                    },
+                },
+                "uncertainty_validation": {
+                    "selected_structure": {
+                        "mean_interval_width_p90": 8.5,
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    (calibration / "bb_rating_uncertainty.json").write_text(
+        json.dumps({"status": "ready", "bb_rating_version": "1.8"}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(admin, "MODEL_ROOT", root)
+    result = admin._bb_rating_status()
+    assert result["ready"] is True
+    assert result["calibration_version"] == "1.16"
+    assert result["bb_rating_version"] == "1.8"
+    assert result["dataset"]["rows"] == 53625
+    assert result["uncertainty"]["support"]["available_exact_cells"] == 120
+    assert result["files"]["uncertainty"].endswith("bb_rating_uncertainty.json")
+
+
+def test_bb_rating_calibration_start(monkeypatch, tmp_path):
+    _reset_state()
+    monkeypatch.setattr(admin, "MODEL_ROOT", tmp_path / "models_saved")
+    with admin.STATE.lock:
+        admin.STATE.active_profile = "production"
+
+    class Executor:
+        def __init__(self):
+            self.submitted = []
+
+        def submit(self, fn, *args):
+            self.submitted.append((fn, args))
+
+    executor = Executor()
+    monkeypatch.setattr(admin.STATE, "bb_rating_executor", executor)
+    monkeypatch.setattr(admin, "_utcnow", lambda: "now")
+    result = admin.start_bb_rating_calibration(
+        {"username": "admin", "role": "admin", "token": "x"}
+    )
+    assert result["ok"] is True
+    assert result["profile"] == "production"
+    assert result["job"]["status"] == "queued"
+    assert executor.submitted
 
 
 def test_authentication_helpers_and_csrf(monkeypatch):
