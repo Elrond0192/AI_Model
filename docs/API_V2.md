@@ -163,6 +163,13 @@ Request:
 }
 ```
 
+For the Chat Player Intelligence experience, the request can optionally include
+`include_history=true` and `history_limit=2..8`. The response then includes a
+`history` array containing the observed BB-Rating 1–100 for the available
+seasons up to the requested season. The historical series uses the same
+league/season/competition contextual BB-Rating as the current score.
+```
+
 The primary peer population is the requested league + season + competition.
 When that context contains at least the preferred minimum peer population
 (default 25), the full context is used for scoring percentiles. Smaller
