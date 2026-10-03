@@ -282,6 +282,7 @@ def test_api_player_endpoint():
             "league": "ITA1",
             "season": "2025-26",
             "phase": "RS",
+            "include_history": True,
         },
     )
     assert response.status_code == 200
