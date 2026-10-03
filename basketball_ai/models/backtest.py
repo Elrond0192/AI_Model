@@ -404,6 +404,7 @@ def run_backtest(
     min_samples_per_fold: Optional[int] = None,
     include_stage_metrics: bool = False,
     compare_target_modes: bool = False,  # retained for CLI compatibility; no longer emitted
+    return_records: bool = False,
 ) -> Dict[str, Any]:
     """Evaluate the complete production path on all eligible future seasons.
 
@@ -618,6 +619,11 @@ def run_backtest(
                 if fold.get("valid") and fold.get("nested_shrinkage")
             ],
         }
+    if return_records:
+        # Internal OOS rows are used by the separate presentation calibration layer.
+        # They are intentionally omitted from the persisted backtest report.
+        report["_oos_records"] = all_records
+
     if output_path:
         path = Path(output_path)
         path.parent.mkdir(parents=True, exist_ok=True)
