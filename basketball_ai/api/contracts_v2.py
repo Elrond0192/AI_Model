@@ -59,9 +59,9 @@ class PlayerTeamPredictionV2(PredictionContextV2):
     competition: str
     target_season: int
     predicted_rating: float
-    predicted_rating_100: float | None = None
     confidence_low: float
     confidence_high: float
+    predicted_rating_100: float | None = None
     confidence_low_100: float | None = None
     confidence_high_100: float | None = None
     prediction_calibration_version: str | None = None
