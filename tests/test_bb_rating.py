@@ -291,6 +291,8 @@ def test_api_player_endpoint():
     assert payload["peer_group"]["definition"] == "league+season+phase"
     assert payload["metrics"]["USG%"]["percentile"] is not None
 
+    assert payload["history"] == [{"season": 2025, "bb_rating": payload["bb_rating"]}]
+
 
 def test_bb_rating_calibration_reuses_peer_and_percentile_contract():
     stats = pd.concat(
