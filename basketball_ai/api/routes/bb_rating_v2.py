@@ -36,6 +36,39 @@ async def rate_player(body: BBRatingPlayerRequestV2, request: Request):
         raise HTTPException(422, str(exc)) from exc
 
     payload = result.to_dict()
+
+    if body.include_history:
+        frame = getattr(engine, "frame", None)
+        history = []
+        if frame is not None and not getattr(frame, "empty", True):
+            try:
+                years = (
+                    frame.loc[
+                        (frame["player_global_id"].astype(str) == str(body.player_global_id))
+                        & (frame["league_key"].astype(str).str.upper() == str(body.league).strip().upper())
+                        & (frame["competition"].astype(str).str.upper() == str(body.phase).strip().upper())
+                    ]["season"]
+                    .map(lambda value: int(str(value).split("-")[0]))
+                )
+                seasons = sorted({int(year) for year in years if int(year) <= season}, reverse=True)[: body.history_limit]
+                for historical_season in reversed(seasons):
+                    try:
+                        historical = engine.rate_player(
+                            body.player_global_id,
+                            league=body.league,
+                            season=historical_season,
+                            phase=body.phase,
+                        )
+                        history.append({
+                            "season": historical_season,
+                            "bb_rating": int(historical.score),
+                        })
+                    except ValueError:
+                        continue
+            except (KeyError, TypeError, ValueError):
+                history = []
+        payload["history"] = history
+
     uncertainty = getattr(request.app.state, "bb_rating_uncertainty", None)
     if uncertainty is None:
         payload["uncertainty"] = {
