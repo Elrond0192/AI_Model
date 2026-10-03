@@ -103,6 +103,19 @@ async def player_team(body: PlayerTeamPredictionRequestV2, request: Request):
         }
     )
 
+    calibration = getattr(request.app.state, "prediction_calibration", None)
+    predicted_rating_100 = None
+    confidence_low_100 = None
+    confidence_high_100 = None
+    calibration_version = None
+    if calibration:
+        from basketball_ai.prediction_calibration import native_to_100
+
+        predicted_rating_100 = native_to_100(result.predicted_rating, calibration["fit"])
+        confidence_low_100 = native_to_100(result.confidence_low, calibration["fit"])
+        confidence_high_100 = native_to_100(result.confidence_high, calibration["fit"])
+        calibration_version = calibration.get("calibration_version")
+
     return PlayerTeamPredictionV2(
         **request.app.state.model_metadata,
         player_global_id=body.player_global_id,
@@ -112,8 +125,12 @@ async def player_team(body: PlayerTeamPredictionRequestV2, request: Request):
         competition=competition,
         target_season=body.season + 1,
         predicted_rating=result.predicted_rating,
+        predicted_rating_100=predicted_rating_100,
         confidence_low=result.confidence_low,
         confidence_high=result.confidence_high,
+        confidence_low_100=confidence_low_100,
+        confidence_high_100=confidence_high_100,
+        prediction_calibration_version=calibration_version,
         competition_support=CompetitionSupportV2(**support),
         generated_at=datetime.now(timezone.utc),
         explanation={
