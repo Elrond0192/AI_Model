@@ -156,6 +156,37 @@ def _load_prediction_calibration(model_dir: str):
     return None
 
 
+def _load_prediction_calibration(model_dir: str):
+    from basketball_ai.prediction_calibration import load_prediction_calibration
+
+    configured = os.environ.get("PREDICTION_CALIBRATION_PATH", "").strip()
+    model_path = Path(model_dir)
+    candidates = []
+    if configured:
+        candidates.append(Path(configured))
+    candidates.extend([
+        model_path / "prediction_calibration" / "prediction_rating_calibration.json",
+        model_path.parent / "prediction_calibration" / "prediction_rating_calibration.json",
+        model_path / "prediction_rating_calibration.json",
+    ])
+    seen = set()
+    for path in candidates:
+        key = str(path)
+        if key in seen:
+            continue
+        seen.add(key)
+        if not path.exists():
+            continue
+        artifact = load_prediction_calibration(path)
+        if artifact:
+            logger.info("[API] Loaded Prediction 1-100 calibration from %s", path)
+            return artifact
+        logger.warning("[API] Prediction calibration artifact invalid at %s", path)
+        return None
+    logger.warning("[API] Prediction 1-100 calibration artifact not found")
+    return None
+
+
 def _load_future_performance_model(model_dir: str):
     from basketball_ai.future_performance import PlayerFuturePerformanceModel
 
@@ -254,6 +285,12 @@ def _load_app_state() -> None:
     except Exception as exc:
         logger.warning("[API] BB-Rating uncertainty unavailable: %s", exc)
         app_state["bb_rating_uncertainty"] = None
+
+    try:
+        app_state["prediction_calibration"] = _load_prediction_calibration(model_dir)
+    except Exception as exc:
+        logger.warning("[API] Prediction 1-100 calibration unavailable: %s", exc)
+        app_state["prediction_calibration"] = None
 
     try:
         app_state["prediction_calibration"] = _load_prediction_calibration(model_dir)
