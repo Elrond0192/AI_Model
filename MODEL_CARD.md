@@ -140,6 +140,21 @@ without mixing leagues. Ties receive the same percentile score.
 
 Source schemas are read-only; writes are restricted to schema `ai`; secrets are runtime-only; browser clients never receive DB credentials or `IdGlobal`; WordPress calls AI_Model server-to-server over authenticated HTTPS.
 
+## Prediction Model 1–100 presentation calibration
+
+The production Prediction Model remains **2.6.0** and its native prediction contract remains **0–10**.
+
+A separate calibration layer maps the native next-season prediction onto a user-facing **1–100** scale so it can be displayed alongside BB-Rating without changing the underlying estimator. The mapping is fitted only from untouched expanding walk-forward OOS predictions and realized next-season ratings.
+
+- Calibration version: **1.0**
+- Method: expanding walk-forward isotonic regression
+- Artifact: `/app/models_saved/prediction_calibration/prediction_rating_calibration.json`
+- Native prediction: unchanged
+- Native confidence interval: unchanged
+- Displayed prediction and interval: mapped to 1–100 using the persisted monotonic calibration
+
+The 1–100 value should be described as **Predicted Rating (1–100)**, not as a BB-Rating. BB-Rating remains the separate descriptive current-performance score.
+
 ## BB-Rating layer
 
 The season-ahead Prediction Model and BB-Rating are separate contracts.
