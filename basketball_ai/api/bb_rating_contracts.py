@@ -11,6 +11,8 @@ class BBRatingPlayerRequestV2(BaseModel):
     league: str
     season: Union[int, str]
     phase: str
+    include_history: bool = False
+    history_limit: int = Field(default=8, ge=2, le=8)
 
 
 class BBRatingPlayerResponseV2(BaseModel):
@@ -31,3 +33,4 @@ class BBRatingPlayerResponseV2(BaseModel):
     metric_coverage: float = Field(ge=0.0, le=1.0)
     bb_rating_version: str
     uncertainty: dict | None = None
+    history: list[dict] = Field(default_factory=list)
