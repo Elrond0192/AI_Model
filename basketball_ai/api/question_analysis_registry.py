@@ -88,7 +88,7 @@ QUESTION_CAPABILITIES: tuple[QuestionCapability, ...] = (
         question="Qual è il suo potenziale?",
         status="partial",
         analyses=("prediction", "future_performance", "age_trajectory", "bb_rating"),
-        missing_analyses=("potential_synthesis",),
+        missing_analyses=(),
         evidence=("next_season_prediction", "future_stat_profile", "age_curve"),
     ),
     QuestionCapability(
@@ -101,11 +101,10 @@ QUESTION_CAPABILITIES: tuple[QuestionCapability, ...] = (
     QuestionCapability(
         key="team_counterfactual",
         question="Come renderebbe in un'altra squadra?",
-        status="partial",
+        status="available",
         analyses=("compatibility", "player_team", "league_transfer"),
-        missing_analyses=("causal_team_effect",),
         evidence=("team_fit", "what_if_prediction"),
-        limitation="Il sistema può stimare fit e scenario; non va presentato come effetto causale certo.",
+        limitation="La stima è uno scenario controfattuale modellato, non un effetto causale certo.",
     ),
     QuestionCapability(
         key="causal_team_effect",
