@@ -928,10 +928,20 @@ def _scenario_entity_rows(entity: str, query: str, limit: int = 12) -> list[dict
     search = str(query or "").strip()
     max_rows = max(1, min(int(limit), 20))
     if search:
+        if entity == "player":
+            search_where = (
+                "lower(coalesce(name, '')) LIKE lower(:query) "
+                "OR lower(coalesce(global_id, '')) LIKE lower(:query)"
+            )
+        else:
+            search_where = (
+                "lower(coalesce(name, '')) LIKE lower(:query) "
+                "OR lower(coalesce(short_name, '')) LIKE lower(:query) "
+                "OR lower(coalesce(global_id, '')) LIKE lower(:query)"
+            )
         statement = text(
             f'SELECT {columns} FROM "{schema}"."{table}" '
-            "WHERE lower(coalesce(name, '')) LIKE lower(:query) "
-            "OR lower(coalesce(short_name, '')) LIKE lower(:query) "
+            f"WHERE {search_where} "
             "ORDER BY CASE WHEN lower(coalesce(name, '')) = lower(:exact) THEN 0 "
             "WHEN lower(coalesce(name, '')) LIKE lower(:prefix) THEN 1 ELSE 2 END, "
             "name NULLS LAST LIMIT :limit"
