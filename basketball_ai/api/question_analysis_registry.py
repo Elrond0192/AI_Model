@@ -86,10 +86,10 @@ QUESTION_CAPABILITIES: tuple[QuestionCapability, ...] = (
     QuestionCapability(
         key="potential",
         question="Qual è il suo potenziale?",
-        status="partial",
-        analyses=("prediction", "future_performance", "age_trajectory", "bb_rating"),
-        missing_analyses=(),
-        evidence=("next_season_prediction", "future_stat_profile", "age_curve"),
+        status="available",
+        analyses=("potential_synthesis", "age_trajectory", "bb_rating"),
+        evidence=("rating_trajectory", "age_curve"),
+        limitation="Il potenziale sintetizza traiettoria osservata ed età; le previsioni numeriche future restano responsabilità dei modelli Prediction/Future Performance.",
     ),
     QuestionCapability(
         key="regression_risk",
