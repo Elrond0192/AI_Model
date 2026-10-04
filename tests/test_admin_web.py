@@ -378,6 +378,54 @@ def test_authentication_helpers_and_csrf(monkeypatch):
     assert exc.value.status_code == 403
 
 
+def test_scenario_player_search_exposes_multiple_league_contexts():
+    _reset_state()
+    data = _data()
+    data["players"].loc[0, "name"] = "Leandro Nicolas Bolmaro"
+    data["players"].loc[0, "global_id"] = "174019"
+    data["players"].loc[0, "current_league_key"] = "EL"
+    data["players"].loc[0, "current_team_id"] = 2
+    data["teams"].loc[0, "name"] = "Panathinaikos"
+    data["teams"].loc[0, "global_id"] = "team-el"
+
+    data["player_stats"]["player_global_id"] = "174019"
+    data["player_stats"]["league_key"] = "EL"
+    data["player_stats"]["team_id"] = 2
+    data["player_stats"].loc[data["player_stats"].index[0], "league_key"] = "ITA1"
+    data["player_stats"].loc[data["player_stats"].index[0], "team_id"] = 3
+    data["player_stats"].loc[data["player_stats"].index[0], "competition"] = "RS"
+
+    data["teams"] = pd.concat(
+        [
+            data["teams"],
+            pd.DataFrame(
+                [
+                    {
+                        "id": 3,
+                        "global_id": "team-ita",
+                        "name": "Virtus Bologna",
+                        "league_id": 20,
+                    }
+                ]
+            ),
+        ],
+        ignore_index=True,
+    )
+
+    with admin.STATE.lock:
+        admin.STATE.data = data
+
+    result = admin.scenario_entities(
+        entity="player",
+        q="Bolmaro",
+        limit=12,
+        user={"username": "admin", "role": "admin", "token": "x"},
+    )
+    item = result["items"][0]
+    assert item["league_keys"] == ["EL", "ITA1"]
+    assert {context["league_key"] for context in item["contexts"]} == {"EL", "ITA1"}
+
+
 def test_scenario_entity_search_uses_loaded_dataset():
     _reset_state()
     data = _data()
