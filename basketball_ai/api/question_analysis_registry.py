@@ -51,9 +51,8 @@ QUESTION_CAPABILITIES: tuple[QuestionCapability, ...] = (
     QuestionCapability(
         key="real_improvement",
         question="È migliorato davvero o gioca semplicemente più minuti?",
-        status="partial",
+        status="available",
         analyses=("player_trend", "performance_decomposition"),
-        missing_analyses=("metric_explanation",),
         evidence=("minutes", "per36_production", "efficiency", "impact"),
     ),
     QuestionCapability(
