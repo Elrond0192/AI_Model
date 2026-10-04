@@ -237,6 +237,26 @@ def test_regression_risk_is_descriptive_not_probability():
     assert "not a calibrated probability" in result["limitations"][0]
 
 
+def test_player_intelligence_orchestrates_question_layers():
+    result = _engine().evaluate(
+        {"scenario": "player_intelligence", "season": 2024, "competition": "RS",
+         "parameters": {"question_key": "why_performing"}},
+        [1], [], 10, None,
+    )
+    assert result["result"]["question_key"] == "why_performing"
+    assert set(result["result"]["analyses"]) == {"performance_decomposition", "metric_explanation"}
+    assert result["result"]["answer_mode"] == "evidence_composition"
+
+
+def test_player_intelligence_rejects_unknown_question_key():
+    with pytest.raises(ValueError, match="unsupported Player Intelligence question_key"):
+        _engine().evaluate(
+            {"scenario": "player_intelligence", "season": 2024, "competition": "RS",
+             "parameters": {"question_key": "unknown"}},
+            [1], [], 10, None,
+        )
+
+
 def test_decomposition():
     result = _engine().evaluate({"scenario": "performance_decomposition", "season": 2024, "competition": "RS"}, [1], [], 10, None)
     assert result["result"]["previous_season"] == 2023
