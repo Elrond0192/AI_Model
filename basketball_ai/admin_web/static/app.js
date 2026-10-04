@@ -370,7 +370,7 @@ async function renderDiagnostics(){
     if(!player){toast('Seleziona prima un giocatore','error');return null;}
     running++; $('.diag-run').forEach(b=>b.disabled=true); $('#diagnostics-all').disabled=true;
     try{
-      const body={model,player_global_id:player,team_global_id:$('#diag-team').value.trim(),league:$('#diag-league').value.trim(),season:Number($('#diag-season').value),competition:$('#diag-competition').value,metrics:$('#diag-metrics').value.split(',').map(x=>x.trim()).filter(Boolean)};
+      const body={model,player_global_id:player,team_global_id:$('#diag-team').value,league:$('#diag-league').value.trim(),season:Number($('#diag-season').value),competition:$('#diag-competition').value,metrics:$('#diag-metrics').value.split(',').map(x=>x.trim()).filter(Boolean)};
       const data=await api('/admin-api/diagnostics/test',{method:'POST',body});
       results.insertAdjacentHTML('afterbegin',renderResult(data));
       summary.textContent='Ultimi test: '+passed+' PASS · '+failed+' FAIL';
@@ -378,16 +378,24 @@ async function renderDiagnostics(){
     }catch(e){toast(e.message,'error');return null;}
     finally{running--;if(!running){$('.diag-run').forEach(b=>b.disabled=false);$('#diagnostics-all').disabled=false;}}
   }
-  async function searchPlayers(){
-    const q=$('#diag-player-search').value.trim();
+  async function searchDiagnosticEntities(entity, inputSelector, selectSelector, placeholder){
+    const q=$(inputSelector).value.trim();
     if(q.length<2)return;
     try{
-      const data=await api('/admin-api/scenario-entities?entity=player&q='+encodeURIComponent(q)+'&limit=12');
-      $('#diag-player').innerHTML='<option value="">Seleziona giocatore</option>'+(data.items||[]).map(p=>'<option value="'+esc(p.global_id||p.selection_id)+'">'+esc(p.name||p.global_id||p.selection_id)+'</option>').join('');
+      const data=await api('/admin-api/scenario-entities?entity='+encodeURIComponent(entity)+'&q='+encodeURIComponent(q)+'&limit=12');
+      $(selectSelector).innerHTML='<option value="">'+esc(placeholder)+'</option>'+(data.items||[]).map(item=>'<option value="'+esc(item.global_id||'')+'">'+esc(item.name||item.global_id||item.selection_id)+'</option>').join('');
     }catch(e){toast(e.message,'error');}
   }
   let searchTimer;
-  $('#diag-player-search').addEventListener('input',()=>{clearTimeout(searchTimer);searchTimer=setTimeout(searchPlayers,300);});
+  $('#diag-player-search').addEventListener('input',()=>{
+    clearTimeout(searchTimer);
+    searchTimer=setTimeout(()=>searchDiagnosticEntities('player','#diag-player-search','#diag-player','Seleziona giocatore'),300);
+  });
+  let teamSearchTimer;
+  $('#diag-team-search').addEventListener('input',()=>{
+    clearTimeout(teamSearchTimer);
+    teamSearchTimer=setTimeout(()=>searchDiagnosticEntities('team','#diag-team-search','#diag-team','Seleziona squadra'),300);
+  });
   $('.diag-run').forEach(b=>b.addEventListener('click',()=>run(b.dataset.model)));
   $('#diagnostics-all').addEventListener('click',async()=>{
     results.innerHTML='';
