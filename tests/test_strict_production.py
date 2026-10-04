@@ -287,6 +287,53 @@ def test_scope_prediction_context_keeps_only_requested_competition():
     assert scoped["_competition_support"]["exact_source_games"] == 8
 
 
+def test_scope_prediction_context_resolves_historical_team_by_global_id():
+    from basketball_ai.models.competition_training import scope_prediction_context
+
+    stats = pd.DataFrame(
+        [
+            {"player_id": 1, "team_id": 99, "league_id": 1, "season": 2025, "competition": "RS", "games_played": 30, "rating": 7.0},
+        ]
+    )
+    team_history = pd.DataFrame(
+        [
+            {
+                "team_id": 99,
+                "global_id": "TEAM-GLOBAL",
+                "name": "Historical Team",
+                "league_id": 1,
+                "league_key": "ITA1",
+                "season": 2025,
+                "competition": "RS",
+                "pace": 75.0,
+                "offensive_rating": 110.0,
+                "defensive_rating": 108.0,
+                "three_point_attempt_rate": 0.30,
+                "assists_per_game": 20.0,
+                "star_player_usage": 0.20,
+                "net_rtg": 2.0,
+            }
+        ]
+    )
+    data = {
+        "player_stats": stats,
+        "team_season_stats": team_history,
+        "teams": pd.DataFrame([{"id": 10, "global_id": "TEAM-GLOBAL", "name": "Current Team", "league_id": 1}]),
+        "players": pd.DataFrame([{"id": 1, "global_id": "PLAYER", "position": "PG", "current_team_id": 10, "current_league_id": 1}]),
+        "player_dict": {
+            1: {"id": 1, "global_id": "PLAYER", "current_team_id": 10, "current_league_id": 1}
+        },
+        "team_dict": {
+            10: {"id": 10, "global_id": "TEAM-GLOBAL", "name": "Current Team", "league_id": 1}
+        },
+    }
+
+    scoped = scope_prediction_context(data, 1, 10, 1, "RS", 2025)
+
+    assert scoped["_prediction_team_id"] == 99
+    assert scoped["team_season_stats"]["team_id"].tolist() == [99]
+
+
 def test_scope_prediction_context_rejects_missing_exact_po_data():
     from basketball_ai.models.competition_training import scope_prediction_context
 
