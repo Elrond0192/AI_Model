@@ -14,6 +14,15 @@ from basketball_ai.bb_rating.engine import BBRatingEngine
 from basketball_ai.bb_rating.uncertainty import BBRatingUncertainty
 from basketball_ai.api.routes.bb_rating_v2 import router
 
+def test_percentile_does_not_mutate_read_only_array():
+    values = pd.Series([1.0, 2.0, 3.0, 4.0])
+    raw = values.to_numpy()
+    raw.setflags(write=False)
+    readonly_values = pd.Series(raw, copy=False)
+
+    assert BBRatingEngine._percentile(readonly_values, 2.5, "higher_better") == pytest.approx(0.5)
+
+
 def test_net_rtg_diff_zero_is_missing_for_bb_rating():
     frame = pd.DataFrame([
         {
