@@ -113,6 +113,14 @@ class ChatScenarioEngine:
             "team_competition": self._team_competition,
             "player_trend": self._player_trend,
             "performance_decomposition": self._performance_decomposition,
+            "metric_explanation": self._metric_explanation,
+            "role_analysis": self._role_analysis,
+            "performance_stability": self._performance_stability,
+            "team_usage_analysis": self._team_usage_analysis,
+            "regression_risk": self._regression_risk,
+            "potential_synthesis": self._potential_synthesis,
+            "shooting_decomposition": self._shooting_decomposition,
+            "defensive_decomposition": self._defensive_decomposition,
             "team_trend": self._team_trend,
             "player_compare": self._player_compare,
             "team_compare": self._team_compare,
@@ -954,6 +962,188 @@ class ChatScenarioEngine:
             "support": {"method": "strict_ensemble_counterfactual_player_context", "samples": 1, "confidence": "medium"},
             "limitations": ["Role labels unseen during training are encoded as out-of-vocabulary rather than treated as known roles."],
         }
+
+
+    def _context_percentile(self, frame, metric, value, *, lower_better=False):
+        if frame.empty or metric not in frame.columns or pd.isna(value):
+            return None
+        values = pd.to_numeric(frame[metric], errors="coerce").dropna()
+        if len(values) < 5:
+            return None
+        percentile = float((values <= float(value)).mean())
+        return round(1.0 - percentile if lower_better else percentile, 4)
+
+    def _player_rows_frame_context(self, league_id, competition, season):
+        frame = self.data.get("player_stats", pd.DataFrame()).copy()
+        if frame.empty:
+            return frame
+        frame["_year"] = frame["season"].map(_year)
+        mask = ((frame["competition"].map(normalize_competition) == normalize_competition(competition)) & (frame["_year"] == int(season)))
+        if league_id is not None:
+            mask &= frame["league_id"].map(_to_int) == _to_int(league_id)
+        return frame[mask].copy()
+
+    @staticmethod
+    def _percentile_label(percentile):
+        if percentile is None:
+            return "insufficient context"
+        if percentile >= .90:
+            return "elite relative to context"
+        if percentile >= .75:
+            return "very strong relative to context"
+        if percentile >= .60:
+            return "above average relative to context"
+        if percentile >= .40:
+            return "around average relative to context"
+        if percentile >= .25:
+            return "below average relative to context"
+        return "low relative to context"
+
+    def _metric_explanation(self, spec, players, teams, source_league, target_league):
+        del teams, target_league
+        if not players:
+            raise ValueError("player is required")
+        season = int(spec["season"])
+        competition = normalize_competition(spec["competition"])
+        rows = self._player_rows(players[0], source_league, competition, season)
+        current = self._latest(rows)
+        requested = spec.get("parameters", {}).get("metrics")
+        metrics = requested if isinstance(requested, list) else ["rating", "ts_pct", "usg_pct", "ast_pct", "tov_pct", "three_point_pct", "bpm", "dbpm"]
+        meanings = {
+            "rating": ("Overall player rating", False),
+            "ts_pct": ("True shooting efficiency", False),
+            "usg_pct": ("Share of team possessions used", False),
+            "ast_pct": ("Share of teammate field goals assisted", False),
+            "tov_pct": ("Turnover rate on possessions used", True),
+            "three_point_pct": ("Three-point shooting accuracy", False),
+            "bpm": ("Box-score impact estimate", False),
+            "dbpm": ("Box-score defensive impact estimate", False),
+        }
+        context = self._player_rows_frame_context(source_league, competition, season)
+        explanations = []
+        for metric in metrics[:12]:
+            if metric not in meanings or metric not in current.index or pd.isna(current.get(metric)):
+                continue
+            meaning, lower_better = meanings[metric]
+            value = _finite(current.get(metric))
+            pct = self._context_percentile(context, metric, value, lower_better=lower_better)
+            explanations.append({"metric": metric, "meaning": meaning, "value": round(value, 4), "context_percentile": pct, "interpretation": self._percentile_label(pct)})
+        return {"result": {"player": self._player_name(players[0]), "league": self._league_name(source_league), "season": season, "competition": competition, "metrics": explanations},
+                "evidence": [{"type": "same_league_season_competition_pool", "count": len(context)}],
+                "support": {"method": "contextual_metric_explanation", "samples": len(context), "confidence": _confidence(len(context))},
+                "limitations": ["Percentiles describe the observed context; they are not causal effects."]}
+
+    def _role_analysis(self, spec, players, teams, source_league, target_league):
+        del teams, target_league
+        if not players:
+            raise ValueError("player is required")
+        rows = self._player_rows(players[0], source_league, spec["competition"], int(spec["season"]))
+        if rows.empty:
+            raise ValueError("No player history is available")
+        history = []
+        for _, row in rows.iterrows():
+            usage, ast, minutes = _ratio(row.get("usg_pct")), _ratio(row.get("ast_pct")), _finite(row.get("minutes_per_game"))
+            if usage >= .27: role = "primary_creator"
+            elif usage >= .22 and ast >= .18: role = "secondary_creator"
+            elif usage >= .20: role = "scoring_role"
+            elif ast >= .18: role = "connector"
+            elif minutes >= 20: role = "rotation"
+            else: role = "depth"
+            history.append({"season": int(row["_year"]), "role": role, "usage": round(usage,4), "ast_pct": round(ast,4), "minutes_per_game": round(minutes,2), "three_par": round(_ratio(row.get("three_par")),4)})
+        changes = [{"from_season": a["season"], "to_season": b["season"], "from": a["role"], "to": b["role"]} for a,b in zip(history,history[1:]) if a["role"] != b["role"]]
+        return {"result": {"player": self._player_name(players[0]), "season": int(spec["season"]), "competition": normalize_competition(spec["competition"]), "current_role": history[-1]["role"], "current_profile": history[-1], "history": history, "role_changes": changes},
+                "evidence": [{"type": "historical_role_profile", "count": len(history)}],
+                "support": {"method": "usage_creation_minutes_role_classification", "samples": len(history)*6, "confidence": _confidence(len(history)*6)},
+                "limitations": ["Role labels are analytical classifications, not causal assignments."]}
+
+    def _performance_stability(self, spec, players, teams, source_league, target_league):
+        del teams, target_league
+        if not players:
+            raise ValueError("player is required")
+        rows = self._player_rows(players[0], source_league, spec["competition"], int(spec["season"]))
+        if len(rows) < 2:
+            raise ValueError("At least two observed seasons are required")
+        valid = rows[["rating","_year"]].copy()
+        valid["rating"] = pd.to_numeric(valid["rating"], errors="coerce")
+        valid = valid.dropna()
+        ratings, years = valid["rating"].to_numpy(float), valid["_year"].to_numpy(float)
+        slope = float(np.polyfit(years, ratings, 1)[0]) if len(ratings) > 1 and len(set(years)) > 1 else 0.0
+        std, median, peak, recent = float(np.std(ratings)), float(np.median(ratings)), float(np.max(ratings)), float(ratings[-1])
+        stability = float(np.clip(np.exp(-std/1.25) * min(1.0, len(ratings)/4.0), 0.0, 1.0))
+        return {"result": {"player": self._player_name(players[0]), "seasons": len(ratings), "rating_mean": round(float(np.mean(ratings)),3), "rating_median": round(median,3), "rating_std": round(std,3), "peak_rating": round(peak,3), "recent_rating": round(recent,3), "trend_slope_per_season": round(slope,4), "peak_premium": round(peak-median,3), "stability_score": round(stability,3)},
+                "evidence": [{"type":"rating_history","count":len(ratings)}],
+                "support": {"method":"historical_dispersion_and_trend","samples":len(ratings),"confidence":_confidence(len(ratings)*6)},
+                "limitations":["The stability score is a descriptive index, not a probability of future consistency."]}
+
+    def _team_usage_analysis(self, spec, players, teams, source_league, target_league):
+        del target_league
+        if not players or not teams:
+            raise ValueError("player and team are required")
+        season, competition = int(spec["season"]), normalize_competition(spec["competition"])
+        player, team = self._latest(self._player_rows(players[0], source_league, competition, season)), self._latest(self._team_rows(teams[0], source_league, competition, season))
+        usage, star = _ratio(player.get("usg_pct")), _ratio(team.get("star_player_usage"))
+        three, team_three = _ratio(player.get("three_par")), _ratio(team.get("three_point_attempt_rate"))
+        ast, team_ast = _ratio(player.get("ast_pct")), _finite(team.get("assists_per_game"))
+        signals=[]
+        if usage-star > .04: signals.append("player carries more usage than the team star-usage reference")
+        elif usage-star < -.04: signals.append("player carries materially less usage than the team star-usage reference")
+        if three > team_three + .08: signals.append("player is more perimeter-oriented than the team baseline")
+        if ast >= .18 and team_ast >= 22: signals.append("creation profile aligns with a high-assist team environment")
+        if not signals: signals.append("observed role is broadly aligned with the team context")
+        return {"result":{"player":self._player_name(players[0]),"team":self._team_name(teams[0]),"season":season,"competition":competition,"player_usage":round(usage,4),"team_star_usage":round(star,4),"usage_gap_vs_team_reference":round(usage-star,4),"player_three_point_rate":round(three,4),"team_three_point_rate":round(team_three,4),"player_ast_pct":round(ast,4),"team_assists_per_game":round(team_ast,2),"team_pace":round(_finite(team.get("pace")),2),"signals":signals},
+                "evidence":[{"type":"player_team_context","count":1}],"support":{"method":"observed_role_vs_team_style","samples":1,"confidence":"medium"},
+                "limitations":["This evaluates contextual alignment; it does not establish that team usage caused performance."]}
+
+    def _regression_risk(self, spec, players, teams, source_league, target_league):
+        stability = self._performance_stability(spec, players, teams, source_league, target_league)
+        r = stability["result"]; deviation = r["recent_rating"]-r["rating_median"]; peak_gap = r["recent_rating"]-r["peak_rating"]
+        risk = float(np.clip(.40*max(0.0,deviation)/2.0 + .35*(1.0-r["stability_score"]) + .25*max(0.0,-peak_gap)/1.5,0,1))
+        level = "high" if risk >= .65 else "moderate" if risk >= .35 else "low"
+        drivers=[x for x in ["recent rating above historical baseline" if deviation>.5 else None, "historical dispersion" if r["rating_std"]>.75 else None, "recent level below historical peak" if peak_gap<-.5 else None] if x]
+        return {"result":{"player":r["player"],"risk_level":level,"risk_index":round(risk,3),"recent_vs_median":round(deviation,3),"recent_vs_peak":round(peak_gap,3),"stability_score":r["stability_score"],"drivers":drivers},
+                "evidence":stability["evidence"],"support":{"method":"descriptive_regression_risk_index","samples":stability["support"]["samples"],"confidence":stability["support"]["confidence"]},
+                "limitations":["This is not a calibrated probability of regression and does not replace Prediction Model."]}
+
+    def _potential_synthesis(self, spec, players, teams, source_league, target_league):
+        del target_league
+        if not players:
+            raise ValueError("player is required")
+        season=int(spec["season"]); rows=self._player_rows(players[0],source_league,spec["competition"],season)
+        if rows.empty: raise ValueError("No player history is available")
+        latest=self._latest(rows); ratings=pd.to_numeric(rows["rating"],errors="coerce").dropna().to_numpy(float)
+        slope=float(np.polyfit(np.arange(len(ratings)),ratings,1)[0]) if len(ratings)>1 else 0.0
+        p=self.data.get("player_dict",{}).get(_to_int(players[0]),{}); birth=p.get("birth_date",p.get("date_of_birth"))
+        try: age=season-int(str(birth)[:4])
+        except (TypeError,ValueError): age=int(_finite(p.get("age"),float("nan"))) if np.isfinite(_finite(p.get("age"),float("nan"))) else None
+        peak_age=26 if str(p.get("position","")).upper() in {"PG","SG"} else 28
+        age_signal="unknown" if age is None else "development_window" if age<peak_age-2 else "near_peak" if age<=peak_age+2 else "post_peak"
+        signal="upside" if age_signal=="development_window" and slope>=0 else "established" if age_signal!="development_window" and abs(slope)<.15 else "mixed"
+        return {"result":{"player":self._player_name(players[0]),"season":season,"current_rating":round(_finite(latest.get("rating")),3),"historical_peak":round(float(np.max(ratings)),3),"rating_trend_per_season":round(slope,4),"age":age,"age_signal":age_signal,"potential_signal":signal},
+                "evidence":[{"type":"rating_history","count":len(ratings)},{"type":"age_context","available":age is not None}],
+                "support":{"method":"rating_trend_plus_age_synthesis","samples":len(ratings),"confidence":_confidence(len(ratings)*6)},
+                "limitations":["This synthesis uses observed trajectory and age; it is not a replacement for season-ahead Prediction or Future Performance."]}
+
+    def _shooting_decomposition(self, spec, players, teams, source_league, target_league):
+        del teams, target_league
+        if not players: raise ValueError("player is required")
+        rows=self._player_rows(players[0],source_league,spec["competition"],int(spec["season"]))
+        if len(rows)<2: raise ValueError("At least two observed seasons are required")
+        current,previous=rows.iloc[-1],rows.iloc[-2]; metrics=("ts_pct","three_point_pct","ft_pct","three_par","three_point_attempts","free_throw_attempts")
+        deltas={m:round(_finite(current.get(m))- _finite(previous.get(m)),4) for m in metrics if pd.notna(current.get(m)) and pd.notna(previous.get(m))}
+        return {"result":{"player":self._player_name(players[0]),"previous_season":int(previous["_year"]),"current_season":int(current["_year"]),"deltas":deltas},
+                "evidence":[{"type":"consecutive_seasons","count":2}],"support":{"method":"observed_shooting_profile_decomposition","samples":int(current.get("games_played",0) or 0),"confidence":_confidence(int(current.get("games_played",0) or 0))},
+                "limitations":["Without shot-level data this cannot separate shot quality, location and defensive pressure."]}
+
+    def _defensive_decomposition(self, spec, players, teams, source_league, target_league):
+        del teams, target_league
+        if not players: raise ValueError("player is required")
+        rows=self._player_rows(players[0],source_league,spec["competition"],int(spec["season"]))
+        if len(rows)<2: raise ValueError("At least two observed seasons are required")
+        current,previous=rows.iloc[-1],rows.iloc[-2]; metrics=("dbpm","raptor_def","lebron_def","drtg","stl_pct","blk_pct","def_rebounds")
+        deltas={m:round(_finite(current.get(m))- _finite(previous.get(m)),4) for m in metrics if pd.notna(current.get(m)) and pd.notna(previous.get(m))}
+        return {"result":{"player":self._player_name(players[0]),"previous_season":int(previous["_year"]),"current_season":int(current["_year"]),"deltas":deltas},
+                "evidence":[{"type":"consecutive_seasons","count":2}],"support":{"method":"observed_defensive_profile_decomposition","samples":int(current.get("games_played",0) or 0),"confidence":_confidence(int(current.get("games_played",0) or 0))},
+                "limitations":["Box-score defensive metrics do not isolate individual causal defensive impact."]}
 
     # ------------------------------------------------------------------
     # Team impact / replacement / fit searches
