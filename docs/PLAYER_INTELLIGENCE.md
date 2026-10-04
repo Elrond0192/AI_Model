@@ -39,6 +39,12 @@ Compatibility and scenario prediction can describe or estimate fit; they do not 
 
 This separation is intentional because basketball performance is affected by player, teammates, strategy, context and sampling variation, and causal questions require explicit counterfactual reasoning.
 
+## Multi-question composition
+
+The `player_intelligence` scenario accepts either a single `question_key` or an ordered `question_keys` list (up to 8). Multiple keys are deduplicated and their analysis layers are composed into one evidence bundle. The response exposes `question_keys` and sets `question_key` to null when multiple intents are requested.
+
+This is intended for Chat V3 questions such as "is he improving, what is his role, and how stable is he?" without requiring independent scenario calls for each sub-question.
+
 ## Evidence orchestrator
 
 The `player_intelligence` scenario now composes the appropriate analysis layers from a `question_key`. Examples:
