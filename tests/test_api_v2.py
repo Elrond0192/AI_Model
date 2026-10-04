@@ -9,7 +9,6 @@ from fastapi.testclient import TestClient
 
 from basketball_ai.api.contracts_v2 import (
     CompatibilityComparisonV2,
-    PerformanceVsExpectationV2,
     CompatibilityPlayerProfileV2,
     CompatibilityTeamProfileV2,
 )
@@ -263,6 +262,37 @@ def test_v2_regular_season_uses_isolated_context(monkeypatch):
     assert body["performance_vs_expectation"]["target_season"] == 2026
     assert body["explanation"]["context"] == "isolated_league_competition_as_of_source_season"
 
+
+def test_v2_performance_vs_expectation_uses_calibrated_range(monkeypatch):
+    from basketball_ai.api.routes.predictions_v2 import router
+
+    _patch_inference(monkeypatch, "RS")
+    app = FastAPI()
+    app.include_router(router)
+    _fake_state(app)
+    app.state.prediction_calibration = {
+        "calibration_version": "1.0",
+        "fit": {
+            "x_thresholds": [0.0, 10.0],
+            "y_thresholds_native": [0.0, 10.0],
+        },
+    }
+
+    response = TestClient(app).post(
+        "/api/v2/predictions/player-team",
+        json=_payload(),
+    )
+    assert response.status_code == 200
+    body = response.json()
+    pve = body["performance_vs_expectation"]
+    assert pve["available"] is True
+    assert pve["target_season"] == 2026
+    assert pve["expected_rating_100"] == 72.775
+    assert pve["actual_rating_100"] == 79.0
+    assert pve["delta_rating_points"] == 6.225
+    assert pve["assessment"] == "above_expectations"
+    assert pve["actual_quality"] == "good"
+    assert pve["actual_metric_coverage"] == 0.88
 
 def test_v2_playoffs_are_normalised_and_isolated(monkeypatch):
     from basketball_ai.api.routes.predictions_v2 import router
