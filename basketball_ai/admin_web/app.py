@@ -908,74 +908,92 @@ def _probe(path: str) -> dict[str, Any]:
 
 
 def _scenario_entity_rows(entity: str, query: str, limit: int = 12) -> list[dict[str, Any]]:
-    """Search canonical source entities directly in PostgreSQL."""
+    """Search entities from the dataset already loaded by the Control Center.
+
+    The loaded dataset is the same canonical AI_Source contract used by the
+    admin workflow. Keeping entity lookup in-memory avoids a second, fragile
+    SQL query solely for autocomplete and never exposes global IDs to the UI.
+    """
     with STATE.lock:
-        profile_name = STATE.active_profile
-    if not profile_name:
+        loaded = STATE.data
+    if not isinstance(loaded, dict):
         return []
-    profile = load_profiles().get(profile_name)
-    if not profile:
+
+    table = "players" if entity == "player" else "teams"
+    frame = loaded.get(table)
+    if not isinstance(frame, pd.DataFrame) or frame.empty or "id" not in frame.columns:
         return []
-    schema = str(profile.get("source_schema", "AI_Source"))
-    if not _SCHEMA_RE.fullmatch(schema):
-        raise RuntimeError("Invalid PostgreSQL source schema")
-    table = "Players" if entity == "player" else "Teams"
-    columns = (
-        "id, global_id, name, position, current_league_key"
-        if entity == "player"
-        else "id, global_id, name, short_name, league_id"
-    )
+
     search = str(query or "").strip()
     max_rows = max(1, min(int(limit), 20))
+    work = frame.copy()
+
+    def contains(column: str) -> pd.Series:
+        if column not in work.columns:
+            return pd.Series(False, index=work.index)
+        return work[column].fillna("").astype(str).str.contains(
+            search,
+            case=False,
+            regex=False,
+            na=False,
+        )
+
     if search:
-        if entity == "player":
-            search_where = (
-                "lower(coalesce(name, '')) LIKE lower(:query) "
-                "OR lower(coalesce(global_id::text, '')) LIKE lower(:query)"
-            )
-        else:
-            search_where = (
-                "lower(coalesce(name, '')) LIKE lower(:query) "
-                "OR lower(coalesce(short_name, '')) LIKE lower(:query) "
-                "OR lower(coalesce(global_id::text, '')) LIKE lower(:query)"
-            )
-        statement = text(
-            f'SELECT {columns} FROM "{schema}"."{table}" '
-            f"WHERE {search_where} "
-            "ORDER BY CASE WHEN lower(coalesce(name, '')) = lower(:exact) THEN 0 "
-            "WHEN lower(coalesce(name, '')) LIKE lower(:prefix) THEN 1 ELSE 2 END, "
-            f"name NULLS LAST LIMIT {max_rows}"
+        match = contains("name") | contains("global_id")
+        if entity == "team":
+            match = match | contains("short_name")
+        work = work.loc[match].copy()
+
+        def rank(value: Any) -> int:
+            value = str(value or "").strip().lower()
+            needle = search.lower()
+            if value == needle:
+                return 0
+            if value.startswith(needle):
+                return 1
+            return 2
+
+        work["_search_rank"] = work["name"].map(rank) if "name" in work.columns else 2
+        work = work.sort_values(
+            ["_search_rank", "name"],
+            ascending=[True, True],
+            na_position="last",
+            kind="stable",
         )
-        params = {"query": f"%{search}%", "exact": search, "prefix": f"{search}%"}
-    else:
-        statement = text(
-            f'SELECT {columns} FROM "{schema}"."{table}" '
-            "ORDER BY name NULLS LAST LIMIT :limit"
-        )
-        params = {"limit": max_rows}
-    with get_engine(profile_url(profile_name)).connect() as connection:
-        rows = connection.execute(statement, params).mappings().all()
-    records = []
-    for row in rows:
+    elif "name" in work.columns:
+        work = work.sort_values("name", na_position="last", kind="stable")
+
+    records: list[dict[str, Any]] = []
+    for row in work.head(max_rows).to_dict("records"):
         internal_id = row.get("id")
-        if internal_id in (None, ""):
+        if internal_id is None or pd.isna(internal_id):
             continue
-        name = str(row.get("name") or internal_id).strip()
+
+        def value_text(key: str) -> str:
+            value = row.get(key)
+            if value is None or (isinstance(value, float) and pd.isna(value)):
+                return ""
+            return str(value).strip()
+
+        name = value_text("name") or value_text("global_id") or str(internal_id)
+        global_id = value_text("global_id")
         if entity == "player":
-            values = (row.get("position"), row.get("current_league_key"))
+            subtitle_values = (value_text("position"), value_text("current_league_key"))
         else:
-            values = (row.get("short_name"),)
+            subtitle_values = (value_text("short_name"),)
+
         subtitle = " · ".join(
-            str(value).strip() for value in values
-            if value not in (None, "") and str(value).strip() != name
+            value for value in subtitle_values if value and value != name
         )
-        records.append({
-            "selection_id": str(internal_id),
-            "global_id": str(row.get("global_id") or ""),
-            "name": name,
-            "subtitle": subtitle,
-            "identity_status": "canonical" if row.get("global_id") not in (None, "") else "unreconciled",
-        })
+        records.append(
+            {
+                "selection_id": str(internal_id),
+                "global_id": global_id,
+                "name": name,
+                "subtitle": subtitle,
+                "identity_status": "canonical" if global_id else "unreconciled",
+            }
+        )
     return records
 
 
