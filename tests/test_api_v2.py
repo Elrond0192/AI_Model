@@ -85,6 +85,49 @@ def _patch_inference(monkeypatch, expected_competition: str = "RS") -> dict:
     monkeypatch.setattr(route, "resolve_league_id", fake_resolve_league)
     monkeypatch.setattr(route, "scope_prediction_context", fake_scope)
     monkeypatch.setattr(route, "StrictWhatIfEngine", FakeStrictWhatIfEngine)
+    monkeypatch.setattr(
+        route,
+        "_compatibility_comparison",
+        lambda *args, **kwargs: CompatibilityComparisonV2(
+            selected_team_score=0.74,
+            real_team_score=0.68,
+            score_delta_vs_real_team=0.06,
+            score_delta_vs_neutral=0.24,
+            selected_team=CompatibilityTeamProfileV2(
+                team_global_id="TEAM-IDGLOBAL",
+                team_name="Team",
+                season=2025,
+                competition=expected_competition,
+                pace=75.0,
+                three_point_attempt_rate=0.35,
+                assists_per_game=20.0,
+                star_player_usage=0.25,
+                offensive_rating=110.0,
+                defensive_rating=108.0,
+            ),
+            real_team=CompatibilityTeamProfileV2(
+                team_global_id="REAL-TEAM",
+                team_name="Real Team",
+                season=2025,
+                competition=expected_competition,
+                pace=74.0,
+                three_point_attempt_rate=0.34,
+                assists_per_game=19.0,
+                star_player_usage=0.24,
+                offensive_rating=109.0,
+                defensive_rating=107.0,
+            ),
+            player_profile=CompatibilityPlayerProfileV2(
+                position="SG",
+                usg_pct=0.21,
+                ts_pct=0.56,
+                points=14.0,
+                three_par=0.40,
+                dbpm=0.4,
+            ),
+        ),
+    )
+
     return seen
 
 
@@ -199,6 +242,9 @@ def test_v2_regular_season_uses_isolated_context(monkeypatch):
     assert body["competition"] == "RS"
     assert body["competition_support"]["mode"] == "isolated"
     assert body["competition_support"]["calibration_scope"] == "global"
+    assert body["compatibility"]["selected_team_score"] == 0.74
+    assert body["compatibility"]["real_team_score"] == 0.68
+    assert body["compatibility"]["score_delta_vs_real_team"] == 0.06
     assert body["explanation"]["context"] == "isolated_league_competition_as_of_source_season"
 
 
