@@ -1124,6 +1124,12 @@ def scope_prediction_context(
     # Resolve the requested target team against historical TeamCompetitionStats
     # by global_id before declaring the context unavailable.
     target_team = data.get("team_dict", {}).get(team_id)
+    if target_team is None:
+        # Historical snapshots can remap a current/source-local team_id to a
+        # different historical team_id. Preserve the original identity mapping
+        # on the snapshot and use it as the GlobalId lookup source.
+        source_team_dict = data.get("_source_team_dict", {})
+        target_team = source_team_dict.get(team_id) if isinstance(source_team_dict, dict) else None
     target_global_id = str((target_team or {}).get("global_id", "") or "").strip()
     history_frame = data.get("team_season_stats", pd.DataFrame())
     if target_global_id and not history_frame.empty and "global_id" in history_frame.columns:
