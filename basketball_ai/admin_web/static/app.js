@@ -383,7 +383,11 @@ async function renderDiagnostics(){
     if(q.length<2)return;
     try{
       const data=await api('/admin-api/scenario-entities?entity='+encodeURIComponent(entity)+'&q='+encodeURIComponent(q)+'&limit=12');
-      $(selectSelector).innerHTML='<option value="">'+esc(placeholder)+'</option>'+(data.items||[]).map(item=>'<option value="'+esc(item.global_id||'')+'" data-league="'+esc(item.league_key||'')+'" data-current-team="'+esc(item.current_team_global_id||'')+'" data-current-team-name="'+esc(item.current_team_name||'')+'">'+esc(item.name||item.global_id||item.selection_id)+'</option>').join('');
+      $(selectSelector).innerHTML='<option value="">'+esc(placeholder)+'</option>'+(data.items||[]).map(item=>{
+        const leagues=(item.league_keys||[]).join(' / ');
+        const label=[item.name||item.global_id||item.selection_id,leagues].filter(Boolean).join(' · ');
+        return '<option value="'+esc(item.global_id||'')+'" data-league="'+esc(item.league_key||'')+'" data-leagues="'+esc(leagues)+'" data-current-team="'+esc(item.current_team_global_id||'')+'" data-current-team-name="'+esc(item.current_team_name||'')+'">'+esc(label)+'</option>';
+      }).join('');
     }catch(e){toast(e.message,'error');}
   }
   let searchTimer;
