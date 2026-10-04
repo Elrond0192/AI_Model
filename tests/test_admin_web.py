@@ -173,6 +173,8 @@ def test_helpers_and_static_assets(monkeypatch, tmp_path):
     assert "Dati e snapshot" in html
     assert "Model Registry" in html
     assert "BB-Rating" in html
+    assert 'id="diag-team-search"' in html
+    assert 'id="diag-team"' in html
     assert "bb-rating-calibrate" in html
     assert "--sidebar" in css
     assert "renderOverview" in js
