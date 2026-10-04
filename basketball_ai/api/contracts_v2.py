@@ -26,6 +26,40 @@ class CompetitionSupportV2(BaseModel):
     calibration_samples: int = Field(ge=0)
 
 
+class CompatibilityPlayerProfileV2(BaseModel):
+    position: str
+    usg_pct: float
+    ts_pct: float
+    points: float
+    three_par: float
+    dbpm: float
+
+
+class CompatibilityTeamProfileV2(BaseModel):
+    team_global_id: str | None = None
+    team_name: str
+    season: int
+    competition: str
+    pace: float
+    three_point_attempt_rate: float
+    assists_per_game: float
+    star_player_usage: float
+    offensive_rating: float
+    defensive_rating: float
+
+
+class CompatibilityComparisonV2(BaseModel):
+    selected_team_score: float = Field(ge=0.0, le=1.0)
+    real_team_score: float | None = Field(default=None, ge=0.0, le=1.0)
+    score_delta_vs_real_team: float | None = None
+    score_delta_vs_neutral: float
+    neutral_score: float = 0.5
+    selected_team: CompatibilityTeamProfileV2
+    real_team: CompatibilityTeamProfileV2 | None = None
+    player_profile: CompatibilityPlayerProfileV2
+    methodology: Literal["competition_temporal_knn"] = "competition_temporal_knn"
+
+
 class PlayerTeamPredictionRequestV2(BaseModel):
     player_global_id: str = Field(min_length=1, max_length=128)
     team_global_id: str = Field(min_length=1, max_length=128)
@@ -66,5 +100,6 @@ class PlayerTeamPredictionV2(PredictionContextV2):
     confidence_high_100: float | None = None
     prediction_calibration_version: str | None = None
     competition_support: CompetitionSupportV2
+    compatibility: CompatibilityComparisonV2
     generated_at: datetime
     explanation: dict[str, Any] = Field(default_factory=dict)
