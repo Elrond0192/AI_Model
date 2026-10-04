@@ -7,6 +7,12 @@ from types import SimpleNamespace
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from basketball_ai.api.contracts_v2 import (
+    CompatibilityComparisonV2,
+    CompatibilityPlayerProfileV2,
+    CompatibilityTeamProfileV2,
+)
+
 
 def _fake_state(app) -> None:
     ensemble = SimpleNamespace(
