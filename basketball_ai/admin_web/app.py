@@ -1011,9 +1011,9 @@ def _scenario_entity_rows(entity: str, query: str, limit: int = 12) -> list[dict
         contexts: list[dict[str, Any]] = []
         if entity == "player":
             stats_frame = loaded.get("player_stats")
-            if isinstance(stats_frame, pd.DataFrame) and "player_global_id" in stats_frame.columns:
+            if isinstance(stats_frame, pd.DataFrame) and "player_id" in stats_frame.columns:
                 context_rows = stats_frame[
-                    stats_frame["player_global_id"].astype(str).str.strip() == global_id
+                    stats_frame["player_id"].map(_to_int) == _to_int(internal_id)
                 ].copy()
                 if not context_rows.empty and "league_key" in context_rows.columns:
                     context_rows["_season_year"] = _numeric_seasons(context_rows)
