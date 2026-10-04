@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import json
 import os
+import re
 from pathlib import Path
 import secrets
 import threading
@@ -64,6 +65,8 @@ CSRF_COOKIE = "hm_ai_admin_csrf"
 COOKIE_SECURE = os.getenv("ADMIN_COOKIE_SECURE", "true").strip().lower() not in {"0", "false", "no"}
 COOKIE_TTL_DAYS = int(os.getenv("SESSION_COOKIE_TTL_DAYS", "7"))
 SEASON_LIFECYCLE_FILE = Path(os.getenv("SEASON_LIFECYCLE_FILE", "/app/config/season_lifecycle.json"))
+
+_SCHEMA_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
 @dataclass
