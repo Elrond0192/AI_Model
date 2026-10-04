@@ -187,6 +187,56 @@ def test_scenarios_fail_explicitly_when_required_entities_are_missing():
 
 
 
+def test_player_intelligence_analysis_layers():
+    engine = _engine()
+    for scenario in (
+        "metric_explanation",
+        "role_analysis",
+        "performance_stability",
+        "team_usage_analysis",
+        "regression_risk",
+        "potential_synthesis",
+        "shooting_decomposition",
+        "defensive_decomposition",
+    ):
+        players = [1]
+        teams = [101] if scenario == "team_usage_analysis" else []
+        result = engine.evaluate(
+            {"scenario": scenario, "season": 2024, "competition": "RS"},
+            players, teams, 10, None,
+        )
+        assert result["result"]["player"] == "Alpha"
+        assert result["support"]["method"]
+
+
+def test_metric_explanation_uses_same_context_percentiles():
+    result = _engine().evaluate(
+        {"scenario": "metric_explanation", "season": 2024, "competition": "RS"},
+        [1], [], 10, None,
+    )
+    metrics = {row["metric"]: row for row in result["result"]["metrics"]}
+    assert metrics["rating"]["context_percentile"] is not None
+    assert metrics["usg_pct"]["meaning"] == "Share of team possessions used"
+
+
+def test_role_analysis_tracks_current_role_and_history():
+    result = _engine().evaluate(
+        {"scenario": "role_analysis", "season": 2024, "competition": "RS"},
+        [1], [], 10, None,
+    )
+    assert result["result"]["current_role"] == "secondary_creator"
+    assert len(result["result"]["history"]) == 2
+
+
+def test_regression_risk_is_descriptive_not_probability():
+    result = _engine().evaluate(
+        {"scenario": "regression_risk", "season": 2024, "competition": "RS"},
+        [1], [], 10, None,
+    )
+    assert 0.0 <= result["result"]["risk_index"] <= 1.0
+    assert "not a calibrated probability" in result["limitations"][0]
+
+
 def test_decomposition():
     result = _engine().evaluate({"scenario": "performance_decomposition", "season": 2024, "competition": "RS"}, [1], [], 10, None)
     assert result["result"]["previous_season"] == 2023
