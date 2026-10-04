@@ -68,24 +68,52 @@ function updateTop(o){$('#top-db').textContent=o.database||'not selected';$('#to
 
 async function renderOverview(){
   const o=await api('/admin-api/overview');App.overview=o;updateTop(o);
-  const s=o.summary||{},bb=o.bb_rating||{};$('#overview-kpis').innerHTML=[
-    kpi('▤','Database',o.database||'Not selected',`<span class="dot ${o.data_loaded?'green':'yellow'}"></span>${o.data_loaded?'Connesso e caricato':'Da caricare'}`),
-    kpi('▥','Dati caricati',fmtInt(s.player_rows),'<span>righe player/competition</span>','green'),
-    kpi('◉','Competitions',String((s.competitions||[]).length||'—'),'<span>caricate</span>','violet'),
-    kpi('⬡','Prediction Model',shortId(o.production?.run_id),o.production?'<span class="dot green"></span>Production':'<span class="dot red"></span>Not promoted','orange'),
-    kpi('◆','BB-Rating',bb.bb_rating_version?'v'+bb.bb_rating_version:'—',bb.ready?'<span class="dot green"></span>Ready':'<span class="dot yellow"></span>Da verificare','violet'),
-    kpi('⌘','Stato API',o.api?.online?'Online':'Offline',`<span class="dot ${o.api?.online?'green':'red'}"></span>V2`,'green')
+  const s=o.summary||{},bb=o.bb_rating||{},prod=o.production||{},cand=o.candidate||{},q=o.candidate_quality||{};
+  const allReady=(o.api?.online&&o.data_loaded&&bb.ready&&!!prod.run_id);
+  const dot=$('#overview-system-dot');const status=$('#overview-system-status');
+  if(dot)dot.className='hero-status-dot '+(allReady?'online':'warning');
+  if(status)status.textContent=allReady?'SYSTEM OPERATIONAL':'ACTION REQUIRED';
+  const systemDot=$('#system-dot'),systemLabel=$('#system-label');
+  if(systemDot)systemDot.className='system-dot '+(allReady?'online':'warning');
+  if(systemLabel)systemLabel.textContent=allReady?'SYSTEM OPERATIONAL':'SYSTEM ATTENTION';
+
+  $('#overview-models').innerHTML=[
+    ['Prediction Model',prod.run_id?'Production':'Not promoted',prod.run_id?shortId(prod.run_id):'No active candidate','registry','blue'],
+    ['BB-Rating',bb.ready?'Serving ready':'Needs verification',bb.bb_rating_version?'v'+bb.bb_rating_version:'—','bb-rating','violet'],
+    ['Future Performance','Independent model','Season-ahead forecasts','future-performance','cyan'],
+    ['Metric Rating','Analytical layer','Metric-level strengths','diagnostics','green']
+  ].map(([name,state,meta,page,tone])=>`<button class="model-strip-card ${tone} jump" data-page="${page}"><span class="model-strip-icon"></span><span class="model-strip-copy"><strong>${esc(name)}</strong><small>${esc(state)}</small><em>${esc(meta)}</em></span><i class="ph ph-arrow-up-right"></i></button>`).join('');
+
+  $('#overview-kpis').innerHTML=[
+    kpi('▤','Database',o.database||'Not selected',`<span class="dot ${o.data_loaded?'green':'yellow'}"></span>${o.data_loaded?'Connected and loaded':'Needs setup'}`),
+    kpi('▥','Player observations',fmtInt(s.player_rows),'<span>player / competition rows</span>','green'),
+    kpi('◉','Competitions',String((s.competitions||[]).length||'—'),'<span>loaded</span>','violet'),
+    kpi('⬡','Production',prod.run_id?'Active':'Not promoted',prod.run_id?`<span class="dot green"></span>${esc(shortId(prod.run_id))}`:'<span class="dot red"></span>Promotion required','orange'),
+    kpi('◆','BB-Rating',bb.bb_rating_version?'v'+bb.bb_rating_version:'—',bb.ready?'<span class="dot green"></span>Serving ready':'<span class="dot yellow"></span>Verify artifact','violet'),
+    kpi('⌘','API',o.api?.online?'Online':'Offline',`<span class="dot ${o.api?.online?'green':'red'}"></span>V2 inference`,'green')
   ].join('');
-  $('#readiness-body').innerHTML=o.readiness.map(r=>{const page=r.action==='data'?'data':r.action;const label=r.action==='registry'?'Apri registry':r.action==='training'?'Apri training':r.action==='bb-rating'?'Apri BB-Rating':r.action==='future-performance'?'Apri Future Performance':'Apri dati';return `<tr><td><strong>${esc(r.component)}</strong></td><td><span class="status ${r.status}"><span class="status-dot">${r.status==='ok'?'✓':r.status==='danger'?'×':'△'}</span>${esc(r.label)}</span></td><td>${esc(r.detail)}</td><td class="right"><button class="btn btn-small btn-secondary readiness-action" data-page="${esc(page)}">${label}</button></td></tr>`;}).join('');
+
+  $('#readiness-body').innerHTML=(o.readiness||[]).map(r=>{
+    const page=r.action==='data'?'data':r.action;
+    const labels={registry:'Open registry',training:'Open training','bb-rating':'Open BB-Rating','future-performance':'Open Future Performance',data:'Open data'};
+    return `<tr><td><strong>${esc(r.component)}</strong></td><td><span class="status ${r.status}"><span class="status-dot">${r.status==='ok'?'✓':r.status==='danger'?'×':'△'}</span>${esc(r.label)}</span></td><td>${esc(r.detail)}</td><td class="right"><button class="btn btn-small btn-secondary readiness-action" data-page="${esc(page)}">${esc(labels[page]||'Open')}</button></td></tr>`;
+  }).join('');
   $$('.readiness-action').forEach(b=>b.addEventListener('click',()=>navigate(b.dataset.page)));
-  const prod=o.production||{},cand=o.candidate||{};
-  $('#overview-registry').innerHTML=(prod.run_id||cand.run_id)?summaryRows([['Production',prod.run_id?shortId(prod.run_id):'—'],['Candidate',cand.run_id?shortId(cand.run_id):'—'],['Candidate RMSE',cand.overall_rmse!==undefined?fmt(cand.overall_rmse):'—']]):empty('⬡','Nessun modello registrato','Esegui un training per generare il primo candidate.','Avvia training','training');
-  const q=o.candidate_quality||{};$('#overview-backtest').innerHTML=q.rmse!==null&&q.rmse!==undefined?summaryRows([['RMSE',fmt(q.rmse)],['MAE',fmt(q.mae)],['Coverage',pct(q.coverage)],['Folds',String(q.seasons||0)]]):empty('▤','Nessun backtest disponibile','Esegui un training per generare un candidate e il suo backtest.','Esegui training','training');
-  const quality=[['RMSE',fmt(q.rmse)],['MAE',fmt(q.mae)],['R²',fmt(q.r2)],['Coverage',pct(q.coverage)],['Stagioni',q.seasons??'—'],['Competitions',q.competitions??'—']];
+
+  $('#overview-registry').innerHTML=(prod.run_id||cand.run_id)?summaryRows([
+    ['Production',prod.run_id?shortId(prod.run_id):'—'],
+    ['Candidate',cand.run_id?shortId(cand.run_id):'—'],
+    ['Candidate RMSE',cand.overall_rmse!==undefined?fmt(cand.overall_rmse):'—']
+  ]):empty('⬡','No model registered','Run training to generate the first candidate.','Open training','training');
+
+  $('#overview-backtest').innerHTML=q.rmse!==null&&q.rmse!==undefined?summaryRows([
+    ['RMSE',fmt(q.rmse)],['MAE',fmt(q.mae)],['Coverage',pct(q.coverage)],['OOS folds',String(q.seasons||0)]
+  ]):empty('▤','No backtest available','Run training to generate a candidate and its walk-forward report.','Open training','training');
+
+  const quality=[['RMSE',fmt(q.rmse)],['MAE',fmt(q.mae)],['R²',fmt(q.r2)],['Coverage',pct(q.coverage)],['Seasons',q.seasons??'—'],['Competitions',q.competitions??'—']];
   $('#candidate-quality').innerHTML=quality.map(([a,b])=>`<div class="quality-card"><span>${esc(a)}</span><strong>${esc(b)}</strong></div>`).join('');
   $$('.jump',root).forEach(b=>b.addEventListener('click',()=>navigate(b.dataset.page)));
 }
-
 async function renderData(){
   async function loadSnapshots(){const data=await api('/admin-api/snapshots'),active=data.active?.snapshot_id,items=data.snapshots||[];$('#snapshots-list').innerHTML=items.length?items.map(s=>`<div class="profile-card ${active===s.snapshot_id?'active':''}"><div class="profile-top"><div class="profile-name">${esc(s.snapshot_id)}</div>${active===s.snapshot_id?'<span class="registry-badge">attivo</span>':''}</div><div class="profile-meta"><span>${esc(s.profile||'—')}</span><span>${esc((s.seasons||[]).length?`${s.seasons[0]}–${s.seasons.at(-1)}`:'—')}</span><span>${fmtInt(s.player_rows)} righe giocatore</span><span>SHA ${esc(String(s.sha256||'').slice(0,12))}</span></div><div class="button-row"><button class="btn btn-primary btn-small snapshot-activate" data-id="${esc(s.snapshot_id)}" ${active===s.snapshot_id?'disabled':''}>Usa per il training</button></div></div>`).join(''):empty('◫','Nessuno storico pronto','Nel riquadro del profilo, verifica la connessione e scegli “Prepara storico modello”.');$$('.snapshot-activate').forEach(b=>b.addEventListener('click',async()=>{b.disabled=true;try{const result=await api(`/admin-api/snapshots/${encodeURIComponent(b.dataset.id)}/activate`,{method:'POST',body:{}});toast(`Storico ${result.snapshot?.snapshot_id||b.dataset.id} attivato`);await loadSnapshots();}catch(e){toast(e.message,'error');b.disabled=false;}}));}
   async function loadProfiles(){
