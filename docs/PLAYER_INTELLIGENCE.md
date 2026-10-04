@@ -28,7 +28,7 @@ The registry is exposed at:
 
 ## Still intentionally limited
 
-- **causal_team_effect** remains unavailable as a causal claim. It requires explicit identification, confounder control and a defensible counterfactual design.
+- **causal_team_effect** is now partially answerable: it measures the observed association between a player’s team context and his own rating across team-season observations, including team switches when available. The causal effect itself remains unavailable because explicit identification, confounder control and a defensible counterfactual design are still missing.
 - **potential_synthesis** does not replace the dedicated Prediction/Future Performance models.
 - **team_counterfactual** remains a fit/scenario estimate, not a causal statement.
 
@@ -55,9 +55,10 @@ The `player_intelligence` scenario now composes the appropriate analysis layers 
 - `shot_profile` → shooting decomposition
 - `defensive_reason` → defensive decomposition
 - `clutch_value` → clutch analysis
+- `causal_team_effect` → team-context association + observed team-switch analysis
 
 This keeps the analytical layers independent while giving Chat V3 a single evidence-composition entry point.
 
 ## Final boundary
 
-The only intentionally unavailable Player Intelligence question is a **causal team-effect claim**. A statement such as “Team X caused this player to perform worse” requires an explicit intervention/counterfactual design and control of confounding. Existing compatibility and scenario models must therefore be presented as modeled fit/scenario estimates, not causal effects.
+The exact **causal team-effect claim** remains unavailable, but Chat V3 can now answer the user-facing question with an observational attribution. A statement such as “Team X caused this player to perform worse” is not supported; instead the response reports the player’s observed rating, the team-context association, observed team switches, and the remaining causal limitation.
