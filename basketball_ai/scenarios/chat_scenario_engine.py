@@ -555,7 +555,7 @@ class ChatScenarioEngine:
                 vals = pd.to_numeric(peers.get(metric), errors="coerce").dropna()
                 if vals.empty or not math.isfinite(value):
                     return 0.5
-                return float(vals.rank(pct=True).loc[vals.index[vals.index == vals.index[0]][0]]) if False else float((vals <= value).mean())
+                return float((vals <= value).mean())
 
             offense = pct("offensive_rating", values["offensive_rating"])
             defense = 1.0 - pct("defensive_rating", values["defensive_rating"])
