@@ -991,6 +991,12 @@ def _scenario_entity_rows(entity: str, query: str, limit: int = 12) -> list[dict
                 return ""
             return str(value).strip()
 
+        def value_text_from_row(source_row: Any, key: str) -> str:
+            value = source_row.get(key)
+            if value is None or (isinstance(value, float) and pd.isna(value)):
+                return ""
+            return str(value).strip()
+
         name = value_text("name") or value_text("global_id") or str(internal_id)
         global_id = value_text("global_id")
         if entity == "player":
@@ -1001,6 +1007,68 @@ def _scenario_entity_rows(entity: str, query: str, limit: int = 12) -> list[dict
         subtitle = " · ".join(
             value for value in subtitle_values if value and value != name
         )
+        league_keys: list[str] = []
+        contexts: list[dict[str, Any]] = []
+        if entity == "player":
+            stats_frame = loaded.get("player_stats")
+            if isinstance(stats_frame, pd.DataFrame) and "player_global_id" in stats_frame.columns:
+                context_rows = stats_frame[
+                    stats_frame["player_global_id"].astype(str).str.strip() == global_id
+                ].copy()
+                if not context_rows.empty and "league_key" in context_rows.columns:
+                    context_rows["_season_year"] = _numeric_seasons(context_rows)
+                    context_rows = context_rows.dropna(subset=["_season_year"]).sort_values(
+                        ["league_key", "_season_year", "competition"],
+                        ascending=[True, False, True],
+                        kind="stable",
+                    )
+                    for league_key, group in context_rows.groupby(
+                        context_rows["league_key"].astype(str).str.strip().str.upper(),
+                        sort=True,
+                    ):
+                        if not league_key:
+                            continue
+                        latest = group.iloc[0]
+                        team_id_text = value_text_from_row(latest, "team_id")
+                        contexts.append(
+                            {
+                                "league_key": league_key,
+                                "season": int(latest["_season_year"]),
+                                "competition": value_text_from_row(latest, "competition").upper(),
+                                "team_global_id": team_global_by_id.get(team_id_text, ""),
+                                "team_name": team_name_by_id.get(team_id_text, ""),
+                            }
+                        )
+                    league_keys = [item["league_key"] for item in contexts]
+        else:
+            team_history = loaded.get("team_season_stats")
+            if isinstance(team_history, pd.DataFrame) and "global_id" in team_history.columns:
+                context_rows = team_history[
+                    team_history["global_id"].astype(str).str.strip() == global_id
+                ].copy()
+                if not context_rows.empty and "league_key" in context_rows.columns:
+                    context_rows["_season_year"] = _numeric_seasons(context_rows)
+                    context_rows = context_rows.dropna(subset=["_season_year"]).sort_values(
+                        ["league_key", "_season_year"],
+                        ascending=[True, False],
+                        kind="stable",
+                    )
+                    for league_key, group in context_rows.groupby(
+                        context_rows["league_key"].astype(str).str.strip().str.upper(),
+                        sort=True,
+                    ):
+                        if not league_key:
+                            continue
+                        latest = group.iloc[0]
+                        contexts.append(
+                            {
+                                "league_key": league_key,
+                                "season": int(latest["_season_year"]),
+                                "competition": value_text_from_row(latest, "competition").upper(),
+                            }
+                        )
+                    league_keys = [item["league_key"] for item in contexts]
+
         records.append(
             {
                 "selection_id": str(internal_id),
@@ -1018,6 +1086,8 @@ def _scenario_entity_rows(entity: str, query: str, limit: int = 12) -> list[dict
                     if entity == "player"
                     else ""
                 ),
+                "league_keys": league_keys,
+                "contexts": contexts,
                 "identity_status": "canonical" if global_id else "unreconciled",
             }
         )
