@@ -248,6 +248,18 @@ def test_player_intelligence_orchestrates_question_layers():
     assert result["result"]["answer_mode"] == "evidence_composition"
 
 
+def test_causal_team_effect_returns_observational_association_without_causal_claim():
+    result = _engine().evaluate(
+        {"scenario": "causal_team_effect", "season": 2024, "competition": "RS"},
+        [1], [], 10, None,
+    )
+    assert result["result"]["causal_identification"] == "unavailable"
+    assert result["result"]["causal_effect"] is None
+    assert result["result"]["association"]["rating_vs_team_context_correlation"] is not None
+    assert result["support"]["method"] == "within_player_observational_team_context"
+    assert any("non un effet causale" in item for item in result["limitations"])
+
+
 def test_player_intelligence_rejects_unknown_question_key():
     with pytest.raises(ValueError, match="unsupported Player Intelligence question_key"):
         _engine().evaluate(
