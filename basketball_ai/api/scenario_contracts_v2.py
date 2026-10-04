@@ -13,6 +13,7 @@ SCENARIO_TYPES = {
     "player_competition",
     "team_competition",
     "player_trend",
+    "performance_decomposition",
     "team_trend",
     "player_compare",
     "team_compare",
