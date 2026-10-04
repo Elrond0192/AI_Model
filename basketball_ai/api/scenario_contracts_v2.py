@@ -51,6 +51,7 @@ SCENARIO_TYPES = {
     "roster_optimizer",
     "composite_scenario",
     "causal_effect",
+    "causal_team_effect",
 }
 
 _STYLE_KEYS = {
