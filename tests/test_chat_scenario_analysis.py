@@ -224,7 +224,7 @@ def test_role_analysis_tracks_current_role_and_history():
         {"scenario": "role_analysis", "season": 2024, "competition": "RS"},
         [1], [], 10, None,
     )
-    assert result["result"]["current_role"] == "secondary_creator"
+    assert result["result"]["current_role"] == "scoring_role"
     assert len(result["result"]["history"]) == 2
 
 
