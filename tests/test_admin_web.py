@@ -427,6 +427,8 @@ def test_scenario_entity_player_search_does_not_reference_team_short_name(monkey
 
     assert rows["items"][0]["name"] == "Bolmar"
     assert "short_name" not in captured["sql"]
+    assert "global_id::text" in captured["sql"]
+    assert "LIMIT 12" in captured["sql"]
     assert captured["params"]["query"] == "%Bolmar%"
 
 
