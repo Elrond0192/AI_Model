@@ -58,6 +58,7 @@ async function navigate(page){
     if(page==='scenarios')await renderScenarios();
     if(page==='registry')await renderRegistry();
     if(page==='health')await renderHealth();
+    if(page==='diagnostics')await renderDiagnostics();
     if(page==='audit')await renderAudit();
     if(page==='settings')await renderSettings();
   }catch(e){if(e?.name!=='AbortError')toast(e.message,'error');}
@@ -323,6 +324,56 @@ async function renderScenarios(){
 
 function registryCard(title,entry,tone=''){if(!entry||!entry.run_id)return `<div class="registry-card">${empty('⬡',`Nessun ${title.toLowerCase()}`,`Non è presente un run ${title.toLowerCase()} nel registry.`)}</div>`;return `<div class="registry-card"><span class="registry-badge ${tone}">${esc(title)}</span><div class="registry-run">${esc(entry.run_id)}</div><div class="registry-meta">Version: ${esc(entry.model_version||'—')}<br>Data cutoff: ${esc(entry.data_cutoff||'—')}<br>OOT RMSE: ${esc(fmt(entry.overall_rmse))}<br>Registered: ${esc(entry.registered_at||entry.promoted_at||'—')}</div></div>`;}
 async function renderRegistry(){const d=await api('/admin-api/registry');$('#top-model').textContent=shortId(d.production?.run_id);$('#registry-cards').innerHTML=registryCard('Production',d.production)+registryCard('Candidate',d.candidate,'candidate');const hist=d.history||[];$('#registry-history').innerHTML=hist.length?[...hist].reverse().map(h=>`<tr><td>${esc(h.at||'—')}</td><td>${esc(h.event||'—')}</td><td>${esc(h.run_id||'—')}</td></tr>`).join(''):'<tr><td colspan="3" class="muted-inline">Nessun evento nel registry.</td></tr>';const check=$('#registry-confirm'),prom=$('#promote-btn'),roll=$('#rollback-btn');check.addEventListener('change',()=>{prom.disabled=!check.checked||!d.candidate;roll.disabled=!check.checked||!d.previous;});prom.addEventListener('click',async()=>{prom.disabled=true;try{const r=await api('/admin-api/registry/promote',{method:'POST',body:{confirm:true}});toast(r.reason||'Candidate promoted');await renderRegistry();}catch(e){toast(e.message,'error');prom.disabled=false;}});roll.addEventListener('click',async()=>{roll.disabled=true;try{const r=await api('/admin-api/registry/rollback',{method:'POST',body:{confirm:true}});toast(r.reason||'Rollback completed');await renderRegistry();}catch(e){toast(e.message,'error');roll.disabled=false;}});}
+
+
+async function renderDiagnostics(){
+  const results=$('#diagnostics-results'), summary=$('#diagnostics-summary');
+  let running=0, passed=0, failed=0;
+  function escJson(v){try{return esc(JSON.stringify(v,null,2));}catch(_){return esc(String(v));}}
+  function renderResult(data){
+    const ok=data.overall_ok;
+    if(ok)passed++;else failed--;
+    const checks=(data.checks||[]).map(c=>'<div class="diagnostic-check '+(c.ok?'ok':'fail')+'"><span>'+(c.ok?'✓':'×')+'</span>'+esc(c.label)+'</div>').join('');
+    const r=data.result||{};
+    return '<article class="diagnostic-card '+(ok?'ok':'fail')+'"><div class="diagnostic-card-head"><div><strong>'+esc(data.model||'Health')+'</strong><span>'+esc(data.endpoint||'')+'</span></div><div class="diagnostic-badges"><span class="status '+(ok?'ok':'danger')+'">'+(ok?'PASS':'FAIL')+'</span><span class="diagnostic-latency">'+esc(r.latency_ms??'—')+' ms</span></div></div><div class="diagnostic-checks">'+checks+'</div><details><summary>Request / response</summary><div class="diagnostic-json"><div><small>Request</small><pre>'+escJson(data.request||{})+'</pre></div><div><small>Response</small><pre>'+escJson(r.body||r)+'</pre></div></div></details></article>';
+  }
+  async function run(model){
+    const player=$('#diag-player').value;
+    if(!player){toast('Seleziona prima un giocatore','error');return null;}
+    running++; $('.diag-run').forEach(b=>b.disabled=true); $('#diagnostics-all').disabled=true;
+    try{
+      const body={model,player_global_id:player,team_global_id:$('#diag-team').value.trim(),league:$('#diag-league').value.trim(),season:Number($('#diag-season').value),competition:$('#diag-competition').value,metrics:$('#diag-metrics').value.split(',').map(x=>x.trim()).filter(Boolean)};
+      const data=await api('/admin-api/diagnostics/test',{method:'POST',body});
+      results.insertAdjacentHTML('afterbegin',renderResult(data));
+      summary.textContent='Ultimi test: '+passed+' PASS · '+failed+' FAIL';
+      return data;
+    }catch(e){toast(e.message,'error');return null;}
+    finally{running--;if(!running){$('.diag-run').forEach(b=>b.disabled=false);$('#diagnostics-all').disabled=false;}}
+  }
+  async function searchPlayers(){
+    const q=$('#diag-player-search').value.trim();
+    if(q.length<2)return;
+    try{
+      const data=await api('/admin-api/scenario-entities?entity=player&q='+encodeURIComponent(q)+'&limit=12');
+      $('#diag-player').innerHTML='<option value="">Seleziona giocatore</option>'+(data.items||[]).map(p=>'<option value="'+esc(p.global_id||p.selection_id)+'">'+esc(p.name||p.global_id||p.selection_id)+'</option>').join('');
+    }catch(e){toast(e.message,'error');}
+  }
+  let searchTimer;
+  $('#diag-player-search').addEventListener('input',()=>{clearTimeout(searchTimer);searchTimer=setTimeout(searchPlayers,300);});
+  $('.diag-run').forEach(b=>b.addEventListener('click',()=>run(b.dataset.model)));
+  $('#diagnostics-all').addEventListener('click',async()=>{
+    results.innerHTML='';
+    const models=['prediction','bb_rating','future_performance','metric_rating'];
+    for(const model of models)await run(model);
+  });
+  $('#diagnostics-health').addEventListener('click',async()=>{
+    try{
+      const data=await api('/admin-api/diagnostics/health-check',{method:'POST',body:{}});
+      data.checks.forEach(item=>results.insertAdjacentHTML('afterbegin',renderResult({model:'Health',endpoint:item.endpoint,result:item.result,checks:[{label:item.label,ok:item.overall_ok}],overall_ok:item.overall_ok})));
+      summary.textContent='Health Check: '+(data.overall_ok?'PASS':'FAIL');
+    }catch(e){toast(e.message,'error');}
+  });
+}
 
 async function renderHealth(){async function refresh(){const d=await api('/admin-api/api-health');const live=!!d.live?.ok,ready=!!d.ready?.ok,bb=d.bb_rating||{};$('#top-api').textContent=live?'● V2':'● OFFLINE';$('#top-api').className=live?'meta-ok':'';$('#health-kpis').innerHTML=[kpi('⌘','API process',live?'Online':'Offline',`<span class="dot ${live?'green':'red'}"></span>/health/live`,'green'),kpi('✓','Inference ready',ready?'Ready':'Not ready',`<span class="dot ${ready?'green':'yellow'}"></span>/health/ready`),kpi('◆','BB-Rating',bb.loaded?'Loaded':'Not loaded',bb.uncertainty_loaded?'<span class="dot green"></span>uncertainty loaded':'<span class="dot red"></span>uncertainty missing','violet'),kpi('↗','Internal base',d.base_url||'—','<span>Docker network</span>','violet'),kpi('⬡','API contract','V2','<span>server-to-server</span>','orange')].join('');$('#health-checks').innerHTML=[['Live endpoint',d.live],['Readiness endpoint',d.ready]].map(([name,x])=>`<div class="health-item"><div class="health-copy"><strong>${esc(name)}</strong><span>${esc(x?.error||JSON.stringify(x?.body||{}).slice(0,160))}</span></div><span class="status ${x?.ok?'ok':'danger'}">${x?.ok?'✓ OK':'× KO'}</span></div>`).join('');$('#health-endpoints').innerHTML=(d.endpoints||[]).map(e=>`<div class="endpoint-item"><code>${esc(e)}</code><span class="registry-badge">V2</span></div>`).join('');}$('#refresh-health').addEventListener('click',()=>refresh().catch(e=>toast(e.message,'error')));await refresh();}
 
