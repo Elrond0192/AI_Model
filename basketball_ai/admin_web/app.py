@@ -965,16 +965,20 @@ def _scenario_entity_rows(entity: str, query: str, limit: int = 12) -> list[dict
 
     records: list[dict[str, Any]] = []
     team_global_by_id: dict[str, str] = {}
+    team_name_by_id: dict[str, str] = {}
     if entity == "player":
         teams_frame = loaded.get("teams")
         if isinstance(teams_frame, pd.DataFrame) and {"id", "global_id"}.issubset(teams_frame.columns):
-            team_global_by_id = {
-                str(row["id"]): str(row["global_id"])
-                for row in teams_frame.to_dict("records")
-                if row.get("id") is not None
-                and not pd.isna(row.get("id"))
-                and row.get("global_id") not in (None, "")
-            }
+            for row in teams_frame.to_dict("records"):
+                if row.get("id") is None or pd.isna(row.get("id")):
+                    continue
+                key = str(row["id"])
+                global_value = row.get("global_id")
+                if global_value not in (None, ""):
+                    team_global_by_id[key] = str(global_value)
+                name_value = row.get("name")
+                if name_value not in (None, ""):
+                    team_name_by_id[key] = str(name_value).strip()
 
     for row in work.head(max_rows).to_dict("records"):
         internal_id = row.get("id")
@@ -1006,6 +1010,11 @@ def _scenario_entity_rows(entity: str, query: str, limit: int = 12) -> list[dict
                 "league_key": value_text("current_league_key") if entity == "player" else value_text("league_key"),
                 "current_team_global_id": (
                     team_global_by_id.get(value_text("current_team_id"), "")
+                    if entity == "player"
+                    else ""
+                ),
+                "current_team_name": (
+                    team_name_by_id.get(value_text("current_team_id"), "")
                     if entity == "player"
                     else ""
                 ),
