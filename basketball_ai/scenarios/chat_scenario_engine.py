@@ -1316,7 +1316,13 @@ class ChatScenarioEngine:
     def _player_intelligence(self, spec, players, teams, source_league, target_league):
         if not players:
             raise ValueError("player is required")
-        key = str(spec.get("parameters", {}).get("question_key", "current_level")).strip().lower()
+        parameters = spec.get("parameters", {}) or {}
+        raw_keys = parameters.get("question_keys")
+        if isinstance(raw_keys, (list, tuple)):
+            keys = [str(item).strip().lower() for item in raw_keys if str(item).strip()]
+        else:
+            keys = [str(parameters.get("question_key", "current_level")).strip().lower()]
+        keys = list(dict.fromkeys(keys))[:8]
         bundles = {
             "current_level": ("player_competition",),
             "why_performing": ("performance_decomposition", "metric_explanation"),
@@ -1334,9 +1340,13 @@ class ChatScenarioEngine:
             "clutch_value": ("clutch_analysis",),
             "causal_team_effect": ("causal_team_effect",),
         }
-        scenarios = bundles.get(key)
-        if scenarios is None:
-            raise ValueError(f"unsupported Player Intelligence question_key: {key}")
+        selected_bundles = []
+        for key in keys:
+            scenarios = bundles.get(key)
+            if scenarios is None:
+                raise ValueError(f"unsupported Player Intelligence question_key: {key}")
+            selected_bundles.extend(scenarios)
+        scenarios = tuple(dict.fromkeys(selected_bundles))
         dispatch = {
             "player_competition": self._player_competition,
             "performance_decomposition": self._performance_decomposition,
@@ -1369,12 +1379,13 @@ class ChatScenarioEngine:
         return {
             "result": {
                 "player": self._player_name(players[0]),
-                "question_key": key,
+                "question_key": keys[0] if len(keys) == 1 else None,
+                "question_keys": keys,
                 "analyses": analyses,
                 "answer_mode": "evidence_composition",
             },
             "evidence": [
-                {"type": "question_analysis_registry", "question_key": key},
+                {"type": "question_analysis_registry", "question_keys": keys},
                 {"type": "composed_analysis_layers", "count": len(analyses)},
             ],
             "support": {
