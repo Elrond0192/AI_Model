@@ -398,17 +398,19 @@ async function renderDiagnostics(){
     const currentTeam=selected?.dataset?.currentTeam||'';
     if(currentTeam){
       const teamSelect=$('#diag-team');
-      const existing=[...teamSelect.options].find(option=>option.value===currentTeam);
-      if(existing){
-        teamSelect.value=currentTeam;
-      }else{
-        const option=document.createElement('option');
-        option.value=currentTeam;
-        option.textContent=selected?.dataset?.currentTeamName||'Squadra attuale del giocatore';
-        option.dataset.league=league;
-        option.dataset.currentTeam='';
-        teamSelect.appendChild(option);
-        teamSelect.value=currentTeam;
+      if(!teamSelect.value){
+        const existing=[...teamSelect.options].find(option=>option.value===currentTeam);
+        if(existing){
+          teamSelect.value=currentTeam;
+        }else{
+          const option=document.createElement('option');
+          option.value=currentTeam;
+          option.textContent=selected?.dataset?.currentTeamName||'Squadra attuale del giocatore';
+          option.dataset.league=league;
+          option.dataset.currentTeam='';
+          teamSelect.appendChild(option);
+          teamSelect.value=currentTeam;
+        }
       }
     }
   });
