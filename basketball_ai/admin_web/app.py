@@ -1606,10 +1606,6 @@ def scenario_entities(
     entity = entity.strip().lower()
     if entity not in {"player", "team"}:
         raise HTTPException(status_code=400, detail="entity must be player or team")
-    with STATE.lock:
-        loaded = STATE.data is not None
-    if not loaded:
-        raise HTTPException(status_code=409, detail="Carica prima il database nella pagina Dati e snapshot")
     return {"entity": entity, "items": _scenario_entity_rows(entity, q, limit)}
 
 
