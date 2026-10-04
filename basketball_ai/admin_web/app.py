@@ -157,6 +157,15 @@ class SeasonLifecyclePayload(BaseModel):
     season: int = Field(ge=2000, le=2100)
     status: str = Field(pattern="^(in_progress|complete|locked)$")
 
+class DiagnosticPayload(BaseModel):
+    model: str = Field(pattern="^(prediction|bb_rating|future_performance|metric_rating)$")
+    player_global_id: str = Field(min_length=1, max_length=128)
+    team_global_id: str = Field(default="", max_length=128)
+    league: str = Field(default="ITA1", min_length=1, max_length=64)
+    season: int = Field(default=2025, ge=2000, le=2100)
+    competition: str = Field(default="RS", min_length=1, max_length=32)
+    metrics: list[str] = Field(default_factory=list, max_length=30)
+
 
 def _utcnow() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -806,6 +815,82 @@ def _training_worker(
             error=_safe_error(exc),
             finished_at=_utcnow(),
         )
+
+
+
+def _api_request(path: str, payload: dict[str, Any], timeout: float = 15.0) -> dict[str, Any]:
+    api_key = os.environ.get("API_KEY", "").strip()
+    headers = {"Accept": "application/json", "Content-Type": "application/json"}
+    if api_key:
+        headers["X-API-Key"] = api_key
+    request = URLRequest(f"{API_BASE_URL}{path}", data=json.dumps(payload).encode("utf-8"), headers=headers, method="POST")
+    started = datetime.now(timezone.utc)
+    try:
+        with urlopen(request, timeout=timeout) as response:
+            raw = response.read().decode("utf-8", errors="replace")
+            try:
+                body = json.loads(raw)
+            except json.JSONDecodeError:
+                body = {"raw": raw[:5000]}
+            elapsed_ms = (datetime.now(timezone.utc) - started).total_seconds() * 1000
+            return {"ok": 200 <= response.status < 300, "status": response.status, "latency_ms": round(elapsed_ms, 1), "body": body}
+    except HTTPError as exc:
+        raw = exc.read().decode("utf-8", errors="replace")
+        try:
+            body = json.loads(raw)
+        except json.JSONDecodeError:
+            body = {"raw": raw[:5000]}
+        elapsed_ms = (datetime.now(timezone.utc) - started).total_seconds() * 1000
+        return {"ok": False, "status": exc.code, "latency_ms": round(elapsed_ms, 1), "body": body}
+    except (URLError, TimeoutError, OSError) as exc:
+        elapsed_ms = (datetime.now(timezone.utc) - started).total_seconds() * 1000
+        return {"ok": False, "status": None, "latency_ms": round(elapsed_ms, 1), "body": None, "error": str(exc)[:500]}
+
+def _diagnostic_request(payload: DiagnosticPayload) -> tuple[str, dict[str, Any]]:
+    base = {"player_global_id": payload.player_global_id.strip(), "league": payload.league.strip().upper(), "season": payload.season}
+    if payload.model == "prediction":
+        if not payload.team_global_id.strip():
+            raise HTTPException(status_code=400, detail="Prediction richiede anche Team Global ID")
+        return "/api/v2/predictions/player-team", {**base, "team_global_id": payload.team_global_id.strip(), "competition": payload.competition.strip().upper()}
+    if payload.model == "bb_rating":
+        return "/api/v2/bb-rating/player", {**base, "phase": payload.competition.strip().upper(), "include_history": True, "history_limit": 8}
+    if payload.model == "future_performance":
+        return "/api/v2/future-performance/player", {**base, "competition": payload.competition.strip().upper()}
+    metrics = [str(value).strip().upper() for value in payload.metrics if str(value).strip()]
+    if not metrics:
+        metrics = ["RAPTOR", "LEBRON", "VORP"]
+    return "/api/v2/metric-rating/player-snapshot", {**base, "phase": payload.competition.strip().upper(), "metrics": metrics}
+
+def _diagnostic_assertions(model: str, result: dict[str, Any]) -> list[dict[str, Any]]:
+    body = result.get("body") if isinstance(result.get("body"), dict) else {}
+    checks = [{"label": "HTTP 2xx", "ok": bool(result.get("ok"))}]
+    if model == "bb_rating":
+        checks += [
+            {"label": "BB-Rating 1–100", "ok": isinstance(body.get("bb_rating"), (int, float)) and 1 <= float(body["bb_rating"]) <= 100},
+            {"label": "History presente", "ok": isinstance(body.get("history"), list)},
+            {"label": "Uncertainty presente", "ok": isinstance(body.get("uncertainty"), dict)},
+        ]
+    elif model == "future_performance":
+        checks += [
+            {"label": "Targets presenti", "ok": isinstance(body.get("targets"), dict) and bool(body.get("targets"))},
+            {"label": "Versione modello presente", "ok": bool(body.get("future_performance_version"))},
+        ]
+    elif model == "prediction":
+        checks += [
+            {"label": "Prediction presente", "ok": any(k in body for k in ("prediction", "predicted_rating", "predicted_rating_100", "final_prediction"))},
+            {"label": "Intervallo presente", "ok": any(k in body for k in ("confidence_low", "confidence_high", "confidence_low_100", "confidence_high_100"))},
+        ]
+    else:
+        checks.append({"label": "Snapshot metriche presente", "ok": isinstance(body.get("metrics"), (dict, list)) or isinstance(body.get("ratings"), (dict, list))})
+    return checks
+
+def _run_diagnostic(payload: DiagnosticPayload, actor: str) -> dict[str, Any]:
+    path, request_payload = _diagnostic_request(payload)
+    result = _api_request(path, request_payload)
+    checks = _diagnostic_assertions(payload.model, result)
+    overall = bool(result.get("ok")) and all(bool(check["ok"]) for check in checks)
+    _audit("api_diagnostic_test", actor, payload.model)
+    return {"model": payload.model, "endpoint": path, "request": request_payload, "result": result, "checks": checks, "overall_ok": overall}
 
 
 def _probe(path: str) -> dict[str, Any]:
@@ -1465,6 +1550,28 @@ def rollback(payload: ConfirmPayload, user: dict[str, str] = Depends(_csrf)) -> 
         raise HTTPException(status_code=409, detail=result.get("reason", "Rollback unavailable"))
     return result
 
+
+
+@app.post("/admin-api/diagnostics/test")
+def diagnostics_test(payload: DiagnosticPayload, user: dict[str, str] = Depends(_csrf)) -> dict[str, Any]:
+    return _run_diagnostic(payload, user["username"])
+
+@app.post("/admin-api/diagnostics/health-check")
+async def diagnostics_health_check(user: dict[str, str] = Depends(_csrf)) -> dict[str, Any]:
+    actor = user["username"]
+    results = await asyncio.gather(
+        asyncio.to_thread(_probe, "/health/live"),
+        asyncio.to_thread(_probe, "/health/ready"),
+        asyncio.to_thread(_probe, "/health"),
+    )
+    checks = [{"label": label, "endpoint": endpoint, "result": result, "overall_ok": bool(result.get("ok"))}
+              for label, endpoint, result in (
+                  ("Inference live", "GET /health/live", results[0]),
+                  ("Inference ready", "GET /health/ready", results[1]),
+                  ("Inference health", "GET /health", results[2]),
+              )]
+    _audit("api_health_check", actor, "health")
+    return {"overall_ok": all(item["overall_ok"] for item in checks), "checks": checks}
 
 @app.get("/admin-api/api-health")
 async def api_health(user: dict[str, str] = Depends(_operator)) -> dict[str, Any]:
