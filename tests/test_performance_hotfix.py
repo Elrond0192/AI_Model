@@ -197,6 +197,99 @@ def test_scope_cache_reuses_context_and_passes_only_target_histories():
     assert len(data["_competition_scope_cache"]) == 1
 
 
+def test_scope_resolves_source_team_global_id_after_historical_id_remap():
+    from basketball_ai.models.competition_training import scope_prediction_context
+    from basketball_ai.models.strict_production import build_historical_snapshot
+
+    data = {
+        "player_stats": pd.DataFrame(
+            [
+                {
+                    "player_id": 1,
+                    "team_id": 99,
+                    "league_id": 1,
+                    "season": 2024,
+                    "competition": "RS",
+                    "games_played": 30,
+                    "rating": 7.0,
+                }
+            ]
+        ),
+        "team_season_stats": pd.DataFrame(
+            [
+                {
+                    "team_id": 99,
+                    "global_id": "T10",
+                    "name": "Historical Team",
+                    "league_id": 1,
+                    "league_key": "ITA1",
+                    "season": 2024,
+                    "competition": "RS",
+                    "pace": 70.0,
+                    "offensive_rating": 110.0,
+                    "defensive_rating": 105.0,
+                    "three_point_attempt_rate": 0.35,
+                    "assists_per_game": 20.0,
+                    "star_player_usage": 0.25,
+                    "net_rtg": 5.0,
+                }
+            ]
+        ),
+        "teams": pd.DataFrame(
+            [
+                {
+                    "id": 10,
+                    "global_id": "T10",
+                    "name": "Current Team",
+                    "league_id": 1,
+                }
+            ]
+        ),
+        "players": pd.DataFrame(
+            [
+                {
+                    "id": 1,
+                    "global_id": "P1",
+                    "position": "PG",
+                    "age": 27,
+                    "current_team_id": 10,
+                    "current_league_id": 1,
+                }
+            ]
+        ),
+        "player_dict": {
+            1: {
+                "id": 1,
+                "global_id": "P1",
+                "position": "PG",
+                "age": 27,
+                "current_team_id": 10,
+                "current_league_id": 1,
+            }
+        },
+        "team_player_relations": pd.DataFrame(),
+        "leagues": pd.DataFrame([{"id": 1, "name": "ITA1"}]),
+    }
+
+    snapshot = build_historical_snapshot(data, 2024)
+
+    assert 10 not in snapshot["team_dict"]
+    assert 99 in snapshot["team_dict"]
+    assert snapshot["_source_team_dict"][10]["global_id"] == "T10"
+
+    scoped = scope_prediction_context(
+        snapshot,
+        1,
+        10,
+        1,
+        "RS",
+        2024,
+    )
+
+    assert scoped["_prediction_team_id"] == 99
+    assert set(scoped["team_season_stats"]["team_id"]) == {99}
+
+
 def test_training_loader_skips_optional_simulation_views(monkeypatch):
     import basketball_ai.data.postgres_loader as loader
 
