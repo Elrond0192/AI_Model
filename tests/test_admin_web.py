@@ -181,6 +181,8 @@ def test_helpers_and_static_assets(monkeypatch, tmp_path):
     assert "renderBBRating" in js
     assert "/admin-api/bb-rating" in js
     assert "AbortController" in js
+    assert "$('.diag-run').forEach" in js
+    assert "$('.diag-run').forEach" not in js
     assert "App.controllers.forEach" in js
     future_js = (admin.STATIC_ROOT / "future_performance_ui.js").read_text(encoding="utf-8")
     assert "renderGeneration" in future_js
@@ -376,62 +378,39 @@ def test_authentication_helpers_and_csrf(monkeypatch):
     assert exc.value.status_code == 403
 
 
-def test_scenario_entity_player_search_does_not_reference_team_short_name(monkeypatch):
+def test_scenario_entity_search_uses_loaded_dataset():
     _reset_state()
+    data = _data()
+    data["players"].loc[0, "name"] = "Leandro Nicolas Bolmaro"
+    data["players"].loc[0, "global_id"] = "174019"
+    data["players"].loc[0, "current_league_key"] = "EL"
+    data["teams"].loc[0, "name"] = "Virtus Bologna"
+    data["teams"].loc[0, "global_id"] = "933060010445620088"
+    data["teams"].loc[0, "short_name"] = "Virtus"
+
     with admin.STATE.lock:
         admin.STATE.active_profile = "production"
-        admin.STATE.data = {"player_stats": pd.DataFrame({"season": [2025]})}
-    monkeypatch.setattr(
-        admin,
-        "load_profiles",
-        lambda: {"production": {"source_schema": "AI_Source"}},
-    )
-    captured = {}
+        admin.STATE.data = data
 
-    class Result:
-        def mappings(self):
-            return self
-
-        def all(self):
-            return [
-                {
-                    "id": 1043,
-                    "global_id": "1043",
-                    "name": "Bolmar",
-                    "position": "PG",
-                    "current_league_key": "ITA1",
-                }
-            ]
-
-    class Connection:
-        def execute(self, statement, params):
-            captured["sql"] = str(statement)
-            captured["params"] = params
-            return Result()
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *args):
-            return False
-
-    class Engine:
-        def connect(self):
-            return Connection()
-
-    monkeypatch.setattr(admin, "get_engine", lambda *_args, **_kwargs: Engine())
-    rows = admin.scenario_entities(
+    players = admin.scenario_entities(
         entity="player",
-        q="Bolmar",
+        q="Bolmaro",
         limit=12,
         user={"username": "admin", "role": "admin", "token": "x"},
     )
+    assert players["items"][0]["name"] == "Leandro Nicolas Bolmaro"
+    assert players["items"][0]["global_id"] == "174019"
+    assert players["items"][0]["identity_status"] == "canonical"
 
-    assert rows["items"][0]["name"] == "Bolmar"
-    assert "short_name" not in captured["sql"]
-    assert "global_id::text" in captured["sql"]
-    assert "LIMIT 12" in captured["sql"]
-    assert captured["params"]["query"] == "%Bolmar%"
+    teams = admin.scenario_entities(
+        entity="team",
+        q="Virtus",
+        limit=12,
+        user={"username": "admin", "role": "admin", "token": "x"},
+    )
+    assert teams["items"][0]["name"] == "Virtus Bologna"
+    assert teams["items"][0]["global_id"] == "933060010445620088"
+    assert teams["items"][0]["subtitle"] == "Virtus"
 
 
 def test_scenario_proxy_passes_api_key(monkeypatch):
