@@ -14,15 +14,23 @@ The registry is exposed at:
 
 `GET /api/v2/player-intelligence/capabilities`
 
-## First missing analysis layers
+## Implemented analysis layers
 
-1. **performance_decomposition** — separates volume, minutes, efficiency, role and impact.
-2. **role_analysis** — reconstructs role and role changes over time.
-3. **performance_stability** — measures historical dispersion, trend and peak-vs-baseline.
-4. **team_usage_analysis** — compares role, team style, expected and observed performance.
-5. **regression_risk** — combines stability, sample size, uncertainty and recent deviation.
-6. **potential_synthesis** — combines current BB-Rating, Prediction, Future Performance and age trajectory.
-7. **causal_team_effect** — reserved for a future causal design with explicit confounders and counterfactual identification.
+1. **performance_decomposition** — volume, efficiency, role and impact changes.
+2. **metric_explanation** — metric meaning plus same-context percentile and interpretation.
+3. **role_analysis** — reconstructs observed role and role changes over time.
+4. **performance_stability** — historical dispersion, trend and peak-vs-baseline.
+5. **team_usage_analysis** — compares player role with team style and usage context.
+6. **regression_risk** — descriptive risk index from baseline deviation and stability.
+7. **shooting_decomposition** — season-over-season shooting profile changes.
+8. **defensive_decomposition** — season-over-season defensive profile changes.
+9. **potential_synthesis** — age + observed trajectory synthesis; it remains distinct from future forecasting.
+
+## Still intentionally limited
+
+- **causal_team_effect** remains unavailable as a causal claim. It requires explicit identification, confounder control and a defensible counterfactual design.
+- **potential_synthesis** does not replace the dedicated Prediction/Future Performance models.
+- **team_counterfactual** remains a fit/scenario estimate, not a causal statement.
 
 ## Design rule
 
