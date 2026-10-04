@@ -286,7 +286,11 @@
           <input id="diag-player-search" class="input" type="search" placeholder="Cerca nome…">
           <select id="diag-player" class="input"><option value="">Seleziona giocatore</option></select>
         </label>
-        <label>Team Global ID <input id="diag-team" class="input" placeholder="Richiesto per Prediction"></label>
+        <label>Squadra
+          <input id="diag-team-search" class="input" type="search" autocomplete="off" placeholder="Cerca squadra per nome…">
+          <select id="diag-team" class="input"><option value="">Seleziona squadra</option></select>
+          <small class="microcopy">Il Global ID viene risolto automaticamente.</small>
+        </label>
         <label>League <input id="diag-league" class="input" value="ITA1"></label>
         <label>Season <input id="diag-season" class="input" type="number" value="2025" min="2000" max="2100"></label>
         <label>Competition <select id="diag-competition" class="input"><option>RS</option><option>PO</option><option>TOT</option></select></label>
