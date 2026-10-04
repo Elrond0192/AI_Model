@@ -383,7 +383,7 @@ async function renderDiagnostics(){
     if(q.length<2)return;
     try{
       const data=await api('/admin-api/scenario-entities?entity='+encodeURIComponent(entity)+'&q='+encodeURIComponent(q)+'&limit=12');
-      $(selectSelector).innerHTML='<option value="">'+esc(placeholder)+'</option>'+(data.items||[]).map(item=>'<option value="'+esc(item.global_id||'')+'" data-league="'+esc(item.league_key||'')+'">'+esc(item.name||item.global_id||item.selection_id)+'</option>').join('');
+      $(selectSelector).innerHTML='<option value="">'+esc(placeholder)+'</option>'+(data.items||[]).map(item=>'<option value="'+esc(item.global_id||'')+'" data-league="'+esc(item.league_key||'')+'" data-current-team="'+esc(item.current_team_global_id||'')+'">'+esc(item.name||item.global_id||item.selection_id)+'</option>').join('');
     }catch(e){toast(e.message,'error');}
   }
   let searchTimer;
@@ -392,8 +392,25 @@ async function renderDiagnostics(){
     searchTimer=setTimeout(()=>searchDiagnosticEntities('player','#diag-player-search','#diag-player','Seleziona giocatore'),300);
   });
   $('#diag-player').addEventListener('change',event=>{
-    const league=event.target.selectedOptions[0]?.dataset?.league||'';
+    const selected=event.target.selectedOptions[0];
+    const league=selected?.dataset?.league||'';
     if(league)$('#diag-league').value=league;
+    const currentTeam=selected?.dataset?.currentTeam||'';
+    if(currentTeam){
+      const teamSelect=$('#diag-team');
+      const existing=[...teamSelect.options].find(option=>option.value===currentTeam);
+      if(existing){
+        teamSelect.value=currentTeam;
+      }else{
+        const option=document.createElement('option');
+        option.value=currentTeam;
+        option.textContent='Squadra attuale del giocatore';
+        option.dataset.league=league;
+        option.dataset.currentTeam='';
+        teamSelect.appendChild(option);
+        teamSelect.value=currentTeam;
+      }
+    }
   });
   $('#diag-team').addEventListener('change',event=>{
     const league=event.target.selectedOptions[0]?.dataset?.league||'';
