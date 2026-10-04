@@ -1630,7 +1630,11 @@ def scenario_entities(
     entity = entity.strip().lower()
     if entity not in {"player", "team"}:
         raise HTTPException(status_code=400, detail="entity must be player or team")
-    return {"entity": entity, "items": _scenario_entity_rows(entity, q, limit)}
+    try:
+        items = _scenario_entity_rows(entity, q, limit)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=_safe_error(exc)) from exc
+    return {"entity": entity, "items": items}
 
 
 @app.post("/admin-api/scenarios/evaluate")
