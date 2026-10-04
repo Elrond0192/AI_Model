@@ -17,7 +17,7 @@ def test_player_intelligence_capability_registry():
     assert body["summary"]["total"] >= 10
     assert body["summary"]["available"] >= 1
     assert body["summary"]["partial"] >= 1
-    assert body["summary"]["missing"] >= 1
+    assert body["summary"]["missing"] == 0
 
     by_key = {item["key"]: item for item in body["capabilities"]}
     assert "why_performing" in by_key
