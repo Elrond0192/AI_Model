@@ -290,6 +290,8 @@ def test_v2_performance_vs_expectation_uses_calibrated_range(monkeypatch):
     assert pve["expected_rating_100"] == 72.775
     assert pve["actual_rating_100"] == 79.0
     assert pve["delta_rating_points"] == 6.225
+    assert pve["expected_low_100"] == 68.32
+    assert pve["expected_high_100"] == 77.23
     assert pve["assessment"] == "above_expectations"
     assert pve["actual_quality"] == "good"
     assert pve["actual_metric_coverage"] == 0.88
