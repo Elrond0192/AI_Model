@@ -773,20 +773,16 @@ def test_scenario_entity_search_and_server_side_resolution():
     user = {"username": "admin", "role": "admin", "token": "x"}
 
     players = admin.scenario_entities("player", "play", 12, user)
-    assert players["items"] == [
-        {
-            "selection_id": "1",
-            "name": "Player",
-            "subtitle": "",
-            "league_key": "",
-            "identity_status": "canonical",
-        }
-    ]
+    assert players["items"][0]["selection_id"] == "1"
+    assert players["items"][0]["name"] == "Player"
+    assert players["items"][0]["identity_status"] == "canonical"
+    assert players["items"][0]["league_keys"] == ["RS"]
+    assert players["items"][0]["contexts"][0]["league_key"] == "RS"
 
     teams = admin.scenario_entities("team", "team", 12, user)
     assert teams["items"][0]["selection_id"] == "2"
     assert teams["items"][0]["name"] == "Team"
-    assert teams["items"][0]["league_key"] == ""
+    assert teams["items"][0]["league_keys"] == ["ITA1"]
 
     resolved = admin._resolve_scenario_selections(
         {
