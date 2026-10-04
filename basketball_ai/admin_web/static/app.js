@@ -383,7 +383,7 @@ async function renderDiagnostics(){
     if(q.length<2)return;
     try{
       const data=await api('/admin-api/scenario-entities?entity='+encodeURIComponent(entity)+'&q='+encodeURIComponent(q)+'&limit=12');
-      $(selectSelector).innerHTML='<option value="">'+esc(placeholder)+'</option>'+(data.items||[]).map(item=>'<option value="'+esc(item.global_id||'')+'" data-league="'+esc(item.league_key||'')+'" data-current-team="'+esc(item.current_team_global_id||'')+'">'+esc(item.name||item.global_id||item.selection_id)+'</option>').join('');
+      $(selectSelector).innerHTML='<option value="">'+esc(placeholder)+'</option>'+(data.items||[]).map(item=>'<option value="'+esc(item.global_id||'')+'" data-league="'+esc(item.league_key||'')+'" data-current-team="'+esc(item.current_team_global_id||'')+'" data-current-team-name="'+esc(item.current_team_name||'')+'">'+esc(item.name||item.global_id||item.selection_id)+'</option>').join('');
     }catch(e){toast(e.message,'error');}
   }
   let searchTimer;
@@ -404,7 +404,7 @@ async function renderDiagnostics(){
       }else{
         const option=document.createElement('option');
         option.value=currentTeam;
-        option.textContent='Squadra attuale del giocatore';
+        option.textContent=selected?.dataset?.currentTeamName||'Squadra attuale del giocatore';
         option.dataset.league=league;
         option.dataset.currentTeam='';
         teamSelect.appendChild(option);
