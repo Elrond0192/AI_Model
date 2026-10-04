@@ -248,6 +248,22 @@ def test_player_intelligence_orchestrates_question_layers():
     assert result["result"]["answer_mode"] == "evidence_composition"
 
 
+def test_player_intelligence_composes_multiple_question_keys():
+    result = _engine().evaluate(
+        {"scenario": "player_intelligence", "season": 2024, "competition": "RS",
+         "parameters": {"question_keys": ["real_improvement", "current_role", "stability"]}},
+        [1], [], 10, None,
+    )
+    assert result["result"]["question_key"] is None
+    assert result["result"]["question_keys"] == ["real_improvement", "current_role", "stability"]
+    assert set(result["result"]["analyses"]) == {
+        "performance_decomposition",
+        "metric_explanation",
+        "role_analysis",
+        "performance_stability",
+    }
+
+
 def test_causal_team_effect_returns_observational_association_without_causal_claim():
     result = _engine().evaluate(
         {"scenario": "causal_team_effect", "season": 2024, "competition": "RS"},
