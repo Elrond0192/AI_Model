@@ -150,6 +150,7 @@ class ChatScenarioEngine:
             "roster_optimizer": self.advanced.roster_optimizer,
             "composite_scenario": self.advanced.composite,
             "causal_effect": self.advanced.causal_effect,
+            "causal_team_effect": self._causal_team_effect,
         }
         if scenario not in dispatch:
             raise ValueError(f"Unsupported scenario {scenario!r}")
@@ -485,6 +486,171 @@ class ChatScenarioEngine:
             "evidence": [{"type": "observed_clutch_advanced_stats", "seasons_considered": len(rows), "clutch_games": samples}],
             "support": {"method": "observed_clutch_advanced_stats", "samples": samples, "confidence": _confidence(samples)},
             "limitations": ["This reports observed clutch aggregates. Possession-level last-five-minute simulations require PBP clock and score fields for the requested competition."],
+        }
+
+    def _causal_team_effect(self, spec, players, teams, source_league, target_league):
+        """Estimate team-context association without claiming causal identification.
+
+        The question is intentionally answered as an observational attribution:
+        we compare a player's own rating across team-season observations and
+        quantify whether changes in team context move with changes in the player's
+        observed rating. A causal effect is never produced by this method.
+        """
+        del teams, target_league
+        if not players:
+            raise ValueError("player is required")
+        if source_league is None:
+            raise ValueError("league context is required")
+
+        season = int(spec["season"])
+        competition = normalize_competition(spec["competition"])
+        player_rows = self._player_rows(players[0], source_league, competition, season)
+        if player_rows.empty:
+            raise ValueError("No player history is available for the requested team-effect context")
+        if "team_id" not in player_rows.columns:
+            raise ValueError("Player team history is unavailable for the requested context")
+
+        team_stats = self.data.get("team_season_stats", pd.DataFrame()).copy()
+        if team_stats.empty or "team_id" not in team_stats.columns:
+            raise ValueError("Team context is unavailable for the requested context")
+        team_stats["_year"] = team_stats["season"].map(_year)
+        team_stats["_team_int"] = team_stats["team_id"].map(_to_int)
+        team_stats["_league_int"] = team_stats["league_id"].map(_to_int)
+        team_stats["_comp"] = team_stats["competition"].map(normalize_competition)
+        team_stats = team_stats[
+            (team_stats["_league_int"] == _to_int(source_league))
+            & (team_stats["_comp"] == competition)
+            & (team_stats["_year"] <= season)
+        ].copy()
+
+        context_metrics = (
+            "offensive_rating",
+            "defensive_rating",
+            "assists_per_game",
+            "three_point_attempt_rate",
+            "pace",
+        )
+        records = []
+        for row in player_rows.to_dict("records"):
+            year = int(row["_year"])
+            team_id = _to_int(row.get("team_id"))
+            if team_id is None:
+                continue
+            candidates = team_stats[
+                (team_stats["_team_int"] == team_id)
+                & (team_stats["_year"] == year)
+            ]
+            if candidates.empty:
+                continue
+            team = candidates.iloc[-1]
+            values = {metric: _finite(team.get(metric), np.nan) for metric in context_metrics}
+            if all(not math.isfinite(value) for value in values.values()):
+                continue
+
+            # Convert team context to within-league-year percentiles. Offensive
+            # efficiency, creation and spacing are positive; defensive rating is
+            # inverted; pace is treated as a style dimension around league median.
+            peers = team_stats[team_stats["_year"] == year]
+            def pct(metric, value):
+                vals = pd.to_numeric(peers.get(metric), errors="coerce").dropna()
+                if vals.empty or not math.isfinite(value):
+                    return 0.5
+                return float(vals.rank(pct=True).loc[vals.index[vals.index == vals.index[0]][0]]) if False else float((vals <= value).mean())
+
+            offense = pct("offensive_rating", values["offensive_rating"])
+            defense = 1.0 - pct("defensive_rating", values["defensive_rating"])
+            creation = pct("assists_per_game", values["assists_per_game"])
+            spacing = pct("three_point_attempt_rate", values["three_point_attempt_rate"])
+            pace_values = pd.to_numeric(peers.get("pace"), errors="coerce").dropna()
+            pace_fit = 0.5
+            if not pace_values.empty and math.isfinite(values["pace"]):
+                scale = float(pace_values.std(ddof=0)) or 1.0
+                pace_fit = float(np.clip(1.0 - abs(values["pace"] - float(pace_values.median())) / (2.0 * scale), 0.0, 1.0))
+            context_score = float(np.clip(
+                offense * 0.30 + defense * 0.30 + creation * 0.15 + spacing * 0.15 + pace_fit * 0.10,
+                0.0, 1.0,
+            ))
+            rating = _finite(row.get("rating"), np.nan)
+            if math.isfinite(rating):
+                records.append({
+                    "season": year,
+                    "team_id": team_id,
+                    "team": self._team_name(team_id),
+                    "rating": rating,
+                    "team_context_score": context_score,
+                })
+
+        if not records:
+            raise ValueError("Team context is unavailable for the player's observed history")
+
+        history = pd.DataFrame(records).sort_values(["season", "team_id"]).reset_index(drop=True)
+        correlation = None
+        if len(history) >= 3 and history["rating"].nunique() >= 2 and history["team_context_score"].nunique() >= 2:
+            correlation = float(history["rating"].corr(history["team_context_score"]))
+
+        switches = []
+        previous = None
+        for row in history.sort_values("season").to_dict("records"):
+            if previous is not None and row["team_id"] != previous["team_id"]:
+                switches.append({
+                    "from_season": previous["season"],
+                    "to_season": row["season"],
+                    "from_team": previous["team"],
+                    "to_team": row["team"],
+                    "rating_change": round(row["rating"] - previous["rating"], 3),
+                    "team_context_change": round(row["team_context_score"] - previous["team_context_score"], 3),
+                })
+            previous = row
+
+        latest = history.iloc[-1]
+        if correlation is None:
+            association_label = "insufficient_evidence"
+        elif correlation >= 0.35:
+            association_label = "positive_association"
+        elif correlation <= -0.35:
+            association_label = "negative_association"
+        else:
+            association_label = "weak_or_mixed_association"
+
+        limitations = [
+            "Questa analisi misura un'associazione osservata, non un effetto causale della squadra sul giocatore.",
+            "Il contesto squadra può essere confuso con ruolo, compagni, allenatore, infortuni, calendario e selezione del campione.",
+            "L'identificazione causale resta non disponibile senza un controfattuale e un controllo esplicito dei confondenti.",
+        ]
+        if len(switches) < 2:
+            limitations.append("Ci sono pochi cambi di squadra osservati per separare meglio l'effetto del contesto dalla variabilità individuale.")
+
+        return {
+            "result": {
+                "player": self._player_name(players[0]),
+                "league": self._league_name(source_league),
+                "competition": competition,
+                "through_season": season,
+                "causal_identification": "unavailable",
+                "causal_effect": None,
+                "association": {
+                    "label": association_label,
+                    "rating_vs_team_context_correlation": round(correlation, 3) if correlation is not None else None,
+                },
+                "current_context": {
+                    "team": str(latest["team"]),
+                    "season": int(latest["season"]),
+                    "rating": round(float(latest["rating"]), 3),
+                    "team_context_score": round(float(latest["team_context_score"]), 3),
+                },
+                "team_switches": switches[-8:],
+                "observations": int(len(history)),
+            },
+            "evidence": [
+                {"type": "within_player_team_seasons", "count": int(len(history))},
+                {"type": "observed_team_switches", "count": int(len(switches))},
+            ],
+            "support": {
+                "method": "within_player_observational_team_context",
+                "samples": int(len(history)),
+                "confidence": _confidence(len(history)),
+            },
+            "limitations": limitations,
         }
 
     def _player_team(self, spec, players, teams, source_league, target_league):
