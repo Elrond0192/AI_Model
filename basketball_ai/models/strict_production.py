@@ -121,7 +121,14 @@ def position_as_of(
 def build_historical_snapshot(data: Dict[str, Any], source_season: int) -> Dict[str, Any]:
     """Return a hard-bounded as-of snapshot with no future team/player state."""
     source_season = int(source_season)
+    # The historical snapshot may remap source-local team IDs to a stable
+    # historical identity. Preserve the pre-snapshot team dictionary so
+    # context scoping can still resolve the requested team's GlobalId when
+    # the incoming team_id is not present in the historical snapshot.
+    source_team_dict = data.get("team_dict")
     snapshot = _build_historical_snapshot(data, source_season)
+    if isinstance(source_team_dict, dict):
+        snapshot["_source_team_dict"] = source_team_dict
 
     team_history = snapshot.get("team_season_stats")
     if team_history is not None and not team_history.empty:
