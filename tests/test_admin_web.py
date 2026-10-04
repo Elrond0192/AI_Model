@@ -464,6 +464,7 @@ def test_scenario_entity_lookup_uses_only_canonical_columns(monkeypatch):
         def execute(self, statement, params):
             sql = str(statement)
             captured.append((sql, dict(params)))
+            assert "text" not in statement._bindparams
             if '"Players"' in sql:
                 return Result(
                     [
