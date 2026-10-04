@@ -112,6 +112,7 @@ class ChatScenarioEngine:
             "player_competition": self._player_competition,
             "team_competition": self._team_competition,
             "player_trend": self._player_trend,
+            "performance_decomposition": self._performance_decomposition,
             "team_trend": self._team_trend,
             "player_compare": self._player_compare,
             "team_compare": self._team_compare,
@@ -301,6 +302,90 @@ class ChatScenarioEngine:
             "evidence": [{"type": "historical_seasons", "count": int(len(rows))}],
             "support": {"method": "observed_data", "samples": int(len(rows)), "confidence": _confidence(len(rows) * 5)},
             "limitations": [],
+        }
+
+    def _performance_decomposition(self, spec, players, teams, source_league, target_league):
+        """Decompose season-over-season player change into volume, efficiency, role and impact."""
+        del teams, target_league
+        if not players:
+            raise ValueError("player is required")
+        season = int(spec["season"])
+        competition = normalize_competition(spec["competition"])
+        rows = self._player_rows(players[0], source_league, competition, season)
+        if len(rows) < 2:
+            raise ValueError("At least two consecutive observed seasons are required")
+
+        current = rows.iloc[-1]
+        previous = rows.iloc[-2]
+        current_year = int(current["_year"])
+        previous_year = int(previous["_year"])
+        if current_year != previous_year + 1:
+            raise ValueError("Performance decomposition requires consecutive seasons")
+
+        metric_groups = {
+            "volume": ("minutes_per_game", "points", "assists", "rebounds"),
+            "efficiency": ("ts_pct", "three_point_pct", "ft_pct", "tov_pct"),
+            "role": ("usg_pct", "ast_pct", "three_par"),
+            "impact": ("rating", "bpm", "obpm", "dbpm", "net_rtg"),
+        }
+        deltas: dict[str, dict[str, float]] = {}
+        for group, metrics in metric_groups.items():
+            group_delta: dict[str, float] = {}
+            for metric in metrics:
+                a = current.get(metric)
+                b = previous.get(metric)
+                if pd.notna(a) and pd.notna(b):
+                    group_delta[metric] = round(_finite(a) - _finite(b), 4)
+            deltas[group] = group_delta
+
+        minutes_delta = deltas["volume"].get("minutes_per_game", 0.0)
+        points_delta = deltas["volume"].get("points", 0.0)
+        ts_delta = deltas["efficiency"].get("ts_pct", 0.0)
+        rating_delta = deltas["impact"].get("rating", 0.0)
+
+        if abs(minutes_delta) > 1.5 and abs(points_delta) > 0:
+            volume_interpretation = "production_change is partly associated with a meaningful minutes change"
+        else:
+            volume_interpretation = "production change is not primarily explained by minutes"
+
+        if abs(ts_delta) >= 0.02:
+            efficiency_interpretation = "efficiency changed materially"
+        else:
+            efficiency_interpretation = "efficiency was relatively stable"
+
+        if abs(rating_delta) >= 1.0:
+            impact_interpretation = "overall impact rating changed materially"
+        else:
+            impact_interpretation = "overall impact rating was relatively stable"
+
+        return {
+            "result": {
+                "player": self._player_name(players[0]),
+                "league": self._league_name(source_league),
+                "competition": competition,
+                "previous_season": previous_year,
+                "current_season": current_year,
+                "previous": _serialise(previous, _PLAYER_METRICS),
+                "current": _serialise(current, _PLAYER_METRICS),
+                "deltas": deltas,
+                "interpretation": {
+                    "volume": volume_interpretation,
+                    "efficiency": efficiency_interpretation,
+                    "impact": impact_interpretation,
+                },
+            },
+            "evidence": [
+                {"type": "consecutive_seasons", "count": 2},
+                {"type": "metric_groups", "groups": list(metric_groups)},
+            ],
+            "support": {
+                "method": "observed_season_over_season_decomposition",
+                "samples": int(current.get("games_played", 0) or 0),
+                "confidence": _confidence(int(current.get("games_played", 0) or 0)),
+            },
+            "limitations": [
+                "This decomposition describes changes; it does not establish causal effects."
+            ],
         }
 
     def _player_trend(self, spec, players, teams, source_league, target_league):
