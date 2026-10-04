@@ -45,6 +45,7 @@
         <button class="nav-item" data-page="scenarios"><span class="nav-icon"><i class="ph ph-flask"></i></span><span>Scenario Lab</span></button>
         <button class="nav-item" data-page="registry"><span class="nav-icon"><i class="ph ph-cube"></i></span><span>Model Registry</span></button>
         <button class="nav-item" data-page="health"><span class="nav-icon"><i class="ph ph-heartbeat"></i></span><span>API &amp; Health</span></button>
+        <button class="nav-item" data-page="diagnostics"><span class="nav-icon"><i class="ph ph-stethoscope"></i></span><span>API Diagnostics</span></button>
         <button class="nav-item admin-only" data-page="audit"><span class="nav-icon"><i class="ph ph-clipboard-text"></i></span><span>Audit Logs</span></button>
         <button class="nav-item" data-page="contact"><span class="nav-icon"><i class="ph ph-envelope"></i></span><span>Contatti</span></button>
         <button class="nav-item" data-page="settings"><span class="nav-icon"><i class="ph ph-gear"></i></span><span>Settings</span></button>
@@ -251,6 +252,36 @@
       </div>
       <p class="microcopy">Gli scenari avanzati usano automaticamente le evidenze possesso/lineup caricate dall’API; se non disponibili, la risposta dichiara il fallback e le limitazioni.</p>
     </section>
+  </template>
+
+
+  <template id="page-diagnostics">
+    <div class="page-heading action-heading">
+      <div><h1>API Diagnostics</h1><p>Test controllati delle API production con validazione della risposta. Nessun endpoint arbitrario e nessuna modifica ai modelli.</p></div>
+      <button id="diagnostics-health" class="btn btn-secondary">Health Check</button>
+    </div>
+    <section class="panel diagnostics-form-panel">
+      <div class="panel-heading"><h2>Test Player</h2><span class="microcopy">Usa un giocatore reale dello storico attivo.</span></div>
+      <div class="diagnostics-grid">
+        <label>Giocatore
+          <input id="diag-player-search" class="input" type="search" placeholder="Cerca nome…">
+          <select id="diag-player" class="input"><option value="">Seleziona giocatore</option></select>
+        </label>
+        <label>Team Global ID <input id="diag-team" class="input" placeholder="Richiesto per Prediction"></label>
+        <label>League <input id="diag-league" class="input" value="ITA1"></label>
+        <label>Season <input id="diag-season" class="input" type="number" value="2025" min="2000" max="2100"></label>
+        <label>Competition <select id="diag-competition" class="input"><option>RS</option><option>PO</option><option>TOT</option></select></label>
+        <label>Metriche Metric Rating <input id="diag-metrics" class="input" value="RAPTOR,LEBRON,VORP"></label>
+      </div>
+      <div class="button-row diagnostics-buttons">
+        <button class="btn btn-secondary diag-run" data-model="prediction">Prediction</button>
+        <button class="btn btn-secondary diag-run" data-model="bb_rating">BB-Rating</button>
+        <button class="btn btn-secondary diag-run" data-model="future_performance">Future Performance</button>
+        <button class="btn btn-secondary diag-run" data-model="metric_rating">Metric Rating</button>
+        <button class="btn btn-primary" id="diagnostics-all">Esegui tutti</button>
+      </div>
+    </section>
+    <section class="panel"><div class="panel-heading"><h2>Risultati</h2><span id="diagnostics-summary" class="microcopy">Nessun test eseguito</span></div><div id="diagnostics-results" class="diagnostics-results"><div class="empty-state compact"><strong>Pronto per il test</strong><p>Seleziona un giocatore e avvia una diagnostica.</p></div></div></section>
   </template>
 
   <template id="page-health">
