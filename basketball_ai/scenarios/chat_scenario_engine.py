@@ -1332,6 +1332,7 @@ class ChatScenarioEngine:
             "shot_profile": ("shooting_decomposition",),
             "defensive_reason": ("defensive_decomposition",),
             "clutch_value": ("clutch_analysis",),
+            "causal_team_effect": ("causal_team_effect",),
         }
         scenarios = bundles.get(key)
         if scenarios is None:
@@ -1350,6 +1351,7 @@ class ChatScenarioEngine:
             "age_trajectory": self._age_trajectory,
             "player_team": self._player_team,
             "clutch_analysis": self._clutch_analysis,
+            "causal_team_effect": self._causal_team_effect,
         }
         analyses = {}
         limitations = [
