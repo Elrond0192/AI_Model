@@ -103,7 +103,7 @@ def _temporal_validation(rows: list[dict[str, Any]]) -> dict[str, Any]:
         raw = np.asarray([r["prediction"] for r in test], dtype=float)
         actual = np.asarray([r["actual"] for r in test], dtype=float)
         calibrated = np.asarray([native_to_100(v, mapping) for v in raw], dtype=float)
-        calibrated_native = (calibrated - 1.0) / 9.9 * 10.0
+        calibrated_native = (calibrated - DISPLAY_MIN) / (DISPLAY_MAX - DISPLAY_MIN) * NATIVE_MAX
         folds.append({
             "target_season": int(target),
             "calibration_train_seasons": sorted({r["target_season"] for r in train if r["target_season"] is not None}),
