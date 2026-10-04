@@ -409,7 +409,7 @@ class BBRatingEngine:
         return context, "limited_context"
 
     def _percentile(self, values: pd.Series, value: float, direction: str) -> Optional[float]:
-        clean = pd.to_numeric(values, errors="coerce").replace([np.inf, -np.inf], np.nan).dropna().to_numpy(dtype=float)
+        clean = pd.to_numeric(values, errors="coerce").replace([np.inf, -np.inf], np.nan).dropna().to_numpy(dtype=float, copy=True)
         if clean.size == 0 or not np.isfinite(value):
             return None
         clean.sort()
