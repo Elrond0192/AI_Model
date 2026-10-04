@@ -910,9 +910,9 @@ def _probe(path: str) -> dict[str, Any]:
 def _scenario_entity_rows(entity: str, query: str, limit: int = 12) -> list[dict[str, Any]]:
     """Search canonical entities with DB lookup and optional loaded-data enrichment.
 
-    The DB remains the authoritative lookup path, preserving the pre-regression
-    behaviour of the endpoint. Loaded control-center data is used only to add
-    multi-league/player-team context metadata when available.
+    PostgreSQL/AI_Source is authoritative for the base player/team identity.
+    Loaded control-center data is strictly additive enrichment and must never be
+    required for the lookup to succeed.
     """
     with STATE.lock:
         profile_name = STATE.active_profile
@@ -929,10 +929,14 @@ def _scenario_entity_rows(entity: str, query: str, limit: int = 12) -> list[dict
             if not _SCHEMA_RE.fullmatch(schema):
                 raise RuntimeError("Invalid PostgreSQL source schema")
             table = "Players" if entity == "player" else "Teams"
+
+            # Keep the authoritative lookup limited to columns guaranteed by the
+            # canonical AI_Source contract. Fields such as current_league_key,
+            # current_team_id, short_name and league_key are enrichment-only.
             columns = (
-                "id, global_id, name, position, current_league_key, current_team_id"
+                "id, global_id, name, position"
                 if entity == "player"
-                else "id, global_id, name, short_name, league_id, league_key"
+                else "id, global_id, name, league_id"
             )
             if search:
                 if entity == "player":
@@ -943,7 +947,6 @@ def _scenario_entity_rows(entity: str, query: str, limit: int = 12) -> list[dict
                 else:
                     search_where = (
                         "lower(coalesce(name, '')) LIKE lower(:query) "
-                        "OR lower(coalesce(short_name, '')) LIKE lower(:query) "
                         "OR lower(coalesce(global_id::text, '')) LIKE lower(:query)"
                     )
                 statement = text(
@@ -964,6 +967,7 @@ def _scenario_entity_rows(entity: str, query: str, limit: int = 12) -> list[dict
                     "ORDER BY name NULLS LAST LIMIT :limit"
                 )
                 params = {"limit": max_rows}
+
             with get_engine(profile_url(profile_name)).connect() as connection:
                 rows = [dict(row) for row in connection.execute(statement, params).mappings().all()]
 
@@ -1039,9 +1043,9 @@ def _scenario_entity_rows(entity: str, query: str, limit: int = 12) -> list[dict
         global_id = value_text(row, "global_id")
         name = value_text(row, "name") or global_id or internal_id
         if entity == "player":
-            subtitle_values = (value_text(row, "position"), value_text(row, "current_league_key"))
+            subtitle_values = (value_text(row, "position"),)
         else:
-            subtitle_values = (value_text(row, "short_name"),)
+            subtitle_values = ()
         subtitle = " · ".join(value for value in subtitle_values if value and value != name)
 
         league_keys: list[str] = []
@@ -1115,23 +1119,27 @@ def _scenario_entity_rows(entity: str, query: str, limit: int = 12) -> list[dict
             league_keys = []
             contexts = []
 
+        current_league_key = ""
+        current_team_global_id = ""
+        current_team_name = ""
+        if entity == "player" and contexts:
+            latest_context = max(
+                contexts,
+                key=lambda item: (item.get("season", 0), item.get("league_key", "")),
+            )
+            current_league_key = str(latest_context.get("league_key") or "")
+            current_team_global_id = str(latest_context.get("team_global_id") or "")
+            current_team_name = str(latest_context.get("team_name") or "")
+
         records.append(
             {
                 "selection_id": internal_id,
                 "global_id": global_id,
                 "name": name,
                 "subtitle": subtitle,
-                "league_key": value_text(row, "current_league_key") if entity == "player" else value_text(row, "league_key"),
-                "current_team_global_id": (
-                    team_global_by_id.get(value_text(row, "current_team_id"), "")
-                    if entity == "player"
-                    else ""
-                ),
-                "current_team_name": (
-                    team_name_by_id.get(value_text(row, "current_team_id"), "")
-                    if entity == "player"
-                    else ""
-                ),
+                "league_key": current_league_key if entity == "player" else "",
+                "current_team_global_id": current_team_global_id,
+                "current_team_name": current_team_name,
                 "league_keys": league_keys,
                 "contexts": contexts,
                 "identity_status": "canonical" if global_id else "unreconciled",
