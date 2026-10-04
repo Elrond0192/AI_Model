@@ -21,7 +21,10 @@ def test_player_intelligence_capability_registry():
 
     by_key = {item["key"]: item for item in body["capabilities"]}
     assert "why_performing" in by_key
-    assert "performance_decomposition" in by_key["why_performing"]["missing_analyses"]
+    assert "metric_explanation" in by_key["why_performing"]["missing_analyses"]
+    assert by_key["current_role"]["status"] == "available"
+    assert by_key["stability"]["status"] == "available"
+    assert by_key["regression_risk"]["status"] == "available"
     assert by_key["causal_team_effect"]["status"] == "missing"
     assert "causal_team_effect" in by_key["causal_team_effect"]["missing_analyses"]
 
