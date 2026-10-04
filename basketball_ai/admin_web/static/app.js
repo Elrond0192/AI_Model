@@ -357,6 +357,8 @@ async function renderRegistry(){const d=await api('/admin-api/registry');$('#top
 async function renderDiagnostics(){
   const results=$('#diagnostics-results'), summary=$('#diagnostics-summary');
   let running=0, passed=0, failed=0;
+  const playerContexts=new Map();
+  let teamSelectionManual=false;
   function escJson(v){try{return esc(JSON.stringify(v,null,2));}catch(_){return esc(String(v));}}
   function renderResult(data){
     const ok=data.overall_ok;
@@ -383,6 +385,9 @@ async function renderDiagnostics(){
     if(q.length<2)return;
     try{
       const data=await api('/admin-api/scenario-entities?entity='+encodeURIComponent(entity)+'&q='+encodeURIComponent(q)+'&limit=12');
+      if(entity==='player'){
+        (data.items||[]).forEach(item=>playerContexts.set(String(item.global_id||item.selection_id),item.contexts||[]));
+      }
       $(selectSelector).innerHTML='<option value="">'+esc(placeholder)+'</option>'+(data.items||[]).map(item=>{
         const leagues=(item.league_keys||[]).join(' / ');
         const label=[item.name||item.global_id||item.selection_id,leagues].filter(Boolean).join(' · ');
@@ -390,43 +395,52 @@ async function renderDiagnostics(){
       }).join('');
     }catch(e){toast(e.message,'error');}
   }
+  function applyPlayerContext(leagueOverride){
+    const selected=$('#diag-player').selectedOptions[0];
+    const playerId=$('#diag-player').value;
+    if(!selected||!playerId)return;
+    const contexts=playerContexts.get(playerId)||[];
+    const league=String(leagueOverride||$('#diag-league').value||selected.dataset.league||'').trim().toUpperCase();
+    if(league)$('#diag-league').value=league;
+    const context=contexts.find(item=>String(item.league_key||'').toUpperCase()===league)
+      ||contexts.find(item=>String(item.league_key||'').toUpperCase()===String(selected.dataset.league||'').toUpperCase())
+      ||contexts[0];
+    if(!context?.team_global_id)return;
+    const teamSelect=$('#diag-team');
+    const existing=[...teamSelect.options].find(option=>option.value===context.team_global_id);
+    if(existing){
+      teamSelect.value=context.team_global_id;
+      if(context.league_key)teamSelect.dataset.contextLeague=String(context.league_key).toUpperCase();
+      return;
+    }
+    const option=document.createElement('option');
+    option.value=context.team_global_id;
+    option.textContent=context.team_name||'Squadra del contesto selezionato';
+    option.dataset.league=String(context.league_key||league).toUpperCase();
+    teamSelect.appendChild(option);
+    teamSelect.value=context.team_global_id;
+  }
   let searchTimer;
   $('#diag-player-search').addEventListener('input',()=>{
     clearTimeout(searchTimer);
     searchTimer=setTimeout(()=>searchDiagnosticEntities('player','#diag-player-search','#diag-player','Seleziona giocatore'),300);
   });
   $('#diag-player').addEventListener('change',event=>{
+    teamSelectionManual=false;
     const selected=event.target.selectedOptions[0];
     const league=selected?.dataset?.league||'';
     if(league)$('#diag-league').value=league;
-    const currentTeam=selected?.dataset?.currentTeam||'';
-    if(currentTeam){
-      const teamSelect=$('#diag-team');
-      if(!teamSelect.value){
-        const existing=[...teamSelect.options].find(option=>option.value===currentTeam);
-        if(existing){
-          teamSelect.value=currentTeam;
-        }else{
-          const option=document.createElement('option');
-          option.value=currentTeam;
-          option.textContent=selected?.dataset?.currentTeamName||'Squadra attuale del giocatore';
-          option.dataset.league=league;
-          option.dataset.currentTeam='';
-          teamSelect.appendChild(option);
-          teamSelect.value=currentTeam;
-        }
-      }
-    }
+    applyPlayerContext(league);
   });
-  $('#diag-team').addEventListener('change',event=>{
-    const league=event.target.selectedOptions[0]?.dataset?.league||'';
-    if(league)$('#diag-league').value=league;
+  $('#diag-league').addEventListener('change',()=>{
+    if(!teamSelectionManual)applyPlayerContext($('#diag-league').value);
   });
   let teamSearchTimer;
   $('#diag-team-search').addEventListener('input',()=>{
     clearTimeout(teamSearchTimer);
     teamSearchTimer=setTimeout(()=>searchDiagnosticEntities('team','#diag-team-search','#diag-team','Seleziona squadra'),300);
   });
+  $('#diag-team').addEventListener('change',()=>{teamSelectionManual=!!$('#diag-team').value;});
   $$('.diag-run').forEach(b=>b.addEventListener('click',()=>run(b.dataset.model)));
   $('#diagnostics-all').addEventListener('click',async()=>{
     results.innerHTML='';
