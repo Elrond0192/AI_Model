@@ -36,8 +36,8 @@ QUESTION_CAPABILITIES: tuple[QuestionCapability, ...] = (
         key="why_performing",
         question="Perché sta giocando meglio o peggio?",
         status="partial",
-        analyses=("bb_rating", "performance_vs_expectation", "metric_explanation"),
-        missing_analyses=("performance_decomposition",),
+        analyses=("bb_rating", "performance_vs_expectation", "performance_decomposition"),
+        missing_analyses=("metric_explanation",),
         evidence=("metric_strengths", "metric_limitations", "expectation_gap"),
     ),
     QuestionCapability(
@@ -52,8 +52,8 @@ QUESTION_CAPABILITIES: tuple[QuestionCapability, ...] = (
         key="real_improvement",
         question="È migliorato davvero o gioca semplicemente più minuti?",
         status="partial",
-        analyses=("player_trend", "metric_explanation"),
-        missing_analyses=("performance_decomposition",),
+        analyses=("player_trend", "performance_decomposition"),
+        missing_analyses=("metric_explanation",),
         evidence=("minutes", "per36_production", "efficiency", "impact"),
     ),
     QuestionCapability(
