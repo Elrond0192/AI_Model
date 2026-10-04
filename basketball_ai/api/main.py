@@ -600,12 +600,14 @@ def create_app() -> FastAPI:
     from basketball_ai.api.routes.metric_rating_v2 import router as metric_rating_v2_router
     from basketball_ai.api.routes.bb_rating_v2 import router as bb_rating_v2_router
     from basketball_ai.api.routes.future_performance_v2 import router as future_performance_v2_router
+    from basketball_ai.api.routes.player_intelligence_v2 import router as player_intelligence_v2_router
 
     app.include_router(predictions_v2_router)
     app.include_router(scenarios_v2_router)
     app.include_router(metric_rating_v2_router)
     app.include_router(bb_rating_v2_router)
     app.include_router(future_performance_v2_router)
+    app.include_router(player_intelligence_v2_router)
 
     @app.get("/health")
     def health(request: Request):
