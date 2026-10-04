@@ -36,19 +36,30 @@
       </div>
 
       <nav class="nav-list" aria-label="Navigazione principale">
-        <button class="nav-item active" data-page="overview"><span class="nav-icon"><i class="ph ph-house"></i></span><span>Overview</span></button>
-        <button class="nav-item" data-page="data"><span class="nav-icon"><i class="ph ph-database"></i></span><span>Dati e snapshot</span></button>
-        <button class="nav-item" data-page="training"><span class="nav-icon"><i class="ph ph-trend-up"></i></span><span>Training</span></button>
-        <button class="nav-item" data-page="backtests"><span class="nav-icon"><i class="ph ph-chart-line-up"></i></span><span>Backtests</span></button>
-        <button class="nav-item" data-page="bb-rating"><span class="nav-icon"><i class="ph-fill ph-star"></i></span><span>BB-Rating</span></button>
-        <button class="nav-item" data-page="future-performance"><span class="nav-icon"><i class="ph ph-crystal-ball"></i></span><span>Future Performance</span></button>
-        <button class="nav-item" data-page="scenarios"><span class="nav-icon"><i class="ph ph-flask"></i></span><span>Scenario Lab</span></button>
-        <button class="nav-item" data-page="registry"><span class="nav-icon"><i class="ph ph-cube"></i></span><span>Model Registry</span></button>
-        <button class="nav-item" data-page="health"><span class="nav-icon"><i class="ph ph-heartbeat"></i></span><span>API &amp; Health</span></button>
-        <button class="nav-item" data-page="diagnostics"><span class="nav-icon"><i class="ph ph-stethoscope"></i></span><span>API Diagnostics</span></button>
-        <button class="nav-item admin-only" data-page="audit"><span class="nav-icon"><i class="ph ph-clipboard-text"></i></span><span>Audit Logs</span></button>
-        <button class="nav-item" data-page="contact"><span class="nav-icon"><i class="ph ph-envelope"></i></span><span>Contatti</span></button>
-        <button class="nav-item" data-page="settings"><span class="nav-icon"><i class="ph ph-gear"></i></span><span>Settings</span></button>
+        <div class="nav-group"><div class="nav-group-label">HOME</div>
+          <button class="nav-item active" data-page="overview"><span class="nav-icon"><i class="ph ph-house"></i></span><span>Overview</span></button>
+        </div>
+        <div class="nav-group"><div class="nav-group-label">MODELS</div>
+          <button class="nav-item" data-page="bb-rating"><span class="nav-icon"><i class="ph-fill ph-star"></i></span><span>BB-Rating</span></button>
+          <button class="nav-item" data-page="future-performance"><span class="nav-icon"><i class="ph ph-crystal-ball"></i></span><span>Future Performance</span></button>
+        </div>
+        <div class="nav-group"><div class="nav-group-label">VALIDATION</div>
+          <button class="nav-item" data-page="training"><span class="nav-icon"><i class="ph ph-trend-up"></i></span><span>Training</span></button>
+          <button class="nav-item" data-page="backtests"><span class="nav-icon"><i class="ph ph-chart-line-up"></i></span><span>Backtests</span></button>
+          <button class="nav-item" data-page="registry"><span class="nav-icon"><i class="ph ph-cube"></i></span><span>Model Registry</span></button>
+        </div>
+        <div class="nav-group"><div class="nav-group-label">LAB</div>
+          <button class="nav-item" data-page="scenarios"><span class="nav-icon"><i class="ph ph-flask"></i></span><span>Scenario Lab</span></button>
+        </div>
+        <div class="nav-group"><div class="nav-group-label">OPERATIONS</div>
+          <button class="nav-item" data-page="data"><span class="nav-icon"><i class="ph ph-database"></i></span><span>Dati e snapshot</span></button>
+          <button class="nav-item" data-page="health"><span class="nav-icon"><i class="ph ph-heartbeat"></i></span><span>API &amp; Health</span></button>
+          <button class="nav-item" data-page="diagnostics"><span class="nav-icon"><i class="ph ph-stethoscope"></i></span><span>API Diagnostics</span></button>
+        </div>
+        <div class="nav-group"><div class="nav-group-label">ADMIN</div>
+          <button class="nav-item admin-only" data-page="audit"><span class="nav-icon"><i class="ph ph-clipboard-text"></i></span><span>Audit Logs</span></button>
+          <button class="nav-item" data-page="settings"><span class="nav-icon"><i class="ph ph-gear"></i></span><span>Settings</span></button>
+        </div>
       </nav>
 
       <div class="sidebar-spacer"></div>
@@ -62,10 +73,11 @@
 
     <main class="main-area">
       <header class="topbar">
+        <div class="system-state"><span class="system-dot" id="system-dot"></span><span id="system-label">SYSTEM OPERATIONAL</span></div>
         <div class="topbar-spacer"></div>
-        <div class="top-meta"><span>ACTIVE API</span><strong id="top-api" class="meta-ok">● V2</strong></div>
+        <div class="top-meta"><span>API</span><strong id="top-api" class="meta-ok">● V2</strong></div>
         <div class="top-meta"><span>DATABASE</span><strong id="top-db">not selected</strong></div>
-        <div class="top-meta"><span>ACTIVE MODEL</span><strong id="top-model">not promoted</strong></div>
+        <div class="top-meta"><span>MODEL</span><strong id="top-model">not promoted</strong></div>
         <div class="top-meta"><span>BB-RATING</span><strong id="top-bb-rating">—</strong></div>
         <div class="top-meta utc"><span>UTC</span><strong id="top-utc">—</strong></div>
       </header>
@@ -76,18 +88,25 @@
   </div>
 
   <template id="page-overview">
-    <section class="page" data-title="Overview">
-      <div class="page-heading"><div><h1>Overview</h1><p>Panoramica dello stato del sistema AI Model</p></div></div>
-      <div id="overview-kpis" class="kpi-grid six"></div>
+    <section class="page overview-page" data-title="Overview">
+      <div class="page-hero">
+        <div><div class="eyebrow">AI MODEL / OPERATIONS</div><h1>System Overview</h1><p>Stato operativo, modelli in produzione e qualità dell'ultima validazione.</p></div>
+        <div class="hero-status"><span class="hero-status-dot" id="overview-system-dot"></span><div><strong id="overview-system-status">SYSTEM OPERATIONAL</strong><span>Production environment</span></div></div>
+      </div>
+      <section class="overview-model-strip">
+        <div class="overview-model-head"><div><div class="eyebrow">PRODUCTION MODELS</div><h2>Active intelligence stack</h2></div><button class="btn btn-small btn-secondary jump" data-page="registry">Model Registry</button></div>
+        <div id="overview-models" class="model-strip-grid"></div>
+      </section>
+      <div id="overview-kpis" class="kpi-grid six overview-kpis"></div>
       <section class="section-block">
-        <div class="section-heading"><h2>Operational readiness</h2></div>
+        <div class="section-heading"><div><div class="eyebrow">READINESS</div><h2>Operational readiness</h2></div></div>
         <div class="table-shell"><table><thead><tr><th>Componente</th><th>Stato</th><th>Dettagli</th><th class="right">Azione</th></tr></thead><tbody id="readiness-body"></tbody></table></div>
       </section>
       <div class="split-grid">
-        <section class="panel"><div class="panel-heading"><h2>Model registry</h2><button class="btn btn-small btn-secondary jump" data-page="registry">Vai al registry</button></div><div id="overview-registry"></div></section>
-        <section class="panel"><div class="panel-heading"><h2>Ultimo backtest</h2><button class="btn btn-small btn-secondary jump" data-page="backtests">Vai ai backtest</button></div><div id="overview-backtest"></div></section>
+        <section class="panel"><div class="panel-heading"><div><div class="eyebrow">REGISTRY</div><h2>Production &amp; candidate</h2></div><button class="btn btn-small btn-secondary jump" data-page="registry">Apri</button></div><div id="overview-registry"></div></section>
+        <section class="panel"><div class="panel-heading"><div><div class="eyebrow">VALIDATION</div><h2>Latest backtest</h2></div><button class="btn btn-small btn-secondary jump" data-page="backtests">Apri</button></div><div id="overview-backtest"></div></section>
       </div>
-      <section class="panel candidate-panel"><div class="panel-heading"><h2>Candidate quality <span class="muted-inline">(ultimo run)</span></h2></div><div id="candidate-quality" class="quality-grid"></div></section>
+      <section class="panel candidate-panel"><div class="panel-heading"><div><div class="eyebrow">QUALITY</div><h2>Candidate quality <span class="muted-inline">(ultimo run)</span></h2></div></div><div id="candidate-quality" class="quality-grid"></div></section>
     </section>
   </template>
 
