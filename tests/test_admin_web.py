@@ -275,6 +275,84 @@ def test_bb_rating_calibration_start(monkeypatch, tmp_path):
     assert executor.submitted
 
 
+
+def test_diagnostic_request_builds_whitelisted_payloads():
+    prediction = admin._diagnostic_request(
+        admin.DiagnosticPayload(
+            model="prediction",
+            player_global_id="p1",
+            team_global_id="t1",
+            league="ita1",
+            season=2025,
+            competition="po",
+        )
+    )
+    assert prediction == (
+        "/api/v2/predictions/player-team",
+        {
+            "player_global_id": "p1",
+            "team_global_id": "t1",
+            "league": "ITA1",
+            "season": 2025,
+            "competition": "PO",
+        },
+    )
+    bb = admin._diagnostic_request(
+        admin.DiagnosticPayload(model="bb_rating", player_global_id="p1")
+    )
+    assert bb[0] == "/api/v2/bb-rating/player"
+    assert bb[1]["include_history"] is True
+    future = admin._diagnostic_request(
+        admin.DiagnosticPayload(model="future_performance", player_global_id="p1")
+    )
+    assert future[0] == "/api/v2/future-performance/player"
+    metric = admin._diagnostic_request(
+        admin.DiagnosticPayload(model="metric_rating", player_global_id="p1")
+    )
+    assert metric[0] == "/api/v2/metric-rating/player-snapshot"
+    assert metric[1]["metrics"] == ["RAPTOR", "LEBRON", "VORP"]
+
+
+def test_diagnostic_assertions_validate_model_response():
+    bb = admin._diagnostic_assertions(
+        "bb_rating",
+        {"ok": True, "body": {"bb_rating": 78, "history": [], "uncertainty": {}}},
+    )
+    assert all(check["ok"] for check in bb)
+    future = admin._diagnostic_assertions(
+        "future_performance",
+        {"ok": True, "body": {"targets": {"PTS/36": {}}, "future_performance_version": "1.0"}},
+    )
+    assert all(check["ok"] for check in future)
+    prediction = admin._diagnostic_assertions(
+        "prediction",
+        {"ok": True, "body": {"predicted_rating": 7.2, "confidence_low": 6.1, "confidence_high": 8.0}},
+    )
+    assert all(check["ok"] for check in prediction)
+
+
+def test_diagnostic_endpoint_uses_internal_api(monkeypatch):
+    captured = {}
+    monkeypatch.setattr(
+        admin,
+        "_api_request",
+        lambda path, payload: captured.update(path=path, payload=payload) or {
+            "ok": True,
+            "status": 200,
+            "latency_ms": 42.5,
+            "body": {"bb_rating": 82, "history": [], "uncertainty": {}},
+        },
+    )
+    monkeypatch.setattr(admin, "_audit", lambda *args, **kwargs: None)
+    result = admin.diagnostics_test(
+        admin.DiagnosticPayload(model="bb_rating", player_global_id="p1", league="ITA1", season=2025),
+        {"username": "admin", "role": "admin", "token": "x"},
+    )
+    assert result["overall_ok"] is True
+    assert captured["path"] == "/api/v2/bb-rating/player"
+    assert captured["payload"]["player_global_id"] == "p1"
+
+
 def test_authentication_helpers_and_csrf(monkeypatch):
     monkeypatch.setattr(admin, "validate_session_token", lambda token: ("admin", "admin") if token == "good" else None)
     user = admin._user_from_request(_request({admin.SESSION_COOKIE: "good"}))
