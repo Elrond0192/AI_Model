@@ -908,181 +908,227 @@ def _probe(path: str) -> dict[str, Any]:
 
 
 def _scenario_entity_rows(entity: str, query: str, limit: int = 12) -> list[dict[str, Any]]:
-    """Search entities from the dataset already loaded by the Control Center.
+    """Search canonical entities with DB lookup and optional loaded-data enrichment.
 
-    The loaded dataset is the same canonical AI_Source contract used by the
-    admin workflow. Keeping entity lookup in-memory avoids a second, fragile
-    SQL query solely for autocomplete and never exposes global IDs to the UI.
+    The DB remains the authoritative lookup path, preserving the pre-regression
+    behaviour of the endpoint. Loaded control-center data is used only to add
+    multi-league/player-team context metadata when available.
     """
     with STATE.lock:
+        profile_name = STATE.active_profile
         loaded = STATE.data
-    if not isinstance(loaded, dict):
-        return []
 
-    table = "players" if entity == "player" else "teams"
-    frame = loaded.get(table)
-    if not isinstance(frame, pd.DataFrame) or frame.empty or "id" not in frame.columns:
-        return []
-
-    search = str(query or "").strip()
     max_rows = max(1, min(int(limit), 20))
-    work = frame.copy()
+    search = str(query or "").strip()
+    rows: list[dict[str, Any]] = []
 
-    def contains(column: str) -> pd.Series:
-        if column not in work.columns:
-            return pd.Series(False, index=work.index)
-        return work[column].fillna("").astype(str).str.contains(
-            search,
-            case=False,
-            regex=False,
-            na=False,
-        )
+    if profile_name:
+        profile = load_profiles().get(profile_name)
+        if profile:
+            schema = str(profile.get("source_schema", "AI_Source"))
+            if not _SCHEMA_RE.fullmatch(schema):
+                raise RuntimeError("Invalid PostgreSQL source schema")
+            table = "Players" if entity == "player" else "Teams"
+            columns = (
+                "id, global_id, name, position, current_league_key, current_team_id"
+                if entity == "player"
+                else "id, global_id, name, short_name, league_id, league_key"
+            )
+            if search:
+                if entity == "player":
+                    search_where = (
+                        "lower(coalesce(name, '')) LIKE lower(:query) "
+                        "OR lower(coalesce(global_id::text, '')) LIKE lower(:query)"
+                    )
+                else:
+                    search_where = (
+                        "lower(coalesce(name, '')) LIKE lower(:query) "
+                        "OR lower(coalesce(short_name, '')) LIKE lower(:query) "
+                        "OR lower(coalesce(global_id::text, '')) LIKE lower(:query)"
+                    )
+                statement = text(
+                    f'SELECT {columns} FROM "{schema}"."{table}" '
+                    f"WHERE {search_where} "
+                    "ORDER BY CASE WHEN lower(coalesce(name, '')) = lower(:exact) THEN 0 "
+                    "WHEN lower(coalesce(name, '')) LIKE lower(:prefix) THEN 1 ELSE 2 END, "
+                    f"name NULLS LAST LIMIT {max_rows}"
+                )
+                params = {
+                    "query": f"%{search}%",
+                    "exact": search,
+                    "prefix": f"{search}%",
+                }
+            else:
+                statement = text(
+                    f'SELECT {columns} FROM "{schema}"."{table}" '
+                    "ORDER BY name NULLS LAST LIMIT :limit"
+                )
+                params = {"limit": max_rows}
+            with get_engine(profile_url(profile_name)).connect() as connection:
+                rows = [dict(row) for row in connection.execute(statement, params).mappings().all()]
 
-    if search:
-        match = contains("name") | contains("global_id")
-        if entity == "team":
-            match = match | contains("short_name")
-        work = work.loc[match].copy()
+    if not rows and isinstance(loaded, dict):
+        table_key = "players" if entity == "player" else "teams"
+        frame = loaded.get(table_key)
+        if isinstance(frame, pd.DataFrame) and not frame.empty and "id" in frame.columns:
+            work = frame.copy()
 
-        def rank(value: Any) -> int:
-            value = str(value or "").strip().lower()
-            needle = search.lower()
-            if value == needle:
-                return 0
-            if value.startswith(needle):
-                return 1
-            return 2
+            def contains(column: str) -> pd.Series:
+                if column not in work.columns:
+                    return pd.Series(False, index=work.index)
+                return work[column].fillna("").astype(str).str.contains(
+                    search, case=False, regex=False, na=False
+                )
 
-        work["_search_rank"] = work["name"].map(rank) if "name" in work.columns else 2
-        work = work.sort_values(
-            ["_search_rank", "name"],
-            ascending=[True, True],
-            na_position="last",
-            kind="stable",
-        )
-    elif "name" in work.columns:
-        work = work.sort_values("name", na_position="last", kind="stable")
+            if search:
+                match = contains("name") | contains("global_id")
+                if entity == "team":
+                    match = match | contains("short_name")
+                work = work.loc[match].copy()
 
-    records: list[dict[str, Any]] = []
+                def rank(value: Any) -> int:
+                    value = str(value or "").strip().lower()
+                    needle = search.lower()
+                    if value == needle:
+                        return 0
+                    if value.startswith(needle):
+                        return 1
+                    return 2
+
+                work["_search_rank"] = (
+                    work["name"].map(rank) if "name" in work.columns else 2
+                )
+                work = work.sort_values(
+                    ["_search_rank", "name"],
+                    ascending=[True, True],
+                    na_position="last",
+                    kind="stable",
+                )
+            elif "name" in work.columns:
+                work = work.sort_values("name", na_position="last", kind="stable")
+            rows = work.head(max_rows).to_dict("records")
+
+    if not rows:
+        return []
+
+    def value_text(source_row: Any, key: str) -> str:
+        value = source_row.get(key)
+        if value is None or (isinstance(value, float) and pd.isna(value)):
+            return ""
+        return str(value).strip()
+
     team_global_by_id: dict[str, str] = {}
     team_name_by_id: dict[str, str] = {}
-    if entity == "player":
+    if entity == "player" and isinstance(loaded, dict):
         teams_frame = loaded.get("teams")
         if isinstance(teams_frame, pd.DataFrame) and {"id", "global_id"}.issubset(teams_frame.columns):
-            for row in teams_frame.to_dict("records"):
-                if row.get("id") is None or pd.isna(row.get("id")):
-                    continue
-                key = str(row["id"])
-                global_value = row.get("global_id")
-                if global_value not in (None, ""):
-                    team_global_by_id[key] = str(global_value)
-                name_value = row.get("name")
-                if name_value not in (None, ""):
-                    team_name_by_id[key] = str(name_value).strip()
+            for team_row in teams_frame.to_dict("records"):
+                team_id = value_text(team_row, "id")
+                global_value = value_text(team_row, "global_id")
+                name_value = value_text(team_row, "name")
+                if team_id and global_value:
+                    team_global_by_id[team_id] = global_value
+                if team_id and name_value:
+                    team_name_by_id[team_id] = name_value
 
-    for row in work.head(max_rows).to_dict("records"):
-        internal_id = row.get("id")
-        if internal_id is None or pd.isna(internal_id):
+    records: list[dict[str, Any]] = []
+    for row in rows:
+        internal_id = value_text(row, "id")
+        if not internal_id:
             continue
-
-        def value_text(key: str) -> str:
-            value = row.get(key)
-            if value is None or (isinstance(value, float) and pd.isna(value)):
-                return ""
-            return str(value).strip()
-
-        def value_text_from_row(source_row: Any, key: str) -> str:
-            value = source_row.get(key)
-            if value is None or (isinstance(value, float) and pd.isna(value)):
-                return ""
-            return str(value).strip()
-
-        name = value_text("name") or value_text("global_id") or str(internal_id)
-        global_id = value_text("global_id")
+        global_id = value_text(row, "global_id")
+        name = value_text(row, "name") or global_id or internal_id
         if entity == "player":
-            subtitle_values = (value_text("position"), value_text("current_league_key"))
+            subtitle_values = (value_text(row, "position"), value_text(row, "current_league_key"))
         else:
-            subtitle_values = (value_text("short_name"),)
+            subtitle_values = (value_text(row, "short_name"),)
+        subtitle = " · ".join(value for value in subtitle_values if value and value != name)
 
-        subtitle = " · ".join(
-            value for value in subtitle_values if value and value != name
-        )
         league_keys: list[str] = []
         contexts: list[dict[str, Any]] = []
-        if entity == "player":
-            stats_frame = loaded.get("player_stats")
-            if isinstance(stats_frame, pd.DataFrame) and "player_id" in stats_frame.columns:
-                context_rows = stats_frame[
-                    stats_frame["player_id"].map(_to_int) == _to_int(internal_id)
-                ].copy()
-                if not context_rows.empty and "league_key" in context_rows.columns:
-                    context_rows["_season_year"] = _numeric_seasons(context_rows)
-                    context_rows = context_rows.dropna(subset=["_season_year"]).sort_values(
-                        ["league_key", "_season_year", "competition"],
-                        ascending=[True, False, True],
-                        kind="stable",
-                    )
-                    for league_key, group in context_rows.groupby(
-                        context_rows["league_key"].astype(str).str.strip().str.upper(),
-                        sort=True,
-                    ):
-                        if not league_key:
-                            continue
-                        latest = group.iloc[0]
-                        team_id_text = value_text_from_row(latest, "team_id")
-                        contexts.append(
-                            {
-                                "league_key": league_key,
-                                "season": int(latest["_season_year"]),
-                                "competition": value_text_from_row(latest, "competition").upper(),
-                                "team_global_id": team_global_by_id.get(team_id_text, ""),
-                                "team_name": team_name_by_id.get(team_id_text, ""),
-                            }
-                        )
-                    league_keys = [item["league_key"] for item in contexts]
-        else:
-            team_history = loaded.get("team_season_stats")
-            if isinstance(team_history, pd.DataFrame) and "global_id" in team_history.columns:
-                context_rows = team_history[
-                    team_history["global_id"].astype(str).str.strip() == global_id
-                ].copy()
-                if not context_rows.empty and "league_key" in context_rows.columns:
-                    context_rows["_season_year"] = _numeric_seasons(context_rows)
-                    context_rows = context_rows.dropna(subset=["_season_year"]).sort_values(
-                        ["league_key", "_season_year"],
-                        ascending=[True, False],
-                        kind="stable",
-                    )
-                    for league_key, group in context_rows.groupby(
-                        context_rows["league_key"].astype(str).str.strip().str.upper(),
-                        sort=True,
-                    ):
-                        if not league_key:
-                            continue
-                        latest = group.iloc[0]
-                        contexts.append(
-                            {
-                                "league_key": league_key,
-                                "season": int(latest["_season_year"]),
-                                "competition": value_text_from_row(latest, "competition").upper(),
-                            }
-                        )
-                    league_keys = [item["league_key"] for item in contexts]
+        try:
+            if isinstance(loaded, dict):
+                if entity == "player":
+                    stats_frame = loaded.get("player_stats")
+                    required = {"player_id", "league_key", "season", "competition"}
+                    if isinstance(stats_frame, pd.DataFrame) and required.issubset(stats_frame.columns):
+                        target_id = _to_int(internal_id)
+                        context_rows = stats_frame[
+                            stats_frame["player_id"].map(_to_int) == target_id
+                        ].copy()
+                        if not context_rows.empty:
+                            context_rows["_season_year"] = _numeric_seasons(context_rows)
+                            context_rows = context_rows.dropna(subset=["_season_year"]).sort_values(
+                                ["league_key", "_season_year", "competition"],
+                                ascending=[True, False, True],
+                                kind="stable",
+                            )
+                            for league_key, group in context_rows.groupby(
+                                context_rows["league_key"].astype(str).str.strip().str.upper(),
+                                sort=True,
+                            ):
+                                if not league_key:
+                                    continue
+                                latest = group.iloc[0]
+                                team_id_text = value_text(latest, "team_id")
+                                contexts.append(
+                                    {
+                                        "league_key": league_key,
+                                        "season": int(latest["_season_year"]),
+                                        "competition": value_text(latest, "competition").upper(),
+                                        "team_global_id": team_global_by_id.get(team_id_text, ""),
+                                        "team_name": team_name_by_id.get(team_id_text, ""),
+                                    }
+                                )
+                            league_keys = [item["league_key"] for item in contexts]
+                else:
+                    team_history = loaded.get("team_season_stats")
+                    required = {"global_id", "league_key", "season", "competition"}
+                    if isinstance(team_history, pd.DataFrame) and required.issubset(team_history.columns):
+                        context_rows = team_history[
+                            team_history["global_id"].astype(str).str.strip() == global_id
+                        ].copy()
+                        if not context_rows.empty:
+                            context_rows["_season_year"] = _numeric_seasons(context_rows)
+                            context_rows = context_rows.dropna(subset=["_season_year"]).sort_values(
+                                ["league_key", "_season_year"],
+                                ascending=[True, False],
+                                kind="stable",
+                            )
+                            for league_key, group in context_rows.groupby(
+                                context_rows["league_key"].astype(str).str.strip().str.upper(),
+                                sort=True,
+                            ):
+                                if not league_key:
+                                    continue
+                                latest = group.iloc[0]
+                                contexts.append(
+                                    {
+                                        "league_key": league_key,
+                                        "season": int(latest["_season_year"]),
+                                        "competition": value_text(latest, "competition").upper(),
+                                    }
+                                )
+                            league_keys = [item["league_key"] for item in contexts]
+        except (KeyError, TypeError, ValueError, OverflowError):
+            # Autocomplete must never fail because optional context enrichment is malformed.
+            league_keys = []
+            contexts = []
 
         records.append(
             {
-                "selection_id": str(internal_id),
+                "selection_id": internal_id,
                 "global_id": global_id,
                 "name": name,
                 "subtitle": subtitle,
-                "league_key": value_text("current_league_key") if entity == "player" else value_text("league_key"),
+                "league_key": value_text(row, "current_league_key") if entity == "player" else value_text(row, "league_key"),
                 "current_team_global_id": (
-                    team_global_by_id.get(value_text("current_team_id"), "")
+                    team_global_by_id.get(value_text(row, "current_team_id"), "")
                     if entity == "player"
                     else ""
                 ),
                 "current_team_name": (
-                    team_name_by_id.get(value_text("current_team_id"), "")
+                    team_name_by_id.get(value_text(row, "current_team_id"), "")
                     if entity == "player"
                     else ""
                 ),
@@ -1092,7 +1138,6 @@ def _scenario_entity_rows(entity: str, query: str, limit: int = 12) -> list[dict
             }
         )
     return records
-
 
 def _resolve_scenario_selections(payload: dict[str, Any]) -> dict[str, Any]:
     """Translate opaque admin selections to canonical global IDs server-side."""
