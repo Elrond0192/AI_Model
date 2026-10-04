@@ -260,6 +260,18 @@ def test_causal_team_effect_returns_observational_association_without_causal_cla
     assert any("non un effet causale" in item for item in result["limitations"])
 
 
+def test_player_intelligence_composes_causal_team_effect_as_observational():
+    result = _engine().evaluate(
+        {"scenario": "player_intelligence", "season": 2024, "competition": "RS",
+         "parameters": {"question_key": "causal_team_effect"}},
+        [1], [], 10, None,
+    )
+    assert set(result["result"]["analyses"]) == {"causal_team_effect"}
+    analysis = result["result"]["analyses"]["causal_team_effect"]
+    assert analysis["result"]["causal_identification"] == "unavailable"
+    assert analysis["result"]["causal_effect"] is None
+
+
 def test_player_intelligence_rejects_unknown_question_key():
     with pytest.raises(ValueError, match="unsupported Player Intelligence question_key"):
         _engine().evaluate(
