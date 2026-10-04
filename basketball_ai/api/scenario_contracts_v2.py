@@ -11,6 +11,7 @@ from basketball_ai.models.competition_training import normalize_competition
 
 SCENARIO_TYPES = {
     "player_competition",
+    "player_intelligence",
     "team_competition",
     "player_trend",
     "performance_decomposition",
