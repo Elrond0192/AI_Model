@@ -144,6 +144,33 @@ def _source_team_id(
     return _to_int(rows.sort_values("_season_year").iloc[-1]["team_id"])
 
 
+def _source_team_global_id(
+    data: dict[str, Any],
+    team_id: int,
+    season: int,
+    league_id: int,
+    competition: str,
+) -> Optional[str]:
+    history = data.get("team_season_stats", pd.DataFrame())
+    if history.empty or "global_id" not in history.columns:
+        return None
+    rows = history[history["team_id"].map(_to_int) == _to_int(team_id)].copy()
+    if "league_id" in rows.columns:
+        rows = rows[rows["league_id"].map(_to_int) == _to_int(league_id)]
+    if "competition" in rows.columns:
+        rows = rows[
+            rows["competition"].map(normalize_competition) == competition
+        ]
+    if rows.empty:
+        return None
+    rows["_season_year"] = _numeric_seasons(rows)
+    rows = rows[rows["_season_year"] == int(season)]
+    if rows.empty:
+        return None
+    value = rows.sort_values("_season_year").iloc[-1].get("global_id")
+    return str(value).strip() if pd.notna(value) and str(value).strip() else None
+
+
 def _compatibility_comparison(
     snapshot: dict[str, Any],
     scoped: dict[str, Any],
@@ -170,8 +197,33 @@ def _compatibility_comparison(
 
     if actual_team_raw is not None:
         try:
+            actual_snapshot = snapshot
+            source_team_dict = snapshot.get("_source_team_dict", {})
+            source_team_known = (
+                isinstance(source_team_dict, dict)
+                and actual_team_raw in source_team_dict
+            )
+            if not source_team_known:
+                actual_global_id = _source_team_global_id(
+                    snapshot,
+                    actual_team_raw,
+                    season,
+                    league_id,
+                    competition,
+                )
+                if actual_global_id:
+                    actual_snapshot = dict(snapshot)
+                    patched_source_team_dict = dict(
+                        source_team_dict if isinstance(source_team_dict, dict) else {}
+                    )
+                    patched_source_team_dict[actual_team_raw] = {
+                        "id": actual_team_raw,
+                        "global_id": actual_global_id,
+                    }
+                    actual_snapshot["_source_team_dict"] = patched_source_team_dict
+
             actual_scoped = scope_prediction_context(
-                snapshot,
+                actual_snapshot,
                 player_id,
                 actual_team_raw,
                 league_id,
