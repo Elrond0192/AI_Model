@@ -33,6 +33,9 @@ def test_prediction_calibration_is_monotonic_and_1_100():
     assert all(left <= right + 1e-9 for left, right in zip(values, values[1:]))
     assert native_to_100(0.0, mapping) >= 1.0
     assert native_to_100(10.0, mapping) <= 100.0
+    assert native_to_100(0.0, {"x_thresholds": [0.0, 10.0], "y_thresholds_native": [0.0, 10.0]}) == 1.0
+    assert native_to_100(10.0, {"x_thresholds": [0.0, 10.0], "y_thresholds_native": [0.0, 10.0]}) == 100.0
+    assert native_to_100(5.0, {"x_thresholds": [0.0, 10.0], "y_thresholds_native": [0.0, 10.0]}) == 50.5
     assert report["prediction_model_version"] == "2.6.0"
 
 
