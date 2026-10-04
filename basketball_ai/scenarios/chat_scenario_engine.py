@@ -110,6 +110,7 @@ class ChatScenarioEngine:
         scenario = str(spec["scenario"])
         dispatch = {
             "player_competition": self._player_competition,
+            "player_intelligence": self._player_intelligence,
             "team_competition": self._team_competition,
             "player_trend": self._player_trend,
             "performance_decomposition": self._performance_decomposition,
@@ -1144,6 +1145,77 @@ class ChatScenarioEngine:
         return {"result":{"player":self._player_name(players[0]),"previous_season":int(previous["_year"]),"current_season":int(current["_year"]),"deltas":deltas},
                 "evidence":[{"type":"consecutive_seasons","count":2}],"support":{"method":"observed_defensive_profile_decomposition","samples":int(current.get("games_played",0) or 0),"confidence":_confidence(int(current.get("games_played",0) or 0))},
                 "limitations":["Box-score defensive metrics do not isolate individual causal defensive impact."]}
+
+
+    def _player_intelligence(self, spec, players, teams, source_league, target_league):
+        if not players:
+            raise ValueError("player is required")
+        key = str(spec.get("parameters", {}).get("question_key", "current_level")).strip().lower()
+        bundles = {
+            "current_level": ("player_competition",),
+            "why_performing": ("performance_decomposition", "metric_explanation"),
+            "change_vs_last_season": ("performance_decomposition", "role_analysis"),
+            "real_improvement": ("performance_decomposition", "metric_explanation"),
+            "current_role": ("role_analysis",),
+            "role_fit": ("role_analysis", "performance_decomposition"),
+            "team_usage": ("team_usage_analysis",),
+            "stability": ("performance_stability",),
+            "potential": ("potential_synthesis", "age_trajectory"),
+            "regression_risk": ("regression_risk",),
+            "team_counterfactual": ("player_team", "compatibility"),
+            "shot_profile": ("shooting_decomposition",),
+            "defensive_reason": ("defensive_decomposition",),
+            "clutch_value": ("clutch_analysis",),
+        }
+        scenarios = bundles.get(key)
+        if scenarios is None:
+            raise ValueError(f"unsupported Player Intelligence question_key: {key}")
+        dispatch = {
+            "player_competition": self._player_competition,
+            "performance_decomposition": self._performance_decomposition,
+            "metric_explanation": self._metric_explanation,
+            "role_analysis": self._role_analysis,
+            "performance_stability": self._performance_stability,
+            "team_usage_analysis": self._team_usage_analysis,
+            "regression_risk": self._regression_risk,
+            "potential_synthesis": self._potential_synthesis,
+            "shooting_decomposition": self._shooting_decomposition,
+            "defensive_decomposition": self._defensive_decomposition,
+            "age_trajectory": self._age_trajectory,
+            "player_team": self._player_team,
+            "clutch_analysis": self._clutch_analysis,
+        }
+        analyses = {}
+        limitations = [
+            "Player Intelligence compone evidenze descrittive e predittive esistenti; non trasforma una correlazione in causalità."
+        ]
+        for name in scenarios:
+            if name == "compatibility":
+                continue
+            fn = dispatch[name]
+            try:
+                payload = fn(spec, players, teams, source_league, target_league)
+            except (ValueError, KeyError) as exc:
+                payload = {"available": False, "reason": str(exc)}
+            analyses[name] = payload
+        return {
+            "result": {
+                "player": self._player_name(players[0]),
+                "question_key": key,
+                "analyses": analyses,
+                "answer_mode": "evidence_composition",
+            },
+            "evidence": [
+                {"type": "question_analysis_registry", "question_key": key},
+                {"type": "composed_analysis_layers", "count": len(analyses)},
+            ],
+            "support": {
+                "method": "player_intelligence_evidence_composition",
+                "samples": len(analyses),
+                "confidence": "medium",
+            },
+            "limitations": limitations,
+        }
 
     # ------------------------------------------------------------------
     # Team impact / replacement / fit searches
