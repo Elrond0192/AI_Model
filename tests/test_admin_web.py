@@ -440,6 +440,88 @@ def test_scenario_entity_endpoint_does_not_require_loaded_state(monkeypatch):
     assert result["items"] == expected
 
 
+def test_scenario_entity_lookup_uses_only_canonical_columns(monkeypatch):
+    _reset_state()
+    captured: list[tuple[str, dict[str, object]]] = []
+
+    class Result:
+        def __init__(self, rows):
+            self._rows = rows
+
+        def mappings(self):
+            return self
+
+        def all(self):
+            return self._rows
+
+    class Connection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def execute(self, statement, params):
+            sql = str(statement)
+            captured.append((sql, dict(params)))
+            if '"Players"' in sql:
+                return Result(
+                    [
+                        {
+                            "id": 1,
+                            "global_id": "p1",
+                            "name": "Player",
+                            "position": "PG",
+                        }
+                    ]
+                )
+            return Result(
+                [
+                    {
+                        "id": 2,
+                        "global_id": "t1",
+                        "name": "Team",
+                        "league_id": 10,
+                    }
+                ]
+            )
+
+    class Engine:
+        def connect(self):
+            return Connection()
+
+    monkeypatch.setattr(admin, "load_profiles", lambda: {"production": {"source_schema": "AI_Source"}})
+    monkeypatch.setattr(admin, "profile_url", lambda _: "postgresql+psycopg://test")
+    monkeypatch.setattr(admin, "get_engine", lambda _: Engine())
+
+    with admin.STATE.lock:
+        admin.STATE.active_profile = "production"
+        admin.STATE.data = None
+
+    players = admin.scenario_entities(
+        entity="player",
+        q="Player",
+        limit=12,
+        user={"username": "admin", "role": "admin", "token": "x"},
+    )
+    teams = admin.scenario_entities(
+        entity="team",
+        q="Team",
+        limit=12,
+        user={"username": "admin", "role": "admin", "token": "x"},
+    )
+
+    assert players["items"][0]["global_id"] == "p1"
+    assert teams["items"][0]["global_id"] == "t1"
+    assert captured
+    assert "current_league_key" not in captured[0][0]
+    assert "current_team_id" not in captured[0][0]
+    assert '"Players"' in captured[0][0]
+    assert '"Teams"' in captured[1][0]
+    assert "short_name" not in captured[1][0]
+    assert "league_key" not in captured[1][0]
+
+
 def test_scenario_entity_search_uses_loaded_dataset():
     _reset_state()
     data = _data()
