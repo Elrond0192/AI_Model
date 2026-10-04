@@ -35,9 +35,8 @@ QUESTION_CAPABILITIES: tuple[QuestionCapability, ...] = (
     QuestionCapability(
         key="why_performing",
         question="Perché sta giocando meglio o peggio?",
-        status="partial",
-        analyses=("bb_rating", "performance_vs_expectation", "performance_decomposition"),
-        missing_analyses=("metric_explanation",),
+        status="available",
+        analyses=("bb_rating", "performance_vs_expectation", "performance_decomposition", "metric_explanation"),
         evidence=("metric_strengths", "metric_limitations", "expectation_gap"),
     ),
     QuestionCapability(
