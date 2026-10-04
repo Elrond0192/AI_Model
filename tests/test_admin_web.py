@@ -426,6 +426,20 @@ def test_scenario_player_search_exposes_multiple_league_contexts():
     assert {context["league_key"] for context in item["contexts"]} == {"EL", "ITA1"}
 
 
+def test_scenario_entity_endpoint_does_not_require_loaded_state(monkeypatch):
+    _reset_state()
+    expected = [{"selection_id": "1", "global_id": "p1", "name": "Player"}]
+    monkeypatch.setattr(admin, "_scenario_entity_rows", lambda entity, q, limit: expected)
+
+    result = admin.scenario_entities(
+        entity="player",
+        q="Player",
+        limit=12,
+        user={"username": "admin", "role": "admin", "token": "x"},
+    )
+    assert result["items"] == expected
+
+
 def test_scenario_entity_search_uses_loaded_dataset():
     _reset_state()
     data = _data()
