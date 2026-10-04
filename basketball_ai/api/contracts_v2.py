@@ -60,6 +60,26 @@ class CompatibilityComparisonV2(BaseModel):
     methodology: Literal["competition_temporal_knn"] = "competition_temporal_knn"
 
 
+class PerformanceVsExpectationV2(BaseModel):
+    available: bool = False
+    target_season: int
+    competition: str
+    expected_rating_100: float | None = None
+    actual_rating_100: float | None = None
+    delta_rating_points: float | None = None
+    expected_low_100: float | None = None
+    expected_high_100: float | None = None
+    assessment: Literal[
+        "above_expectations",
+        "within_expectations",
+        "below_expectations",
+        "unavailable",
+    ] = "unavailable"
+    actual_quality: str | None = None
+    actual_metric_coverage: float | None = Field(default=None, ge=0.0, le=1.0)
+    explanation: str | None = None
+
+
 class PlayerTeamPredictionRequestV2(BaseModel):
     player_global_id: str = Field(min_length=1, max_length=128)
     team_global_id: str = Field(min_length=1, max_length=128)
