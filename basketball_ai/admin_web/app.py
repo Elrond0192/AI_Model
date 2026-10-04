@@ -964,6 +964,18 @@ def _scenario_entity_rows(entity: str, query: str, limit: int = 12) -> list[dict
         work = work.sort_values("name", na_position="last", kind="stable")
 
     records: list[dict[str, Any]] = []
+    team_global_by_id: dict[str, str] = {}
+    if entity == "player":
+        teams_frame = loaded.get("teams")
+        if isinstance(teams_frame, pd.DataFrame) and {"id", "global_id"}.issubset(teams_frame.columns):
+            team_global_by_id = {
+                str(row["id"]): str(row["global_id"])
+                for row in teams_frame.to_dict("records")
+                if row.get("id") is not None
+                and not pd.isna(row.get("id"))
+                and row.get("global_id") not in (None, "")
+            }
+
     for row in work.head(max_rows).to_dict("records"):
         internal_id = row.get("id")
         if internal_id is None or pd.isna(internal_id):
@@ -992,6 +1004,11 @@ def _scenario_entity_rows(entity: str, query: str, limit: int = 12) -> list[dict
                 "name": name,
                 "subtitle": subtitle,
                 "league_key": value_text("current_league_key") if entity == "player" else value_text("league_key"),
+                "current_team_global_id": (
+                    team_global_by_id.get(value_text("current_team_id"), "")
+                    if entity == "player"
+                    else ""
+                ),
                 "identity_status": "canonical" if global_id else "unreconciled",
             }
         )
