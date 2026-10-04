@@ -121,5 +121,6 @@ class PlayerTeamPredictionV2(PredictionContextV2):
     prediction_calibration_version: str | None = None
     competition_support: CompetitionSupportV2
     compatibility: CompatibilityComparisonV2
+    performance_vs_expectation: PerformanceVsExpectationV2
     generated_at: datetime
     explanation: dict[str, Any] = Field(default_factory=dict)
