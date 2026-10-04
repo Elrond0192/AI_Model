@@ -931,22 +931,22 @@ def _scenario_entity_rows(entity: str, query: str, limit: int = 12) -> list[dict
         if entity == "player":
             search_where = (
                 "lower(coalesce(name, '')) LIKE lower(:query) "
-                "OR lower(coalesce(global_id, '')) LIKE lower(:query)"
+                "OR lower(coalesce(global_id::text, '')) LIKE lower(:query)"
             )
         else:
             search_where = (
                 "lower(coalesce(name, '')) LIKE lower(:query) "
                 "OR lower(coalesce(short_name, '')) LIKE lower(:query) "
-                "OR lower(coalesce(global_id, '')) LIKE lower(:query)"
+                "OR lower(coalesce(global_id::text, '')) LIKE lower(:query)"
             )
         statement = text(
             f'SELECT {columns} FROM "{schema}"."{table}" '
             f"WHERE {search_where} "
             "ORDER BY CASE WHEN lower(coalesce(name, '')) = lower(:exact) THEN 0 "
             "WHEN lower(coalesce(name, '')) LIKE lower(:prefix) THEN 1 ELSE 2 END, "
-            "name NULLS LAST LIMIT :limit"
+            f"name NULLS LAST LIMIT {max_rows}"
         )
-        params = {"query": f"%{search}%", "exact": search, "prefix": f"{search}%", "limit": max_rows}
+        params = {"query": f"%{search}%", "exact": search, "prefix": f"{search}%"}
     else:
         statement = text(
             f'SELECT {columns} FROM "{schema}"."{table}" '
