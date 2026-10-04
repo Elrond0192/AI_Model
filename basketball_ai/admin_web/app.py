@@ -968,8 +968,24 @@ def _scenario_entity_rows(entity: str, query: str, limit: int = 12) -> list[dict
                 )
                 params = {"limit": max_rows}
 
-            with get_engine(profile_url(profile_name)).connect() as connection:
-                rows = [dict(row) for row in connection.execute(statement, params).mappings().all()]
+            try:
+                with get_engine(profile_url(profile_name)).connect() as connection:
+                    rows = [dict(row) for row in connection.execute(statement, params).mappings().all()]
+            except Exception as exc:
+                engine = get_engine(profile_url(profile_name))
+                try:
+                    diagnostics = _source_object_diagnostics(engine, schema, [table])
+                finally:
+                    engine.dispose()
+                current_user = diagnostics.get("current_user", "unknown")
+                object_info = diagnostics.get("objects", {}).get(table, {})
+                detail = (
+                    f'Scenario entity lookup failed for "{schema}"."{table}" '
+                    f'as PostgreSQL user "{current_user}": {str(exc).strip() or exc.__class__.__name__}; '
+                    f'object_exists={bool(object_info.get("exists"))}; '
+                    f'select_allowed={bool(object_info.get("select"))}'
+                )
+                raise RuntimeError(detail) from exc
 
     if not rows and isinstance(loaded, dict):
         table_key = "players" if entity == "player" else "teams"
