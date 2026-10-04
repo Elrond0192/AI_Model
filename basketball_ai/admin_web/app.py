@@ -991,6 +991,7 @@ def _scenario_entity_rows(entity: str, query: str, limit: int = 12) -> list[dict
                 "global_id": global_id,
                 "name": name,
                 "subtitle": subtitle,
+                "league_key": value_text("current_league_key") if entity == "player" else value_text("league_key"),
                 "identity_status": "canonical" if global_id else "unreconciled",
             }
         )
