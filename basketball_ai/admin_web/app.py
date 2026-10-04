@@ -40,12 +40,14 @@ from basketball_ai.auth.auth import (
     validate_session_token,
 )
 from basketball_ai.data.connection_profiles import load_profiles, profile_url, save_profile
+from basketball_ai.data.loader import _to_int
 from basketball_ai.data.postgres_loader import get_engine, load_all_data
 from basketball_ai.data.training_snapshots import (
     create_training_snapshot,
     list_training_snapshots,
     load_training_snapshot,
 )
+from basketball_ai.models.production_training import _numeric_seasons
 from basketball_ai.models.promote import (
     MAX_SEGMENT_REGRESSION_PCT,
     MIN_BACKTEST_SAMPLES,
