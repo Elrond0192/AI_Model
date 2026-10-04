@@ -69,7 +69,8 @@ async def player_team(body: PlayerTeamPredictionRequestV2, request: Request):
     except (ValueError, RuntimeError) as exc:
         raise HTTPException(422, f"Historical competition context is unavailable: {exc}") from exc
 
-    if player_id not in scoped.get("player_dict", {}) or team_id not in scoped.get("team_dict", {}):
+    resolved_team_id = int(scoped.get("_prediction_team_id", team_id))
+    if player_id not in scoped.get("player_dict", {}) or resolved_team_id not in scoped.get("team_dict", {}):
         raise HTTPException(
             404,
             "Resolved player or team has no state in the requested league/competition",
@@ -79,7 +80,7 @@ async def player_team(body: PlayerTeamPredictionRequestV2, request: Request):
     try:
         result = historical_engine.predict_in_team(
             player_id,
-            team_id,
+            resolved_team_id,
             int(body.season),
             competition=competition,
         )
