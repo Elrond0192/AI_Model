@@ -182,7 +182,7 @@ def test_helpers_and_static_assets(monkeypatch, tmp_path):
     assert "/admin-api/bb-rating" in js
     assert "AbortController" in js
     assert "$('.diag-run').forEach" in js
-    assert "$('.diag-run').forEach" not in js
+    assert "\n    running++; $('.diag-run').forEach" not in js
     assert "App.controllers.forEach" in js
     future_js = (admin.STATIC_ROOT / "future_performance_ui.js").read_text(encoding="utf-8")
     assert "renderGeneration" in future_js
