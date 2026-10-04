@@ -961,6 +961,7 @@ def _scenario_entity_rows(entity: str, query: str, limit: int = 12) -> list[dict
         )
         records.append({
             "selection_id": str(internal_id),
+            "global_id": str(row.get("global_id") or ""),
             "name": name,
             "subtitle": subtitle,
             "identity_status": "canonical" if row.get("global_id") not in (None, "") else "unreconciled",
