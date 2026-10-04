@@ -384,6 +384,7 @@ def test_scenario_entity_search_uses_loaded_dataset():
     data["players"].loc[0, "name"] = "Leandro Nicolas Bolmaro"
     data["players"].loc[0, "global_id"] = "174019"
     data["players"].loc[0, "current_league_key"] = "EL"
+    data["players"].loc[0, "current_team_id"] = 2
     data["teams"].loc[0, "name"] = "Virtus Bologna"
     data["teams"].loc[0, "global_id"] = "933060010445620088"
     data["teams"].loc[0, "short_name"] = "Virtus"
@@ -401,6 +402,8 @@ def test_scenario_entity_search_uses_loaded_dataset():
     assert players["items"][0]["name"] == "Leandro Nicolas Bolmaro"
     assert players["items"][0]["global_id"] == "174019"
     assert players["items"][0]["identity_status"] == "canonical"
+    assert players["items"][0]["current_team_global_id"] == "933060010445620088"
+    assert players["items"][0]["current_team_name"] == "Virtus Bologna"
 
     teams = admin.scenario_entities(
         entity="team",
