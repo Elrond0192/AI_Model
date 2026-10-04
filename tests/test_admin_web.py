@@ -374,6 +374,62 @@ def test_authentication_helpers_and_csrf(monkeypatch):
     assert exc.value.status_code == 403
 
 
+def test_scenario_entity_player_search_does_not_reference_team_short_name(monkeypatch):
+    _reset_state()
+    with admin.STATE.lock:
+        admin.STATE.active_profile = "production"
+        admin.STATE.data = {"player_stats": pd.DataFrame({"season": [2025]})}
+    monkeypatch.setattr(
+        admin,
+        "load_profiles",
+        lambda: {"production": {"source_schema": "AI_Source"}},
+    )
+    captured = {}
+
+    class Result:
+        def mappings(self):
+            return self
+
+        def all(self):
+            return [
+                {
+                    "id": 1043,
+                    "global_id": "1043",
+                    "name": "Bolmar",
+                    "position": "PG",
+                    "current_league_key": "ITA1",
+                }
+            ]
+
+    class Connection:
+        def execute(self, statement, params):
+            captured["sql"] = str(statement)
+            captured["params"] = params
+            return Result()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    class Engine:
+        def connect(self):
+            return Connection()
+
+    monkeypatch.setattr(admin, "get_engine", lambda *_args, **_kwargs: Engine())
+    rows = admin.scenario_entities(
+        entity="player",
+        q="Bolmar",
+        limit=12,
+        user={"username": "admin", "role": "admin", "token": "x"},
+    )
+
+    assert rows["items"][0]["name"] == "Bolmar"
+    assert "short_name" not in captured["sql"]
+    assert captured["params"]["query"] == "%Bolmar%"
+
+
 def test_scenario_proxy_passes_api_key(monkeypatch):
     monkeypatch.setenv("API_KEY", "internal-key")
     captured = {}
