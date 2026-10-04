@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 
 from basketball_ai.api.contracts_v2 import (
     CompatibilityComparisonV2,
+    PerformanceVsExpectationV2,
     CompatibilityPlayerProfileV2,
     CompatibilityTeamProfileV2,
 )
@@ -24,6 +25,13 @@ def _fake_state(app) -> None:
         "player_dict": {101: {"id": 101, "global_id": "PLAYER-IDGLOBAL"}},
         "team_dict": {202: {"id": 202, "global_id": "TEAM-IDGLOBAL"}},
     }
+    app.state.bb_rating_engine = SimpleNamespace(
+        rate_player=lambda player_global_id, *, league, season, phase: SimpleNamespace(
+            score=79,
+            quality="good",
+            metric_coverage=0.88,
+        )
+    )
     app.state.model_metadata = {
         "model_run_id": "run-1",
         "model_version": "2.2.0",
@@ -251,6 +259,8 @@ def test_v2_regular_season_uses_isolated_context(monkeypatch):
     assert body["compatibility"]["selected_team_score"] == 0.74
     assert body["compatibility"]["real_team_score"] == 0.68
     assert body["compatibility"]["score_delta_vs_real_team"] == 0.06
+    assert body["performance_vs_expectation"]["available"] is False
+    assert body["performance_vs_expectation"]["target_season"] == 2026
     assert body["explanation"]["context"] == "isolated_league_competition_as_of_source_season"
 
 
