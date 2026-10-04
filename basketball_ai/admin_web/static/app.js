@@ -332,7 +332,7 @@ async function renderDiagnostics(){
   function escJson(v){try{return esc(JSON.stringify(v,null,2));}catch(_){return esc(String(v));}}
   function renderResult(data){
     const ok=data.overall_ok;
-    if(ok)passed++;else failed--;
+    if(ok)passed++;else failed++;
     const checks=(data.checks||[]).map(c=>'<div class="diagnostic-check '+(c.ok?'ok':'fail')+'"><span>'+(c.ok?'✓':'×')+'</span>'+esc(c.label)+'</div>').join('');
     const r=data.result||{};
     return '<article class="diagnostic-card '+(ok?'ok':'fail')+'"><div class="diagnostic-card-head"><div><strong>'+esc(data.model||'Health')+'</strong><span>'+esc(data.endpoint||'')+'</span></div><div class="diagnostic-badges"><span class="status '+(ok?'ok':'danger')+'">'+(ok?'PASS':'FAIL')+'</span><span class="diagnostic-latency">'+esc(r.latency_ms??'—')+' ms</span></div></div><div class="diagnostic-checks">'+checks+'</div><details><summary>Request / response</summary><div class="diagnostic-json"><div><small>Request</small><pre>'+escJson(data.request||{})+'</pre></div><div><small>Response</small><pre>'+escJson(r.body||r)+'</pre></div></div></details></article>';
