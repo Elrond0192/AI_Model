@@ -151,3 +151,28 @@ footer{padding:15px 36px 20px;font-size:11px}
 @media(max-width:1300px){.kpi-grid.six{grid-template-columns:repeat(3,minmax(0,1fr))}}
 @media(max-width:860px){.kpi-grid.six{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:520px){.kpi-grid.six{grid-template-columns:1fr}}
+
+/* API Diagnostics */
+.diagnostics-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin-bottom:18px}
+.diagnostics-grid label{display:flex;flex-direction:column;gap:7px;font-size:12px;font-weight:700;color:var(--muted,#8ea3b8)}
+.diagnostics-buttons{flex-wrap:wrap}
+.diagnostics-results{display:grid;gap:12px}
+.diagnostic-card{border:1px solid var(--border,#203247);border-radius:12px;padding:14px;background:var(--panel,#0d1b2a)}
+.diagnostic-card.ok{border-color:rgba(80,190,130,.35)}
+.diagnostic-card.fail{border-color:rgba(240,100,100,.45)}
+.diagnostic-card-head{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.diagnostic-card-head>div:first-child{display:flex;flex-direction:column;gap:4px}
+.diagnostic-card-head span{font-size:12px;color:var(--muted,#8ea3b8)}
+.diagnostic-badges{display:flex;align-items:center;gap:8px}
+.diagnostic-latency{font-variant-numeric:tabular-nums}
+.diagnostic-checks{display:flex;flex-wrap:wrap;gap:7px;margin:12px 0}
+.diagnostic-check{padding:5px 8px;border-radius:8px;font-size:12px}
+.diagnostic-check.ok{background:rgba(80,190,130,.1);color:#83dfad}
+.diagnostic-check.fail{background:rgba(240,100,100,.1);color:#ff9999}
+.diagnostic-check span{font-weight:800;margin-right:5px}
+.diagnostic-json{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:10px}
+.diagnostic-json>div{min-width:0}
+.diagnostic-json small{display:block;color:var(--muted,#8ea3b8);margin-bottom:5px}
+.diagnostic-json pre{max-height:360px;overflow:auto;margin:0;padding:10px;border-radius:8px;background:#07131f;color:#c8d5e2;font-size:11px;white-space:pre-wrap;word-break:break-word}
+@media(max-width:900px){.diagnostics-grid{grid-template-columns:1fr 1fr}.diagnostic-json{grid-template-columns:1fr}}
+@media(max-width:600px){.diagnostics-grid{grid-template-columns:1fr}}
