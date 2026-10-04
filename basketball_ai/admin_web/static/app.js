@@ -368,7 +368,7 @@ async function renderDiagnostics(){
   async function run(model){
     const player=$('#diag-player').value;
     if(!player){toast('Seleziona prima un giocatore','error');return null;}
-    running++; $('.diag-run').forEach(b=>b.disabled=true); $('#diagnostics-all').disabled=true;
+    running++; $$('.diag-run').forEach(b=>b.disabled=true); $('#diagnostics-all').disabled=true;
     try{
       const body={model,player_global_id:player,team_global_id:$('#diag-team').value,league:$('#diag-league').value.trim(),season:Number($('#diag-season').value),competition:$('#diag-competition').value,metrics:$('#diag-metrics').value.split(',').map(x=>x.trim()).filter(Boolean)};
       const data=await api('/admin-api/diagnostics/test',{method:'POST',body});
@@ -376,7 +376,7 @@ async function renderDiagnostics(){
       summary.textContent='Ultimi test: '+passed+' PASS · '+failed+' FAIL';
       return data;
     }catch(e){toast(e.message,'error');return null;}
-    finally{running--;if(!running){$('.diag-run').forEach(b=>b.disabled=false);$('#diagnostics-all').disabled=false;}}
+    finally{running--;if(!running){$$('.diag-run').forEach(b=>b.disabled=false);$('#diagnostics-all').disabled=false;}}
   }
   async function searchDiagnosticEntities(entity, inputSelector, selectSelector, placeholder){
     const q=$(inputSelector).value.trim();
@@ -396,7 +396,7 @@ async function renderDiagnostics(){
     clearTimeout(teamSearchTimer);
     teamSearchTimer=setTimeout(()=>searchDiagnosticEntities('team','#diag-team-search','#diag-team','Seleziona squadra'),300);
   });
-  $('.diag-run').forEach(b=>b.addEventListener('click',()=>run(b.dataset.model)));
+  $$('.diag-run').forEach(b=>b.addEventListener('click',()=>run(b.dataset.model)));
   $('#diagnostics-all').addEventListener('click',async()=>{
     results.innerHTML='';
     const models=['prediction','bb_rating','future_performance','metric_rating'];
