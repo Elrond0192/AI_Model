@@ -109,11 +109,11 @@ QUESTION_CAPABILITIES: tuple[QuestionCapability, ...] = (
     QuestionCapability(
         key="causal_team_effect",
         question="La squadra sta causando il suo rendimento?",
-        status="missing",
-        analyses=("compatibility",),
-        missing_analyses=("causal_team_effect",),
-        evidence=("team_context", "player_context"),
-        limitation="Serve un disegno causale con confondenti e controfattuale identificabile.",
+        status="partial",
+        analyses=("team_context_association", "team_switch_analysis"),
+        missing_analyses=("causal_identification",),
+        evidence=("within_player_team_changes", "team_context", "player_context"),
+        limitation="Posso quantificare l'associazione tra contesto squadra e rendimento osservato, ma non dimostrare un effetto causale senza un disegno causale e un controfattuale identificabile.",
     ),
     QuestionCapability(
         key="shot_profile",
