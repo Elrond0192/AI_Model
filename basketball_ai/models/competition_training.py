@@ -1117,10 +1117,55 @@ def scope_prediction_context(
         player_stats = data["player_stats"].iloc[0:0].copy()
 
     team_history = base["team_history_by_id"].get(team_id)
+    resolved_team_id = team_id
+
+    # Teams are identity-scoped by GlobalId, while historical competition rows
+    # can have a different internal team_id when source-local identities changed.
+    # Resolve the requested target team against historical TeamCompetitionStats
+    # by global_id before declaring the context unavailable.
+    target_team = data.get("team_dict", {}).get(team_id)
+    target_global_id = str((target_team or {}).get("global_id", "") or "").strip()
+    history_frame = data.get("team_season_stats", pd.DataFrame())
+    if target_global_id and not history_frame.empty and "global_id" in history_frame.columns:
+        historical_rows = history_frame[
+            history_frame["global_id"].astype(str).str.strip() == target_global_id
+        ].copy()
+        historical_rows["_season_year"] = _numeric_seasons(historical_rows)
+        historical_rows = historical_rows[
+            (historical_rows["_season_year"] <= source_season)
+            & (historical_rows["league_id"].map(_to_int) == league_id)
+            & (historical_rows["competition"].map(normalize_competition) == competition)
+        ]
+        if not historical_rows.empty:
+            historical_rows = historical_rows.sort_values("_season_year")
+            resolved_team_id = _to_int(historical_rows.iloc[-1]["team_id"])
+            team_history = (
+                historical_rows
+                .drop(columns=["_season_year"])
+                .reset_index(drop=True)
+            )
+
     if team_history is None or team_history.empty:
+        available = []
+        if target_global_id and not history_frame.empty and "global_id" in history_frame.columns:
+            available_rows = history_frame[
+                history_frame["global_id"].astype(str).str.strip() == target_global_id
+            ].copy()
+            if not available_rows.empty:
+                available = sorted(
+                    {
+                        f"{str(league).strip()}:{str(comp).strip().upper()}"
+                        for league, comp in zip(
+                            available_rows.get("league_key", []),
+                            available_rows.get("competition", []),
+                        )
+                        if str(league).strip() and str(comp).strip()
+                    }
+                )
+        suffix = f" Available contexts: {', '.join(available[:12])}." if available else ""
         raise ValueError(
             f"Target team has no {competition} context in the requested league "
-            f"through source season {source_season}"
+            f"through source season {source_season}.{suffix}"
         )
 
     scoped = dict(data)
@@ -1145,6 +1190,7 @@ def scope_prediction_context(
     scoped["_as_of_season"] = source_season
     scoped["_prediction_league_id"] = league_id
     scoped["_prediction_competition"] = competition
+    scoped["_prediction_team_id"] = resolved_team_id
     scoped["_competition_support"] = base["support_by_id"].get(
         player_id,
         {
