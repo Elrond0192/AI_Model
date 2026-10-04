@@ -184,3 +184,13 @@ def test_scenarios_fail_explicitly_when_required_entities_are_missing():
             {"scenario": "team_trend", "season": 2024, "competition": "RS"},
             [], [], 10, None,
         )
+
+
+
+def test_decomposition():
+    result = _engine().evaluate({"scenario": "performance_decomposition", "season": 2024, "competition": "RS"}, [1], [], 10, None)
+    assert result["result"]["previous_season"] == 2023
+    assert result["result"]["current_season"] == 2024
+    assert set(result["result"]["deltas"]) == {"volume", "efficiency", "role", "impact"}
+    assert result["result"]["deltas"]["volume"]["points"] == pytest.approx(1.0)
+    assert result["result"]["deltas"]["impact"]["rating"] == pytest.approx(0.2)
