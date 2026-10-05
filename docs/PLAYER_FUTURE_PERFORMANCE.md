@@ -7,7 +7,7 @@ Player Future Performance is the player-level season-ahead forecasting layer of 
 It is intentionally independent from:
 
 - **Prediction Model 2.6.0** — predicts next-season overall player rating.
-- **BB-Rating 1.8** — describes observed performance relative to peers and is not a predictive model.
+- **BB-Rating 1.9** — describes observed performance relative to peers and is not a predictive model.
 
 The three layers can therefore answer three different questions:
 
