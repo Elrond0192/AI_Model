@@ -10,6 +10,10 @@ from basketball_ai.bb_rating.calibration import (
     BBRatingCalibrationConfig,
     build_calibration_report,
 )
+from basketball_ai.bb_rating.competition_tiers import (
+    competition_tier,
+    competition_tier_label,
+)
 from basketball_ai.bb_rating.engine import BBRatingEngine
 from basketball_ai.bb_rating.uncertainty import BBRatingUncertainty
 from basketball_ai.api.routes.bb_rating_v2 import router
@@ -145,6 +149,8 @@ def test_bb_rating_is_deterministic_and_contextual():
     assert result.score >= 90
     assert result.peer_group["definition"] == "league+season+phase"
     assert result.peer_group["sample_size"] == 60
+    assert result.peer_group["competition_tier"] == 2
+    assert result.peer_group["competition_tier_label"] == "National first division"
     assert result.quality == "high"
     assert 0.0 <= result.metric_coverage <= 1.0
     assert "RAPTOR" in result.metrics
@@ -157,6 +163,30 @@ def test_bb_rating_is_deterministic_and_contextual():
     for key in ("POINTS", "FG%", "MINUTES", "CLUTCH_TS%", "NET_RTG"):
         assert key in payload_metrics
         assert payload_metrics[key]["interpretation"]
+
+
+
+def test_competition_tier_mapping_distinguishes_level_without_changing_context():
+    assert competition_tier("EL") == 1
+    assert competition_tier_label("EC") == "European elite"
+    assert competition_tier("BEL1") == 2
+    assert competition_tier("ITA1") == 2
+    assert competition_tier("ITA2") == 3
+    assert competition_tier("UNKNOWN") is None
+    assert competition_tier_label("UNKNOWN") is None
+
+
+def test_competition_tier_is_exposed_without_changing_bb_rating_score():
+    stats = make_stats()
+    engine = BBRatingEngine(stats, make_players())
+
+    base = engine.rate_player("G60", league="ITA1", season=2025, phase="RS")
+    payload = base.to_dict()
+
+    assert payload["competition_tier"] == 2
+    assert payload["competition_tier_label"] == "National first division"
+    assert payload["bb_rating"] == base.score
+    assert payload["peer_group"]["competition_tier"] == 2
 
 
 def test_league_context_precedes_position_role_even_when_role_group_is_large():
@@ -297,7 +327,7 @@ def test_api_player_endpoint():
     assert response.status_code == 200
     payload = response.json()
     assert 1 <= payload["bb_rating"] <= 100
-    assert payload["bb_rating_version"] == "1.8"
+    assert payload["bb_rating_version"] == "1.9"
     assert payload["peer_group"]["definition"] == "league+season+phase"
     assert payload["metrics"]["USG%"]["percentile"] is not None
 
@@ -463,8 +493,8 @@ def test_api_player_endpoint_includes_uncertainty_when_loaded():
     app.state.bb_rating_uncertainty = BBRatingUncertainty(
         {
             "status": "fitted",
-            "calibration_version": "1.16",
-            "bb_rating_version": "1.8",
+            "calibration_version": "1.17",
+            "bb_rating_version": "1.9",
             "min_samples": 50,
             "exposure_band_definition": {
                 "global_edges_minutes": [200.0, 400.0, 600.0],
