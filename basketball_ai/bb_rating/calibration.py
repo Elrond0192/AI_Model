@@ -1157,6 +1157,30 @@ def _markdown(report: dict[str, Any]) -> str:
 
     lines += [
         "",
+        "## Competition tiers",
+        "",
+        "Tiers are contextual labels for competitive level and transferability. "
+        "They do not modify the within-league BB-Rating score.",
+        "",
+        "| Tier | Context | Rows | Leagues |",
+        "|---:|---|---:|---|",
+    ]
+    for row in report["competition_tiers"]["distribution"]:
+        lines.append(
+            f"| {row['competition_tier'] or '—'} | "
+            f"{row['competition_tier_label'] or 'Unknown'} | "
+            f"{row['rows']} ({row['share_rows']:.1%}) | "
+            f"{', '.join(row['leagues'])} |"
+        )
+    unknown = report["competition_tiers"]["unknown_leagues"]
+    if unknown:
+        lines += [
+            "",
+            f"- Unclassified league codes: **{', '.join(unknown)}**",
+        ]
+
+    lines += [
+        "",
         "## Exposure distribution",
         "",
         f"- Games played P10/P50/P90: **{report['exposure']['games_played']['p10']} / "
