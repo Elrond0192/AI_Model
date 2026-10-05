@@ -45,7 +45,7 @@ population down to 10 rows and reports lower quality. Below 10 rows the result
 is explicitly marked limited_context.
 
 Position family, age band and observed combined role remain part of the
-peer-group metadata and explanation layer, but in v1.8 they do not replace the
+peer-group metadata and explanation layer, but in v1.9 they do not replace the
 primary competition population used for scoring.
 
 Age bands are 18–21, 22–25, 26–29, 30–33 and 34+.
@@ -53,6 +53,30 @@ Age bands are 18–21, 22–25, 26–29, 30–33 and 34+.
 Position families are GUARD, WING and BIG, derived from the canonical position
 labels. Position family, age band and observed ruolo_combinato remain descriptive
 context; they no longer replace the primary competition population.
+
+## Competition tier
+
+BB-Rating also records a **competition tier** as a cross-competition context.
+The tier is not a quality multiplier and does not directly raise or lower the
+1–100 score.
+
+Current modelling classification:
+
+| Tier | Context | Competitions |
+|---|---|---|
+| 1 | European elite | EL, EC |
+| 2 | National first division | ESP1, FRA1, GER1, GRC1, ISR1, ITA1, LIT1, TUR1, BEL1 |
+| 3 | National second division | ITA2 |
+
+The primary BB-Rating peer population remains **league + season + competition**.
+The tier exists so cross-league analyses can distinguish a move within the same
+competitive level from a move to a materially different level. In particular,
+ITA2 should not be treated as interchangeable with ITA1 merely because both are
+Italian competitions.
+
+This is a BBallstat modelling classification, not an official league ranking.
+Unknown league codes remain unclassified rather than being assigned a guessed
+tier.
 
 ## Metric semantics and explanations
 
@@ -140,11 +164,11 @@ logic belongs in PHP.
 
 ## Current status
 
-This is **FASE I of the BB-Rating layer (version 1.8)**. The implementation is deterministic
+This is **FASE I of the BB-Rating layer (version 1.9)**. The implementation is deterministic
 and API-ready. Calibration validates the existing methodology against real production
 data without changing the public 1–100 rating.
 
-## Calibration 1.16
+## Calibration 1.17
 
 The calibration command performs two separate operations:
 
@@ -170,7 +194,7 @@ The command writes:
 
 ### Final uncertainty artifact
 
-The production fit keeps the public **BB-Rating 1.8** unchanged. It estimates the
+The production fit keeps the public **BB-Rating 1.9** unchanged. It estimates the
 absolute next-season BB-Rating change with empirical P50/P75/P90 thresholds.
 
 The fitted structure is:
