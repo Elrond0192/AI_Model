@@ -328,6 +328,8 @@ def test_api_player_endpoint():
     payload = response.json()
     assert 1 <= payload["bb_rating"] <= 100
     assert payload["bb_rating_version"] == "1.9"
+    assert payload["competition_tier"] == 2
+    assert payload["competition_tier_label"] == "National first division"
     assert payload["peer_group"]["definition"] == "league+season+phase"
     assert payload["metrics"]["USG%"]["percentile"] is not None
 
