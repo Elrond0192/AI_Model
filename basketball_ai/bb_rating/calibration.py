@@ -13,6 +13,9 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from basketball_ai.bb_rating.competition_tiers import (
+    COMPETITION_TIER_DEFINITIONS,
+)
 from basketball_ai.bb_rating.engine import (
     AGE_BANDS,
     BAND_LABELS,
@@ -26,7 +29,7 @@ from basketball_ai.bb_rating.engine import (
 )
 from basketball_ai.bb_rating.semantics import METRIC_SEMANTICS
 
-CALIBRATION_VERSION = "1.16"
+CALIBRATION_VERSION = "1.17"
 
 
 @dataclass(frozen=True)
@@ -1388,6 +1391,24 @@ def build_calibration_report(
     seasons = pd.to_numeric(frame["season"], errors="coerce").dropna()
     valid_ids = frame["player_global_id"].replace({"nan": np.nan}).dropna()
 
+    tier_rows: list[dict[str, Any]] = []
+    for tier, group in frame.groupby(
+        ["competition_tier", "competition_tier_label"], dropna=False, sort=True
+    ):
+        tier_value, tier_label = tier
+        row = {
+            "competition_tier": int(tier_value) if pd.notna(tier_value) else None,
+            "competition_tier_label": (
+                str(tier_label) if pd.notna(tier_label) else None
+            ),
+            "rows": int(len(group)),
+            "share_rows": float(len(group) / len(frame)) if len(frame) else 0.0,
+            "leagues": sorted(
+                str(value) for value in group["league_key"].dropna().unique()
+            ),
+        }
+        tier_rows.append(row)
+
     report: dict[str, Any] = {
         "calibration_version": CALIBRATION_VERSION,
         "bb_rating_version": BB_RATING_VERSION,
@@ -1400,6 +1421,19 @@ def build_calibration_report(
             "season_max": int(seasons.max()),
             "competitions": sorted(str(v) for v in frame["competition"].dropna().unique()),
             "source_contract": data.get("source_contract"),
+        },
+        "competition_tiers": {
+            "definitions": {
+                str(tier): dict(definition)
+                for tier, definition in sorted(COMPETITION_TIER_DEFINITIONS.items())
+            },
+            "distribution": tier_rows,
+            "unknown_leagues": sorted(
+                str(value)
+                for value in frame.loc[
+                    frame["competition_tier"].isna(), "league_key"
+                ].dropna().unique()
+            ),
         },
         "configuration": {
             "min_peer_samples": min_peer_samples,
@@ -1431,6 +1465,7 @@ def build_calibration_report(
         "by_league": _group_score_summary(frame, ["league_key"]),
         "by_season": _group_score_summary(frame, ["season"]),
         "by_competition": _group_score_summary(frame, ["competition"]),
+        "by_competition_tier": _group_score_summary(frame, ["competition_tier"]),
         "by_league_season": _group_score_summary(frame, ["league_key", "season"]),
         "uncertainty_validation": _oos_uncertainty_validation(
             frame,
