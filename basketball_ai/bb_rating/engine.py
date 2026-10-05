@@ -19,9 +19,13 @@ from typing import Any, Iterable, Optional
 import numpy as np
 import pandas as pd
 
+from basketball_ai.bb_rating.competition_tiers import (
+    competition_tier,
+    competition_tier_label,
+)
 from basketball_ai.bb_rating.semantics import METRIC_SEMANTICS, metric_interpretation
 
-BB_RATING_VERSION = "1.8"
+BB_RATING_VERSION = "1.9"
 
 # Minimum population preferred for a stable league/season/competition peer
 # context. The primary scoring population remains the requested competition
@@ -245,6 +249,8 @@ class BBRatingResult:
     peer_group: dict[str, Any]
     quality: str
     metric_coverage: float
+    competition_tier: Optional[int] = None
+    competition_tier_label: Optional[str] = None
     version: str = BB_RATING_VERSION
 
     def to_dict(self) -> dict[str, Any]:
@@ -264,6 +270,8 @@ class BBRatingResult:
             "peer_group": dict(self.peer_group),
             "quality": self.quality,
             "metric_coverage": round(float(self.metric_coverage), 4),
+            "competition_tier": self.competition_tier,
+            "competition_tier_label": self.competition_tier_label,
             "bb_rating_version": self.version,
         }
 
@@ -310,6 +318,10 @@ class BBRatingEngine:
             .astype(str)
             .str.strip()
             .str.upper()
+        )
+        frame["competition_tier"] = frame["league_key"].map(competition_tier)
+        frame["competition_tier_label"] = frame["league_key"].map(
+            competition_tier_label
         )
 
         if players is not None and not players.empty and "player_id" in frame.columns:
@@ -478,6 +490,8 @@ class BBRatingEngine:
         league_key = str(league).strip().upper()
         phase_key = str(phase).strip().upper()
         season_year = int(str(season).split("-")[0])
+        tier = competition_tier(league_key)
+        tier_label = competition_tier_label(league_key)
 
         context = self._context_frame(league_key, season_year, phase_key)
         if context.empty:
@@ -658,9 +672,13 @@ class BBRatingEngine:
                 "definition": peer_source,
                 "sample_size": int(len(peer)),
                 "context_sample_size": int(len(context)),
+                "competition_tier": tier,
+                "competition_tier_label": tier_label,
             },
             quality=quality,
             metric_coverage=coverage,
+            competition_tier=tier,
+            competition_tier_label=tier_label,
         )
 
 
