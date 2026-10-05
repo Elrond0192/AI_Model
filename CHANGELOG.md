@@ -7,6 +7,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 ### Added
+- BB-Rating 1.9 introduces a competition-tier context registry for cross-competition analysis: Tier 1 European elite (EL/EC), Tier 2 national first divisions (including BEL1), and Tier 3 national second division (ITA2). Tier is metadata for competitive level/transferability and does not modify the within-league BB-Rating score.
 - Player Future Performance Model v1.0: independent player-centric season-ahead multivariate forecasts for per-36 production, shooting/usage rates, role metrics and minutes, with expanding walk-forward OOS validation, persistence baselines, target-level uncertainty and a separate serving artifact. Prediction Model 2.6.0 and BB-Rating 1.8 remain unchanged.
 - Player Future Performance is exposed through the API at `POST /api/v2/future-performance/player`, the AI Model Control Center and the WordPress player profile proxy.
 - AI_Model Control Center v2.5.0: dedicated BB-Rating operations page with
