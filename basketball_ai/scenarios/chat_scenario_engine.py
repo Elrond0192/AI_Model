@@ -175,6 +175,13 @@ class ChatScenarioEngine:
         row = self.data.get("league_dict", {}).get(_to_int(league_id), {})
         return str(row.get("name", row.get("league_key", league_id)))
 
+    def _league_key(self, league_id: int | None) -> str:
+        if league_id is None:
+            return ""
+        row = self.data.get("league_dict", {}).get(_to_int(league_id), {})
+        value = row.get("league_key", row.get("code", row.get("name", league_id)))
+        return str(value).strip().upper()
+
     def _player_rows(
         self,
         player_id: int,
@@ -681,6 +688,8 @@ class ChatScenarioEngine:
                 "team": self._team_name(teams[0]),
                 "league": self._league_name(target_league),
                 "competition": result.competition,
+                "competition_tier": competition_tier(self._league_key(target_league)),
+                "competition_tier_label": competition_tier_label(self._league_key(target_league)),
                 "target_season": int(spec["season"]) + 1,
                 "predicted_rating": result.predicted_rating,
                 "confidence_low": result.confidence_low,
@@ -851,6 +860,10 @@ class ChatScenarioEngine:
                 "target_league": self._league_name(target_league),
                 "source_competition": source_comp,
                 "target_competition": target_comp,
+                "source_competition_tier": competition_tier(self._league_key(source_league)),
+                "source_competition_tier_label": competition_tier_label(self._league_key(source_league)),
+                "target_competition_tier": competition_tier(self._league_key(target_league)),
+                "target_competition_tier_label": competition_tier_label(self._league_key(target_league)),
                 "source_season": int(source["_year"]),
                 "target_season": season + 1,
                 "source_rating": round(source_rating, 3),
