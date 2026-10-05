@@ -620,7 +620,7 @@ def create_app() -> FastAPI:
             "data_loaded": bool(data.get("player_dict")),
             "bb_rating_loaded": bb_rating is not None,
             "bb_rating_uncertainty_loaded": uncertainty is not None,
-            "bb_rating_version": getattr(bb_rating, "VERSION", None) or getattr(bb_rating, "version", None) or "1.8",
+            "bb_rating_version": getattr(bb_rating, "VERSION", None) or getattr(bb_rating, "version", None) or "1.9",
             "bb_rating_calibration_version": getattr(uncertainty, "calibration_version", None),
             "bb_rating_uncertainty_version": getattr(uncertainty, "bb_rating_version", None),
             "future_performance_loaded": future_model is not None,
