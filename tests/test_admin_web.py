@@ -202,8 +202,8 @@ def test_bb_rating_status_reads_calibration_artifacts(monkeypatch, tmp_path):
     (calibration / "bb_rating_calibration.json").write_text(
         json.dumps(
             {
-                "calibration_version": "1.16",
-                "bb_rating_version": "1.8",
+                "calibration_version": "1.17",
+                "bb_rating_version": "1.9",
                 "dataset": {
                     "rows": 53625,
                     "players": 4337,
@@ -246,8 +246,8 @@ def test_bb_rating_status_reads_calibration_artifacts(monkeypatch, tmp_path):
     monkeypatch.setattr(admin, "MODEL_ROOT", root)
     result = admin._bb_rating_status()
     assert result["ready"] is True
-    assert result["calibration_version"] == "1.16"
-    assert result["bb_rating_version"] == "1.8"
+    assert result["calibration_version"] == "1.17"
+    assert result["bb_rating_version"] == "1.9"
     assert result["dataset"]["rows"] == 53625
     assert result["uncertainty"]["support"]["available_exact_cells"] == 120
     assert result["files"]["uncertainty"].endswith("bb_rating_uncertainty.json")
