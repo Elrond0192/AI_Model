@@ -10,14 +10,14 @@ import pandas as pd
 
 
 class BBRatingUncertainty:
-    """Load and serve the final Calibration 1.16 empirical tables."""
+    """Load and serve the final Calibration 1.17 empirical tables."""
 
     def __init__(self, artifact: dict[str, Any]) -> None:
         if artifact.get("status") != "fitted":
             raise ValueError("BB-Rating uncertainty artifact is not fitted")
         self.artifact = artifact
-        self.calibration_version = str(artifact.get("calibration_version", "1.16"))
-        self.bb_rating_version = str(artifact.get("bb_rating_version", "1.8"))
+        self.calibration_version = str(artifact.get("calibration_version", "1.17"))
+        self.bb_rating_version = str(artifact.get("bb_rating_version", "1.9"))
         self.min_samples = int(artifact.get("min_samples", 50))
         tables = artifact.get("tables") or {}
         self.global_table = tables.get("global")
