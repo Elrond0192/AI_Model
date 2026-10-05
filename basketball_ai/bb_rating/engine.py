@@ -22,6 +22,7 @@ import pandas as pd
 from basketball_ai.bb_rating.competition_tiers import (
     competition_tier,
     competition_tier_label,
+    competition_tier_name,
 )
 from basketball_ai.bb_rating.semantics import METRIC_SEMANTICS, metric_interpretation
 
@@ -342,8 +343,8 @@ class BBRatingEngine:
         frame["competition_tier"] = canonical_tier.where(
             canonical_tier.notna(), fallback_tier
         )
-        frame["competition_tier_label"] = frame["league_key"].map(
-            competition_tier_label
+        frame["competition_tier_label"] = frame["competition_tier"].map(
+            competition_tier_name
         )
 
         if players is not None and not players.empty and "player_id" in frame.columns:
