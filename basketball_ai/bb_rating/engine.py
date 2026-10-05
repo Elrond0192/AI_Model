@@ -283,17 +283,19 @@ class BBRatingEngine:
         self,
         player_stats: pd.DataFrame,
         players: Optional[pd.DataFrame] = None,
+        leagues: Optional[pd.DataFrame] = None,
         *,
         min_peer_samples: int = MIN_PEER_SAMPLES,
     ) -> None:
         self.min_peer_samples = int(max(5, min_peer_samples))
-        self.frame = self._prepare_frame(player_stats, players)
+        self.frame = self._prepare_frame(player_stats, players, leagues)
         self._population_cache: dict[tuple[Any, ...], pd.DataFrame] = {}
 
     @staticmethod
     def _prepare_frame(
         player_stats: pd.DataFrame,
         players: Optional[pd.DataFrame],
+        leagues: Optional[pd.DataFrame] = None,
     ) -> pd.DataFrame:
         frame = player_stats.copy()
         if frame.empty:
@@ -319,7 +321,27 @@ class BBRatingEngine:
             .str.strip()
             .str.upper()
         )
-        frame["competition_tier"] = frame["league_key"].map(competition_tier)
+        # Prefer the canonical league master tier when available. The local
+        # registry remains a deterministic fallback for datasets that expose
+        # only league_key (including newly introduced BEL1/ITA2 before the
+        # league master has been refreshed).
+        canonical_tier = pd.Series(pd.NA, index=frame.index, dtype="Int64")
+        if leagues is not None and not leagues.empty and {"id", "tier"}.issubset(leagues.columns) and "league_id" in frame.columns:
+            league_meta = leagues[["id", "tier"]].copy()
+            league_meta["_league_id"] = pd.to_numeric(league_meta["id"], errors="coerce")
+            league_meta["_tier"] = pd.to_numeric(league_meta["tier"], errors="coerce").round().astype("Int64")
+            tier_map = (
+                league_meta.dropna(subset=["_league_id"])
+                .drop_duplicates("_league_id", keep="last")
+                .set_index("_league_id")["_tier"]
+                .to_dict()
+            )
+            numeric_league_id = pd.to_numeric(frame["league_id"], errors="coerce")
+            canonical_tier = numeric_league_id.map(tier_map).astype("Int64")
+        fallback_tier = frame["league_key"].map(competition_tier).astype("Int64")
+        frame["competition_tier"] = canonical_tier.where(
+            canonical_tier.notna(), fallback_tier
+        )
         frame["competition_tier_label"] = frame["league_key"].map(
             competition_tier_label
         )
