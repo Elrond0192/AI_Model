@@ -240,7 +240,7 @@ def test_bb_rating_status_reads_calibration_artifacts(monkeypatch, tmp_path):
         encoding="utf-8",
     )
     (calibration / "bb_rating_uncertainty.json").write_text(
-        json.dumps({"status": "fitted", "calibration_version": "1.16", "bb_rating_version": "1.8"}),
+        json.dumps({"status": "fitted", "calibration_version": "1.17", "bb_rating_version": "1.9"}),
         encoding="utf-8",
     )
     monkeypatch.setattr(admin, "MODEL_ROOT", root)
