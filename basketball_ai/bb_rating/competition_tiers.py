@@ -47,9 +47,17 @@ def competition_tier(league: str) -> Optional[int]:
 
 
 def competition_tier_label(league: str) -> Optional[str]:
-    """Return the human-readable tier label, or None when unknown."""
-    tier = competition_tier(league)
-    definition = COMPETITION_TIER_DEFINITIONS.get(tier)
+    """Return the human-readable tier label for a league code."""
+    return competition_tier_name(competition_tier(league))
+
+
+def competition_tier_name(tier: int | None) -> Optional[str]:
+    """Return the human-readable label for a numeric modelling tier."""
+    try:
+        tier_value = int(tier) if tier is not None else None
+    except (TypeError, ValueError):
+        tier_value = None
+    definition = COMPETITION_TIER_DEFINITIONS.get(tier_value)
     return definition["label"] if definition else None
 
 
@@ -70,5 +78,6 @@ __all__ = [
     "LEAGUE_TO_COMPETITION_TIER",
     "competition_tier",
     "competition_tier_label",
+    "competition_tier_name",
     "competition_tier_metadata",
 ]
