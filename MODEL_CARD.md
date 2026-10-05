@@ -161,11 +161,14 @@ The season-ahead Prediction Model and BB-Rating are separate contracts.
 
 - Prediction Model 2.6.0 forecasts the next-season rating using the native
   delta_vs_prior target. It is evaluated with OOS forecasting metrics.
-- BB-Rating 1.8 is descriptive: it evaluates observed player performance
+- BB-Rating 1.9 is descriptive: it evaluates observed player performance
   relative to the requested league/season/competition context and returns a
   1–100 score with dimension scores, metric percentiles and deterministic
   explanations. Position, age band and observed role remain explanatory
-  context and do not replace the primary competition population.
+  context and do not replace the primary competition population. A modelling
+  competition tier (European elite / national first division / national second
+  division) is exposed as contextual metadata for cross-league transferability
+  and is not a score multiplier.
 - BB-Rating does not modify, shrink, floor or otherwise post-process Prediction
   Model outputs.
 - USG% is a contextual role/involvement signal and has no standalone positive
