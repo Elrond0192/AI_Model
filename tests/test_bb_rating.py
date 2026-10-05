@@ -359,8 +359,8 @@ def test_bb_rating_calibration_reuses_peer_and_percentile_contract():
         {"player_stats": stats, "players": make_players(), "source_contract": "test"}
     )
 
-    assert report["calibration_version"] == "1.16"
-    assert report["bb_rating_version"] == "1.8"
+    assert report["calibration_version"] == "1.17"
+    assert report["bb_rating_version"] == "1.9"
     assert report["dataset"]["rows"] == 240
     assert report["score_distribution"]["n"] == 240
     assert report["validation_signals"]["registry_columns_ok"] is True
@@ -533,9 +533,9 @@ def test_api_player_endpoint_includes_uncertainty_when_loaded():
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["bb_rating_version"] == "1.8"
+    assert payload["bb_rating_version"] == "1.9"
     assert payload["uncertainty"]["available"] is True
-    assert payload["uncertainty"]["calibration_version"] == "1.16"
+    assert payload["uncertainty"]["calibration_version"] == "1.17"
     assert payload["uncertainty"]["source"] == "league+exposure"
     assert payload["uncertainty"]["sample_size"] == 60
     assert payload["uncertainty"]["exposure_band"] == 4
@@ -575,8 +575,8 @@ def test_uncertainty_serving_uses_league_exposure_then_fallback():
     service = BBRatingUncertainty(
         {
             "status": "fitted",
-            "calibration_version": "1.16",
-            "bb_rating_version": "1.8",
+            "calibration_version": "1.17",
+            "bb_rating_version": "1.9",
             "min_samples": 50,
             "exposure_band_definition": {
                 "global_edges_minutes": [200.0, 400.0, 600.0],
