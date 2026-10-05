@@ -13,6 +13,10 @@ from typing import Any, Iterable
 import numpy as np
 import pandas as pd
 
+from basketball_ai.bb_rating.competition_tiers import (
+    competition_tier,
+    competition_tier_label,
+)
 from basketball_ai.data.loader import _to_int
 from basketball_ai.features.context_features import compute_context_features
 from basketball_ai.models.competition_training import (
@@ -174,6 +178,14 @@ class ChatScenarioEngine:
             return ""
         row = self.data.get("league_dict", {}).get(_to_int(league_id), {})
         return str(row.get("name", row.get("league_key", league_id)))
+
+    def _league_key(self, league_id: int | None) -> str:
+        if league_id is None:
+            return ""
+        row = self.data.get("league_dict", {}).get(_to_int(league_id), {})
+        value = row.get("league_key", row.get("code", row.get("name", league_id)))
+        return str(value).strip().upper()
+
 
     def _league_key(self, league_id: int | None) -> str:
         if league_id is None:
