@@ -1352,7 +1352,7 @@ class ChatScenarioEngine:
             raise ValueError("player is required")
         player = players[0]
         global_id = str(player.get("global_id", ""))
-        league = str(source_league or "").strip().upper()
+        league = self._league_key(source_league)
         season = _year(spec.get("season"))
         competition = normalize_competition(spec.get("competition", "RS"))
         if not global_id or not league:
