@@ -1346,8 +1346,14 @@ class ChatScenarioEngine:
 
 
     def _model_evidence(self, spec, players, teams, source_league, target_league):
-        """Compose model-layer evidence without changing any underlying model."""
-        del teams, target_league
+        """Compose model evidence and make the prediction context explicit.
+
+        Future Performance is a player/league/competition season-ahead model.
+        It uses player role, minutes, usage, age, position and recent history,
+        but it does not use a target-team counterfactual. The intelligence layer
+        therefore exposes that scope instead of presenting a per-36 prediction
+        as an unconditional per-game expectation.
+        """
         if not players:
             raise ValueError("player is required")
         player = players[0]
@@ -1397,8 +1403,89 @@ class ChatScenarioEngine:
                     season=season,
                     competition=competition,
                 )
-                result["future_performance"] = dict(future)
-                result["future_performance"]["available"] = True
+                future = dict(future)
+                future["available"] = True
+
+                # Explicitly expose the context in which the trained model made
+                # the prediction. These are model inputs/derived interpretation,
+                # not a new prediction model and not a team counterfactual.
+                rows = self._player_rows(
+                    int(player["id"]), source_league, competition, season
+                )
+                latest = self._latest(rows)
+                current_minutes = _finite(latest.get("minutes_per_game"), 0.0)
+                current_usage = _ratio(latest.get("usg_pct"), 0.0)
+                current_rating = _finite(latest.get("rating"), 0.0)
+                prior_rating = (
+                    _finite(rows.iloc[-2].get("rating"), current_rating)
+                    if len(rows) >= 2 else current_rating
+                )
+                position = str(
+                    self.data.get("player_dict", {})
+                    .get(_to_int(player["id"]), {})
+                    .get("position", "")
+                    or ""
+                )
+
+                targets = future.get("targets", {})
+                projected_minutes = targets.get("minutes_per_game", {}).get("value")
+                per_game_projection = {}
+                for key, label in (
+                    ("pts_per_36", "points"),
+                    ("ast_per_36", "assists"),
+                    ("reb_per_36", "rebounds"),
+                    ("stl_per_36", "steals"),
+                    ("blk_per_36", "blocks"),
+                ):
+                    item = targets.get(key)
+                    if isinstance(item, dict) and item.get("value") is not None:
+                        per_game = item.get("derived_per_game")
+                        if per_game is not None:
+                            per_game_projection[label] = round(float(per_game), 2)
+
+                current_team_id = _to_int(latest.get("team_id"))
+                future["prediction_context"] = {
+                    "source_league": league,
+                    "source_competition": competition,
+                    "source_season": season,
+                    "target_season": int(future.get("target_season", season + 1)),
+                    "competition_tier": competition_tier(league),
+                    "competition_tier_label": competition_tier_label(league),
+                    "position": position or None,
+                    "current_minutes_per_game": round(current_minutes, 2),
+                    "predicted_minutes_per_game": (
+                        round(float(projected_minutes), 2)
+                        if projected_minutes is not None else None
+                    ),
+                    "current_usage_pct": round(current_usage * 100.0, 2),
+                    "current_rating": round(current_rating, 3),
+                    "rating_change_vs_previous_season": round(
+                        current_rating - prior_rating, 3
+                    ) if len(rows) >= 2 else None,
+                    "current_team": (
+                        self._team_name(current_team_id)
+                        if current_team_id is not None else None
+                    ),
+                    "team_used_as_prediction_input": False,
+                    "interpretation": (
+                        "Le previsioni per-36 sono produzione normalizzata. "
+                        "La stima per partita deriva dai minuti previsti; "
+                        "non rappresenta un valore garantito ogni gara."
+                    ),
+                }
+                future["projected_per_game"] = per_game_projection
+                future["prediction_scope"] = (
+                    "player_role_league_competition_history"
+                )
+                future["team_counterfactual"] = {
+                    "available": False,
+                    "reason": (
+                        "Future Performance non modifica la previsione in base "
+                        "a una squadra target. Per un cambio squadra va usato "
+                        "uno scenario player_team/league_transfer."
+                    ),
+                }
+                result["future_performance"] = future
             except (ValueError, RuntimeError, KeyError) as exc:
                 result["future_performance"]["reason"] = str(exc)
 
