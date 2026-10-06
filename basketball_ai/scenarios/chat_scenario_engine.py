@@ -957,13 +957,17 @@ class ChatScenarioEngine:
             raise ValueError("player is required")
         if source_league is None or target_league is None:
             raise ValueError("source_league and target_league are required")
-        season = int(spec["season"])
+        parameters = spec.get("parameters", {}) or {}
+        player_season = int(parameters.get("player_season", spec["season"]))
+        target_season = int(parameters.get("target_season", player_season + 1))
+        if target_season <= player_season:
+            raise ValueError("target_season must be later than player_season")
         source_comp = normalize_competition(spec["competition"])
         target_comp = normalize_competition(spec.get("target_competition") or source_comp)
-        source_rows = self._player_rows(players[0], source_league, source_comp, season)
+        source_rows = self._player_rows(players[0], source_league, source_comp, player_season)
         source = self._latest(source_rows)
         source_rating = _finite(source.get("rating"), 6.5)
-        samples = self._transfer_samples(source_league, target_league, source_comp, target_comp, season)
+        samples = self._transfer_samples(source_league, target_league, source_comp, target_comp, player_season)
         fallback_delta = self._league_quality_fallback(source_league, target_league)
         if samples:
             empirical = float(np.median(np.asarray(samples, dtype=float)))
@@ -977,7 +981,7 @@ class ChatScenarioEngine:
         context_score, context = (0.5, {})
         if teams:
             context_score, context = self._target_context_score(
-                players[0], teams[0], target_league, target_comp, season
+                players[0], teams[0], target_league, target_comp, player_season
             )
         fit_delta = float(np.clip((context_score - 0.65) * 0.70, -0.30, 0.25)) if teams else 0.0
         projected = float(np.clip(source_rating + transfer_delta + fit_delta, 0.0, 10.0))
@@ -986,15 +990,21 @@ class ChatScenarioEngine:
         limitations = []
         if len(samples) < 5:
             limitations.append("Cross-league support is sparse; the estimate relies materially on league-quality priors.")
-
+        limitations.append(
+            f"Il contesto target è limitato alle informazioni disponibili fino al {player_season}; "
+            f"i dati reali del {target_season} non entrano nella previsione."
+        )
         what_if = {
             "baseline": {
+                "profile_season": player_season,
                 "current_rating": round(source_rating, 3),
                 "competition_tier": competition_tier(self._league_key(source_league)),
                 "competition_tier_label": competition_tier_label(self._league_key(source_league)),
             },
             "target": {
                 "team": self._team_name(teams[0]) if teams else None,
+                "scenario_season": target_season,
+                "context_as_of_season": player_season,
                 "competition_tier": competition_tier(self._league_key(target_league)),
                 "competition_tier_label": competition_tier_label(self._league_key(target_league)),
             },
@@ -1011,9 +1021,8 @@ class ChatScenarioEngine:
                 "confidence_high": round(min(10.0, projected + half_width), 3),
             },
             "interpretation": (
-                "Lo scenario is driven only by the change of competition level and, when a target team "
-                "is specified, the player's fit with that target environment. It is not a duplicate "
-                "of the full Player Intelligence profile."
+                f"Scenario costruito dal profilo di {player_season} e proiettato al {target_season}, "
+                "senza usare i dati osservati della stagione target."
             ),
         }
         return {
@@ -1028,7 +1037,7 @@ class ChatScenarioEngine:
                 "target_competition_tier": competition_tier(self._league_key(target_league)),
                 "target_competition_tier_label": competition_tier_label(self._league_key(target_league)),
                 "source_season": int(source["_year"]),
-                "target_season": season + 1,
+                "target_season": target_season,
                 "source_rating": round(source_rating, 3),
                 "projected_rating": round(projected, 3),
                 "confidence_low": round(max(0.0, projected - half_width), 3),
@@ -1040,14 +1049,13 @@ class ChatScenarioEngine:
                 "context": context,
                 "what_if": what_if,
             },
-            "evidence": [{"type": "historical_cross_league_transitions", "count": len(samples)}],
+            "evidence": [
+                {"type": "historical_cross_league_transitions", "count": len(samples), "source_season": player_season, "target_season": target_season}
+            ],
             "support": {"method": method, "samples": len(samples), "confidence": _confidence(len(samples))},
             "limitations": limitations,
         }
 
-    # ------------------------------------------------------------------
-    # Playoffs, pair/lineup and counterfactuals
-    # ------------------------------------------------------------------
     def _playoff_role(self, spec, players, teams, source_league, target_league):
         del target_league
         if not players:
