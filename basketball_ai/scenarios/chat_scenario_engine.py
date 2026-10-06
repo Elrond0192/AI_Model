@@ -1368,6 +1368,7 @@ class ChatScenarioEngine:
             "bb_rating": {"available": False},
             "bb_rating_uncertainty": {"available": False},
             "future_performance": {"available": False},
+            "prediction_model": {"available": False},
         }
 
         if self.bb_rating_engine is not None:
@@ -1491,6 +1492,72 @@ class ChatScenarioEngine:
 
         return result
 
+        # Prediction Model: observed current-team context, not a future-team counterfactual.
+        try:
+            rows = self._player_rows(int(player["id"]), source_league, competition, season)
+            latest = self._latest(rows)
+            current_team_id = _to_int(latest.get("team_id"))
+            observed_rating = _finite(latest.get("rating"), np.nan)
+            if current_team_id is not None and source_league is not None:
+                prediction, _ = self._direct_prediction(int(player["id"]), current_team_id, source_league, season, competition)
+                result["prediction_model"] = {"available": True, "scope": "current_team_context", "team": self._team_name(current_team_id), "predicted_rating": round(float(prediction.predicted_rating), 3), "confidence_low": round(float(prediction.confidence_low), 3), "confidence_high": round(float(prediction.confidence_high), 3), "base_rating": round(float(prediction.base_rating), 3), "age_factor": round(float(prediction.age_factor), 4), "compatibility_factor": round(float(prediction.compatibility_factor), 4), "league_factor": round(float(prediction.league_factor), 4), "context_adjustment": round(float(prediction.context_adjustment), 4), "delta_vs_observed": round(float(prediction.predicted_rating) - observed_rating, 3) if math.isfinite(observed_rating) else None, "interpretation": "Stima del livello nel contesto della squadra corrente; non è una previsione di cambio squadra né una proiezione per-36."}
+        except (ValueError, RuntimeError, KeyError, TypeError) as exc:
+            result["prediction_model"]["reason"] = str(exc)
+
+        return result
+
+    def _intelligence_context(self, spec, players, source_league):
+        """Build descriptive context used by the Player Intelligence synthesis layer."""
+        if not players:
+            raise ValueError("player is required")
+        player_id = int(players[0]["id"])
+        season = int(spec["season"])
+        competition = normalize_competition(spec.get("competition", "RS"))
+        rows = self._player_rows(player_id, source_league, competition, season)
+        latest = self._latest(rows)
+        games = int(_finite(latest.get("games_played"), 0.0))
+        minutes = _finite(latest.get("minutes_per_game"), 0.0)
+        usage = _ratio(latest.get("usg_pct"), 0.0)
+        ast_pct = _ratio(latest.get("ast_pct"), 0.0)
+        ts_pct = _ratio(latest.get("ts_pct"), 0.0)
+        rating = _finite(latest.get("rating"), np.nan)
+        previous_rating = _finite(rows.iloc[-2].get("rating"), np.nan) if len(rows) >= 2 else np.nan
+        rating_delta = round(rating - previous_rating, 3) if math.isfinite(rating) and math.isfinite(previous_rating) else None
+        rating_series = pd.to_numeric(rows.get("rating"), errors="coerce").dropna()
+        trend = float(np.polyfit(rows.loc[rating_series.index, "_year"].astype(float), rating_series.to_numpy(float), 1)[0]) if len(rating_series) >= 2 else 0.0
+        rating_std = float(np.std(rating_series)) if len(rating_series) else None
+        stability_score = float(np.clip(np.exp(-rating_std / 1.25) * min(1.0, len(rating_series) / 4.0), 0.0, 1.0)) if rating_std is not None else None
+        team_context = {}
+        team_id = _to_int(latest.get("team_id"))
+        if team_id is not None:
+            team_rows = self._team_rows(team_id, source_league, competition, season)
+            if not team_rows.empty:
+                team = self._latest(team_rows)
+                team_frame = self.data.get("team_season_stats", pd.DataFrame()).copy()
+                percentiles = {}
+                if not team_frame.empty:
+                    team_frame["_year"] = team_frame["season"].map(_year)
+                    team_frame = team_frame[(team_frame["league_id"].map(_to_int) == _to_int(source_league)) & (team_frame["competition"].map(normalize_competition) == competition) & (team_frame["_year"] == season)]
+                    for metric, lower_better in (("net_rtg", False), ("offensive_rating", False), ("defensive_rating", True), ("pace", False)):
+                        if metric in team_frame.columns and pd.notna(team.get(metric)):
+                            percentiles[metric] = self._context_percentile(team_frame, metric, team.get(metric), lower_better=lower_better)
+                team_context = {"team": self._team_name(team_id), "net_rtg": round(_finite(team.get("net_rtg")), 2), "offensive_rating": round(_finite(team.get("offensive_rating")), 2), "defensive_rating": round(_finite(team.get("defensive_rating")), 2), "pace": round(_finite(team.get("pace")), 2), "team_star_usage": round(_ratio(team.get("star_player_usage")), 4), "three_point_attempt_rate": round(_ratio(team.get("three_point_attempt_rate")), 4), "assists_per_game": round(_finite(team.get("assists_per_game")), 2), "league_percentiles": percentiles}
+        player_dict = self.data.get("player_dict", {}).get(player_id, {})
+        role_label = latest.get("ruolo_combinato") or latest.get("role") or latest.get("role_label")
+        position = str(player_dict.get("position") or latest.get("position") or "")
+        return {
+            "league": self._league_key(source_league), "competition": competition, "season": season,
+            "competition_tier": competition_tier(self._league_key(source_league)),
+            "competition_tier_label": competition_tier_label(self._league_key(source_league)),
+            "role": {"position": position or None, "role_label": str(role_label) if role_label else None, "minutes_per_game": round(minutes, 2), "usage_pct": round(usage * 100.0, 2), "assist_pct": round(ast_pct * 100.0, 2), "offensive_responsibility": "high" if usage >= 0.24 or (usage >= 0.21 and ast_pct >= 0.18) else "medium" if usage >= 0.17 or ast_pct >= 0.14 else "low", "creation_signal": "primary_or_secondary_creator" if ast_pct >= 0.18 else "secondary_creator" if ast_pct >= 0.14 else "finisher_or_off_ball"},
+            "opportunity": {"minutes_per_game": round(minutes, 2), "usage_pct": round(usage * 100.0, 2), "team_pace": team_context.get("pace"), "estimated_player_possession_share": round(usage, 4), "interpretation": "USG% è un proxy della quota di possessi offensivi, non un conteggio PBP dei possessi individuali."},
+            "efficiency_vs_volume": {"ts_pct": round(ts_pct * 100.0, 2), "usage_pct": round(usage * 100.0, 2), "points_per_game": round(_finite(latest.get("points")), 2), "three_point_pct": round(_ratio(latest.get("three_point_pct")) * 100.0, 2), "profile": "efficiency_favored" if ts_pct >= 0.60 and usage < 0.22 else "volume_favored" if usage >= 0.24 else "balanced"},
+            "trend": {"current_rating": round(rating, 3) if math.isfinite(rating) else None, "change_vs_previous_season": rating_delta, "trend_slope_per_season": round(trend, 4)},
+            "stability": {"observed_seasons": int(len(rating_series)), "games_current_season": games, "rating_std": round(rating_std, 3) if rating_std is not None else None, "stability_score": round(stability_score, 3) if stability_score is not None else None, "confidence": _confidence(games), "interpretation": "limited_current_sample" if games < 10 else "stable_profile" if stability_score is not None and stability_score >= 0.65 else "variable_profile"},
+            "team_environment": team_context,
+            "evidence_strength": {"current_games": games, "historical_rating_seasons": int(len(rating_series)), "confidence": _confidence(max(games, len(rating_series) * 6))},
+        }
+
     def _player_intelligence(self, spec, players, teams, source_league, target_league):
         if not players:
             raise ValueError("player is required")
@@ -1559,8 +1626,9 @@ class ChatScenarioEngine:
                 "player": self._player_name(players[0]),
                 "question_key": keys[0] if len(keys) == 1 else None,
                 "question_keys": keys,
+                "context": self._intelligence_context(spec, players, source_league) if "current_level" in keys else None,
                 "analyses": analyses,
-                "answer_mode": "evidence_composition",
+                "answer_mode": "contextual_synthesis",
             },
             "evidence": [
                 {"type": "question_analysis_registry", "question_keys": keys},
