@@ -986,6 +986,36 @@ class ChatScenarioEngine:
         limitations = []
         if len(samples) < 5:
             limitations.append("Cross-league support is sparse; the estimate relies materially on league-quality priors.")
+
+        what_if = {
+            "baseline": {
+                "current_rating": round(source_rating, 3),
+                "competition_tier": competition_tier(self._league_key(source_league)),
+                "competition_tier_label": competition_tier_label(self._league_key(source_league)),
+            },
+            "target": {
+                "team": self._team_name(teams[0]) if teams else None,
+                "competition_tier": competition_tier(self._league_key(target_league)),
+                "competition_tier_label": competition_tier_label(self._league_key(target_league)),
+            },
+            "changes": {
+                "predicted_rating_delta": round(projected - source_rating, 3),
+                "league_transfer_delta": round(transfer_delta, 3),
+                "league_prior_delta": round(fallback_delta, 3),
+                "team_fit_delta": round(fit_delta, 3),
+                "target_context": context,
+            },
+            "outcome": {
+                "predicted_rating": round(projected, 3),
+                "confidence_low": round(max(0.0, projected - half_width), 3),
+                "confidence_high": round(min(10.0, projected + half_width), 3),
+            },
+            "interpretation": (
+                "Lo scenario is driven only by the change of competition level and, when a target team "
+                "is specified, the player's fit with that target environment. It is not a duplicate "
+                "of the full Player Intelligence profile."
+            ),
+        }
         return {
             "result": {
                 "player": self._player_name(players[0]),
@@ -1008,6 +1038,7 @@ class ChatScenarioEngine:
                 "team_fit_delta": round(fit_delta, 3),
                 "team": self._team_name(teams[0]) if teams else None,
                 "context": context,
+                "what_if": what_if,
             },
             "evidence": [{"type": "historical_cross_league_transitions", "count": len(samples)}],
             "support": {"method": method, "samples": len(samples), "confidence": _confidence(len(samples))},
