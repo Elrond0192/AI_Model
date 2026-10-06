@@ -98,10 +98,16 @@ class ChatScenarioEngine:
         self,
         ensemble: StrictProductionEnsembleModel,
         data: dict[str, Any],
+        bb_rating_engine: Any | None = None,
+        bb_rating_uncertainty: Any | None = None,
+        future_performance_model: Any | None = None,
     ) -> None:
         self.ensemble = ensemble
         self.data = data
         self.advanced = AdvancedSimulationEngine(data)
+        self.bb_rating_engine = bb_rating_engine
+        self.bb_rating_uncertainty = bb_rating_uncertainty
+        self.future_performance_model = future_performance_model
 
     def evaluate(
         self,
@@ -155,6 +161,7 @@ class ChatScenarioEngine:
             "composite_scenario": self.advanced.composite,
             "causal_effect": self.advanced.causal_effect,
             "causal_team_effect": self._causal_team_effect,
+            "model_evidence": self._model_evidence,
         }
         if scenario not in dispatch:
             raise ValueError(f"Unsupported scenario {scenario!r}")
@@ -1338,6 +1345,65 @@ class ChatScenarioEngine:
                 "limitations":["Box-score defensive metrics do not isolate individual causal defensive impact."]}
 
 
+    def _model_evidence(self, spec, players, teams, source_league, target_league):
+        """Compose model-layer evidence without changing any underlying model."""
+        del teams, target_league
+        if not players:
+            raise ValueError("player is required")
+        player = players[0]
+        global_id = str(player.get("global_id", ""))
+        league = str(source_league or "").strip().upper()
+        season = _year(spec.get("season"))
+        competition = normalize_competition(spec.get("competition", "RS"))
+        if not global_id or not league:
+            raise ValueError("player model context is incomplete")
+
+        result = {
+            "bb_rating": {"available": False},
+            "bb_rating_uncertainty": {"available": False},
+            "future_performance": {"available": False},
+        }
+
+        if self.bb_rating_engine is not None:
+            try:
+                rated = self.bb_rating_engine.rate_player(
+                    global_id, league=league, season=season, phase=competition
+                )
+                result["bb_rating"] = {
+                    "available": True,
+                    "score": int(rated.score),
+                    "quality": getattr(rated, "quality", None),
+                    "bb_rating_version": getattr(rated, "bb_rating_version", None),
+                }
+                if self.bb_rating_uncertainty is not None:
+                    result["bb_rating_uncertainty"] = self.bb_rating_uncertainty.for_player(
+                        self.bb_rating_engine.frame,
+                        player_global_id=global_id,
+                        league=league,
+                        season=season,
+                        phase=competition,
+                        score=rated.score,
+                    )
+            except (ValueError, RuntimeError, KeyError) as exc:
+                result["bb_rating"]["reason"] = str(exc)
+                result["bb_rating_uncertainty"]["reason"] = "bb_rating_unavailable"
+
+        if self.future_performance_model is not None:
+            try:
+                future = self.future_performance_model.predict_player(
+                    self.data,
+                    player_id=int(player["id"]),
+                    league_key=league,
+                    season=season,
+                    competition=competition,
+                )
+                result["future_performance"] = dict(future)
+                result["future_performance"]["available"] = True
+            except (ValueError, RuntimeError, KeyError) as exc:
+                result["future_performance"]["reason"] = str(exc)
+
+        return result
+
     def _player_intelligence(self, spec, players, teams, source_league, target_league):
         if not players:
             raise ValueError("player is required")
@@ -1349,7 +1415,7 @@ class ChatScenarioEngine:
             keys = [str(parameters.get("question_key", "current_level")).strip().lower()]
         keys = list(dict.fromkeys(keys))[:8]
         bundles = {
-            "current_level": ("player_competition",),
+            "current_level": ("player_competition", "model_evidence"),
             "why_performing": ("performance_decomposition", "metric_explanation"),
             "change_vs_last_season": ("performance_decomposition", "role_analysis"),
             "real_improvement": ("performance_decomposition", "metric_explanation"),
