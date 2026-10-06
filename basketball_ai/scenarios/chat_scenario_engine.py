@@ -680,277 +680,111 @@ class ChatScenarioEngine:
         }
 
     def _player_team(self, spec, players, teams, source_league, target_league):
-        """Run the player-team counterfactual, exposing only factors that can move it."""
+        """Player-team counterfactual with an optional historical source cutoff."""
         if not players or not teams:
             raise ValueError("player and team are required")
         source_league = source_league or target_league
         target_league = target_league or source_league
         if source_league is None or target_league is None:
             raise ValueError("league context is required")
+        parameters = spec.get("parameters", {}) or {}
+        player_season = int(parameters.get("player_season", spec["season"]))
+        target_season = int(parameters.get("target_season", player_season + 1))
+        if target_season <= player_season:
+            raise ValueError("target_season must be later than player_season")
+        target_competition = normalize_competition(spec.get("target_competition") or spec["competition"])
+        source_competition = normalize_competition(spec["competition"])
+
         if source_league != target_league:
-            return self._league_transfer(spec, players, teams, source_league, target_league)
+            return self._league_transfer(
+                {**spec, "season": player_season,
+                 "parameters": {**parameters, "player_season": player_season, "target_season": target_season}},
+                players, teams, source_league, target_league
+            )
 
-        competition = normalize_competition(
-            spec.get("target_competition") or spec["competition"]
-        )
-        season = int(spec["season"])
-        result, scoped = self._direct_prediction(
-            players[0], teams[0], target_league, season, competition
-        )
-        support = dict(scoped.get("_competition_support", {}))
+        snapshot = build_historical_snapshot(self.data, player_season)
+        player_rows = self._player_rows(players[0], source_league, source_competition, player_season)
+        if player_rows.empty:
+            raise ValueError("Player has no source-season history for the requested cutoff")
+        team_rows = self._team_rows(teams[0], target_league, target_competition, player_season)
+        if team_rows.empty:
+            raise ValueError("Target team has no historical context available before the target season")
 
-        player_history = self._player_rows(
-            players[0], source_league, spec["competition"], season
-        )
-        team_history = self._team_rows(
-            teams[0], target_league, competition, season
-        )
-        player_latest_row = self._latest(player_history) if not player_history.empty else None
-        team_latest_row = self._latest(team_history) if not team_history.empty else None
-        player_latest = _serialise(player_latest_row, _PLAYER_METRICS) if player_latest_row is not None else {}
-        team_latest = _serialise(team_latest_row, _TEAM_METRICS) if team_latest_row is not None else {}
-        player_ratings = (
-            pd.to_numeric(player_history.get("rating"), errors="coerce").dropna()
-            if "rating" in player_history
-            else pd.Series(dtype=float)
-        )
+        scoped = dict(snapshot)
+        scoped["player_stats"] = player_rows.copy()
+        scoped["team_season_stats"] = team_rows.copy()
+        scoped["_as_of_season"] = player_season
+        scoped["_prediction_league_id"] = _to_int(target_league)
+        scoped["_prediction_competition"] = target_competition
+        scoped["_prediction_team_id"] = _to_int(teams[0])
+        scoped["_competition_support"] = {
+            "mode": "historical_counterfactual",
+            "competition": target_competition,
+            "source_season": player_season,
+            "target_season": target_season,
+            "source_player_seasons": int(len(player_rows)),
+        }
 
+        player_dict = dict(scoped.get("player_dict", {}))
+        player_meta = dict(player_dict.get(_to_int(players[0]), {}))
+        birth_date = player_meta.get("birth_date", player_meta.get("date_of_birth"))
+        try:
+            age = target_season - int(str(birth_date)[:4])
+        except (TypeError, ValueError):
+            try:
+                age = int(player_meta.get("age")) + (target_season - player_season)
+            except (TypeError, ValueError):
+                age = int(player_meta.get("age", 25))
+        player_meta["age"] = int(age)
+        player_meta["current_team_id"] = _to_int(teams[0])
+        player_meta["current_league_id"] = _to_int(target_league)
+        player_dict[_to_int(players[0])] = player_meta
+        scoped["player_dict"] = player_dict
+
+        team_dict = dict(scoped.get("team_dict", {}))
+        target_team_meta = dict(team_dict.get(_to_int(teams[0]), self.data.get("team_dict", {}).get(_to_int(teams[0]), {})))
+        target_team_meta["league_id"] = _to_int(target_league)
+        team_dict[_to_int(teams[0])] = target_team_meta
+        scoped["team_dict"] = team_dict
+
+        result = StrictWhatIfEngine(self.ensemble, scoped).predict_in_team(
+            players[0], teams[0], target_season, competition=target_competition
+        )
+        player_latest = self._latest(player_rows)
         observed_rating = _finite(player_latest.get("rating"), result.base_rating)
         rating_delta = float(result.predicted_rating) - observed_rating
+        team_latest = self._latest(team_rows)
 
-        # Only expose target-team environment variables when they can explain a
-        # change from the player's current context. These are not a second
-        # Player Intelligence payload: they are explicit counterfactual deltas.
-        current_team_id = (
-            _to_int(player_latest_row.get("team_id"))
-            if player_latest_row is not None
-            else None
-        )
-        current_team_history = (
-            self._team_rows(current_team_id, source_league, competition, season)
-            if current_team_id is not None
-            else pd.DataFrame()
-        )
-        current_team_row = (
-            self._latest(current_team_history)
-            if not current_team_history.empty
-            else None
-        )
-
+        current_team_id = _to_int(player_latest.get("team_id"))
+        current_team_rows = self._team_rows(current_team_id, source_league, source_competition, player_season) if current_team_id is not None else pd.DataFrame()
+        current_team = self._latest(current_team_rows) if not current_team_rows.empty else None
         environment_delta = {}
         for metric in _TEAM_METRICS:
             target_value = _finite(team_latest.get(metric), math.nan)
-            current_value = (
-                _finite(current_team_row.get(metric), math.nan)
-                if current_team_row is not None
-                else math.nan
-            )
+            current_value = _finite(current_team.get(metric), math.nan) if current_team is not None else math.nan
             if math.isfinite(target_value) and math.isfinite(current_value):
                 environment_delta[metric] = round(target_value - current_value, 4)
 
         drivers = dict(getattr(result, "shap_values", {}) or {})
-        ranked_drivers = [
-            {"feature": key, "impact": round(float(value), 4)}
-            for key, value in sorted(
-                drivers.items(), key=lambda item: abs(_finite(item[1])), reverse=True
-            )
-            if math.isfinite(_finite(value))
-        ][:8]
-
+        ranked_drivers = [{"feature": key, "impact": round(float(value), 4)} for key, value in sorted(drivers.items(), key=lambda item: abs(_finite(item[1])), reverse=True) if math.isfinite(_finite(value))][:8]
         compatibility = float(result.compatibility_factor)
-        league_factor = float(result.league_factor)
-        context_adjustment = float(result.context_adjustment)
-
-        if rating_delta >= 0.5:
-            outcome_label = "meaningful_positive_change"
-        elif rating_delta <= -0.5:
-            outcome_label = "meaningful_negative_change"
-        else:
-            outcome_label = "limited_change"
-
-        if compatibility >= 1.0:
-            fit_label = "strong_fit"
-        elif compatibility >= 0.9:
-            fit_label = "good_fit"
-        elif compatibility >= 0.8:
-            fit_label = "mixed_fit"
-        else:
-            fit_label = "weak_fit"
+        fit_label = "strong_fit" if compatibility >= 1.0 else "good_fit" if compatibility >= 0.9 else "mixed_fit" if compatibility >= 0.8 else "weak_fit"
+        outcome_label = "meaningful_positive_change" if rating_delta >= 0.5 else "meaningful_negative_change" if rating_delta <= -0.5 else "limited_change"
 
         what_if = {
-            "baseline": {
-                "current_team": self._team_name(current_team_id) if current_team_id is not None else None,
-                "current_rating": round(observed_rating, 3),
-                "current_minutes_per_game": round(_finite(player_latest.get("minutes_per_game")), 3),
-                "current_usage_pct": round(_ratio(player_latest.get("usg_pct")), 4),
-                "competition_tier": competition_tier(self._league_key(source_league)),
-                "competition_tier_label": competition_tier_label(self._league_key(source_league)),
-            },
-            "target": {
-                "team": self._team_name(teams[0]),
-                "competition_tier": competition_tier(self._league_key(target_league)),
-                "competition_tier_label": competition_tier_label(self._league_key(target_league)),
-            },
-            "changes": {
-                "predicted_rating_delta": round(rating_delta, 3),
-                "team_environment_delta": environment_delta,
-                "compatibility": round(compatibility, 4),
-                "compatibility_label": fit_label,
-                "league_factor": round(league_factor, 4),
-                "context_adjustment": round(context_adjustment, 4),
-            },
-            "outcome": {
-                "label": outcome_label,
-                "predicted_rating": round(float(result.predicted_rating), 3),
-                "confidence_low": round(float(result.confidence_low), 3),
-                "confidence_high": round(float(result.confidence_high), 3),
-            },
+            "baseline": {"profile_season": player_season, "current_team": self._team_name(current_team_id) if current_team_id is not None else None, "current_rating": round(observed_rating, 3), "current_minutes_per_game": round(_finite(player_latest.get("minutes_per_game")), 3), "current_usage_pct": round(_ratio(player_latest.get("usg_pct")), 4), "competition_tier": competition_tier(self._league_key(source_league)), "competition_tier_label": competition_tier_label(self._league_key(source_league))},
+            "target": {"team": self._team_name(teams[0]), "scenario_season": target_season, "context_as_of_season": player_season, "competition_tier": competition_tier(self._league_key(target_league)), "competition_tier_label": competition_tier_label(self._league_key(target_league))},
+            "changes": {"predicted_rating_delta": round(rating_delta, 3), "team_environment_delta": environment_delta, "compatibility": round(compatibility, 4), "compatibility_label": fit_label, "league_factor": round(float(result.league_factor), 4), "context_adjustment": round(float(result.context_adjustment), 4)},
+            "outcome": {"label": outcome_label, "predicted_rating": round(float(result.predicted_rating), 3), "confidence_low": round(float(result.confidence_low), 3), "confidence_high": round(float(result.confidence_high), 3)},
             "drivers": ranked_drivers,
-            "interpretation": (
-                "Lo scenario misura cosa cambia passando dal contesto attuale alla squadra target. "
-                "Il risultato è guidato da fit/compatibilità, livello della competizione, "
-                "aggiustamento contestuale e caratteristiche dell'ambiente target; non è una "
-                "previsione di produzione per-36."
-            ),
+            "interpretation": f"Scenario costruito dal profilo osservato fino al {player_season} e proiettato alla stagione {target_season}. Il contesto target usa solo informazioni disponibili al cutoff, evitando leakage della stagione target."
         }
-
         return {
-            "result": {
-                "player": self._player_name(players[0]),
-                "team": self._team_name(teams[0]),
-                "league": self._league_name(target_league),
-                "competition": result.competition,
-                "competition_tier": competition_tier(self._league_key(target_league)),
-                "competition_tier_label": competition_tier_label(self._league_key(target_league)),
-                "target_season": season + 1,
-                "predicted_rating": result.predicted_rating,
-                "confidence_low": result.confidence_low,
-                "confidence_high": result.confidence_high,
-                "base_rating": result.base_rating,
-                "compatibility": result.compatibility_factor,
-                "league_factor": result.league_factor,
-                "context_adjustment": result.context_adjustment,
-                "drivers": result.shap_values,
-                "what_if": what_if,
-            },
-            "evidence": [
-                {"type": "competition_support", **support},
-                {
-                    "type": "player_historical_profile",
-                    "player": self._player_name(players[0]),
-                    "seasons_considered": int(len(player_history)),
-                    "through_season": season,
-                    "latest": player_latest,
-                    "rating_history": [
-                        {"season": int(row["_year"]), "rating": round(float(row["rating"]), 3)}
-                        for row in player_history.tail(8).to_dict("records")
-                        if pd.notna(row.get("rating"))
-                    ],
-                    "rating_average": round(float(player_ratings.mean()), 3) if not player_ratings.empty else None,
-                },
-                {
-                    "type": "target_team_profile",
-                    "team": self._team_name(teams[0]),
-                    "seasons_considered": int(len(team_history)),
-                    "through_season": season,
-                    "latest": team_latest,
-                },
-            ],
-            "support": {"method": "strict_supervised_ensemble", **support},
-            "limitations": [],
+            "result": {"player": self._player_name(players[0]), "team": self._team_name(teams[0]), "league": self._league_name(target_league), "competition": result.competition, "competition_tier": competition_tier(self._league_key(target_league)), "competition_tier_label": competition_tier_label(self._league_key(target_league)), "source_season": player_season, "target_season": target_season, "predicted_rating": result.predicted_rating, "confidence_low": result.confidence_low, "confidence_high": result.confidence_high, "base_rating": result.base_rating, "compatibility": result.compatibility_factor, "league_factor": result.league_factor, "context_adjustment": result.context_adjustment, "drivers": result.shap_values, "what_if": what_if},
+            "evidence": [{"type": "historical_counterfactual", "player_profile_through": player_season, "scenario_season": target_season}, {"type": "target_team_context", "team": self._team_name(teams[0]), "context_through": player_season}],
+            "support": {"method": "strict_supervised_historical_counterfactual", **dict(scoped.get("_competition_support", {}))},
+            "limitations": ["Il contesto della squadra target è valutato con le informazioni disponibili al cutoff del profilo, non con i risultati reali della stagione target."]
         }
-
-    def _league_quality_fallback(self, source_league: int, target_league: int) -> float:
-        leagues = self.data.get("league_dict", {})
-        source = leagues.get(_to_int(source_league), {})
-        target = leagues.get(_to_int(target_league), {})
-        source_q = _finite(source.get("competitiveness_score"), 1.0)
-        target_q = _finite(target.get("competitiveness_score"), 1.0)
-        maximum = max(
-            [_finite(row.get("competitiveness_score"), 1.0) for row in leagues.values()] or [1.0]
-        )
-        if maximum <= 0:
-            return 0.0
-        return float(np.clip((source_q - target_q) / maximum * 1.25, -1.25, 1.25))
-
-    def _transfer_samples(
-        self,
-        source_league: int,
-        target_league: int,
-        source_comp: str,
-        target_comp: str,
-        through_season: int,
-    ) -> list[float]:
-        stats = self.data.get("player_stats", pd.DataFrame()).copy()
-        if stats.empty:
-            return []
-        stats["_year"] = stats["season"].map(_year)
-        stats["_comp"] = stats["competition"].map(normalize_competition)
-        stats = stats[stats["_year"] <= int(through_season) + 1]
-        stats["_pid_int"] = stats["player_id"].map(_to_int)
-        stats["_league_int"] = stats["league_id"].map(_to_int)
-        stats["_row_order"] = np.arange(len(stats), dtype=int)
-        source_rows = stats[
-            (stats["_league_int"] == _to_int(source_league))
-            & (stats["_comp"] == source_comp)
-        ][["_pid_int", "_year", "rating", "_row_order"]].copy()
-        target_rows = stats[
-            (stats["_league_int"] == _to_int(target_league))
-            & (stats["_comp"] == target_comp)
-        ][["_pid_int", "_year", "rating", "_row_order"]].copy()
-        if source_rows.empty or target_rows.empty:
-            return []
-
-        # The legacy per-player dict retained the last target row for a year.
-        target_rows = target_rows.drop_duplicates(
-            ["_pid_int", "_year"], keep="last"
-        ).rename(columns={"_year": "_target_year", "rating": "_target_rating"})
-        source_rows["_target_year"] = source_rows["_year"] + 1
-        paired = source_rows.merge(
-            target_rows[["_pid_int", "_target_year", "_target_rating"]],
-            on=["_pid_int", "_target_year"],
-            how="inner",
-            sort=False,
-            validate="many_to_one",
-        )
-        paired["_source_rating"] = pd.to_numeric(paired["rating"], errors="coerce")
-        paired["_target_rating"] = pd.to_numeric(
-            paired["_target_rating"], errors="coerce"
-        )
-        paired = paired.dropna(subset=["_source_rating", "_target_rating"])
-        paired = paired.sort_values(["_pid_int", "_row_order"], kind="stable")
-        return (paired["_target_rating"] - paired["_source_rating"]).astype(float).tolist()
-
-    def _target_context_score(self, player_id: int, team_id: int, target_league: int, competition: str, season: int) -> tuple[float, dict[str, float]]:
-        snapshot = build_historical_snapshot(self.data, season)
-        team_rows = self._team_rows(team_id, target_league, competition, season)
-        if team_rows.empty:
-            return 0.5, {}
-        latest = team_rows.iloc[-1]
-        patched = dict(snapshot)
-        team_dict = dict(snapshot.get("team_dict", {}))
-        team = dict(team_dict.get(_to_int(team_id), self.data.get("team_dict", {}).get(_to_int(team_id), {})))
-        for metric in _TEAM_METRICS:
-            if pd.notna(latest.get(metric)):
-                team[metric] = latest[metric]
-        team["league_id"] = target_league
-        team_dict[_to_int(team_id)] = team
-        patched["team_dict"] = team_dict
-        player_dict = dict(patched.get("player_dict", {}))
-        player = dict(player_dict.get(_to_int(player_id), {}))
-        if player:
-            player_dict[_to_int(player_id)] = player
-            patched["player_dict"] = player_dict
-        patched["_as_of_season"] = season
-        ctx = compute_context_features(player_id, team_id, patched)
-        score = (
-            ctx["position_team_fit"] * 0.25
-            + ctx["style_compatibility"] * 0.30
-            + ctx["role_opportunity"] * 0.20
-            + ctx["league_adaptation_factor"] * 0.15
-            + ctx["spacing_fit"] * 0.10
-        )
-        return float(np.clip(score, 0.0, 1.0)), ctx
 
     def _league_transfer(self, spec, players, teams, source_league, target_league):
         if not players:
