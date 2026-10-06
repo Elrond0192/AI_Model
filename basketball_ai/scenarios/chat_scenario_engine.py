@@ -1490,8 +1490,6 @@ class ChatScenarioEngine:
             except (ValueError, RuntimeError, KeyError) as exc:
                 result["future_performance"]["reason"] = str(exc)
 
-        return result
-
         # Prediction Model: observed current-team context, not a future-team counterfactual.
         try:
             rows = self._player_rows(int(player["id"]), source_league, competition, season)
