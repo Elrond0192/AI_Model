@@ -70,7 +70,13 @@ async def evaluate_scenario(body: ScenarioRequestV2, request: Request):
         )
         scenario_data = {**data, **feeds}
         ensemble = runtime.ensemble
-        engine = ChatScenarioEngine(ensemble, scenario_data)
+        engine = ChatScenarioEngine(
+            ensemble,
+            scenario_data,
+            bb_rating_engine=getattr(request.app.state, "bb_rating_engine", None),
+            bb_rating_uncertainty=getattr(request.app.state, "bb_rating_uncertainty", None),
+            future_performance_model=getattr(request.app.state, "future_performance_model", None),
+        )
         payload = engine.evaluate(
             body.model_dump(),
             player_ids,
