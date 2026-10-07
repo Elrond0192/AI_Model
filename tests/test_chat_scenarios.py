@@ -81,6 +81,7 @@ def test_player_intelligence_discovers_all_current_league_contexts_when_unspecif
     contexts = result["result"]["contexts"]
     assert [item["league_key"] for item in contexts] == ["A", "EL"]
     assert all("player_competition" in item["analyses"] for item in contexts)
+    assert all("model_evidence" in item["analyses"] for item in contexts)
     assert all(item["analyses"]["player_competition"]["result"]["latest"]["rating"] in {7.0, 6.2} for item in contexts)
 
 
