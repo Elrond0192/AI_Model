@@ -1605,6 +1605,8 @@ class ChatScenarioEngine:
             normalize_competition(spec.get("competition", "RS")),
             source_league,
         )
+        if source_league is None and len(context_leagues) == 1:
+            source_league = context_leagues[0]
         if source_league is None and len(context_leagues) > 1:
             dispatch_multi = {
                 "player_competition": self._player_competition,
