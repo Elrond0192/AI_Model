@@ -1344,7 +1344,9 @@ class ChatScenarioEngine:
         if not players:
             raise ValueError("player is required")
         player = players[0]
-        global_id = str(player.get("global_id", ""))
+        player_row = self.data.get("player_dict", {}).get(_to_int(player), {})
+        global_id = str(player_row.get("global_id", ""))
+        player_id = _to_int(player)
         league = self._league_key(source_league)
         season = _year(spec.get("season"))
         competition = normalize_competition(spec.get("competition", "RS"))
@@ -1386,7 +1388,7 @@ class ChatScenarioEngine:
             try:
                 future = self.future_performance_model.predict_player(
                     self.data,
-                    player_id=int(player["id"]),
+                    player_id=player_id,
                     league_key=league,
                     season=season,
                     competition=competition,
@@ -1398,7 +1400,7 @@ class ChatScenarioEngine:
                 # the prediction. These are model inputs/derived interpretation,
                 # not a new prediction model and not a team counterfactual.
                 rows = self._player_rows(
-                    int(player["id"]), source_league, competition, season
+                    player_id, source_league, competition, season
                 )
                 latest = self._latest(rows)
                 current_minutes = _finite(latest.get("minutes_per_game"), 0.0)
@@ -1410,7 +1412,7 @@ class ChatScenarioEngine:
                 )
                 position = str(
                     self.data.get("player_dict", {})
-                    .get(_to_int(player["id"]), {})
+                    .get(player_id, {})
                     .get("position", "")
                     or ""
                 )
@@ -1479,12 +1481,12 @@ class ChatScenarioEngine:
 
         # Prediction Model: observed current-team context, not a future-team counterfactual.
         try:
-            rows = self._player_rows(int(player["id"]), source_league, competition, season)
+            rows = self._player_rows(player_id, source_league, competition, season)
             latest = self._latest(rows)
             current_team_id = _to_int(latest.get("team_id"))
             observed_rating = _finite(latest.get("rating"), np.nan)
             if current_team_id is not None and source_league is not None:
-                prediction, _ = self._direct_prediction(int(player["id"]), current_team_id, source_league, season, competition)
+                prediction, _ = self._direct_prediction(player_id, current_team_id, source_league, season, competition)
                 result["prediction_model"] = {"available": True, "scope": "current_team_context", "team": self._team_name(current_team_id), "predicted_rating": round(float(prediction.predicted_rating), 3), "confidence_low": round(float(prediction.confidence_low), 3), "confidence_high": round(float(prediction.confidence_high), 3), "base_rating": round(float(prediction.base_rating), 3), "age_factor": round(float(prediction.age_factor), 4), "compatibility_factor": round(float(prediction.compatibility_factor), 4), "league_factor": round(float(prediction.league_factor), 4), "context_adjustment": round(float(prediction.context_adjustment), 4), "delta_vs_observed": round(float(prediction.predicted_rating) - observed_rating, 3) if math.isfinite(observed_rating) else None, "interpretation": "Stima del livello nel contesto della squadra corrente; non è una previsione di cambio squadra né una proiezione per-36."}
         except (ValueError, RuntimeError, KeyError, TypeError) as exc:
             result["prediction_model"]["reason"] = str(exc)
@@ -1610,6 +1612,7 @@ class ChatScenarioEngine:
         if source_league is None and len(context_leagues) > 1:
             dispatch_multi = {
                 "player_competition": self._player_competition,
+                "model_evidence": self._model_evidence,
                 "performance_decomposition": self._performance_decomposition,
                 "metric_explanation": self._metric_explanation,
                 "role_analysis": self._role_analysis,
@@ -1671,6 +1674,7 @@ class ChatScenarioEngine:
 
         dispatch = {
             "player_competition": self._player_competition,
+            "model_evidence": self._model_evidence,
             "performance_decomposition": self._performance_decomposition,
             "metric_explanation": self._metric_explanation,
             "role_analysis": self._role_analysis,
