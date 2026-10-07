@@ -15,6 +15,7 @@ def _data() -> dict:
     player_rows = [
         # Subject: distinct RS/PO values in the same league/season.
         {"player_id": 1, "team_id": 101, "league_id": 10, "season": 2024, "competition": "RS", "rating": 7.0, "games_played": 30, "minutes_per_game": 28, "points": 15, "assists": 5, "ts_pct": .58, "usg_pct": .24, "bpm": 3.0, "dbpm": 0.5, "three_point_pct": .37, "three_par": .40},
+        {"player_id": 1, "team_id": 201, "league_id": 20, "season": 2024, "competition": "RS", "rating": 6.2, "games_played": 18, "minutes_per_game": 23, "points": 12, "assists": 4, "ts_pct": .55, "usg_pct": .21, "bpm": 1.2, "dbpm": 0.3, "three_point_pct": .35, "three_par": .46},
         {"player_id": 1, "team_id": 101, "league_id": 10, "season": 2024, "competition": "PO", "rating": 7.5, "games_played": 8, "minutes_per_game": 31, "points": 17, "assists": 5.5, "ts_pct": .60, "usg_pct": .27, "bpm": 4.0, "dbpm": 0.8, "three_point_pct": .39, "three_par": .42, "ruolo_combinato": "PRIMARY CREATOR"},
         {"player_id": 2, "team_id": 101, "league_id": 10, "season": 2024, "competition": "PO", "rating": 6.8, "games_played": 8, "minutes_per_game": 26, "points": 12, "assists": 2, "ts_pct": .61, "usg_pct": .20, "bpm": 1.5, "dbpm": 1.1, "three_point_pct": .41, "three_par": .52},
     ]
@@ -69,6 +70,18 @@ def test_contract_is_open_to_normalised_future_competitions():
     )
     assert request.competition == "FINAL_FOUR"
     assert request.style_overrides["pace"] == "higher"
+
+
+def test_player_intelligence_discovers_all_current_league_contexts_when_unspecified():
+    engine = ChatScenarioEngine(SimpleNamespace(), _data())
+    result = engine.evaluate(
+        {"scenario": "player_intelligence", "season": 2024, "competition": "RS", "parameters": {"question_key": "current_level"}},
+        [1], [], None, None,
+    )
+    contexts = result["result"]["contexts"]
+    assert [item["league_key"] for item in contexts] == ["A", "EL"]
+    assert all("player_competition" in item["analyses"] for item in contexts)
+    assert all(item["analyses"]["player_competition"]["result"]["latest"]["rating"] in {7.0, 6.2} for item in contexts)
 
 
 def test_player_competition_keeps_playoffs_isolated():
