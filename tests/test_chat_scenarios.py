@@ -98,6 +98,50 @@ def test_player_intelligence_filters_current_contexts_by_explicit_team():
     assert all("player_competition" in item["analyses"] for item in contexts)
 
 
+def test_player_history_uses_canonical_identity_across_internal_player_ids():
+    data = _data()
+    data["player_dict"][1]["global_id"] = "PLAYER-CANONICAL"
+    data["player_dict"][11] = {
+        "id": 11,
+        "name": "Alpha",
+        "position": "PG",
+        "current_team_id": 101,
+        "current_league_id": 10,
+        "global_id": "PLAYER-CANONICAL",
+    }
+    data["player_stats"] = pd.concat([
+        data["player_stats"],
+        pd.DataFrame([{
+            "player_id": 11,
+            "team_id": 101,
+            "league_id": 10,
+            "season": 2023,
+            "competition": "RS",
+            "rating": 6.0,
+            "games_played": 26,
+            "minutes_per_game": 24,
+            "points": 12,
+            "assists": 4,
+            "rebounds": 5,
+            "ts_pct": .56,
+            "usg_pct": .22,
+            "bpm": 2.0,
+            "dbpm": .4,
+            "three_point_pct": .36,
+            "three_par": .38,
+        }]),
+    ], ignore_index=True)
+    engine = ChatScenarioEngine(SimpleNamespace(), data)
+    result = engine.evaluate(
+        {"scenario": "performance_decomposition", "season": 2024, "competition": "RS"},
+        [1], [], 10, None,
+    )
+    assert result["result"]["previous_season"] == 2023
+    assert result["result"]["current_season"] == 2024
+    assert result["result"]["previous"]["rating"] == 6.0
+    assert result["result"]["current"]["rating"] == 7.0
+
+
 def test_player_competition_keeps_playoffs_isolated():
     engine = ChatScenarioEngine(SimpleNamespace(), _data())
     result = engine.evaluate(
