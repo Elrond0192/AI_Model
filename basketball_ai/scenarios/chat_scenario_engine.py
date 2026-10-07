@@ -419,6 +419,7 @@ class ChatScenarioEngine:
             "result": {
                 "player": self._player_name(players[0]),
                 "league": self._league_name(source_league),
+                "league_key": self._league_key(source_league),
                 "competition": competition,
                 "previous_season": previous_year,
                 "current_season": current_year,
@@ -1518,7 +1519,8 @@ class ChatScenarioEngine:
         """Build descriptive context used by the Player Intelligence synthesis layer."""
         if not players:
             raise ValueError("player is required")
-        player_id = int(players[0]["id"])
+        raw_player = players[0]
+        player_id = int(raw_player["id"]) if isinstance(raw_player, dict) else int(raw_player)
         season = int(spec["season"])
         competition = normalize_competition(spec.get("competition", "RS"))
         rows = self._player_rows(player_id, source_league, competition, season)
@@ -1660,7 +1662,7 @@ class ChatScenarioEngine:
             int(spec["season"]),
             normalize_competition(spec.get("competition", "RS")),
             source_league,
-            team_ids=team_ids,
+            team_ids=teams,
         )
         if source_league is None and len(context_leagues) == 1:
             source_league = context_leagues[0]
@@ -1694,12 +1696,58 @@ class ChatScenarioEngine:
                         )
                     except (ValueError, KeyError) as exc:
                         context_analyses[name] = {"available": False, "reason": str(exc)}
+                season_comparison = {
+                    "available": False,
+                    "reason": "Season-over-season comparison is unavailable in this league context.",
+                }
+                decomposition = context_analyses.get("performance_decomposition")
+                if isinstance(decomposition, dict):
+                    decomposition_result = decomposition.get("result")
+                    if isinstance(decomposition_result, dict):
+                        previous = decomposition_result.get("previous") or {}
+                        current = decomposition_result.get("current") or {}
+                        previous_rating = _finite(previous.get("rating"), np.nan)
+                        current_rating = _finite(current.get("rating"), np.nan)
+                        season_comparison = {
+                            "available": (
+                                decomposition_result.get("previous_season") is not None
+                                and decomposition_result.get("current_season") is not None
+                            ),
+                            "league": self._league_name(league_id),
+                            "league_key": self._league_key(league_id),
+                            "previous_season": decomposition_result.get("previous_season"),
+                            "current_season": decomposition_result.get("current_season"),
+                            "previous_rating": round(previous_rating, 3) if math.isfinite(previous_rating) else None,
+                            "current_rating": round(current_rating, 3) if math.isfinite(current_rating) else None,
+                            "rating_delta": (
+                                round(current_rating - previous_rating, 3)
+                                if math.isfinite(previous_rating) and math.isfinite(current_rating)
+                                else None
+                            ),
+                            "previous_team": (
+                                self._team_name(_to_int(previous.get("team_id")))
+                                if _to_int(previous.get("team_id")) is not None
+                                else None
+                            ),
+                            "current_team": (
+                                self._team_name(_to_int(current.get("team_id")))
+                                if _to_int(current.get("team_id")) is not None
+                                else None
+                            ),
+                        }
                 contexts.append({
                     "league": self._league_name(league_id),
                     "league_key": self._league_key(league_id),
                     "season": int(spec["season"]),
                     "analyses": context_analyses,
+                    "season_comparison": season_comparison,
                 })
+
+            season_comparisons = [
+                item["season_comparison"]
+                for item in contexts
+                if item.get("season_comparison", {}).get("available")
+            ]
             return {
                 "result": {
                     "player": self._player_name(players[0]),
@@ -1707,6 +1755,7 @@ class ChatScenarioEngine:
                     "question_keys": keys,
                     "context": None,
                     "contexts": contexts,
+                    "season_comparisons": season_comparisons,
                     "answer_mode": "multi_context_synthesis",
                 },
                 "evidence": [
