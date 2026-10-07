@@ -65,6 +65,18 @@ The `player_intelligence` scenario now composes the appropriate analysis layers 
 
 This keeps the analytical layers independent while giving Chat V3 a single evidence-composition entry point.
 
+## Historical season comparison across league contexts
+
+When the selected player has multiple current league contexts, Player Intelligence keeps the historical comparison isolated by league. The player identity is expanded through `global_id`, so a previous season can be resolved even when its internal `player_id` differs from the current season.
+
+For season-over-season questions such as `change_vs_last_season`, the multi-context response exposes:
+
+- one `season_comparison` object per league context;
+- `previous_season`, `current_season`, `previous_rating`, `current_rating` and `rating_delta`;
+- a top-level `season_comparisons` collection ordered with the discovered league contexts.
+
+Chat V3 should therefore report the comparison explicitly per league (for example, "in ITA1 ... while in EL ...") whenever more than one context has a valid consecutive-season series. Metrics from different leagues must never be merged into a single season comparison.
+
 ## Final boundary
 
 The exact **causal team-effect claim** remains unavailable, but Chat V3 can now answer the user-facing question with an observational attribution. A statement such as “Team X caused this player to perform worse” is not supported; instead the response reports the player’s observed rating, the team-context association, observed team switches, and the remaining causal limitation.
