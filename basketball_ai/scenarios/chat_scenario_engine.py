@@ -1545,7 +1545,15 @@ class ChatScenarioEngine:
             "evidence_strength": {"current_games": games, "historical_rating_seasons": int(len(rating_series)), "confidence": _confidence(max(games, len(rating_series) * 6))},
         }
 
-    def _player_intelligence_context_leagues(self, spec, player_id: int, season: int, competition: str, source_league: int | None) -> list[int]:
+    def _player_intelligence_context_leagues(
+        self,
+        spec,
+        player_id: int,
+        season: int,
+        competition: str,
+        source_league: int | None,
+        team_ids: list[int] | None = None,
+    ) -> list[int]:
         """Return concrete league contexts for one canonical player identity."""
         if source_league is not None:
             return [_to_int(source_league)]
@@ -1558,6 +1566,11 @@ class ChatScenarioEngine:
             & (frame["competition"].map(normalize_competition) == normalize_competition(competition))
             & (frame["_year"] == int(season))
         )
+        if team_ids:
+            if "team_id" not in frame.columns:
+                return []
+            allowed_team_ids = {_to_int(value) for value in team_ids}
+            mask &= frame["team_id"].map(_to_int).isin(allowed_team_ids)
         values = pd.to_numeric(frame.loc[mask, "league_id"], errors="coerce").dropna().astype(int).drop_duplicates().tolist()
         return sorted({_to_int(value) for value in values})
 
@@ -1606,6 +1619,7 @@ class ChatScenarioEngine:
             int(spec["season"]),
             normalize_competition(spec.get("competition", "RS")),
             source_league,
+            team_ids=team_ids,
         )
         if source_league is None and len(context_leagues) == 1:
             source_league = context_leagues[0]
