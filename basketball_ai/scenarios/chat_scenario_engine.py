@@ -1570,6 +1570,25 @@ class ChatScenarioEngine:
             if "team_id" not in frame.columns:
                 return []
             allowed_team_ids = {_to_int(value) for value in team_ids}
+
+            # A club can have one canonical global_id but distinct internal team
+            # rows per league. Expand the requested team IDs to every team row
+            # sharing that global identity before filtering PlayerCompetitionStats.
+            teams = self.data.get("teams", pd.DataFrame())
+            if not teams.empty and {"id", "global_id"} <= set(teams.columns):
+                selected_globals = {
+                    str(row.get("global_id")).strip()
+                    for row in teams.to_dict("records")
+                    if _to_int(row.get("id")) in allowed_team_ids and str(row.get("global_id", "")).strip()
+                }
+                if selected_globals:
+                    allowed_team_ids.update(
+                        _to_int(row.get("id"))
+                        for row in teams.to_dict("records")
+                        if str(row.get("global_id", "")).strip() in selected_globals
+                        and row.get("id") is not None
+                    )
+
             mask &= frame["team_id"].map(_to_int).isin(allowed_team_ids)
         values = pd.to_numeric(frame.loc[mask, "league_id"], errors="coerce").dropna().astype(int).drop_duplicates().tolist()
         return sorted({_to_int(value) for value in values})
