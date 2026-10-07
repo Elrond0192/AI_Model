@@ -142,6 +142,98 @@ def test_player_history_uses_canonical_identity_across_internal_player_ids():
     assert result["result"]["current"]["rating"] == 7.0
 
 
+def test_player_intelligence_reports_season_comparison_separately_for_each_league():
+    data = _data()
+    # Rebuild the subject's history so the current and previous seasons use
+    # different internal player IDs in each league, all pointing to one canonical identity.
+    data["player_stats"] = data["player_stats"][data["player_stats"]["player_id"] != 1].copy()
+    canonical_rows = pd.DataFrame([
+        {
+            "player_id": 11, "team_id": 101, "league_id": 10, "season": 2024, "competition": "RS",
+            "rating": 6.3, "games_played": 28, "minutes_per_game": 25, "points": 13, "rebounds": 5,
+            "assists": 4, "ts_pct": .56, "usg_pct": .22, "ast_pct": .16, "bpm": 2.0, "dbpm": .4,
+            "three_point_pct": .35, "three_par": .38, "tov_pct": .12, "net_rtg": 2.0,
+        },
+        {
+            "player_id": 1, "team_id": 101, "league_id": 10, "season": 2025, "competition": "RS",
+            "rating": 7.4, "games_played": 30, "minutes_per_game": 27, "points": 16, "rebounds": 5,
+            "assists": 5, "ts_pct": .59, "usg_pct": .24, "ast_pct": .18, "bpm": 3.2, "dbpm": .6,
+            "three_point_pct": .37, "three_par": .41, "tov_pct": .11, "net_rtg": 4.0,
+        },
+        {
+            "player_id": 13, "team_id": 201, "league_id": 20, "season": 2024, "competition": "RS",
+            "rating": 5.9, "games_played": 24, "minutes_per_game": 22, "points": 11, "rebounds": 4,
+            "assists": 3, "ts_pct": .54, "usg_pct": .20, "ast_pct": .15, "bpm": 1.1, "dbpm": .2,
+            "three_point_pct": .34, "three_par": .43, "tov_pct": .13, "net_rtg": 0.5,
+        },
+        {
+            "player_id": 12, "team_id": 201, "league_id": 20, "season": 2025, "competition": "RS",
+            "rating": 6.9, "games_played": 27, "minutes_per_game": 24, "points": 14, "rebounds": 5,
+            "assists": 4, "ts_pct": .58, "usg_pct": .22, "ast_pct": .17, "bpm": 2.3, "dbpm": .4,
+            "three_point_pct": .36, "three_par": .45, "tov_pct": .12, "net_rtg": 2.5,
+        },
+    ])
+    data["player_stats"] = pd.concat([data["player_stats"], canonical_rows], ignore_index=True)
+    for pid in (11, 12, 13):
+        data["player_dict"][pid] = {
+            "id": pid,
+            "name": "Alpha",
+            "position": "PG",
+            "current_team_id": 101 if pid in (1, 11) else 201,
+            "current_league_id": 10 if pid in (1, 11) else 20,
+            "global_id": "PLAYER-CANONICAL",
+        }
+    data["player_dict"][1]["global_id"] = "PLAYER-CANONICAL"
+
+    result = ChatScenarioEngine(SimpleNamespace(), data).evaluate(
+        {
+            "scenario": "player_intelligence",
+            "season": 2025,
+            "competition": "RS",
+            "parameters": {"question_key": "change_vs_last_season"},
+        },
+        [1], [], None, None,
+    )
+
+    contexts = result["result"]["contexts"]
+    assert [item["league_key"] for item in contexts] == ["A", "EL"]
+    comparisons = {item["league_key"]: item["season_comparison"] for item in contexts}
+    assert comparisons["A"]["previous_season"] == 2024
+    assert comparisons["A"]["current_season"] == 2025
+    assert comparisons["A"]["previous_rating"] == 6.3
+    assert comparisons["A"]["current_rating"] == 7.4
+    assert comparisons["A"]["rating_delta"] == 1.1
+    assert comparisons["EL"]["previous_rating"] == 5.9
+    assert comparisons["EL"]["current_rating"] == 6.9
+    assert comparisons["EL"]["rating_delta"] == 1.0
+    assert result["result"]["season_comparisons"] == [
+        comparisons["A"],
+        comparisons["EL"],
+    ]
+
+
+def test_player_intelligence_single_context_accepts_integer_player_ids():
+    data = _data()
+    data["player_stats"] = data["player_stats"][
+        ~(
+            (data["player_stats"]["player_id"] == 1)
+            & (data["player_stats"]["league_id"] == 20)
+            & (data["player_stats"]["competition"] == "RS")
+        )
+    ].copy()
+    result = ChatScenarioEngine(SimpleNamespace(), data).evaluate(
+        {
+            "scenario": "player_intelligence",
+            "season": 2024,
+            "competition": "RS",
+            "parameters": {"question_key": "current_level"},
+        },
+        [1], [], None, None,
+    )
+    assert result["result"]["context"]["league"] == "A"
+    assert result["result"]["context"]["season"] == 2024
+
+
 def test_player_competition_keeps_playoffs_isolated():
     engine = ChatScenarioEngine(SimpleNamespace(), _data())
     result = engine.evaluate(
