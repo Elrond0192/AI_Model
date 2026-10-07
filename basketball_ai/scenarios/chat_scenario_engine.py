@@ -1543,6 +1543,22 @@ class ChatScenarioEngine:
             "evidence_strength": {"current_games": games, "historical_rating_seasons": int(len(rating_series)), "confidence": _confidence(max(games, len(rating_series) * 6))},
         }
 
+    def _player_intelligence_context_leagues(self, spec, player_id: int, season: int, competition: str, source_league: int | None) -> list[int]:
+        """Return concrete league contexts for one canonical player identity."""
+        if source_league is not None:
+            return [_to_int(source_league)]
+        frame = self.data.get("player_stats", pd.DataFrame()).copy()
+        if frame.empty or "player_id" not in frame.columns or "league_id" not in frame.columns:
+            return []
+        frame["_year"] = frame["season"].map(_year)
+        mask = (
+            (frame["player_id"].map(_to_int) == _to_int(player_id))
+            & (frame["competition"].map(normalize_competition) == normalize_competition(competition))
+            & (frame["_year"] == int(season))
+        )
+        values = pd.to_numeric(frame.loc[mask, "league_id"], errors="coerce").dropna().astype(int).drop_duplicates().tolist()
+        return sorted({_to_int(value) for value in values})
+
     def _player_intelligence(self, spec, players, teams, source_league, target_league):
         if not players:
             raise ValueError("player is required")
@@ -1553,6 +1569,7 @@ class ChatScenarioEngine:
         else:
             keys = [str(parameters.get("question_key", "current_level")).strip().lower()]
         keys = list(dict.fromkeys(keys))[:8]
+
         bundles = {
             "current_level": ("player_competition", "model_evidence"),
             "why_performing": ("performance_decomposition", "metric_explanation"),
@@ -1577,6 +1594,79 @@ class ChatScenarioEngine:
                 raise ValueError(f"unsupported Player Intelligence question_key: {key}")
             selected_bundles.extend(scenarios)
         scenarios = tuple(dict.fromkeys(selected_bundles))
+
+        # When no league was explicitly requested, a canonical player identity
+        # may have multiple current league contexts. Player Intelligence owns
+        # that context discovery and evaluates the selected evidence per league.
+        context_leagues = self._player_intelligence_context_leagues(
+            spec,
+            int(players[0]),
+            int(spec["season"]),
+            normalize_competition(spec.get("competition", "RS")),
+            source_league,
+        )
+        if source_league is None and len(context_leagues) > 1:
+            dispatch_multi = {
+                "player_competition": self._player_competition,
+                "performance_decomposition": self._performance_decomposition,
+                "metric_explanation": self._metric_explanation,
+                "role_analysis": self._role_analysis,
+                "performance_stability": self._performance_stability,
+                "team_usage_analysis": self._team_usage_analysis,
+                "regression_risk": self._regression_risk,
+                "potential_synthesis": self._potential_synthesis,
+                "shooting_decomposition": self._shooting_decomposition,
+                "defensive_decomposition": self._defensive_decomposition,
+                "age_trajectory": self._age_trajectory,
+                "player_team": self._player_team,
+                "clutch_analysis": self._clutch_analysis,
+                "causal_team_effect": self._causal_team_effect,
+            }
+            contexts = []
+            for league_id in context_leagues:
+                context_analyses = {}
+                for name in scenarios:
+                    if name == "compatibility":
+                        continue
+                    try:
+                        context_analyses[name] = dispatch_multi[name](
+                            spec, players, teams, league_id, target_league
+                        )
+                    except (ValueError, KeyError) as exc:
+                        context_analyses[name] = {"available": False, "reason": str(exc)}
+                contexts.append({
+                    "league": self._league_name(league_id),
+                    "league_key": self._league_key(league_id),
+                    "season": int(spec["season"]),
+                    "analyses": context_analyses,
+                })
+            return {
+                "result": {
+                    "player": self._player_name(players[0]),
+                    "question_key": keys[0] if len(keys) == 1 else None,
+                    "question_keys": keys,
+                    "context": None,
+                    "contexts": contexts,
+                    "answer_mode": "multi_context_synthesis",
+                },
+                "evidence": [
+                    {"type": "question_analysis_registry", "question_keys": keys},
+                    {"type": "league_contexts", "count": len(contexts)},
+                    {
+                        "type": "composed_analysis_layers",
+                        "count": sum(len(item["analyses"]) for item in contexts),
+                    },
+                ],
+                "support": {
+                    "method": "player_intelligence_multi_context_evidence_composition",
+                    "samples": len(contexts),
+                    "confidence": "medium",
+                },
+                "limitations": [
+                    "Player Intelligence compone le evidenze separatamente per ogni contesto di lega; non fonde automaticamente metriche appartenenti a leghe diverse."
+                ],
+            }
+
         dispatch = {
             "player_competition": self._player_competition,
             "performance_decomposition": self._performance_decomposition,
