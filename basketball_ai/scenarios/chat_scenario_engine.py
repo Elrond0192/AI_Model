@@ -201,6 +201,26 @@ class ChatScenarioEngine:
         value = row.get("league_key", row.get("code", row.get("name", league_id)))
         return str(value).strip().upper()
 
+    def _player_identity_ids(self, player_id: int) -> set[int]:
+        """Return all internal player IDs sharing the same canonical global identity."""
+        pid = _to_int(player_id)
+        if pid is None:
+            return set()
+        ids = {pid}
+        player_row = self.data.get("player_dict", {}).get(pid, {})
+        global_id = str(player_row.get("global_id", "")).strip()
+        if not global_id:
+            return ids
+        for raw_id, row in (self.data.get("player_dict", {}) or {}).items():
+            if not isinstance(row, dict):
+                continue
+            if str(row.get("global_id", "")).strip() != global_id:
+                continue
+            other_id = _to_int(raw_id)
+            if other_id is not None:
+                ids.add(other_id)
+        return ids
+
     def _player_rows(
         self,
         player_id: int,
@@ -212,8 +232,9 @@ class ChatScenarioEngine:
         if frame.empty:
             return frame
         frame["_year"] = frame["season"].map(_year)
+        identity_ids = self._player_identity_ids(player_id)
         mask = (
-            (frame["player_id"].map(_to_int) == _to_int(player_id))
+            frame["player_id"].map(_to_int).isin(identity_ids)
             & (frame["competition"].map(normalize_competition) == normalize_competition(competition))
             & (frame["_year"] <= int(through_season))
         )
@@ -1561,8 +1582,9 @@ class ChatScenarioEngine:
         if frame.empty or "player_id" not in frame.columns or "league_id" not in frame.columns:
             return []
         frame["_year"] = frame["season"].map(_year)
+        identity_ids = self._player_identity_ids(player_id)
         mask = (
-            (frame["player_id"].map(_to_int) == _to_int(player_id))
+            frame["player_id"].map(_to_int).isin(identity_ids)
             & (frame["competition"].map(normalize_competition) == normalize_competition(competition))
             & (frame["_year"] == int(season))
         )
