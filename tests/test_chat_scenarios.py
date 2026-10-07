@@ -85,13 +85,16 @@ def test_player_intelligence_discovers_all_current_league_contexts_when_unspecif
     assert all(item["analyses"]["player_competition"]["result"]["latest"]["rating"] in {7.0, 6.2} for item in contexts)
 
 def test_player_intelligence_filters_current_contexts_by_explicit_team():
-    engine = ChatScenarioEngine(SimpleNamespace(), _data())
+    data = _data()
+    data["teams"].loc[data["teams"]["id"] == 201, "global_id"] = "T-SOURCE"
+    data["team_dict"][201]["global_id"] = "T-SOURCE"
+    engine = ChatScenarioEngine(SimpleNamespace(), data)
     result = engine.evaluate(
         {"scenario": "player_intelligence", "season": 2024, "competition": "RS", "parameters": {"question_key": "current_level"}},
         [1], [101], None, None,
     )
     contexts = result["result"]["contexts"]
-    assert [item["league_key"] for item in contexts] == ["A"]
+    assert [item["league_key"] for item in contexts] == ["A", "EL"]
     assert all("player_competition" in item["analyses"] for item in contexts)
 
 
