@@ -212,6 +212,53 @@ def test_player_intelligence_reports_season_comparison_separately_for_each_leagu
     ]
 
 
+def test_player_history_falls_back_to_players_dataframe_for_canonical_identity():
+    data = _data()
+    # Simulate a runtime where player_dict contains only the selected current
+    # row, while the Players dataframe still carries the other internal IDs.
+    data["player_stats"] = data["player_stats"][
+        ~(
+            (data["player_stats"]["player_id"] == 1)
+            & (data["player_stats"]["league_id"] == 20)
+        )
+    ].copy()
+    history = pd.DataFrame([
+        {
+            "player_id": 21, "team_id": 101, "league_id": 10, "season": 2023,
+            "competition": "RS", "rating": 6.1, "games_played": 25,
+        },
+        {
+            "player_id": 1, "team_id": 101, "league_id": 10, "season": 2024,
+            "competition": "RS", "rating": 7.2, "games_played": 28,
+        },
+    ])
+    data["player_stats"] = pd.concat([data["player_stats"], history], ignore_index=True)
+    data["players"] = pd.concat([
+        data["players"],
+        pd.DataFrame([{
+            "id": 21, "name": "Alpha", "position": "PG",
+            "current_team_id": 101, "current_league_id": 10,
+            "global_id": "PLAYER-CANONICAL",
+        }]),
+    ], ignore_index=True)
+    data["players"].loc[
+        data["players"]["id"] == 1, "global_id"
+    ] = "PLAYER-CANONICAL"
+    data["player_dict"] = {
+        1: {**data["player_dict"][1], "global_id": "PLAYER-CANONICAL"}
+    }
+
+    result = ChatScenarioEngine(SimpleNamespace(), data).evaluate(
+        {"scenario": "performance_decomposition", "season": 2024, "competition": "RS"},
+        [1], [], 10, None,
+    )
+
+    assert result["result"]["previous_season"] == 2023
+    assert result["result"]["current_season"] == 2024
+    assert result["result"]["previous"]["rating"] == 6.1
+    assert result["result"]["current"]["rating"] == 7.2
+
+
 def test_player_intelligence_single_context_accepts_integer_player_ids():
     data = _data()
     data["player_stats"] = data["player_stats"][
