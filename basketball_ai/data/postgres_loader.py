@@ -422,9 +422,11 @@ def _attach_player_global_ids(data: dict[str, pd.DataFrame]) -> None:
 
     stats_ids = stats["player_id"].map(_to_int)
     mapped = stats_ids.map(mapping.set_index("id")["global_id"])
+    # Players.global_id is the canonical identity source. Never retain a
+    # conflicting/stale statistic-level global_id when the authoritative player
+    # row resolves successfully.
     if "global_id" in stats.columns:
-        existing = stats["global_id"].astype(str).str.strip()
-        stats["global_id"] = existing.where(existing != "", mapped)
+        stats["global_id"] = mapped.where(mapped.notna(), stats["global_id"])
     else:
         stats["global_id"] = mapped
 
