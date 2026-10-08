@@ -365,3 +365,31 @@ def test_scenario_api_resolves_global_ids_and_returns_structured_payload(monkeyp
     assert seen["players"] == [1]
     assert seen["teams"] == [201]
     assert (seen["source"], seen["target"]) == (10, 20)
+
+def test_player_intelligence_cross_context_ignores_source_league_and_stale_stat_identity():
+    data = _data()
+    data["player_stats"].loc[
+        (data["player_stats"]["player_id"] == 1) &
+        (data["player_stats"]["league_id"] == 20),
+        "global_id",
+    ] = "STALE-IDENTITY"
+
+    result = ChatScenarioEngine(SimpleNamespace(), data).evaluate(
+        {
+            "scenario": "player_intelligence",
+            "season": 2025,
+            "competition": "RS",
+            "source_league": "EL",
+            "parameters": {
+                "question_key": "change_vs_last_season",
+                "cross_context": True,
+            },
+        },
+        [1], [], 20, None,
+    )
+
+    contexts = result["result"]["contexts"]
+    assert [item["league_key"] for item in contexts] == ["A", "EL"]
+    comparisons = {item["league_key"]: item["season_comparison"] for item in contexts}
+    assert comparisons["A"]["rating_delta"] == 1.1
+    assert comparisons["EL"]["rating_delta"] == 1.0
