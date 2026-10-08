@@ -623,6 +623,28 @@ def create_app() -> FastAPI:
     app.include_router(future_performance_v2_router)
     app.include_router(player_intelligence_v2_router)
 
+    @app.post("/api/v2/debug/chat")
+    async def debug_chat(request: Request):
+        if os.environ.get("CHAT_DEBUG_ENABLED", "false").lower() not in {"1", "true", "yes", "on"}:
+            return JSONResponse(status_code=404, content={"detail": "Not found"})
+        try:
+            payload = await request.json()
+        except Exception:
+            return JSONResponse(status_code=400, content={"detail": "Invalid JSON"})
+        if not isinstance(payload, dict):
+            return JSONResponse(status_code=400, content={"detail": "Debug payload must be an object"})
+        events = payload.get("events", [])
+        if not isinstance(events, list):
+            return JSONResponse(status_code=400, content={"detail": "events must be a list"})
+        events = events[:32]
+        logger.info(
+            "[CHAT_DEBUG] source=%s request_id=%s events=%s",
+            str(payload.get("source", "unknown"))[:40],
+            getattr(request.state, "request_id", ""),
+            _json.dumps(events, ensure_ascii=False, separators=(",", ":"))[:12000],
+        )
+        return {"ok": True, "events": len(events)}
+
     @app.get("/health")
     def health(request: Request):
         data = getattr(request.app.state, "data", {})
