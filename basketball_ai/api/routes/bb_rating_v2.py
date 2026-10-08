@@ -5,6 +5,8 @@ call or modify the season-ahead prediction model.
 """
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, HTTPException, Request
 
 from basketball_ai.api.bb_rating_contracts import (
@@ -13,6 +15,7 @@ from basketball_ai.api.bb_rating_contracts import (
 )
 
 router = APIRouter(prefix="/api/v2/bb-rating", tags=["bb-rating-v2"])
+logger = logging.getLogger(__name__)
 
 
 @router.post("/player", response_model=BBRatingPlayerResponseV2)
@@ -25,6 +28,7 @@ async def rate_player(body: BBRatingPlayerRequestV2, request: Request):
         )
 
     season = int(str(body.season).split("-")[0])
+    logger.info("[bb-rating] request league=%s season=%s phase=%s include_history=%s", body.league, body.season, body.phase, body.include_history)
     try:
         result = engine.rate_player(
             body.player_global_id,
@@ -33,6 +37,7 @@ async def rate_player(body: BBRatingPlayerRequestV2, request: Request):
             phase=body.phase,
         )
     except ValueError as exc:
+        logger.exception("[bb-rating] 422 league=%s season=%s phase=%s error=%s", body.league, body.season, body.phase, exc)
         raise HTTPException(422, str(exc)) from exc
 
     payload = result.to_dict()
