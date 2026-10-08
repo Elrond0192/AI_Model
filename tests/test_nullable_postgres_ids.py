@@ -130,3 +130,25 @@ def test_attach_player_global_ids_propagates_canonical_identity():
         "PLAYER-X",
         "PLAYER-Y",
     ]
+
+def test_attach_player_global_ids_overwrites_stale_stat_identity():
+    from basketball_ai.data.postgres_loader import _attach_player_global_ids, _normalise_ids
+
+    data = {
+        "players": pd.DataFrame([
+            {"id": 101, "global_id": "PLAYER-CANONICAL"},
+        ]),
+        "player_stats": pd.DataFrame([
+            {
+                "player_id": 101,
+                "season": 2026,
+                "competition": "RS",
+                "global_id": "STALE-IDENTITY",
+            },
+        ]),
+    }
+
+    _normalise_ids(data)
+    _attach_player_global_ids(data)
+
+    assert data["player_stats"].iloc[0]["global_id"] == "PLAYER-CANONICAL"
