@@ -259,13 +259,28 @@ class ChatScenarioEngine:
         if isinstance(player_meta, dict):
             global_id = str(player_meta.get("global_id", "")).strip()
 
-        if not global_id and "global_id" in frame.columns:
-            candidate = frame.loc[frame["player_id"].map(_to_int) == _to_int(player_id), "global_id"]
-            candidate = candidate.dropna().astype(str).str.strip()
-            if not candidate.empty:
-                global_id = candidate.iloc[0]
+        # Resolve the canonical identity from Players itself as the final
+        # authority. This also handles runtimes where player_dict was built from
+        # only one representative row of a multi-ID player.
+        players_frame = self.data.get("players", pd.DataFrame())
+        if not global_id and isinstance(players_frame, pd.DataFrame) and not players_frame.empty:
+            if {"id", "global_id"}.issubset(players_frame.columns):
+                matches = players_frame[players_frame["id"].map(_to_int) == _to_int(player_id)]
+                if not matches.empty:
+                    global_id = str(matches.iloc[0].get("global_id", "")).strip()
 
-        if global_id and "global_id" in frame.columns:
+        if global_id and isinstance(players_frame, pd.DataFrame) and not players_frame.empty:
+            if {"id", "global_id"}.issubset(players_frame.columns):
+                canonical_map = players_frame[["id", "global_id"]].copy()
+                canonical_map["id"] = canonical_map["id"].map(_to_int)
+                canonical_map["global_id"] = canonical_map["global_id"].astype(str).str.strip()
+                canonical_map = canonical_map[canonical_map["global_id"] != ""].drop_duplicates("id", keep="last")
+                canonical_by_id = canonical_map.set_index("id")["global_id"]
+                row_identity = frame["player_id"].map(_to_int).map(canonical_by_id)
+                identity_mask = row_identity == global_id
+            else:
+                identity_mask = frame["player_id"].map(_to_int).isin(identity_ids)
+        elif global_id and "global_id" in frame.columns:
             identity_mask = frame["global_id"].fillna("").astype(str).str.strip() == global_id
         else:
             identity_mask = frame["player_id"].map(_to_int).isin(identity_ids)
