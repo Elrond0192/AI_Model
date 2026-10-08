@@ -1725,12 +1725,17 @@ class ChatScenarioEngine:
         # When no league was explicitly requested, a canonical player identity
         # may have multiple current league contexts. Player Intelligence owns
         # that context discovery and evaluates the selected evidence per league.
+        # cross_context=true is an explicit Chat V3 contract: ignore any
+        # accidentally inherited source league and discover every matching
+        # competition context for the selected canonical player.
+        cross_context = bool(parameters.get("cross_context", False))
+        effective_source_league = None if cross_context else source_league
         context_leagues = self._player_intelligence_context_leagues(
             spec,
             int(players[0]),
             int(spec["season"]),
             normalize_competition(spec.get("competition", "RS")),
-            source_league,
+            effective_source_league,
             team_ids=teams,
         )
         if source_league is None and len(context_leagues) == 1:
