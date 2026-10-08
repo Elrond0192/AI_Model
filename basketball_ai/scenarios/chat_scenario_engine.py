@@ -253,8 +253,25 @@ class ChatScenarioEngine:
             return frame
         frame["_year"] = frame["season"].map(_year)
         identity_ids = self._player_identity_ids(player_id)
+        global_id = ""
+        players_dict = self.data.get("player_dict", {}) or {}
+        player_meta = players_dict.get(_to_int(player_id), {})
+        if isinstance(player_meta, dict):
+            global_id = str(player_meta.get("global_id", "")).strip()
+
+        if not global_id and "global_id" in frame.columns:
+            candidate = frame.loc[frame["player_id"].map(_to_int) == _to_int(player_id), "global_id"]
+            candidate = candidate.dropna().astype(str).str.strip()
+            if not candidate.empty:
+                global_id = candidate.iloc[0]
+
+        if global_id and "global_id" in frame.columns:
+            identity_mask = frame["global_id"].fillna("").astype(str).str.strip() == global_id
+        else:
+            identity_mask = frame["player_id"].map(_to_int).isin(identity_ids)
+
         mask = (
-            frame["player_id"].map(_to_int).isin(identity_ids)
+            identity_mask
             & (frame["competition"].map(normalize_competition) == normalize_competition(competition))
             & (frame["_year"] <= int(through_season))
         )
