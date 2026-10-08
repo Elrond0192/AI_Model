@@ -393,3 +393,26 @@ def test_player_intelligence_cross_context_ignores_source_league_and_stale_stat_
     comparisons = {item["league_key"]: item["season_comparison"] for item in contexts}
     assert comparisons["A"]["rating_delta"] == 1.1
     assert comparisons["EL"]["rating_delta"] == 1.0
+
+def test_player_intelligence_comparison_tolerates_missing_team_ids():
+    data = _data()
+    data["player_stats"].loc[
+        (data["player_stats"]["player_id"] == 1) &
+        (data["player_stats"]["league_id"] == 20) &
+        (data["player_stats"]["season"] == 2025),
+        "team_id",
+    ] = None
+
+    result = ChatScenarioEngine(SimpleNamespace(), data).evaluate(
+        {
+            "scenario": "player_intelligence",
+            "season": 2025,
+            "competition": "RS",
+            "parameters": {"question_key": "change_vs_last_season"},
+        },
+        [1], [], None, None,
+    )
+
+    comparisons = result["result"]["season_comparisons"]
+    assert comparisons
+    assert all("rating_delta" in item for item in comparisons)
