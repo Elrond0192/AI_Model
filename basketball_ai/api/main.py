@@ -625,8 +625,8 @@ def create_app() -> FastAPI:
 
     @app.post("/api/v2/debug/chat")
     async def debug_chat(request: Request):
-        if os.environ.get("CHAT_DEBUG_ENABLED", "false").lower() not in {"1", "true", "yes", "on"}:
-            return JSONResponse(status_code=404, content={"detail": "Not found"})
+        # Chat V3 diagnostics are enabled by the authenticated WordPress chat
+        # plugin. The endpoint remains behind the normal API authentication.
         try:
             payload = await request.json()
         except Exception:
