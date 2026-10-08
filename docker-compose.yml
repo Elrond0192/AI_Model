@@ -10,6 +10,7 @@ services:
       DATABASE_PROFILES_FILE: /app/config/database_profiles.json
       API_ENV: production
       LOG_FORMAT: json
+      CHAT_DEBUG_ENABLED: "true"
       AUDIT_DB_PATH: /app/runtime/audit/audit.db
     ports:
       - "127.0.0.1:8000:8000"
