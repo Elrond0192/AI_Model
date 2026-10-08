@@ -572,6 +572,20 @@ def create_app() -> FastAPI:
 
     @app.exception_handler(_RequestValidationError)
     async def validation_exception_handler(request: Request, exc: _RequestValidationError):
+        if request.url.path == "/api/v2/scenarios/evaluate":
+            errors = [
+                {
+                    "loc": list(error.get("loc", ())),
+                    "type": error.get("type"),
+                    "msg": error.get("msg"),
+                }
+                for error in exc.errors()
+            ]
+            logger.warning(
+                "[scenario] validation_422 request_id=%s errors=%s",
+                getattr(request.state, "request_id", ""),
+                errors,
+            )
         return JSONResponse(
             status_code=422,
             media_type="application/problem+json",
