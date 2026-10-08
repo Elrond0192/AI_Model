@@ -193,25 +193,34 @@ class ChatScenarioEngine:
         value = row.get("league_key", row.get("code", row.get("name", league_id)))
         return str(value).strip().upper()
 
-
-    def _league_key(self, league_id: int | None) -> str:
-        if league_id is None:
-            return ""
-        row = self.data.get("league_dict", {}).get(_to_int(league_id), {})
-        value = row.get("league_key", row.get("code", row.get("name", league_id)))
-        return str(value).strip().upper()
-
     def _player_identity_ids(self, player_id: int) -> set[int]:
-        """Return all internal player IDs sharing the same canonical global identity."""
+        """Return every internal player ID belonging to the same canonical global identity."""
         pid = _to_int(player_id)
         if pid is None:
             return set()
+
         ids = {pid}
-        player_row = self.data.get("player_dict", {}).get(pid, {})
-        global_id = str(player_row.get("global_id", "")).strip()
+        players_dict = self.data.get("player_dict", {}) or {}
+        global_id = ""
+
+        player_row = players_dict.get(pid, {})
+        if isinstance(player_row, dict):
+            global_id = str(player_row.get("global_id", "")).strip()
+
+        # The lookup dictionary is normally authoritative, but keep a DataFrame
+        # fallback because some runtime/test loaders populate `players` without
+        # rebuilding `player_dict` after canonical identity enrichment.
+        players_frame = self.data.get("players", pd.DataFrame())
+        if not global_id and isinstance(players_frame, pd.DataFrame) and not players_frame.empty:
+            if "id" in players_frame.columns and "global_id" in players_frame.columns:
+                matches = players_frame[players_frame["id"].map(_to_int) == pid]
+                if not matches.empty:
+                    global_id = str(matches.iloc[0].get("global_id", "")).strip()
+
         if not global_id:
             return ids
-        for raw_id, row in (self.data.get("player_dict", {}) or {}).items():
+
+        for raw_id, row in players_dict.items():
             if not isinstance(row, dict):
                 continue
             if str(row.get("global_id", "")).strip() != global_id:
@@ -219,6 +228,17 @@ class ChatScenarioEngine:
             other_id = _to_int(raw_id)
             if other_id is not None:
                 ids.add(other_id)
+
+        if isinstance(players_frame, pd.DataFrame) and not players_frame.empty:
+            if {"id", "global_id"}.issubset(players_frame.columns):
+                matches = players_frame.loc[
+                    players_frame["global_id"].astype(str).str.strip() == global_id
+                ]
+                for row in matches.to_dict("records"):
+                    other_id = _to_int(row.get("id"))
+                    if other_id is not None:
+                        ids.add(other_id)
+
         return ids
 
     def _player_rows(
