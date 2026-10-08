@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, HTTPException, Request
@@ -15,6 +16,7 @@ from basketball_ai.models.competition_training import resolve_league_id
 from basketball_ai.scenarios.chat_scenario_engine import ChatScenarioEngine
 
 router = APIRouter(prefix="/api/v2/scenarios", tags=["scenarios-v2"])
+logger = logging.getLogger(__name__)
 
 
 def _resolve_global_ids(data: dict, values: list[str], entity: str) -> list[int]:
@@ -40,6 +42,11 @@ async def evaluate_scenario(body: ScenarioRequestV2, request: Request):
     if runtime is None:
         raise HTTPException(503, "Model not loaded")
 
+    logger.info(
+        "[scenario] request scenario=%s league=%s target_league=%s season=%s competition=%s players=%d teams=%d",
+        body.scenario, body.source_league, body.target_league, body.season, body.competition,
+        len(body.player_global_ids), len(body.team_global_ids),
+    )
     try:
         player_ids = _resolve_global_ids(data, body.player_global_ids, "player")
         team_ids = _resolve_global_ids(data, body.team_global_ids, "team")
@@ -84,9 +91,17 @@ async def evaluate_scenario(body: ScenarioRequestV2, request: Request):
             source_league_id,
             target_league_id,
         )
+        logger.info(
+            "[scenario] success scenario=%s result_keys=%s evidence=%d",
+            body.scenario, sorted(payload.get("result", {}).keys()), len(payload.get("evidence", [])),
+        )
     except HTTPException:
         raise
     except (ValueError, RuntimeError, KeyError) as exc:
+        logger.exception(
+            "[scenario] 422 scenario=%s league=%s season=%s competition=%s error=%s",
+            body.scenario, body.source_league, body.season, body.competition, exc,
+        )
         raise HTTPException(422, str(exc)) from exc
 
     return ScenarioResponseV2(
