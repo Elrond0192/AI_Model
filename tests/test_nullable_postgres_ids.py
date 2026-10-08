@@ -100,3 +100,33 @@ def test_fill_current_team_league_accepts_nullable_int64_targets():
     assert str(players["current_league_id"].dtype) == "Int64"
     assert int(players.loc[0, "current_team_id"]) == team_id
     assert int(players.loc[0, "current_league_id"]) == league_id
+
+
+def test_attach_player_global_ids_propagates_canonical_identity():
+    from basketball_ai.data.postgres_loader import _attach_player_global_ids, _normalise_ids
+
+    data = {
+        "players": pd.DataFrame(
+            [
+                {"id": 101, "global_id": "PLAYER-X"},
+                {"id": 202, "global_id": "PLAYER-X"},
+                {"id": 303, "global_id": "PLAYER-Y"},
+            ]
+        ),
+        "player_stats": pd.DataFrame(
+            [
+                {"player_id": 101, "season": 2025, "competition": "RS"},
+                {"player_id": 202, "season": 2026, "competition": "RS"},
+                {"player_id": 303, "season": 2026, "competition": "RS"},
+            ]
+        ),
+    }
+
+    _normalise_ids(data)
+    _attach_player_global_ids(data)
+
+    assert data["player_stats"]["global_id"].tolist() == [
+        "PLAYER-X",
+        "PLAYER-X",
+        "PLAYER-Y",
+    ]
