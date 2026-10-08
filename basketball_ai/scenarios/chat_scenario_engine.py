@@ -1713,9 +1713,9 @@ class ChatScenarioEngine:
         keys = list(dict.fromkeys(keys))[:8]
 
         bundles = {
-            "current_level": ("player_competition", "model_evidence"),
+            "current_level": ("player_competition", "model_evidence", "metric_explanation"),
             "why_performing": ("performance_decomposition", "metric_explanation"),
-            "change_vs_last_season": ("performance_decomposition", "role_analysis"),
+            "change_vs_last_season": ("performance_decomposition", "role_analysis", "metric_explanation"),
             "real_improvement": ("performance_decomposition", "metric_explanation"),
             "current_role": ("role_analysis",),
             "role_fit": ("role_analysis", "performance_decomposition"),
@@ -1827,6 +1827,16 @@ class ChatScenarioEngine:
                                 if math.isfinite(previous_rating) and math.isfinite(current_rating)
                                 else None
                             ),
+                            "previous_stats": {
+                                key: round(_finite(previous.get(key)), 2)
+                                for key in ("points", "assists", "rebounds", "minutes_per_game")
+                                if previous.get(key) is not None and math.isfinite(_finite(previous.get(key)))
+                            },
+                            "current_stats": {
+                                key: round(_finite(current.get(key)), 2)
+                                for key in ("points", "assists", "rebounds", "minutes_per_game")
+                                if current.get(key) is not None and math.isfinite(_finite(current.get(key)))
+                            },
                             "previous_team": (
                                 self._team_name(previous_team_id)
                                 if previous_team_id is not None
