@@ -1434,6 +1434,16 @@ class ChatScenarioEngine:
             "prediction_model": {"available": False},
         }
 
+        # A generic/current Player Intelligence request is descriptive only.
+        # Future Performance and Prediction must never leak into the semantic
+        # evidence unless the user explicitly asks for a forward-looking view.
+        requested_keys = [
+            str(value).strip().lower()
+            for value in (spec.get("parameters", {}) or {}).get("question_keys", [])
+            if str(value).strip()
+        ]
+        current_level_only = "current_level" in requested_keys or not requested_keys
+
         if self.bb_rating_engine is not None:
             try:
                 rated = self.bb_rating_engine.rate_player(
@@ -1444,6 +1454,14 @@ class ChatScenarioEngine:
                     "score": int(rated.score),
                     "quality": getattr(rated, "quality", None),
                     "bb_rating_version": getattr(rated, "bb_rating_version", None),
+                    "dimensions": {
+                        str(key): int(value)
+                        for key, value in (getattr(rated, "dimensions", {}) or {}).items()
+                        if value is not None
+                    },
+                    "strengths": list(getattr(rated, "strengths", ()) or ()),
+                    "limitations": list(getattr(rated, "limitations", ()) or ()),
+                    "explanation": getattr(rated, "explanation", None),
                 }
                 if self.bb_rating_uncertainty is not None:
                     result["bb_rating_uncertainty"] = self.bb_rating_uncertainty.for_player(
@@ -1458,7 +1476,7 @@ class ChatScenarioEngine:
                 result["bb_rating"]["reason"] = str(exc)
                 result["bb_rating_uncertainty"]["reason"] = "bb_rating_unavailable"
 
-        if self.future_performance_model is not None:
+        if self.future_performance_model is not None and not current_level_only:
             try:
                 future = self.future_performance_model.predict_player(
                     self.data,
@@ -1552,6 +1570,11 @@ class ChatScenarioEngine:
                 result["future_performance"] = future
             except (ValueError, RuntimeError, KeyError) as exc:
                 result["future_performance"]["reason"] = str(exc)
+
+        # Prediction Model is also forward-looking for Chat V3 purposes;
+        # keep it out of a generic/current Player Intelligence answer.
+        if current_level_only:
+            return result
 
         # Prediction Model: observed current-team context, not a future-team counterfactual.
         try:
