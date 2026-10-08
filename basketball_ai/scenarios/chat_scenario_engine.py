@@ -1799,6 +1799,18 @@ class ChatScenarioEngine:
                         current = decomposition_result.get("current") or {}
                         previous_rating = _finite(previous.get("rating"), np.nan)
                         current_rating = _finite(current.get("rating"), np.nan)
+                        previous_team_id = previous.get("team_id")
+                        current_team_id = current.get("team_id")
+                        previous_team_id = (
+                            _to_int(previous_team_id)
+                            if previous_team_id is not None
+                            else None
+                        )
+                        current_team_id = (
+                            _to_int(current_team_id)
+                            if current_team_id is not None
+                            else None
+                        )
                         season_comparison = {
                             "available": (
                                 decomposition_result.get("previous_season") is not None
@@ -1816,13 +1828,13 @@ class ChatScenarioEngine:
                                 else None
                             ),
                             "previous_team": (
-                                self._team_name(_to_int(previous.get("team_id")))
-                                if _to_int(previous.get("team_id")) is not None
+                                self._team_name(previous_team_id)
+                                if previous_team_id is not None
                                 else None
                             ),
                             "current_team": (
-                                self._team_name(_to_int(current.get("team_id")))
-                                if _to_int(current.get("team_id")) is not None
+                                self._team_name(current_team_id)
+                                if current_team_id is not None
                                 else None
                             ),
                         }
