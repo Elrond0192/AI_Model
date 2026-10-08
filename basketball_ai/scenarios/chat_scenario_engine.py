@@ -1649,11 +1649,26 @@ class ChatScenarioEngine:
             if not candidate.empty:
                 global_id = candidate.iloc[0]
 
-        identity_mask = (
-            frame["global_id"].fillna("").astype(str).str.strip() == global_id
-            if global_id and "global_id" in frame.columns
-            else frame["player_id"].map(_to_int).isin(identity_ids)
-        )
+        if global_id:
+            # Players is the canonical identity authority. Do not let a stale or
+            # missing statistic-level global_id hide a valid competition row.
+            players_frame = self.data.get("players", pd.DataFrame())
+            if isinstance(players_frame, pd.DataFrame) and not players_frame.empty and {"id", "global_id"}.issubset(players_frame.columns):
+                canonical_map = players_frame[["id", "global_id"]].copy()
+                canonical_map["id"] = canonical_map["id"].map(_to_int)
+                canonical_map["global_id"] = canonical_map["global_id"].astype(str).str.strip()
+                canonical_map = canonical_map[
+                    (canonical_map["id"].notna()) & (canonical_map["global_id"] != "")
+                ].drop_duplicates("id", keep="last")
+                canonical_by_id = canonical_map.set_index("id")["global_id"]
+                row_identity = frame["player_id"].map(_to_int).map(canonical_by_id)
+                identity_mask = row_identity == global_id
+            elif "global_id" in frame.columns:
+                identity_mask = frame["global_id"].fillna("").astype(str).str.strip() == global_id
+            else:
+                identity_mask = frame["player_id"].map(_to_int).isin(identity_ids)
+        else:
+            identity_mask = frame["player_id"].map(_to_int).isin(identity_ids)
         mask = (
             identity_mask
             & (frame["competition"].map(normalize_competition) == normalize_competition(competition))
