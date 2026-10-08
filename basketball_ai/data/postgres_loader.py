@@ -396,6 +396,39 @@ def _normalise_ids(data: dict[str, pd.DataFrame]) -> None:
             frame["season"] = pd.to_numeric(frame["season"], errors="coerce").astype("Int64")
 
 
+def _attach_player_global_ids(data: dict[str, pd.DataFrame]) -> None:
+    """Propagate canonical player global_id onto every PlayerCompetitionStats row."""
+    players = data.get("players")
+    stats = data.get("player_stats")
+    if not isinstance(players, pd.DataFrame) or not isinstance(stats, pd.DataFrame):
+        return
+    if players.empty or stats.empty or "id" not in players.columns or "global_id" not in players.columns:
+        return
+    if "player_id" not in stats.columns:
+        return
+
+    mapping = players[["id", "global_id"]].copy()
+    mapping["id"] = mapping["id"].map(_to_int)
+    mapping["global_id"] = mapping["global_id"].astype(str).str.strip()
+    mapping = mapping[(mapping["id"].notna()) & (mapping["global_id"] != "")]
+    if mapping.empty:
+        return
+
+    # One canonical mapping per internal Players.id. Duplicate source rows with
+    # conflicting identities are ignored rather than assigning an arbitrary one.
+    counts = mapping.groupby("id")["global_id"].nunique()
+    stable_ids = set(counts[counts == 1].index.tolist())
+    mapping = mapping[mapping["id"].isin(stable_ids)].drop_duplicates("id", keep="last")
+
+    stats_ids = stats["player_id"].map(_to_int)
+    mapped = stats_ids.map(mapping.set_index("id")["global_id"])
+    if "global_id" in stats.columns:
+        existing = stats["global_id"].astype(str).str.strip()
+        stats["global_id"] = existing.where(existing != "", mapped)
+    else:
+        stats["global_id"] = mapped
+
+
 def _build_lookups(data: dict[str, pd.DataFrame]) -> None:
     def indexed(frame: pd.DataFrame, id_column: str = "id") -> dict[int, dict[str, Any]]:
         if id_column not in frame.columns:
@@ -588,6 +621,7 @@ def load_all_data(
 
     _validate_contract(data, schema)
     _normalise_ids(data)
+    _attach_player_global_ids(data)
 
     _derive_playing_style(data["teams"])
     _compute_star_player_usage(data["teams"], data["player_stats"])
