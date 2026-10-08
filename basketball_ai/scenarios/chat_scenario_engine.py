@@ -1738,6 +1738,8 @@ class ChatScenarioEngine:
             effective_source_league,
             team_ids=teams,
         )
+        if cross_context:
+            source_league = None
         if source_league is None and len(context_leagues) == 1:
             source_league = context_leagues[0]
         if source_league is None and len(context_leagues) > 1:
