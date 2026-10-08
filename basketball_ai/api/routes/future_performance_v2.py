@@ -5,6 +5,7 @@ forecast. It does not alter Prediction Model or BB-Rating outputs.
 """
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, Request
@@ -19,6 +20,7 @@ router = APIRouter(
     prefix="/api/v2/future-performance",
     tags=["future-performance-v2"],
 )
+logger = logging.getLogger(__name__)
 
 
 @router.post("/player", response_model=FuturePerformancePlayerResponseV2)
@@ -32,11 +34,13 @@ async def future_player(
         raise HTTPException(503, "Player Future Performance Model is not loaded")
 
     source_season = int(str(body.season).split("-")[0])
+    logger.info("[future-performance] request league=%s season=%s competition=%s", body.league, body.season, body.competition)
     competition = normalize_competition(body.competition)
 
     try:
         league_id = resolve_league_id(data, body.league)
     except ValueError as exc:
+        logger.exception("[future-performance] 422 league=%s season=%s competition=%s error=%s", body.league, body.season, body.competition, exc)
         raise HTTPException(422, str(exc)) from exc
 
     canonical_league = str(body.league).strip().upper()
@@ -72,6 +76,7 @@ async def future_player(
             competition=competition,
         )
     except ValueError as exc:
+        logger.exception("[future-performance] 422 predict league=%s season=%s competition=%s error=%s", body.league, body.season, body.competition, exc)
         raise HTTPException(422, str(exc)) from exc
     except RuntimeError as exc:
         raise HTTPException(503, str(exc)) from exc
