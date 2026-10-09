@@ -39,6 +39,7 @@ SCENARIO_TYPES = {
     "team_replace_player",
     "best_team_fit",
     "best_player_fit",
+    "player_scouting",
     "player_similarity",
     "age_trajectory",
     "probabilistic_boxscore",
