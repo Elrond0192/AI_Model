@@ -317,7 +317,7 @@ def test_player_scouting_filters_identity_and_ranks_playmakers():
     result = engine.evaluate(
         {"scenario": "player_scouting", "season": 2024, "competition": "RS", "top_n": 5,
          "parameters": {"archetype": "playmaker", "role": "PG", "nationality": "ITA",
-                        "min_age": 20, "max_age": 25, "min_games": 10}},
+                        "age_range": [20, 25], "min_games": 10}},
         [], [], 10, None,
     )
     candidates = result["result"]["candidates"]
