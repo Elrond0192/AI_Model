@@ -304,3 +304,56 @@ def test_decomposition():
     assert set(result["result"]["deltas"]) == {"volume", "efficiency", "role", "impact"}
     assert result["result"]["deltas"]["volume"]["points"] == pytest.approx(1.0)
     assert result["result"]["deltas"]["impact"]["rating"] == pytest.approx(0.2)
+
+
+
+def test_player_scouting_filters_identity_and_ranks_playmakers():
+    engine = _engine()
+    data = engine.data
+    data["player_dict"][1].update({"position": "PG", "nationality": "ITA", "birth_date": "2000-01-01"})
+    data["player_dict"][2].update({"position": "SG", "nationality": "USA", "birth_date": "1998-01-01"})
+    data["player_dict"][3].update({"position": "PG", "nationality": "ITA", "birth_date": "2002-01-01"})
+    data["player_dict"][4].update({"position": "C", "nationality": "ITA", "birth_date": "1997-01-01"})
+    result = engine.evaluate(
+        {"scenario": "player_scouting", "season": 2024, "competition": "RS", "top_n": 5,
+         "parameters": {"archetype": "playmaker", "role": "PG", "nationality": "ITA",
+                        "age_range": [20, 25], "min_games": 10}},
+        [], [], 10, None,
+    )
+    candidates = result["result"]["candidates"]
+    assert candidates
+    assert all(row["position"] == "PG" for row in candidates)
+    assert all(row["nationality"] == "ITA" for row in candidates)
+    assert all(20 <= row["age"] <= 25 for row in candidates)
+    assert all(0 <= row["fit_score"] <= 100 for row in candidates)
+    assert result["support"]["method"] == "transparent_weighted_percentile_scouting"
+
+
+def test_player_scouting_rejects_unknown_archetype():
+    with pytest.raises(ValueError, match="unsupported scouting archetype"):
+        _engine().evaluate(
+            {"scenario": "player_scouting", "season": 2024, "competition": "RS",
+             "source_league": "10", "parameters": {"archetype": "magic"}},
+            [], [], 10, None,
+        )
+
+
+
+def test_player_scouting_is_registered_in_request_contract():
+    request = ScenarioRequestV2(
+        scenario="player_scouting",
+        source_league="ITA1",
+        season=2026,
+        competition="RS",
+        top_n=10,
+        parameters={
+            "archetype": "playmaker",
+            "nationality": "ITA",
+            "min_age": 22,
+            "max_age": 28,
+            "role": "PG",
+        },
+    )
+    assert request.scenario == "player_scouting"
+    assert request.parameters["archetype"] == "playmaker"
+    assert request.top_n == 10

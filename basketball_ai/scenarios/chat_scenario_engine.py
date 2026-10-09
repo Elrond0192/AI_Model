@@ -148,6 +148,7 @@ class ChatScenarioEngine:
             "team_replace_player": self._team_replace_player,
             "best_team_fit": self._best_team_fit,
             "best_player_fit": self._best_player_fit,
+            "player_scouting": self._player_scouting,
             "player_similarity": self._player_similarity,
             "age_trajectory": self._age_trajectory,
             "probabilistic_boxscore": self.advanced.probabilistic_boxscore,
@@ -2133,6 +2134,193 @@ class ChatScenarioEngine:
                 continue
         results.sort(key=lambda row: row["rating"], reverse=True)
         return {"result": {"team": self._team_name(teams[0]), "competition": competition, "players": results[: int(spec.get("top_n", 5))]}, "evidence": [{"type": "players_evaluated", "count": len(results)}], "support": {"method": "strict_ensemble_rank", "samples": len(results), "confidence": _confidence(len(results))}, "limitations": []}
+
+    def _player_scouting(self, spec, players, teams, source_league, target_league):
+        """Rank a league-scoped player pool against explicit scouting filters and archetypes.
+
+        This is a transparent percentile-based fit score, not a trained prediction
+        or a replacement for BB-Rating. Filters are strict; unavailable identity
+        fields never silently satisfy nationality/age requirements.
+        """
+        del players
+        parameters = spec.get("parameters", {}) or {}
+        league_id = target_league if target_league is not None else source_league
+        if league_id is None:
+            raise ValueError("source_league or target_league is required to keep candidate comparisons in one league")
+        season = int(spec["season"])
+        competition = normalize_competition(spec.get("target_competition") or spec["competition"])
+        archetype = str(parameters.get("archetype", "balanced")).strip().lower()
+        archetype_metrics = {
+            "playmaker": {"assists": 0.22, "ast_pct": 0.24, "tov_pct": -0.18, "bpm": 0.12, "ts_pct": 0.10, "usg_pct": 0.06},
+            "scorer": {"points": 0.22, "usg_pct": 0.18, "ts_pct": 0.20, "three_point_pct": 0.12, "bpm": 0.12, "tov_pct": -0.06},
+            "connector": {"ast_pct": 0.22, "assists": 0.18, "tov_pct": -0.18, "ts_pct": 0.16, "bpm": 0.12, "usg_pct": -0.06},
+            "defender": {"dbpm": 0.28, "steals": 0.14, "blocks": 0.14, "rebounds": 0.10, "bpm": 0.14, "tov_pct": -0.04},
+            "big": {"rebounds": 0.22, "blocks": 0.18, "dbpm": 0.18, "ts_pct": 0.16, "bpm": 0.12, "points": 0.08},
+            "balanced": {"rating": 0.24, "bpm": 0.18, "ts_pct": 0.16, "ast_pct": 0.12, "dbpm": 0.12, "points": 0.10, "rebounds": 0.08},
+        }
+        if archetype not in archetype_metrics:
+            raise ValueError(f"unsupported scouting archetype {archetype!r}; choose from {sorted(archetype_metrics)}")
+
+        stats = self.data.get("player_stats", pd.DataFrame()).copy()
+        if stats.empty:
+            raise ValueError("Player competition statistics are unavailable")
+        required = {"player_id", "league_id", "season", "competition"}
+        if not required.issubset(stats.columns):
+            raise ValueError("Canonical player statistics are missing required columns")
+        stats["_year"] = stats["season"].map(_year)
+        pool = stats[
+            (stats["league_id"].map(_to_int) == _to_int(league_id))
+            & (stats["competition"].map(normalize_competition) == competition)
+            & (stats["_year"] == season)
+        ].copy()
+        if pool.empty:
+            raise ValueError("No player scouting pool exists for the requested league, season and competition")
+
+        # Resolve duplicate team rows to one candidate observation per player.
+        sort_cols = [column for column in ("games_played", "minutes_per_game", "rating") if column in pool.columns]
+        if sort_cols:
+            pool = pool.sort_values(sort_cols, ascending=[False] * len(sort_cols))
+        pool = pool.drop_duplicates(subset=["player_id"], keep="first").copy()
+
+        requested_position = str(parameters.get("role", "") or "").strip().upper()
+        nationality = str(parameters.get("nationality", "") or "").strip().casefold()
+        age_range = parameters.get("age_range")
+        min_age = parameters.get("min_age")
+        max_age = parameters.get("max_age")
+        if isinstance(age_range, (list, tuple)) and len(age_range) == 2:
+            min_age = age_range[0] if min_age is None else min_age
+            max_age = age_range[1] if max_age is None else max_age
+        min_games = int(parameters.get("min_games", 5))
+        min_minutes = float(parameters.get("min_minutes_per_game", 0.0))
+        if min_games < 0 or min_games > 82 or min_minutes < 0 or min_minutes > 48:
+            raise ValueError("min_games must be 0..82 and min_minutes_per_game must be 0..48")
+        if min_age is not None and not 16 <= int(min_age) <= 50:
+            raise ValueError("min_age must be between 16 and 50")
+        if max_age is not None and not 16 <= int(max_age) <= 50:
+            raise ValueError("max_age must be between 16 and 50")
+        if min_age is not None and max_age is not None and int(min_age) > int(max_age):
+            raise ValueError("min_age cannot exceed max_age")
+
+        metadata = self.data.get("player_dict", {}) or {}
+        accepted = []
+        excluded_missing_identity = 0
+        for row in pool.to_dict("records"):
+            pid = _to_int(row.get("player_id"))
+            meta = metadata.get(pid, {}) or {}
+            position = str(meta.get("position", meta.get("ruolo", row.get("position", ""))) or "").upper()
+            if requested_position and requested_position not in {part.strip() for part in position.replace("-", "/").split("/")}:
+                continue
+            player_nationality = str(meta.get("nationality", meta.get("nationality_code", "")) or "").strip()
+            if nationality:
+                if not player_nationality:
+                    excluded_missing_identity += 1
+                    continue
+                if nationality not in player_nationality.casefold():
+                    continue
+            birth_date = meta.get("birth_date", meta.get("date_of_birth"))
+            age = None
+            try:
+                age = season - int(str(birth_date)[:4])
+            except (TypeError, ValueError):
+                try:
+                    age = int(meta.get("age"))
+                except (TypeError, ValueError):
+                    pass
+            if min_age is not None or max_age is not None:
+                if age is None:
+                    excluded_missing_identity += 1
+                    continue
+                if min_age is not None and age < int(min_age):
+                    continue
+                if max_age is not None and age > int(max_age):
+                    continue
+            games = _finite(row.get("games_played"), 0)
+            minutes = _finite(row.get("minutes_per_game"), 0)
+            if games < min_games or minutes < min_minutes:
+                continue
+            accepted.append({**row, "_pid": pid, "_name": self._player_name(pid), "_position": position or None,
+                             "_nationality": player_nationality or None, "_age": age})
+
+        if not accepted:
+            raise ValueError("No candidates match the scouting filters; verify role, nationality, age and minimum playing-time requirements")
+        candidates = pd.DataFrame(accepted)
+        metrics = archetype_metrics[archetype]
+        weighted_metrics = [(metric, weight) for metric, weight in metrics.items() if metric in candidates.columns]
+        if not weighted_metrics:
+            raise ValueError("None of the metrics required by this scouting archetype are available")
+        percentile_values = {}
+        for metric, weight in weighted_metrics:
+            values = pd.to_numeric(candidates[metric], errors="coerce")
+            valid = values.dropna()
+            if valid.empty:
+                continue
+            pct = values.rank(method="average", pct=True)
+            if weight < 0:
+                pct = 1.0 - pct
+            percentile_values[metric] = pct
+        if not percentile_values:
+            raise ValueError("Scouting metrics are present but contain no usable values")
+        scores = pd.Series(0.0, index=candidates.index)
+        available_weight = pd.Series(0.0, index=candidates.index)
+        metric_percentiles = {}
+        for metric, weight in weighted_metrics:
+            if metric not in percentile_values:
+                continue
+            pct = percentile_values[metric]
+            magnitude = abs(weight)
+            scores = scores.add(pct.fillna(0.0) * magnitude, fill_value=0.0)
+            available_weight = available_weight.add(pct.notna().astype(float) * magnitude, fill_value=0.0)
+            metric_percentiles[metric] = pct
+        candidates["_fit_score"] = (scores / available_weight.replace(0, np.nan) * 100.0).fillna(50.0).clip(0, 100)
+        ranked = candidates.sort_values(["_fit_score", "rating"], ascending=[False, False]).head(int(spec.get("top_n", 5)))
+        results = []
+        for _, row in ranked.iterrows():
+            strengths = []
+            evidence_metrics = {}
+            for metric, pct in metric_percentiles.items():
+                value = pct.loc[row.name]
+                if pd.isna(value):
+                    continue
+                evidence_metrics[metric] = {"value": round(_finite(row.get(metric)), 4), "percentile": round(float(value), 3)}
+                if value >= .75:
+                    strengths.append(metric)
+            results.append({
+                "player": row["_name"],
+                "fit_score": round(float(row["_fit_score"]), 1),
+                "position": row["_position"],
+                "nationality": row["_nationality"],
+                "age": int(row["_age"]) if row["_age"] is not None and pd.notna(row["_age"]) else None,
+                "bb_rating_source_score": round(_finite(row.get("rating")), 3) if pd.notna(row.get("rating")) else None,
+                "games_played": int(_finite(row.get("games_played"))),
+                "minutes_per_game": round(_finite(row.get("minutes_per_game")), 1),
+                "strengths": strengths[:5],
+                "metrics": evidence_metrics,
+            })
+        target_team = self._team_name(teams[0]) if teams else None
+        limitations = [
+            "Il fit score è un ranking percentile trasparente per archetipo, non una probabilità calibrata né il BB-Rating.",
+            "Il ranking confronta candidati della stessa lega, stagione e competizione; il fit tattico specifico con una squadra richiede un'analisi team-fit separata.",
+            "Nazionalità ed età sono filtri rigidi solo quando i relativi dati d'identità sono disponibili; i record con dato mancante vengono esclusi.",
+        ]
+        return {
+            "result": {
+                "archetype": archetype,
+                "role_filter": requested_position or None,
+                "nationality_filter": parameters.get("nationality") or None,
+                "age_range": {"min": int(min_age) if min_age is not None else None, "max": int(max_age) if max_age is not None else None},
+                "team_context": target_team,
+                "league": self._league_name(league_id),
+                "season": season,
+                "competition": competition,
+                "candidates": results,
+                "candidates_considered": len(accepted),
+            },
+            "evidence": [{"type": "same_league_season_competition_pool", "count": len(pool)},
+                         {"type": "eligible_candidates", "count": len(accepted)},
+                         {"type": "missing_identity_exclusions", "count": excluded_missing_identity}],
+            "support": {"method": "transparent_weighted_percentile_scouting", "samples": len(accepted), "confidence": _confidence(len(accepted))},
+            "limitations": limitations,
+        }
 
     def _player_similarity(self, spec, players, teams, source_league, target_league):
         del teams, target_league
