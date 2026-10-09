@@ -80,3 +80,17 @@ Chat V3 should therefore report the comparison explicitly per league (for exampl
 ## Final boundary
 
 The exact **causal team-effect claim** remains unavailable, but Chat V3 can now answer the user-facing question with an observational attribution. A statement such as “Team X caused this player to perform worse” is not supported; instead the response reports the player’s observed rating, the team-context association, observed team switches, and the remaining causal limitation.
+
+
+## Scouting & Player Fit
+
+The scenario registry now includes `player_scouting`: a first-stage shortlist
+that filters a single league/season/competition pool by position, nationality,
+age and playing-time requirements, then ranks eligible candidates against a
+transparent archetype profile (`playmaker`, `scorer`, `connector`,
+`defender`, `big`, `balanced`). The output includes fit score, supporting
+metric percentiles, strengths, sample support and explicit limitations.
+
+This first stage does not claim to identify a causal or guaranteed team fit.
+Target-team roster fit, cross-league transferability, contract status and cost
+require additional evidence layers.
