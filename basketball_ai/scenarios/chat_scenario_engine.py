@@ -2256,7 +2256,6 @@ class ChatScenarioEngine:
             percentile_values[metric] = pct
         if not percentile_values:
             raise ValueError("Scouting metrics are present but contain no usable values")
-        weight_total = sum(abs(weight) for metric, weight in weighted_metrics if metric in percentile_values)
         scores = pd.Series(0.0, index=candidates.index)
         available_weight = pd.Series(0.0, index=candidates.index)
         metric_percentiles = {}
@@ -2265,7 +2264,7 @@ class ChatScenarioEngine:
                 continue
             pct = percentile_values[metric]
             magnitude = abs(weight)
-            scores = scores.add(pct.fillna(0.5) * magnitude, fill_value=0.0)
+            scores = scores.add(pct.fillna(0.0) * magnitude, fill_value=0.0)
             available_weight = available_weight.add(pct.notna().astype(float) * magnitude, fill_value=0.0)
             metric_percentiles[metric] = pct
         candidates["_fit_score"] = (scores / available_weight.replace(0, np.nan) * 100.0).fillna(50.0).clip(0, 100)
