@@ -333,6 +333,27 @@ def test_player_scouting_rejects_unknown_archetype():
     with pytest.raises(ValueError, match="unsupported scouting archetype"):
         _engine().evaluate(
             {"scenario": "player_scouting", "season": 2024, "competition": "RS",
-             "parameters": {"archetype": "magic"}},
+             "source_league": "10", "parameters": {"archetype": "magic"}},
             [], [], 10, None,
         )
+
+
+
+def test_player_scouting_is_registered_in_request_contract():
+    request = ScenarioRequestV2(
+        scenario="player_scouting",
+        source_league="ITA1",
+        season=2026,
+        competition="RS",
+        top_n=10,
+        parameters={
+            "archetype": "playmaker",
+            "nationality": "ITA",
+            "min_age": 22,
+            "max_age": 28,
+            "role": "PG",
+        },
+    )
+    assert request.scenario == "player_scouting"
+    assert request.parameters["archetype"] == "playmaker"
+    assert request.top_n == 10
