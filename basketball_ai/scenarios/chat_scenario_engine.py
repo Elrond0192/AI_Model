@@ -2184,8 +2184,12 @@ class ChatScenarioEngine:
 
         requested_position = str(parameters.get("role", "") or "").strip().upper()
         nationality = str(parameters.get("nationality", "") or "").strip().casefold()
+        age_range = parameters.get("age_range")
         min_age = parameters.get("min_age")
         max_age = parameters.get("max_age")
+        if isinstance(age_range, (list, tuple)) and len(age_range) == 2:
+            min_age = age_range[0] if min_age is None else min_age
+            max_age = age_range[1] if max_age is None else max_age
         min_games = int(parameters.get("min_games", 5))
         min_minutes = float(parameters.get("min_minutes_per_game", 0.0))
         if min_games < 0 or min_games > 82 or min_minutes < 0 or min_minutes > 48:
