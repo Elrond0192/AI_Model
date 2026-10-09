@@ -2312,7 +2312,8 @@ class ChatScenarioEngine:
                 "candidates_considered": len(accepted),
             },
             "evidence": [{"type": "same_league_season_competition_pool", "count": len(pool)},
-                         {"type": "eligible_candidates", "count": len(accepted)}],
+                         {"type": "eligible_candidates", "count": len(accepted)},
+                         {"type": "missing_identity_exclusions", "count": excluded_missing_identity}],
             "support": {"method": "transparent_weighted_percentile_scouting", "samples": len(accepted), "confidence": _confidence(len(accepted))},
             "limitations": limitations,
         }
