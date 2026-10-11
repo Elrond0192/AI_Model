@@ -106,6 +106,17 @@ relation and usable matching-context statistics for every resolved member.
 `partial` is returned if the relation is missing or some members cannot be
 evaluated; the candidate ranking may still be useful, but must not be called a
 complete roster fit. `unavailable` means fewer than two roster members have
-usable statistics. In all cases this is a transparent analytical heuristic,
-not a trained or calibrated forecast. Cross-league transferability, contract
-status and cost still require additional evidence layers.
+usable statistics. The scouting Team Fit remains a transparent analytical
+ranking, not the acquisition-impact forecast.
+
+For an explicit acquisition what-if, `team_add_player` and
+`team_replace_player` now use a separate historical roster-transition model
+with an expanding-window walk-forward evaluation. Numeric estimates are
+returned only when the model has at least 40 historical transitions, at least
+20 out-of-time predictions across at least three seasons, and improves on a
+zero-change Net Rating baseline without excessive prediction bias. Otherwise
+the output marks the impact model as unvalidated and leaves the numerical
+acquisition estimate empty. Even when validation passes, it is an observational
+forecast of team Net Rating change, not proof of the acquisition's causal
+effect. Cross-league transferability, contract status and cost still require
+additional evidence layers.
