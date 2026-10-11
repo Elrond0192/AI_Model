@@ -2106,7 +2106,6 @@ class ChatScenarioEngine:
         replaced = min(top, key=lambda item: item[1])
         after_values = [rating for pid, rating in top if pid != replaced[0]] + [incoming]
         after = float(np.mean(after_values))
-        team_rows = self._team_rows(teams[0], target_league, competition, season)
         relations = self.data.get("team_player_relations", pd.DataFrame())
         roster_size = 0
         if isinstance(relations, pd.DataFrame) and not relations.empty and {
