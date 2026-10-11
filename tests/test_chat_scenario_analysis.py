@@ -379,6 +379,8 @@ def test_player_scouting_scores_roster_complementarity_when_team_is_provided():
     )
     assert team_fit["complementarity_pairs_evaluated"] == 6
     assert result["evidence"][-1] == {"type": "roster_complementarity_pairs", "count": 6}
+    assert result["result"]["acquisition_impact_model"]["status"] == "roster_history_unavailable"
+    assert all(row["acquisition_impact"]["estimated_incremental_net_rating"] is None for row in candidates.values())
 
 
 
