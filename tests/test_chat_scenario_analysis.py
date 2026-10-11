@@ -304,3 +304,50 @@ def test_decomposition():
     assert set(result["result"]["deltas"]) == {"volume", "efficiency", "role", "impact"}
     assert result["result"]["deltas"]["volume"]["points"] == pytest.approx(1.0)
     assert result["result"]["deltas"]["impact"]["rating"] == pytest.approx(0.2)
+
+
+def test_player_intelligence_finds_recent_contexts_across_adjacent_seasons():
+    data = {
+        "player_stats": pd.DataFrame([
+            {
+                "player_id": 7405, "global_id": "174019", "team_id": 313702,
+                "league_id": 10, "season": 2026, "competition": "RS",
+                "rating": 7.1, "games_played": 1, "minutes_per_game": 25.0,
+                "points": 11.0, "rebounds": 5.0, "assists": 2.0,
+            },
+            {
+                "player_id": 9012, "global_id": "174019", "team_id": 412300,
+                "league_id": 20, "season": 2025, "competition": "RS",
+                "rating": 6.8, "games_played": 24, "minutes_per_game": 19.0,
+                "points": 6.0, "rebounds": 3.0, "assists": 2.5,
+            },
+            {
+                "player_id": 9012, "global_id": "174019", "team_id": 412300,
+                "league_id": 20, "season": 2024, "competition": "RS",
+                "rating": 6.6, "games_played": 28, "minutes_per_game": 17.0,
+                "points": 5.0, "rebounds": 2.5, "assists": 2.0,
+            },
+        ]),
+        "players": pd.DataFrame([
+            {"id": 7405, "global_id": "174019", "name": "Leandro Bolmaro"},
+            {"id": 9012, "global_id": "174019", "name": "Leandro Nicolas Bolmaro"},
+        ]),
+        "player_dict": {
+            7405: {"id": 7405, "global_id": "174019", "name": "Leandro Bolmaro"},
+            9012: {"id": 9012, "global_id": "174019", "name": "Leandro Nicolas Bolmaro"},
+        },
+    }
+    engine = ChatScenarioEngine(SimpleNamespace(), data)
+
+    contexts = engine._player_intelligence_context_leagues(
+        spec={"season": 2026},
+        player_id=7405,
+        season=2026,
+        competition="RS",
+        source_league=None,
+    )
+
+    # EL's latest row is 2025 while ITA1 already has a 2026 row. The canonical
+    # identity must expose both recent competition contexts without pulling in
+    # the stale 2024 row.
+    assert contexts == [10, 20]
