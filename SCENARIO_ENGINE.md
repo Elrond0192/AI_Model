@@ -20,8 +20,8 @@ source/target competition, season, style, role, usage/minutes and roster changes
 | `lineup_fit` | Pairwise complementarity across a proposed group | analytical basketball fit |
 | `style_change` | Counterfactual pace/3P rate/creation/usage/team efficiency | strict ensemble with a synthetic bounded team context when supported |
 | `player_role_change` | Counterfactual minutes, usage or role | strict ensemble with a synthetic bounded player context |
-| `team_add_player` | Rotation change and estimated team impact after adding a player | player projection + empirical rotation→Net Rating relation |
-| `team_replace_player` | Explicit incoming/outgoing player replacement | explicit rotation replacement + empirical team impact |
+| `team_add_player` | What-if acquisition into a target team's rotation | walk-forward-validated historical roster-transition model when validation passes |
+| `team_replace_player` | Explicit incoming/outgoing player replacement | same validated acquisition-impact model with an explicit outgoing player |
 | `best_team_fit` | Rank target-league teams for a player | scenario ranking |
 | `best_player_fit` | Rank players for a target team | strict ensemble ranking in supported context |
 | `player_scouting` | Filter and rank candidates by position, nationality, age and archetype; when a team is supplied, assess roster-aware fit | individual percentiles + analytical pairwise roster complementarity, roster-need alignment and indicative positional depth; not a calibrated prediction |
@@ -41,6 +41,36 @@ Competition labels are open-ended and use the same normalisation contract as tra
 `CUP`, `SUPERCUP`, `TOT`, `FINAL_FOUR`, or newly observed labels). Direct strict-model inference only
 serves competitions present in the promoted model vocabulary. Descriptive and empirical scenario
 methods can use newly available competition data without pretending it was part of a prior model run.
+
+
+## Acquisition impact model
+
+The `team_add_player` and `team_replace_player` scenarios estimate next-season
+team Net Rating change from historical team-season roster transitions. For each
+training example, roster-quality and turnover features are built from membership
+changes plus player ratings available in the prior season; the target is the
+observed Net Rating change in the following season. The model uses ridge
+regression with an expanding-window walk-forward evaluation, and reports OOS
+RMSE, MAE, bias, sample counts, and empirical residual intervals.
+
+The numeric acquisition estimate is **fail-closed**: the model must have at
+least 40 complete transitions, at least 20 out-of-time predictions spanning at
+least three held-out seasons, and beat a zero-change baseline on walk-forward
+RMSE without excessive OOS bias. Otherwise the scenario returns
+`acquisition_impact_status` and validation diagnostics but leaves numeric
+acquisition-impact fields null. This status is evaluated from the data loaded
+for the requested league, competition, and source-season cutoff.
+
+The response separates the estimated incremental Net Rating association from
+the predicted team Net Rating change with/without the hypothetical acquisition.
+The 80% outcome interval is derived from walk-forward residual quantiles; the
+90% interval around the incremental coefficient effect expresses model
+coefficient uncertainty. Neither interval makes the estimate causal. Observed
+team changes also reflect coaching, injuries, minutes, player availability,
+schedule, and other transactions, so the output must be described as a
+historically validated observational forecast—not as the real causal effect
+of a single signing. The estimator does not infer salary, contract status,
+promised minutes, or locker-room fit.
 
 ## Evidence semantics
 
