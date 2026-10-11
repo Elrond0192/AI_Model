@@ -24,7 +24,7 @@ source/target competition, season, style, role, usage/minutes and roster changes
 | `team_replace_player` | Explicit incoming/outgoing player replacement | same validated acquisition-impact model with an explicit outgoing player |
 | `best_team_fit` | Rank target-league teams for a player | scenario ranking |
 | `best_player_fit` | Rank players for a target team | strict ensemble ranking in supported context |
-| `player_scouting` | Filter and rank candidates by position, nationality, age and archetype; when a team is supplied, assess roster-aware fit | individual percentiles + analytical pairwise roster complementarity, roster-need alignment and indicative positional depth; not a calibrated prediction |
+| `player_scouting` | Shortlist candidates by position, nationality, age and archetype; with a target team, assess roster-aware fit and attach next-season acquisition estimates when validated | heuristic Team Fit shortlist plus walk-forward-validated Net Rating impact estimates for evaluated candidates; observational, not causal |
 | `player_similarity` | Find statistically similar player profiles | standardised profile distance |
 | `age_trajectory` | Age/peak trajectory | strict model + age curve; long-horizon caveat |
 
@@ -56,7 +56,9 @@ RMSE, MAE, bias, sample counts, and empirical residual intervals.
 The numeric acquisition estimate is **fail-closed**: the model must have at
 least 40 complete transitions, at least 20 out-of-time predictions spanning at
 least three held-out seasons, and beat a zero-change baseline on walk-forward
-RMSE without excessive OOS bias. Otherwise the scenario returns
+RMSE without excessive OOS bias. Player Scouting evaluates only the candidates
+in its Team Fit shortlist with this model; it does not claim that this calibrated
+forecast was computed for every player in the original league pool. Otherwise the scenario returns
 `acquisition_impact_status` and validation diagnostics but leaves numeric
 acquisition-impact fields null. This status is evaluated from the data loaded
 for the requested league, competition, and source-season cutoff.
@@ -123,11 +125,19 @@ requested.
 
 The individual `scouting_fit_score` is a transparent weighted average of
 within-cohort metric percentiles, distinct from BB-Rating, Prediction Model,
-and Future Performance. When a target team is supplied, the engine also tries
-to compute roster complementarity, archetype needs, and positional depth.
-Inspect `result.team_fit.status`: `available` means the resolved season roster
-has full matching-context statistical coverage; `partial` means membership
-or player evidence is incomplete; `unavailable` means there are too few
-usable roster profiles to score complementarity. Only `available` should be
-described as a full roster-aware fit. All versions are analytical heuristics,
-not a calibrated probability, causal estimate, or coach-specific rotation model.
+and Future Performance. With a target team, the engine calculates analytical
+roster complementarity, archetype needs, and positional depth. It also attempts
+to estimate next-season acquisition impact for the candidates in the Team Fit
+shortlist. When the impact model passes walk-forward validation, the shortlist
+is ordered by the estimated Net Rating increment among candidates for whom an
+estimate is available; otherwise it stays ordered by Team Fit. It never claims
+to have evaluated acquisition impact for every eligible player in the league.
+
+Inspect `result.team_fit.status`: `available` means full resolved-roster
+statistical coverage; `partial` means roster/evidence is incomplete;
+`unavailable` means too few usable roster profiles. Separately inspect
+`result.acquisition_impact_model.status` and each candidate's
+`acquisition_impact.status`. Numeric acquisition impact is returned only
+after sufficient history and out-of-time tests beat the zero-change baseline.
+Even then, it is an observational forecast, not a calibrated causal effect of
+the individual signing or a coach-specific rotation model.
