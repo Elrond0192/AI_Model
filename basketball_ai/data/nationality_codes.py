@@ -67,6 +67,7 @@ def is_nationality_code(value: object) -> bool:
         raw in _ISO3_TO_ALPHA2
         or raw in _LEGACY_TO_ALPHA2
         or (len(raw) == 2 and raw.isascii() and raw.isalpha())
+        or (len(raw) == 3 and raw.isascii() and raw.isalpha())
     )
 
 
