@@ -297,12 +297,13 @@ BEGIN
             FROM pg_catalog.pg_attribute a
             JOIN pg_catalog.pg_class c ON c.oid = a.attrelid
             JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+            JOIN pg_catalog.pg_type typ ON typ.oid = a.atttypid
             WHERE n.nspname = 'Anagrafiche'
               AND c.relname = tbl.relname
               AND a.attnum > 0
               AND NOT a.attisdropped
               AND lower(a.attname) IN ('nat', 'nat2', 'nationality', 'nationality2')
-              AND format_type(a.atttypid, a.atttypmod) IN ('text', 'character varying', 'character')
+              AND typ.typcategory = 'S'
         LOOP
             EXECUTE format(
                 'UPDATE %I.%I AS src
