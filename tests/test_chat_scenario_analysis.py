@@ -8,6 +8,7 @@ import pytest
 from pydantic import ValidationError
 
 from basketball_ai.api.scenario_contracts_v2 import ScenarioRequestV2
+from basketball_ai.data.nationality_codes import nationality_matches, normalize_nationality
 from basketball_ai.scenarios.chat_scenario_engine import ChatScenarioEngine
 
 
@@ -323,7 +324,7 @@ def test_player_scouting_filters_identity_and_ranks_playmakers():
     candidates = result["result"]["candidates"]
     assert candidates
     assert all(row["position"] == "PG" for row in candidates)
-    assert all(row["nationality"] == "ITA" for row in candidates)
+    assert all(row["nationality"] == "IT" for row in candidates)
     assert all(20 <= row["age"] <= 25 for row in candidates)
     assert all(0 <= row["fit_score"] <= 100 for row in candidates)
     assert result["support"]["method"] == "transparent_weighted_percentile_scouting"
@@ -419,3 +420,14 @@ def test_player_intelligence_finds_recent_contexts_across_adjacent_seasons():
     # identity must expose both recent contexts while excluding league 20's 2024
     # row from discovery.
     assert contexts == [10, 20]
+
+
+
+def test_nationality_codes_are_canonicalized_and_matched_exactly():
+    assert normalize_nationality("DEU") == "DE"
+    assert normalize_nationality("GER") == "DE"
+    assert normalize_nationality("ITA") == "IT"
+    assert nationality_matches("DE", "DEU")
+    assert nationality_matches("DEU", "DE")
+    assert nationality_matches("Germany", "DEU")
+    assert not nationality_matches("DE", "DEN")
