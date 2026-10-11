@@ -3022,6 +3022,32 @@ class ChatScenarioEngine:
             if isinstance(team_fit_payload, dict):
                 team_fit_payload["acquisition_impact_model"] = acquisition_impact_summary
 
+        impact_rankable = [
+            index for index, item in candidate_acquisition_impacts.items()
+            if item.get("status") == "validated"
+            and item.get("estimated_incremental_net_rating") is not None
+        ]
+        if impact_rankable:
+            ranked = ranked.copy()
+            ranked["_acquisition_impact_sort"] = ranked.index.map(
+                lambda index: _finite(
+                    candidate_acquisition_impacts.get(index, {}).get("estimated_incremental_net_rating"),
+                    float("-inf"),
+                )
+            )
+            ranked = ranked.sort_values(
+                ["_acquisition_impact_sort", "_fit_score", "rating"],
+                ascending=[False, False, False],
+                na_position="last",
+            ).drop(columns=["_acquisition_impact_sort"])
+            ranking_basis = "team_fit_plus_acquisition_impact"
+        else:
+            ranking_basis = (
+                "team_fit" if team_fit_status == "available"
+                else "team_fit_partial" if team_fit_status == "partial"
+                else "individual_scouting"
+            )
+
         results = []
         for _, row in ranked.iterrows():
             strengths = []
@@ -3120,15 +3146,11 @@ class ChatScenarioEngine:
                 "age_range": {"min": int(min_age) if min_age is not None else None, "max": int(max_age) if max_age is not None else None},
                 "team_context": target_team,
                 "team_fit": team_fit_payload,
-                "ranking_basis": (
-                    "team_fit" if team_fit_status == "available"
-                    else "team_fit_partial" if team_fit_status == "partial"
-                    else "individual_scouting"
-                ),
+                "ranking_basis": ranking_basis,
                 "acquisition_impact_model": acquisition_impact_summary,
                 "acquisition_impact_note": (
-                    "Le stime di impatto sono un'evidenza separata; la shortlist resta ordinata per Team Fit."
-                    if teams and acquisition_impact_summary.get("status") == "validated"
+                    "La shortlist viene pre-selezionata dal Team Fit e poi ordinata per impatto incrementale stimato fra i candidati valutati."
+                    if ranking_basis == "team_fit_plus_acquisition_impact"
                     else "L'impatto d'acquisto non è disponibile o non ha superato la validazione; il ranking usa soltanto lo score di scouting/Team Fit."
                 ),
                 "league": self._league_name(league_id),
@@ -3140,7 +3162,9 @@ class ChatScenarioEngine:
             "evidence": evidence,
             "support": {
                 "method": (
-                    "roster_aware_scouting_fit" if team_fit_status == "available"
+                    "roster_aware_scouting_fit_plus_walk_forward_acquisition_impact"
+                    if ranking_basis == "team_fit_plus_acquisition_impact"
+                    else "roster_aware_scouting_fit" if team_fit_status == "available"
                     else "partial_roster_aware_scouting_fit" if team_fit_status == "partial"
                     else "transparent_weighted_percentile_scouting"
                 ),
