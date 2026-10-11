@@ -1692,10 +1692,16 @@ class ChatScenarioEngine:
                 identity_mask = frame["player_id"].map(_to_int).isin(identity_ids)
         else:
             identity_mask = frame["player_id"].map(_to_int).isin(identity_ids)
+        # A player can move competitions between seasons. For a generic
+        # cross-context profile, include this season and the immediately previous
+        # season so one league's newly-started season does not hide another
+        # league's latest completed context (e.g. EL 2025 alongside ITA1 2026).
+        latest_context_start = max(2000, int(season) - 1)
         mask = (
             identity_mask
             & (frame["competition"].map(normalize_competition) == normalize_competition(competition))
-            & (frame["_year"] == int(season))
+            & (frame["_year"] <= int(season))
+            & (frame["_year"] >= latest_context_start)
         )
         if team_ids:
             if "team_id" not in frame.columns:
@@ -1871,10 +1877,22 @@ class ChatScenarioEngine:
                                 else None
                             ),
                         }
+                context_season = int(spec["season"])
+                competition_layer = context_analyses.get("player_competition")
+                if isinstance(competition_layer, dict):
+                    competition_result = competition_layer.get("result")
+                    if isinstance(competition_result, dict):
+                        latest_season = competition_result.get("latest_season")
+                        if latest_season is not None:
+                            try:
+                                context_season = int(latest_season)
+                            except (TypeError, ValueError):
+                                pass
+
                 contexts.append({
                     "league": self._league_name(league_id),
                     "league_key": self._league_key(league_id),
-                    "season": int(spec["season"]),
+                    "season": context_season,
                     "analyses": context_analyses,
                     "season_comparison": season_comparison,
                 })
