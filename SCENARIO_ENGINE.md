@@ -24,6 +24,7 @@ source/target competition, season, style, role, usage/minutes and roster changes
 | `team_replace_player` | Explicit incoming/outgoing player replacement | explicit rotation replacement + empirical team impact |
 | `best_team_fit` | Rank target-league teams for a player | scenario ranking |
 | `best_player_fit` | Rank players for a target team | strict ensemble ranking in supported context |
+| `player_scouting` | Filter and rank a league-scoped pool by position, nationality, age and player archetype | transparent weighted metric percentiles; not a calibrated prediction |
 | `player_similarity` | Find statistically similar player profiles | standardised profile distance |
 | `age_trajectory` | Age/peak trajectory | strict model + age curve; long-horizon caveat |
 
@@ -69,3 +70,20 @@ WordPress resolves `hm_` / `hmg_` IDs to database `IdGlobal` only inside the aut
 server-to-server client. Scenario requests can include multiple players/teams, but real global IDs are
 never exposed to the browser or conversational context. Responses are recursively scrubbed of internal
 and global identifiers before Chat V3 receives them.
+
+
+## Player Scouting & Fit (initial version)
+
+The `player_scouting` scenario accepts `parameters.archetype` (`playmaker`,
+`scorer`, `connector`, `defender`, `big`, or `balanced`) and optional strict
+filters: `role` (position code), `nationality`, `min_age`, `max_age`,
+`min_games`, and `min_minutes_per_game`. The request must identify a source or
+target league so candidates are compared inside one league/season/competition
+cohort. Missing nationality or age excludes a candidate when that filter is
+requested.
+
+The fit score is a transparent weighted average of within-cohort metric
+percentiles. It is distinct from BB-Rating, Prediction Model, and Future
+Performance. It is an initial role/archetype shortlist, not a calibrated
+probability or a complete target-team tactical fit. The latter remains a
+separate follow-up layer using roster needs and team context.
