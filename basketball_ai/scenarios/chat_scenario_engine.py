@@ -3111,14 +3111,23 @@ class ChatScenarioEngine:
             )
 
         if teams:
-            if acquisition_impact_summary.get("status") == "validated":
+            validated_estimate_count = sum(
+                1 for item in candidate_acquisition_impacts.values()
+                if item.get("status") == "validated"
+                and item.get("estimated_incremental_net_rating") is not None
+            )
+            if validated_estimate_count > 0:
                 limitations.append(
-                    "Per i candidati della shortlist viene riportata anche una stima osservazionale dell'impatto incrementale sul Net Rating della stagione successiva. "
-                    "La classifica principale resta selezionata dal Team Fit; l'impatto non è una prova causale del singolo acquisto."
+                    "Per alcuni candidati della shortlist è disponibile una stima osservazionale dell'impatto incrementale sul Net Rating della stagione successiva. "
+                    "La shortlist è pre-selezionata per Team Fit e ordinata per impatto soltanto tra i candidati con stima valida; non è una prova causale del singolo acquisto."
+                )
+            elif acquisition_impact_summary.get("status") == "validated":
+                limitations.append(
+                    "Il modello storico supera il backtest, ma nessun candidato in questa shortlist dispone di una stima d'acquisizione utilizzabile; l'ordinamento resta basato sul Team Fit."
                 )
             else:
                 limitations.append(
-                    "La previsione dell'impatto d'acquisto non è stata validata per questo contesto; i campi numerici restano null e il ranking conserva il carattere analitico."
+                    "La previsione dell'impatto d'acquisto non ha superato i requisiti di validazione per questo contesto; i campi numerici restano null e il ranking usa soltanto lo score analitico."
                 )
 
         evidence = [
