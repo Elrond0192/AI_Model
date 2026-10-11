@@ -91,7 +91,7 @@ transparent archetype profile (`playmaker`, `scorer`, `connector`,
 `defender`, `big`, `balanced`). The output includes fit score, supporting
 metric percentiles, strengths, sample support and explicit limitations.
 
-Nationality codes are canonicalized to ISO 3166-1 alpha-2 (for example, `DE`, not `DEU`); alpha-3 and common basketball aliases remain accepted as filter inputs. The accompanying SQL migration normalizes existing `Anagrafiche` rows and the materialized `AI_Source.Players` nationality field.
+Nationality values use ISO 3166-1 alpha-2 in the canonical data (for example, `DE`, not `DEU`). Alpha-3 codes and common basketball aliases remain accepted as filter inputs for compatibility.
 
 This first stage does not claim to identify a causal or guaranteed team fit.
 Target-team roster fit, cross-league transferability, contract status and cost
