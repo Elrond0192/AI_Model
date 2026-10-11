@@ -2009,6 +2009,38 @@ class ChatScenarioEngine:
         ]
         return sorted(result, key=lambda item: item[1], reverse=True)
 
+    def _team_roster_size(
+        self, team_id: int, league_id: int, competition: str, season: int
+    ) -> int:
+        relations = self.data.get("team_player_relations", pd.DataFrame())
+        if isinstance(relations, pd.DataFrame) and not relations.empty and {
+            "team_id", "player_id", "season"
+        }.issubset(relations.columns):
+            relation_year = relations["season"].map(_year)
+            selected = relations[
+                (relations["team_id"].map(_to_int) == _to_int(team_id))
+                & (relation_year == int(season))
+            ]
+            if "league_id" in selected.columns:
+                selected = selected[selected["league_id"].map(_to_int) == _to_int(league_id)]
+            size = int(selected["player_id"].map(_to_int).dropna().nunique())
+            if size > 0:
+                return size
+
+        stats = self.data.get("player_stats", pd.DataFrame())
+        if not isinstance(stats, pd.DataFrame) or stats.empty or not {
+            "team_id", "player_id", "league_id", "season", "competition"
+        }.issubset(stats.columns):
+            return 0
+        stat_year = stats["season"].map(_year)
+        rows = stats[
+            (stats["team_id"].map(_to_int) == _to_int(team_id))
+            & (stats["league_id"].map(_to_int) == _to_int(league_id))
+            & (stats["competition"].map(normalize_competition) == normalize_competition(competition))
+            & (stat_year == int(season))
+        ]
+        return int(rows["player_id"].map(_to_int).dropna().nunique())
+
     def _team_acquisition_forecast(
         self,
         team_id: int,
@@ -2017,6 +2049,7 @@ class ChatScenarioEngine:
         season: int,
         rotation_quality_delta: float,
         roster_size: int,
+        impact_model: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Return a fail-closed, walk-forward-validated acquisition estimate."""
         team_rows = self._team_rows(team_id, league_id, competition, season)
@@ -2055,7 +2088,7 @@ class ChatScenarioEngine:
             }
 
         prior_change = current_net - prior_net
-        model = fit_acquisition_impact_model(
+        model = impact_model if isinstance(impact_model, dict) else fit_acquisition_impact_model(
             self.data, league_id, competition, through_season=season
         )
         transaction_turnover = min(1.0, 2.0 / max(1, int(roster_size)))
@@ -2106,19 +2139,7 @@ class ChatScenarioEngine:
         replaced = min(top, key=lambda item: item[1])
         after_values = [rating for pid, rating in top if pid != replaced[0]] + [incoming]
         after = float(np.mean(after_values))
-        relations = self.data.get("team_player_relations", pd.DataFrame())
-        roster_size = 0
-        if isinstance(relations, pd.DataFrame) and not relations.empty and {
-            "team_id", "player_id", "season"
-        }.issubset(relations.columns):
-            relation_year = relations["season"].map(_year)
-            selected = relations[
-                (relations["team_id"].map(_to_int) == _to_int(teams[0]))
-                & (relation_year == season)
-            ]
-            roster_size = int(selected["player_id"].map(_to_int).dropna().nunique())
-        if roster_size == 0:
-            roster_size = int(len({pid for pid, _ in rotation}))
+        roster_size = self._team_roster_size(teams[0], target_league, competition, season) or int(len({pid for pid, _ in rotation}))
         forecast = self._team_acquisition_forecast(
             teams[0], target_league, competition, season,
             rotation_quality_delta=after - before, roster_size=roster_size,
