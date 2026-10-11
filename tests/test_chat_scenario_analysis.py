@@ -330,6 +330,70 @@ def test_player_scouting_filters_identity_and_ranks_playmakers():
     assert result["support"]["method"] == "transparent_weighted_percentile_scouting"
 
 
+
+def test_player_scouting_scores_roster_complementarity_when_team_is_provided():
+    engine = _engine()
+    result = engine.evaluate(
+        {
+            "scenario": "player_scouting",
+            "season": 2024,
+            "competition": "RS",
+            "top_n": 10,
+            "parameters": {"archetype": "balanced", "min_games": 10},
+        },
+        [],
+        [101],
+        10,
+        None,
+    )
+
+    team_fit = result["result"]["team_fit"]
+    candidates = {row["player"]: row for row in result["result"]["candidates"]}
+    assert team_fit["status"] == "available"
+    assert team_fit["team"] == "Red"
+    assert team_fit["roster_source"] == "observed_player_competition_stats"
+    assert team_fit["roster_player_count"] == 2
+    assert team_fit["roster_players_with_stats"] == 2
+    assert team_fit["roster_needs"]
+    assert result["result"]["ranking_basis"] == "team_fit"
+    assert result["support"]["method"] == "roster_aware_scouting_fit"
+
+    # Candidates outside the roster are compared with both current roster players;
+    # existing roster members are compared with the other member, not themselves.
+    assert candidates["Gamma"]["complementarity_pairs"] == 2
+    assert candidates["Delta"]["complementarity_pairs"] == 2
+    assert candidates["Alpha"]["complementarity_pairs"] == 1
+    assert candidates["Beta"]["complementarity_pairs"] == 1
+    assert all(
+        row["team_fit_score"] is not None
+        and 0 <= row["fit_score"] <= 100
+        and row["complementarity_score"] is not None
+        for row in candidates.values()
+    )
+    assert team_fit["complementarity_pairs_evaluated"] == 6
+    assert result["evidence"][-1] == {"type": "roster_complementarity_pairs", "count": 6}
+
+
+def test_player_scouting_does_not_claim_team_fit_without_roster_context():
+    result = _engine().evaluate(
+        {
+            "scenario": "player_scouting",
+            "season": 2024,
+            "competition": "RS",
+            "top_n": 3,
+            "parameters": {"archetype": "balanced", "min_games": 10},
+        },
+        [],
+        [999],
+        10,
+        None,
+    )
+
+    assert result["result"]["team_fit"]["status"] == "unavailable"
+    assert result["result"]["ranking_basis"] == "individual_scouting"
+    assert all(row["team_fit_score"] is None for row in result["result"]["candidates"])
+    assert any("Team Fit completo non è stato calcolato" in item for item in result["limitations"])
+
 def test_player_scouting_rejects_unknown_archetype():
     with pytest.raises(ValueError, match="unsupported scouting archetype"):
         _engine().evaluate(
