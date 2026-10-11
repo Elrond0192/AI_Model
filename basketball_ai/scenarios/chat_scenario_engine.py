@@ -2412,9 +2412,10 @@ class ChatScenarioEngine:
                     context_stats[context_stats["player_id"].map(_to_int).isin(roster_member_ids)]
                 )
                 if "games_played" in roster_stats.columns:
-                    appeared = pd.to_numeric(roster_stats["games_played"], errors="coerce") > 0
-                    if appeared.any():
-                        roster_stats = roster_stats[appeared].copy()
+                    appeared = pd.to_numeric(
+                        roster_stats["games_played"], errors="coerce"
+                    ).fillna(0) > 0
+                    roster_stats = roster_stats[appeared].copy()
             if not roster_member_ids:
                 team_fit_reason = "Il roster della squadra non è disponibile per la stagione richiesta."
             elif len(roster_stats) < 2:
@@ -2423,7 +2424,26 @@ class ChatScenarioEngine:
                     "nella stessa lega, stagione e competizione; il fit individuale resta disponibile."
                 )
             else:
-                team_fit_status = "available"
+                has_authoritative_roster = roster_source in {
+                    "season_roster_relations",
+                    "season_roster_relations_plus_observed_stats",
+                }
+                has_full_statistics_coverage = len(roster_stats) >= len(roster_member_ids)
+                if has_authoritative_roster and has_full_statistics_coverage:
+                    team_fit_status = "available"
+                else:
+                    team_fit_status = "partial"
+                    if not has_authoritative_roster:
+                        team_fit_reason = (
+                            "La relazione stagionale del roster non è disponibile: "
+                            "il fit può usare soltanto i giocatori osservati nelle statistiche "
+                            "della squadra e non può certificare la copertura dell'intero roster."
+                        )
+                    else:
+                        team_fit_reason = (
+                            f"Fit parziale: statistiche utilizzabili per {len(roster_stats)} "
+                            f"di {len(roster_member_ids)} membri del roster."
+                        )
 
         # Compute league-relative percentiles for every archetype, not just the
         # requested one. Those profiles identify which dimensions look weakest
@@ -2462,7 +2482,7 @@ class ChatScenarioEngine:
                 return None
             return 100.0 * sum(value * weight for value, weight in weighted_values) / total_weight
 
-        if team_fit_status == "available":
+        if team_fit_status in {"available", "partial"}:
             roster_records = roster_stats.to_dict("records")
             for label in archetype_metrics:
                 values = [
@@ -2614,7 +2634,7 @@ class ChatScenarioEngine:
                 "team": None,
                 "reason": "Indicare una squadra per valutare il roster e la complementarità.",
             }
-        elif team_fit_status != "available":
+        elif team_fit_status not in {"available", "partial"}:
             team_fit_payload = {
                 "status": "unavailable",
                 "team": target_team,
@@ -2634,7 +2654,8 @@ class ChatScenarioEngine:
                 if _to_int(pid) is not None
             }
             team_fit_payload = {
-                "status": "available",
+                "status": team_fit_status,
+                "completeness": "full" if team_fit_status == "available" else "partial",
                 "team": target_team,
                 "league": self._league_name(league_id),
                 "season": season,
@@ -2643,6 +2664,24 @@ class ChatScenarioEngine:
                 "roster_source": roster_source,
                 "roster_player_count": len(roster_member_ids),
                 "roster_players_with_stats": int(len(roster_stats)),
+                "roster_stats_coverage": {
+                    "registered_members_in_resolved_scope": int(len(roster_member_ids)),
+                    "members_with_usable_stats": int(len(roster_stats)),
+                    "members_without_usable_stats": int(max(0, len(roster_member_ids) - len(roster_stats))),
+                    "statistics_coverage_pct": round(
+                        100.0 * len(roster_stats) / len(roster_member_ids), 1
+                    ) if roster_member_ids else 0.0,
+                    "membership_source_is_authoritative": roster_source in {
+                        "season_roster_relations",
+                        "season_roster_relations_plus_observed_stats",
+                    },
+                    "complete": team_fit_status == "available",
+                },
+                "completeness_note": (
+                    "Copertura roster completa nel contesto richiesto."
+                    if team_fit_status == "available"
+                    else team_fit_reason
+                ),
                 "roster_members_without_stats": [
                     self._player_name(pid) for pid in sorted(roster_member_ids - members_with_stats)[:10]
                 ],
@@ -2708,19 +2747,24 @@ class ChatScenarioEngine:
             "Il punteggio individuale per archetipo è un ranking percentile trasparente, non una probabilità calibrata né il BB-Rating.",
             "Nazionalità ed età sono filtri rigidi solo quando i relativi dati d'identità sono disponibili; i record con dato mancante vengono esclusi.",
         ]
-        if team_fit_status == "available":
+        if team_fit_status in {"available", "partial"}:
             limitations.extend([
                 "Il Team Fit usa complementarità analitica candidato-compagni, lacune di archetipi e una stima indicativa della profondità per ruolo; non è un modello ML calibrato.",
-                "La complementarità considera tutti i membri del roster con statistiche nella stessa lega, stagione e competizione. I membri senza dati statistici sono elencati ma non entrano nei confronti pairwise.",
+                "La complementarità confronta il candidato con tutti i membri risolti del roster che dispongono di statistiche utilizzabili nella stessa lega, stagione e competizione.",
                 "Il target di profondità di due giocatori per ruolo è euristico e non descrive minuti, sistema tattico o preferenze dello staff.",
             ])
+            if team_fit_status == "partial":
+                limitations.append(
+                    "Team Fit parziale: la classifica usa solo la porzione di roster con evidenze utilizzabili "
+                    "e non va interpretata come valutazione completa della squadra."
+                )
             if roster_source == "observed_player_competition_stats":
                 limitations.append(
                     "Il roster proviene dalle statistiche osservate della squadra perché non è disponibile una relazione stagionale completa."
                 )
         else:
             limitations.append(
-                "La squadra, se indicata, definisce il contesto ma il Team Fit completo non è stato calcolato perché i dati di roster/statistiche non sono sufficienti."
+                "La squadra definisce il contesto, ma il Team Fit non è stato calcolato perché i dati di roster/statistiche non sono sufficienti."
             )
 
         evidence = [
@@ -2731,7 +2775,7 @@ class ChatScenarioEngine:
         if teams:
             evidence.append({"type": "team_roster_members", "count": int(len(roster_member_ids))})
             evidence.append({"type": "roster_members_with_statistics", "count": int(len(roster_stats))})
-            if team_fit_status == "available":
+            if team_fit_status in {"available", "partial"}:
                 evidence.append({"type": "roster_complementarity_pairs", "count": int(total_complementarity_pairs)})
         return {
             "result": {
@@ -2741,7 +2785,11 @@ class ChatScenarioEngine:
                 "age_range": {"min": int(min_age) if min_age is not None else None, "max": int(max_age) if max_age is not None else None},
                 "team_context": target_team,
                 "team_fit": team_fit_payload,
-                "ranking_basis": "team_fit" if team_fit_status == "available" else "individual_scouting",
+                "ranking_basis": (
+                    "team_fit" if team_fit_status == "available"
+                    else "team_fit_partial" if team_fit_status == "partial"
+                    else "individual_scouting"
+                ),
                 "league": self._league_name(league_id),
                 "season": season,
                 "competition": competition,
@@ -2750,9 +2798,13 @@ class ChatScenarioEngine:
             },
             "evidence": evidence,
             "support": {
-                "method": "roster_aware_scouting_fit" if team_fit_status == "available" else "transparent_weighted_percentile_scouting",
+                "method": (
+                    "roster_aware_scouting_fit" if team_fit_status == "available"
+                    else "partial_roster_aware_scouting_fit" if team_fit_status == "partial"
+                    else "transparent_weighted_percentile_scouting"
+                ),
                 "samples": len(accepted),
-                "confidence": _confidence(len(roster_stats)) if team_fit_status == "available" else _confidence(len(accepted)),
+                "confidence": _confidence(len(roster_stats)) if team_fit_status in {"available", "partial"} else _confidence(len(accepted)),
             },
             "limitations": limitations,
         }
