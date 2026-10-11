@@ -3007,11 +3007,11 @@ class ChatScenarioEngine:
                                 "target_season": int(season) + 1,
                                 "validation": acquisition_impact_summary["validation"],
                             }
-                        except (ValueError, RuntimeError, TypeError, KeyError) as exc:
+                        except (ValueError, RuntimeError, TypeError, KeyError):
                             candidate_acquisition_impacts[candidate_index] = {
                                 "status": "candidate_projection_unavailable",
                                 "estimated_incremental_net_rating": None,
-                                "reason": str(exc)[:240],
+                                "reason": "Dati previsionali insufficienti per valutare il candidato nel contesto target.",
                             }
                 elif acquisition_impact_model.get("status") == "validated":
                     acquisition_impact_summary["status"] = "team_rotation_unavailable"
