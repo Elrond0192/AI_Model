@@ -24,9 +24,18 @@ source/target competition, season, style, role, usage/minutes and roster changes
 | `team_replace_player` | Explicit incoming/outgoing player replacement | explicit rotation replacement + empirical team impact |
 | `best_team_fit` | Rank target-league teams for a player | scenario ranking |
 | `best_player_fit` | Rank players for a target team | strict ensemble ranking in supported context |
-| `player_scouting` | Filter and rank a league-scoped pool by position, nationality, age and player archetype | transparent weighted metric percentiles; not a calibrated prediction |
+| `player_scouting` | Filter and rank candidates by position, nationality, age and archetype; when a team is supplied, assess roster-aware fit | individual percentiles + analytical pairwise roster complementarity, roster-need alignment and indicative positional depth; not a calibrated prediction |
 | `player_similarity` | Find statistically similar player profiles | standardised profile distance |
 | `age_trajectory` | Age/peak trajectory | strict model + age curve; long-horizon caveat |
+
+
+### Roster-aware Team Fit in Player Scouting
+
+When player_scouting receives a target team, the engine no longer treats that team as context alone. It attempts to reconstruct the requested season roster from team_player_relations and combines it with player statistics from the exact league, season and competition. If the season relation is missing, observed player-stat rows explicitly attached to the target team are used as a declared fallback.
+
+Each eligible candidate is compared analytically with every roster member who has matching-context statistics, excluding the candidate's own canonical identity when already on the roster. The score combines individual archetype fit (40%), average candidate-to-roster complementarity (30%), alignment with the roster's weaker archetype profiles (20%) and an indicative positional-depth signal (10% when position data is available). Components with missing evidence are omitted and the remaining weights are renormalized. The reported component scores and pair counts make the calculation inspectable.
+
+Roster needs are relative to the same league/season/competition statistical pool; positional depth uses a transparent target of two listed players per main position. These are analytical heuristics, not learned coefficients, calibrated probabilities, causal impact estimates or a coach-specific rotation model. The result reports registered roster size separately from roster members with usable statistics. If fewer than two roster players have matching-context statistics, Team Fit is marked unavailable and the engine falls back to the ordinary individual scouting ranking rather than inventing a roster score.
 
 Competition labels are open-ended and use the same normalisation contract as training (`RS`, `PO`,
 `CUP`, `SUPERCUP`, `TOT`, `FINAL_FOUR`, or newly observed labels). Direct strict-model inference only
