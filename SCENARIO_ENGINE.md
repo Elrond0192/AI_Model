@@ -35,7 +35,7 @@ When player_scouting receives a target team, the engine no longer treats that te
 
 Each eligible candidate is compared analytically with every roster member who has matching-context statistics, excluding the candidate's own canonical identity when already on the roster. The score combines individual archetype fit (40%), average candidate-to-roster complementarity (30%), alignment with the roster's weaker archetype profiles (20%) and an indicative positional-depth signal (10% when position data is available). Components with missing evidence are omitted and the remaining weights are renormalized. The reported component scores and pair counts make the calculation inspectable.
 
-Roster needs are relative to the same league/season/competition statistical pool; positional depth uses a transparent target of two listed players per main position. These are analytical heuristics, not learned coefficients, calibrated probabilities, causal impact estimates or a coach-specific rotation model. The result reports registered roster size separately from roster members with usable statistics. If fewer than two roster players have matching-context statistics, Team Fit is marked unavailable and the engine falls back to the ordinary individual scouting ranking rather than inventing a roster score.
+Roster needs are relative to the same league/season/competition statistical pool; positional depth uses a transparent target of two listed players per main position. These are analytical heuristics, not learned coefficients, calibrated probabilities, causal impact estimates or a coach-specific rotation model. The result reports roster size separately from members with usable statistics and exposes statistics coverage. A full `available` Team Fit requires a season-specific roster relation and usable statistics for every resolved roster member. If the membership relation is absent, or some roster members lack matching-context statistics, the result is explicitly `partial`; if fewer than two members have usable statistics, it is `unavailable`. Partial scores can rank candidates provisionally but must never be described as a complete roster fit.
 
 Competition labels are open-ended and use the same normalisation contract as training (`RS`, `PO`,
 `CUP`, `SUPERCUP`, `TOT`, `FINAL_FOUR`, or newly observed labels). Direct strict-model inference only
@@ -81,9 +81,7 @@ never exposed to the browser or conversational context. Responses are recursivel
 and global identifiers before Chat V3 receives them.
 
 
-## Player Scouting & Fit (initial version)
-
-Nationality values follow the database/basketball feed convention: `ITA` stays `ITA`, while the Germany alias `DEU` is normalized to `DE`. The implementation only rewrites configured aliases; it does not convert all three-letter codes to two letters.
+## Player Scouting filters and Team Fit
 
 The `player_scouting` scenario accepts `parameters.archetype` (`playmaker`,
 `scorer`, `connector`, `defender`, `big`, or `balanced`) and optional strict
@@ -93,8 +91,13 @@ target league so candidates are compared inside one league/season/competition
 cohort. Missing nationality or age excludes a candidate when that filter is
 requested.
 
-The fit score is a transparent weighted average of within-cohort metric
-percentiles. It is distinct from BB-Rating, Prediction Model, and Future
-Performance. It is an initial role/archetype shortlist, not a calibrated
-probability or a complete target-team tactical fit. The latter remains a
-separate follow-up layer using roster needs and team context.
+The individual `scouting_fit_score` is a transparent weighted average of
+within-cohort metric percentiles, distinct from BB-Rating, Prediction Model,
+and Future Performance. When a target team is supplied, the engine also tries
+to compute roster complementarity, archetype needs, and positional depth.
+Inspect `result.team_fit.status`: `available` means the resolved season roster
+has full matching-context statistical coverage; `partial` means membership
+or player evidence is incomplete; `unavailable` means there are too few
+usable roster profiles to score complementarity. Only `available` should be
+described as a full roster-aware fit. All versions are analytical heuristics,
+not a calibrated probability, causal estimate, or coach-specific rotation model.
