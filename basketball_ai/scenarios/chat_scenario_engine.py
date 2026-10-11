@@ -13,6 +13,8 @@ from typing import Any, Iterable
 import numpy as np
 import pandas as pd
 
+from basketball_ai.data.nationality_codes import nationality_matches, normalize_nationality
+
 from basketball_ai.bb_rating.competition_tiers import (
     competition_tier,
     competition_tier_label,
@@ -2201,7 +2203,7 @@ class ChatScenarioEngine:
         pool = pool.drop_duplicates(subset=["player_id"], keep="first").copy()
 
         requested_position = str(parameters.get("role", "") or "").strip().upper()
-        nationality = str(parameters.get("nationality", "") or "").strip().casefold()
+        nationality = str(parameters.get("nationality", "") or "").strip()
         age_range = parameters.get("age_range")
         min_age = parameters.get("min_age")
         max_age = parameters.get("max_age")
@@ -2228,12 +2230,13 @@ class ChatScenarioEngine:
             position = str(meta.get("position", meta.get("ruolo", row.get("position", ""))) or "").upper()
             if requested_position and requested_position not in {part.strip() for part in position.replace("-", "/").split("/")}:
                 continue
-            player_nationality = str(meta.get("nationality", meta.get("nationality_code", "")) or "").strip()
+            player_nationality_raw = str(meta.get("nationality", meta.get("nationality_code", "")) or "").strip()
+            player_nationality = normalize_nationality(player_nationality_raw)
             if nationality:
                 if not player_nationality:
                     excluded_missing_identity += 1
                     continue
-                if nationality not in player_nationality.casefold():
+                if not nationality_matches(nationality, player_nationality_raw):
                     continue
             birth_date = meta.get("birth_date", meta.get("date_of_birth"))
             age = None
