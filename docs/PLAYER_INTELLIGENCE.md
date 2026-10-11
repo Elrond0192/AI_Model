@@ -91,7 +91,7 @@ transparent archetype profile (`playmaker`, `scorer`, `connector`,
 `defender`, `big`, `balanced`). The output includes fit score, supporting
 metric percentiles, strengths, sample support and explicit limitations.
 
-Nationality values use ISO 3166-1 alpha-2 in the canonical data (for example, `DE`, not `DEU`). Alpha-3 codes and common basketball aliases remain accepted as filter inputs for compatibility.
+Nationality values follow the database's basketball-code convention: `ITA` remains `ITA`, while `DEU` is normalized to `DE` as a configured Germany alias. Other three-letter codes are preserved unless an explicit alias is defined.
 
 This first stage does not claim to identify a causal or guaranteed team fit.
 Target-team roster fit, cross-league transferability, contract status and cost
