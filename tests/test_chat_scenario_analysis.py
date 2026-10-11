@@ -333,6 +333,10 @@ def test_player_scouting_filters_identity_and_ranks_playmakers():
 
 def test_player_scouting_scores_roster_complementarity_when_team_is_provided():
     engine = _engine()
+    engine.data["team_player_relations"] = pd.DataFrame([
+        {"player_id": 1, "team_id": 101, "season": 2024, "role": "PG"},
+        {"player_id": 2, "team_id": 101, "season": 2024, "role": "SG"},
+    ])
     result = engine.evaluate(
         {
             "scenario": "player_scouting",
@@ -350,10 +354,13 @@ def test_player_scouting_scores_roster_complementarity_when_team_is_provided():
     team_fit = result["result"]["team_fit"]
     candidates = {row["player"]: row for row in result["result"]["candidates"]}
     assert team_fit["status"] == "available"
+    assert team_fit["completeness"] == "full"
     assert team_fit["team"] == "Red"
-    assert team_fit["roster_source"] == "observed_player_competition_stats"
+    assert team_fit["roster_source"] == "season_roster_relations_plus_observed_stats"
     assert team_fit["roster_player_count"] == 2
     assert team_fit["roster_players_with_stats"] == 2
+    assert team_fit["roster_stats_coverage"]["statistics_coverage_pct"] == 100.0
+    assert team_fit["roster_stats_coverage"]["complete"] is True
     assert team_fit["roster_needs"]
     assert result["result"]["ranking_basis"] == "team_fit"
     assert result["support"]["method"] == "roster_aware_scouting_fit"
@@ -372,6 +379,67 @@ def test_player_scouting_scores_roster_complementarity_when_team_is_provided():
     )
     assert team_fit["complementarity_pairs_evaluated"] == 6
     assert result["evidence"][-1] == {"type": "roster_complementarity_pairs", "count": 6}
+
+
+
+def test_player_scouting_marks_observed_stats_fallback_as_partial_fit():
+    engine = _engine()
+    result = engine.evaluate(
+        {
+            "scenario": "player_scouting",
+            "season": 2024,
+            "competition": "RS",
+            "top_n": 10,
+            "parameters": {"archetype": "balanced", "min_games": 10},
+        },
+        [],
+        [101],
+        10,
+        None,
+    )
+
+    team_fit = result["result"]["team_fit"]
+    assert team_fit["status"] == "partial"
+    assert team_fit["completeness"] == "partial"
+    assert team_fit["roster_source"] == "observed_player_competition_stats"
+    assert team_fit["roster_stats_coverage"]["membership_source_is_authoritative"] is False
+    assert team_fit["roster_stats_coverage"]["complete"] is False
+    assert result["result"]["ranking_basis"] == "team_fit_partial"
+    assert result["support"]["method"] == "partial_roster_aware_scouting_fit"
+    assert all(row["team_fit_score"] is not None for row in result["result"]["candidates"])
+    assert any("non va interpretata come valutazione completa" in item for item in result["limitations"])
+
+
+def test_player_scouting_marks_missing_roster_statistics_as_partial_fit():
+    engine = _engine()
+    engine.data["team_player_relations"] = pd.DataFrame([
+        {"player_id": 1, "team_id": 101, "season": 2024, "role": "PG"},
+        {"player_id": 2, "team_id": 101, "season": 2024, "role": "SG"},
+        {"player_id": 99, "team_id": 101, "season": 2024, "role": "C"},
+    ])
+    result = engine.evaluate(
+        {
+            "scenario": "player_scouting",
+            "season": 2024,
+            "competition": "RS",
+            "top_n": 10,
+            "parameters": {"archetype": "balanced", "min_games": 10},
+        },
+        [],
+        [101],
+        10,
+        None,
+    )
+
+    team_fit = result["result"]["team_fit"]
+    coverage = team_fit["roster_stats_coverage"]
+    assert team_fit["status"] == "partial"
+    assert team_fit["roster_player_count"] == 3
+    assert team_fit["roster_players_with_stats"] == 2
+    assert coverage["members_without_usable_stats"] == 1
+    assert coverage["statistics_coverage_pct"] == pytest.approx(66.7)
+    assert coverage["complete"] is False
+    assert result["result"]["ranking_basis"] == "team_fit_partial"
 
 
 def test_player_scouting_does_not_claim_team_fit_without_roster_context():
