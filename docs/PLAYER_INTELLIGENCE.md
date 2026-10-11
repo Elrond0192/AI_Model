@@ -93,6 +93,17 @@ metric percentiles, strengths, sample support and explicit limitations.
 
 Nationality values follow the database's basketball-code convention: `ITA` remains `ITA`, while `DEU` is normalized to `DE` as a configured Germany alias. Other three-letter codes are preserved unless an explicit alias is defined.
 
-This first stage does not claim to identify a causal or guaranteed team fit.
-Target-team roster fit, cross-league transferability, contract status and cost
-require additional evidence layers.
+When a target team is supplied, Player Scouting also attempts a roster-aware
+Team Fit: it reconstructs season membership from TeamPlayerRelations where
+available, compares a candidate with every roster member who has statistics in
+the same league/season/competition, estimates weaknesses in the roster's
+archetype coverage, and adds a transparent positional-depth signal. The result
+separates the individual scouting score from the combined Team Fit score and
+reports roster coverage, comparison counts and limitations.
+
+This Team Fit is analytical and heuristic, not a trained or calibrated forecast.
+If fewer than two roster members have matching-context statistics, the response
+explicitly marks Team Fit unavailable and returns the individual scouting
+ranking instead. A team name alone is never presented as proof that roster
+complementarity was measured. Cross-league transferability, contract status and
+cost still require additional evidence layers.
