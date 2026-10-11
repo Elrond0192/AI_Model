@@ -2894,7 +2894,6 @@ class ChatScenarioEngine:
                 ],
                 "positional_depth_target": 2,
                 "complementarity_pairs_evaluated": int(total_complementarity_pairs),
-            "acquisition_impact_model": acquisition_impact_summary,
                 "score_components": {
                     "individual_scouting": 0.40,
                     "roster_complementarity": 0.30,
@@ -2941,9 +2940,31 @@ class ChatScenarioEngine:
                     roster_size = self._team_roster_size(
                         team_id, int(league_id), competition, season
                     ) or len({pid for pid, _ in rotation})
+                    global_id_by_player: dict[int, str] = {}
+                    players_frame = self.data.get("players", pd.DataFrame())
+                    if isinstance(players_frame, pd.DataFrame) and {"id", "global_id"}.issubset(players_frame.columns):
+                        for identity_row in players_frame[["id", "global_id"]].to_dict("records"):
+                            identity_pid = _to_int(identity_row.get("id"))
+                            raw_global_id = identity_row.get("global_id")
+                            global_id = "" if raw_global_id is None or pd.isna(raw_global_id) else str(raw_global_id).strip()
+                            if global_id.lower() in {"nan", "none", "null"}:
+                                global_id = ""
+                            if identity_pid is not None and global_id:
+                                global_id_by_player[identity_pid] = global_id
+                    for identity_pid, identity_meta in metadata.items():
+                        parsed_pid = _to_int(identity_pid)
+                        if parsed_pid is None or parsed_pid in global_id_by_player or not isinstance(identity_meta, dict):
+                            continue
+                        raw_global_id = identity_meta.get("global_id")
+                        global_id = "" if raw_global_id is None or pd.isna(raw_global_id) else str(raw_global_id).strip()
+                        if global_id.lower() in {"nan", "none", "null"}:
+                            global_id = ""
+                        if global_id:
+                            global_id_by_player[parsed_pid] = global_id
                     roster_global_ids = {
-                        str((metadata.get(_to_int(pid), {}) or {}).get("global_id", "") or "").strip()
-                        for pid in roster_member_ids
+                        global_id_by_player[pid]
+                        for raw_pid in roster_member_ids
+                        if (pid := _to_int(raw_pid)) is not None and pid in global_id_by_player
                     }
                     for candidate_index, candidate in ranked.iterrows():
                         candidate_id = _to_int(candidate.get("_pid"))
@@ -2953,8 +2974,7 @@ class ChatScenarioEngine:
                                 "estimated_incremental_net_rating": None,
                             }
                             continue
-                        candidate_meta = metadata.get(candidate_id, {}) or {}
-                        candidate_global_id = str(candidate_meta.get("global_id", "") or "").strip()
+                        candidate_global_id = global_id_by_player.get(candidate_id, "")
                         if candidate_id in roster_member_ids or (
                             candidate_global_id and candidate_global_id in roster_global_ids
                         ):
@@ -2999,6 +3019,8 @@ class ChatScenarioEngine:
                         "Il modello supera il backtest, ma la rotazione osservata della squadra "
                         "non contiene almeno cinque valutazioni utilizzabili."
                     )
+            if isinstance(team_fit_payload, dict):
+                team_fit_payload["acquisition_impact_model"] = acquisition_impact_summary
 
         results = []
         for _, row in ranked.iterrows():
