@@ -2894,6 +2894,7 @@ class ChatScenarioEngine:
                 ],
                 "positional_depth_target": 2,
                 "complementarity_pairs_evaluated": int(total_complementarity_pairs),
+            "acquisition_impact_model": acquisition_impact_summary,
                 "score_components": {
                     "individual_scouting": 0.40,
                     "roster_complementarity": 0.30,
@@ -2907,6 +2908,98 @@ class ChatScenarioEngine:
             }
 
         ranked = candidates.sort_values(["_fit_score", "rating"], ascending=[False, False]).head(int(spec.get("top_n", 5)))
+        acquisition_impact_model: dict[str, Any] | None = None
+        acquisition_impact_summary: dict[str, Any] = {
+            "status": "not_requested" if not teams else "unavailable",
+            "reason": "Nessuna squadra target indicata." if not teams else "Modello d'impatto non valutato.",
+            "training_samples": 0,
+            "training_seasons": 0,
+            "validation": {"samples": 0, "seasons": 0},
+        }
+        candidate_acquisition_impacts: dict[Any, dict[str, Any]] = {}
+        if teams:
+            team_id = _to_int(teams[0])
+            if team_id is not None:
+                acquisition_impact_model = fit_acquisition_impact_model(
+                    self.data, int(league_id), competition, through_season=season
+                )
+                acquisition_impact_summary = {
+                    "status": str(acquisition_impact_model.get("status", "uncalibrated")),
+                    "reason": str(acquisition_impact_model.get("reason", "")),
+                    "method": str(acquisition_impact_model.get("method", "")),
+                    "training_samples": int(acquisition_impact_model.get("training_samples", 0)),
+                    "training_seasons": int(acquisition_impact_model.get("training_seasons", 0)),
+                    "validation": acquisition_impact_model.get("validation", {}),
+                    "numeric_estimates_allowed": acquisition_impact_model.get("status") == "validated",
+                }
+                rotation = self._rotation_ratings(team_id, int(league_id), competition, season)
+                top_rotation = rotation[:8]
+                if acquisition_impact_model.get("status") == "validated" and len(top_rotation) >= 5:
+                    replacement = min(top_rotation, key=lambda item: item[1])
+                    replacement_rating = float(replacement[1])
+                    rotation_slots = max(1, len(top_rotation))
+                    roster_size = self._team_roster_size(
+                        team_id, int(league_id), competition, season
+                    ) or len({pid for pid, _ in rotation})
+                    roster_global_ids = {
+                        str((metadata.get(_to_int(pid), {}) or {}).get("global_id", "") or "").strip()
+                        for pid in roster_member_ids
+                    }
+                    for candidate_index, candidate in ranked.iterrows():
+                        candidate_id = _to_int(candidate.get("_pid"))
+                        if candidate_id is None:
+                            candidate_acquisition_impacts[candidate_index] = {
+                                "status": "candidate_identity_unavailable",
+                                "estimated_incremental_net_rating": None,
+                            }
+                            continue
+                        candidate_meta = metadata.get(candidate_id, {}) or {}
+                        candidate_global_id = str(candidate_meta.get("global_id", "") or "").strip()
+                        if candidate_id in roster_member_ids or (
+                            candidate_global_id and candidate_global_id in roster_global_ids
+                        ):
+                            candidate_acquisition_impacts[candidate_index] = {
+                                "status": "already_on_roster",
+                                "estimated_incremental_net_rating": None,
+                                "reason": "Il giocatore risulta già nel roster osservato della squadra.",
+                            }
+                            continue
+                        try:
+                            projection = self._project_player_for_team(
+                                spec, candidate_id, team_id, int(league_id), int(league_id)
+                            )
+                            projected_rating = float(projection["rating"])
+                            quality_delta = (projected_rating - replacement_rating) / rotation_slots
+                            forecast = self._team_acquisition_forecast(
+                                team_id, int(league_id), competition, season,
+                                rotation_quality_delta=quality_delta,
+                                roster_size=roster_size,
+                                impact_model=acquisition_impact_model,
+                            )
+                            impact = forecast.get("impact", {}) if isinstance(forecast.get("impact"), dict) else {}
+                            candidate_acquisition_impacts[candidate_index] = {
+                                "status": str(impact.get("status", forecast.get("status", "unavailable"))),
+                                "estimated_incremental_net_rating": impact.get("estimated_incremental_net_rating") if impact.get("available") else None,
+                                "incremental_net_rating_interval_90": impact.get("incremental_net_rating_interval_90") if impact.get("available") else None,
+                                "predicted_team_net_rating_change_without_acquisition": impact.get("predicted_team_net_rating_change_without_acquisition") if impact.get("available") else None,
+                                "predicted_team_net_rating_change_with_acquisition": impact.get("predicted_team_net_rating_change_with_acquisition") if impact.get("available") else None,
+                                "predicted_team_net_rating_change_interval_80": impact.get("predicted_team_net_rating_change_interval_80") if impact.get("available") else None,
+                                "target_season": int(season) + 1,
+                                "validation": acquisition_impact_summary["validation"],
+                            }
+                        except (ValueError, RuntimeError, TypeError, KeyError) as exc:
+                            candidate_acquisition_impacts[candidate_index] = {
+                                "status": "candidate_projection_unavailable",
+                                "estimated_incremental_net_rating": None,
+                                "reason": str(exc)[:240],
+                            }
+                elif acquisition_impact_model.get("status") == "validated":
+                    acquisition_impact_summary["status"] = "team_rotation_unavailable"
+                    acquisition_impact_summary["reason"] = (
+                        "Il modello supera il backtest, ma la rotazione osservata della squadra "
+                        "non contiene almeno cinque valutazioni utilizzabili."
+                    )
+
         results = []
         for _, row in ranked.iterrows():
             strengths = []
@@ -2931,6 +3024,11 @@ class ChatScenarioEngine:
                 "position_need_score": team_detail.get("position_need_score"),
                 "best_roster_match": team_detail.get("best_roster_match"),
                 "weakest_roster_match": team_detail.get("weakest_roster_match"),
+                "acquisition_impact": candidate_acquisition_impacts.get(row.name, {
+                    "status": str(acquisition_impact_summary.get("status", "unavailable")),
+                    "estimated_incremental_net_rating": None,
+                    "reason": str(acquisition_impact_summary.get("reason", "")),
+                }) if teams else None,
                 "position": row["_position"],
                 "nationality": row["_nationality"],
                 "age": int(row["_age"]) if row["_age"] is not None and pd.notna(row["_age"]) else None,
@@ -2964,6 +3062,17 @@ class ChatScenarioEngine:
                 "La squadra definisce il contesto, ma il Team Fit non è stato calcolato perché i dati di roster/statistiche non sono sufficienti."
             )
 
+        if teams:
+            if acquisition_impact_summary.get("status") == "validated":
+                limitations.append(
+                    "Per i candidati della shortlist viene riportata anche una stima osservazionale dell'impatto incrementale sul Net Rating della stagione successiva. "
+                    "La classifica principale resta selezionata dal Team Fit; l'impatto non è una prova causale del singolo acquisto."
+                )
+            else:
+                limitations.append(
+                    "La previsione dell'impatto d'acquisto non è stata validata per questo contesto; i campi numerici restano null e il ranking conserva il carattere analitico."
+                )
+
         evidence = [
             {"type": "same_league_season_competition_pool", "count": int(len(pool))},
             {"type": "eligible_candidates", "count": int(len(accepted))},
@@ -2972,6 +3081,13 @@ class ChatScenarioEngine:
         if teams:
             evidence.append({"type": "team_roster_members", "count": int(len(roster_member_ids))})
             evidence.append({"type": "roster_members_with_statistics", "count": int(len(roster_stats))})
+            evidence.append({
+                "type": "validated_acquisition_impact_estimates",
+                "count": sum(
+                    1 for item in candidate_acquisition_impacts.values()
+                    if item.get("status") == "validated" and item.get("estimated_incremental_net_rating") is not None
+                ),
+            })
             if team_fit_status in {"available", "partial"}:
                 evidence.append({"type": "roster_complementarity_pairs", "count": int(total_complementarity_pairs)})
         return {
@@ -2986,6 +3102,12 @@ class ChatScenarioEngine:
                     "team_fit" if team_fit_status == "available"
                     else "team_fit_partial" if team_fit_status == "partial"
                     else "individual_scouting"
+                ),
+                "acquisition_impact_model": acquisition_impact_summary,
+                "acquisition_impact_note": (
+                    "Le stime di impatto sono un'evidenza separata; la shortlist resta ordinata per Team Fit."
+                    if teams and acquisition_impact_summary.get("status") == "validated"
+                    else "L'impatto d'acquisto non è disponibile o non ha superato la validazione; il ranking usa soltanto lo score di scouting/Team Fit."
                 ),
                 "league": self._league_name(league_id),
                 "season": season,
