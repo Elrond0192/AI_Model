@@ -307,47 +307,62 @@ def test_decomposition():
 
 
 def test_player_intelligence_finds_recent_contexts_across_adjacent_seasons():
-    data = {
-        "player_stats": pd.DataFrame([
-            {
-                "player_id": 7405, "global_id": "174019", "team_id": 313702,
-                "league_id": 10, "season": 2026, "competition": "RS",
-                "rating": 7.1, "games_played": 1, "minutes_per_game": 25.0,
-                "points": 11.0, "rebounds": 5.0, "assists": 2.0,
-            },
-            {
-                "player_id": 9012, "global_id": "174019", "team_id": 412300,
-                "league_id": 20, "season": 2025, "competition": "RS",
-                "rating": 6.8, "games_played": 24, "minutes_per_game": 19.0,
-                "points": 6.0, "rebounds": 3.0, "assists": 2.5,
-            },
-            {
-                "player_id": 9012, "global_id": "174019", "team_id": 412300,
-                "league_id": 20, "season": 2024, "competition": "RS",
-                "rating": 6.6, "games_played": 28, "minutes_per_game": 17.0,
-                "points": 5.0, "rebounds": 2.5, "assists": 2.0,
-            },
-        ]),
-        "players": pd.DataFrame([
-            {"id": 7405, "global_id": "174019", "name": "Leandro Bolmaro"},
-            {"id": 9012, "global_id": "174019", "name": "Leandro Nicolas Bolmaro"},
-        ]),
-        "player_dict": {
-            7405: {"id": 7405, "global_id": "174019", "name": "Leandro Bolmaro"},
-            9012: {"id": 9012, "global_id": "174019", "name": "Leandro Nicolas Bolmaro"},
-        },
+    data = _analysis_data()
+    players = data["players"].copy()
+    players["global_id"] = players["id"].map({
+        1: "174019", 2: "global-2", 3: "global-3", 4: "global-4"
+    })
+    players = pd.concat([
+        players,
+        pd.DataFrame([{
+            "id": 5, "name": "Leandro Nicolas Bolmaro", "position": "SG",
+            "current_team_id": 201, "current_league_id": 20, "global_id": "174019",
+        }]),
+    ], ignore_index=True)
+    data["players"] = players
+    data["player_dict"] = {
+        int(row["id"]): row
+        for row in players.to_dict("records")
     }
+
+    base_stats = data["player_stats"]
+    data["player_stats"] = pd.concat([
+        base_stats,
+        pd.DataFrame([
+            {
+                "player_id": 1, "team_id": 101, "league_id": 10,
+                "season": 2026, "competition": "RS", "rating": 7.1,
+                "games_played": 1, "minutes_per_game": 25.0,
+                "points": 11.0, "rebounds": 5.0, "assists": 2.0,
+                "global_id": "174019",
+            },
+            {
+                "player_id": 5, "team_id": 201, "league_id": 20,
+                "season": 2025, "competition": "RS", "rating": 6.8,
+                "games_played": 24, "minutes_per_game": 19.0,
+                "points": 6.0, "rebounds": 3.0, "assists": 2.5,
+                "global_id": "174019",
+            },
+            {
+                "player_id": 5, "team_id": 201, "league_id": 20,
+                "season": 2024, "competition": "RS", "rating": 6.6,
+                "games_played": 28, "minutes_per_game": 17.0,
+                "points": 5.0, "rebounds": 2.5, "assists": 2.0,
+                "global_id": "174019",
+            },
+        ]),
+    ], ignore_index=True)
     engine = ChatScenarioEngine(SimpleNamespace(), data)
 
     contexts = engine._player_intelligence_context_leagues(
         spec={"season": 2026},
-        player_id=7405,
+        player_id=1,
         season=2026,
         competition="RS",
         source_league=None,
     )
 
-    # EL's latest row is 2025 while ITA1 already has a 2026 row. The canonical
-    # identity must expose both recent competition contexts without pulling in
-    # the stale 2024 row.
+    # League 10 has a 2026 row; league 20's latest row is 2025. The canonical
+    # identity must expose both recent contexts while excluding league 20's 2024
+    # row from discovery.
     assert contexts == [10, 20]
