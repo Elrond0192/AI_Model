@@ -1,9 +1,12 @@
 """Regression tests for the walk-forward acquisition impact estimator."""
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import numpy as np
 import pandas as pd
 
+from basketball_ai.scenarios.chat_scenario_engine import ChatScenarioEngine
 from basketball_ai.scenarios.acquisition_impact import (
     build_team_transition_samples,
     fit_acquisition_impact_model,
@@ -208,3 +211,112 @@ def test_acquisition_model_returns_no_numeric_impact_when_validation_is_not_good
     )
     assert impact["status"] != "validated"
     assert impact["available"] is False
+
+
+
+def _scenario_engine() -> ChatScenarioEngine:
+    return ChatScenarioEngine(
+        SimpleNamespace(),
+        {
+            "player_dict": {900: {"id": 900, "name": "Incoming Player"}},
+            "team_dict": {101: {"id": 101, "name": "Target Team"}},
+        },
+    )
+
+
+def test_team_add_player_does_not_publish_number_when_impact_model_is_uncalibrated():
+    engine = _scenario_engine()
+    engine._project_player_for_team = lambda spec, pid, team_id, source, target: {
+        "rating": 8.2, "analysis": {"result": {"projected_rating": 8.2}}
+    }
+    engine._rotation_ratings = lambda team_id, league, competition, season: [
+        (1, 8.0), (2, 7.5), (3, 7.0), (4, 6.5),
+        (5, 6.0), (6, 5.8), (7, 5.6), (8, 5.0),
+    ]
+    engine._team_acquisition_forecast = (
+        lambda team_id, league, competition, season, rotation_quality_delta, roster_size: {
+            "status": "baseline_not_beaten",
+            "reason": "synthetic unvalidated model",
+            "current_net_rtg": 2.0,
+            "model": {
+                "status": "baseline_not_beaten",
+                "reason": "synthetic unvalidated model",
+                "training_samples": 30,
+                "validation": {"samples": 12, "seasons": 2},
+            },
+            "impact": {
+                "status": "baseline_not_beaten",
+                "available": False,
+                "reason": "synthetic unvalidated model",
+            },
+        }
+    )
+
+    result = engine.evaluate(
+        {"scenario": "team_add_player", "season": 2024, "competition": "RS"},
+        [900], [101], 10, 10,
+    )
+
+    assert result["result"]["acquisition_impact_status"] == "baseline_not_beaten"
+    assert result["result"]["estimated_net_rating_delta"] is None
+    assert result["result"]["estimated_net_rating_after"] is None
+    assert result["support"]["method"] == "acquisition_impact_not_validated"
+    assert any("non ha superato" in item for item in result["limitations"])
+
+
+def test_team_add_player_exposes_validation_metrics_when_impact_model_is_validated():
+    engine = _scenario_engine()
+    engine._project_player_for_team = lambda spec, pid, team_id, source, target: {
+        "rating": 8.2, "analysis": {"result": {"projected_rating": 8.2}}
+    }
+    engine._rotation_ratings = lambda team_id, league, competition, season: [
+        (1, 8.0), (2, 7.5), (3, 7.0), (4, 6.5),
+        (5, 6.0), (6, 5.8), (7, 5.6), (8, 5.0),
+    ]
+    engine._team_acquisition_forecast = (
+        lambda team_id, league, competition, season, rotation_quality_delta, roster_size: {
+            "status": "validated",
+            "reason": "walk-forward passed",
+            "current_net_rtg": 2.0,
+            "model": {
+                "status": "validated",
+                "reason": "walk-forward passed",
+                "training_samples": 120,
+                "training_seasons": 10,
+                "validation": {
+                    "samples": 48,
+                    "seasons": 4,
+                    "rmse": 1.1,
+                    "baseline_rmse": 1.5,
+                    "mae": 0.8,
+                    "baseline_mae": 1.2,
+                    "bias": 0.05,
+                },
+            },
+            "impact": {
+                "status": "validated",
+                "available": True,
+                "estimated_incremental_net_rating": 0.42,
+                "incremental_net_rating_interval_90": {
+                    "lower": 0.1, "upper": 0.74, "level": 0.9
+                },
+                "predicted_team_net_rating_change_without_acquisition": -0.2,
+                "predicted_team_net_rating_change_with_acquisition": 0.22,
+                "predicted_team_net_rating_change_interval_80": {
+                    "lower": -0.7, "upper": 1.1, "level": 0.8
+                },
+            },
+        }
+    )
+
+    result = engine.evaluate(
+        {"scenario": "team_add_player", "season": 2024, "competition": "RS"},
+        [900], [101], 10, 10,
+    )
+
+    assert result["result"]["estimated_net_rating_delta"] == 0.42
+    assert result["result"]["estimated_net_rating_after"] == 2.22
+    assert result["result"]["predicted_team_net_rating_change_without_acquisition"] == -0.2
+    assert result["result"]["predicted_team_net_rating_change_with_acquisition"] == 0.22
+    assert result["support"]["method"] == "walk_forward_validated_acquisition_impact"
+    assert any("non identifica l'effetto causale" in item for item in result["limitations"])
