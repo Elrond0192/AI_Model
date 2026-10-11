@@ -2714,7 +2714,7 @@ class ChatScenarioEngine:
                 "La complementarità considera tutti i membri del roster con statistiche nella stessa lega, stagione e competizione. I membri senza dati statistici sono elencati ma non entrano nei confronti pairwise.",
                 "Il target di profondità di due giocatori per ruolo è euristico e non descrive minuti, sistema tattico o preferenze dello staff.",
             ])
-            if roster_source != "season_roster_relations_plus_observed_stats":
+            if roster_source == "observed_player_competition_stats":
                 limitations.append(
                     "Il roster proviene dalle statistiche osservate della squadra perché non è disponibile una relazione stagionale completa."
                 )
@@ -2752,7 +2752,7 @@ class ChatScenarioEngine:
             "support": {
                 "method": "roster_aware_scouting_fit" if team_fit_status == "available" else "transparent_weighted_percentile_scouting",
                 "samples": len(accepted),
-                "confidence": _confidence(total_complementarity_pairs) if team_fit_status == "available" else _confidence(len(accepted)),
+                "confidence": _confidence(len(roster_stats)) if team_fit_status == "available" else _confidence(len(accepted)),
             },
             "limitations": limitations,
         }
