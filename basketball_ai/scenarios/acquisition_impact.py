@@ -53,14 +53,20 @@ def _identity_keys(data: dict[str, Any]) -> dict[int, str]:
     if isinstance(players, pd.DataFrame) and {"id", "global_id"}.issubset(players.columns):
         for row in players[["id", "global_id"]].to_dict("records"):
             pid = _id(row.get("id"))
-            gid = str(row.get("global_id") or "").strip()
+            raw_gid = row.get("global_id")
+            gid = "" if raw_gid is None or pd.isna(raw_gid) else str(raw_gid).strip()
+            if gid.lower() in {"nan", "none", "null"}:
+                gid = ""
             if pid is not None:
                 out[pid] = f"global:{gid}" if gid else f"player:{pid}"
     for raw_pid, meta in (data.get("player_dict", {}) or {}).items():
         pid = _id(raw_pid)
         if pid is None or not isinstance(meta, dict) or pid in out:
             continue
-        gid = str(meta.get("global_id") or "").strip()
+        raw_gid = meta.get("global_id")
+        gid = "" if raw_gid is None or pd.isna(raw_gid) else str(raw_gid).strip()
+        if gid.lower() in {"nan", "none", "null"}:
+            gid = ""
         out[pid] = f"global:{gid}" if gid else f"player:{pid}"
     return out
 
@@ -306,8 +312,7 @@ def fit_acquisition_impact_model(
         predicted = np.asarray([float(row["prediction"]) for row in out_of_time])
         residuals = observed - predicted
         rmse = float(np.sqrt(np.mean(np.square(residuals))))
-        baseline_rmse = float(np.sqrt(np.mean(np.square(observed)))
-        )
+        baseline_rmse = float(np.sqrt(np.mean(np.square(observed))))
         mae = float(np.mean(np.abs(residuals)))
         baseline_mae = float(np.mean(np.abs(observed)))
         bias = float(np.mean(residuals))
