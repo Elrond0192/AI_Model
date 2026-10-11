@@ -2269,11 +2269,14 @@ class ChatScenarioEngine:
         weighted_metrics = [(metric, weight) for metric, weight in metrics.items() if metric in candidates.columns]
         if not weighted_metrics:
             raise ValueError("None of the metrics required by this scouting archetype are available")
-        percentile_values = {}
+
+        # Keep the individual scouting score and its metric evidence. When a team
+        # is supplied, this score becomes one component of a separate roster-aware
+        # score rather than being misrepresented as team fit by itself.
+        percentile_values: dict[str, pd.Series] = {}
         for metric, weight in weighted_metrics:
             values = pd.to_numeric(candidates[metric], errors="coerce")
-            valid = values.dropna()
-            if valid.empty:
+            if values.notna().sum() == 0:
                 continue
             pct = values.rank(method="average", pct=True)
             if weight < 0:
@@ -2283,7 +2286,7 @@ class ChatScenarioEngine:
             raise ValueError("Scouting metrics are present but contain no usable values")
         scores = pd.Series(0.0, index=candidates.index)
         available_weight = pd.Series(0.0, index=candidates.index)
-        metric_percentiles = {}
+        metric_percentiles: dict[str, pd.Series] = {}
         for metric, weight in weighted_metrics:
             if metric not in percentile_values:
                 continue
@@ -2292,7 +2295,381 @@ class ChatScenarioEngine:
             scores = scores.add(pct.fillna(0.0) * magnitude, fill_value=0.0)
             available_weight = available_weight.add(pct.notna().astype(float) * magnitude, fill_value=0.0)
             metric_percentiles[metric] = pct
-        candidates["_fit_score"] = (scores / available_weight.replace(0, np.nan) * 100.0).fillna(50.0).clip(0, 100)
+        candidates["_scouting_fit_score"] = (
+            scores / available_weight.replace(0, np.nan) * 100.0
+        ).fillna(50.0).clip(0, 100)
+        candidates["_fit_score"] = candidates["_scouting_fit_score"]
+
+        target_team = self._team_name(teams[0]) if teams else None
+        team_fit_status = "not_requested" if not teams else "unavailable"
+        team_fit_reason = "Nessuna squadra target indicata." if not teams else ""
+        roster_source = None
+        roster_member_ids: set[int] = set()
+        roster_stats = pd.DataFrame()
+        roster_strengths: dict[str, float] = {}
+        roster_needs: list[dict[str, Any]] = []
+        position_depth: dict[str, int] = {}
+        positional_needs: dict[str, float] = {}
+        candidate_team_fit: dict[Any, dict[str, Any]] = {}
+        total_complementarity_pairs = 0
+        core_positions = ("PG", "SG", "SF", "PF", "C")
+
+        def safe_season_year(value: Any) -> int | None:
+            try:
+                return _year(value)
+            except (TypeError, ValueError, OverflowError):
+                return None
+
+        def position_tokens(value: Any) -> set[str]:
+            raw = str(value or "").upper().replace("-", "/").replace(",", "/")
+            tokens = {part.strip() for part in raw.split("/") if part.strip()}
+            mapped: set[str] = set()
+            for token in tokens:
+                if token in core_positions:
+                    mapped.add(token)
+                elif token in {"G", "GUARD", "GUARDS"}:
+                    mapped.update(("PG", "SG"))
+                elif token in {"F", "FORWARD", "FORWARDS"}:
+                    mapped.update(("SF", "PF"))
+                elif token in {"C", "CENTER", "CENTRE"}:
+                    mapped.add("C")
+            return mapped
+
+        def listed_position(player_id: int, fallback: Any = "") -> str:
+            meta = metadata.get(_to_int(player_id), {}) or {}
+            value = meta.get("position", meta.get("ruolo", fallback))
+            return str(value or "").strip().upper()
+
+        def unique_player_rows(frame: pd.DataFrame) -> pd.DataFrame:
+            if frame.empty or "player_id" not in frame.columns:
+                return frame.iloc[0:0].copy()
+            ordered = frame.copy()
+            order_columns = [
+                column for column in ("games_played", "minutes_per_game", "rating")
+                if column in ordered.columns
+            ]
+            if order_columns:
+                ordered = ordered.sort_values(
+                    order_columns, ascending=[False] * len(order_columns), na_position="last"
+                )
+            return ordered.drop_duplicates(subset=["player_id"], keep="first").copy()
+
+        # Prefer the season-specific roster relation. PlayerCompetitionStats
+        # supplies the same-context performance observations used in the fit.
+        # If no season relation exists, fall back to players with observed stats
+        # explicitly attached to this team; the response declares that fallback.
+        if teams:
+            team_id = _to_int(teams[0])
+            raw_stats = self.data.get("player_stats", pd.DataFrame()).copy()
+            context_stats = pd.DataFrame()
+            exact_team_stats = pd.DataFrame()
+            if not raw_stats.empty and {"player_id", "league_id", "season", "competition"}.issubset(raw_stats.columns):
+                raw_stats["_year"] = raw_stats["season"].map(safe_season_year)
+                stats_mask = (
+                    (raw_stats["league_id"].map(_to_int) == _to_int(league_id))
+                    & (raw_stats["competition"].map(normalize_competition) == competition)
+                    & (raw_stats["_year"] == season)
+                )
+                context_stats = raw_stats[stats_mask].copy()
+                if "team_id" in raw_stats.columns:
+                    exact_team_stats = context_stats[
+                        context_stats["team_id"].map(_to_int) == team_id
+                    ].copy()
+
+            relations = self.data.get("team_player_relations", pd.DataFrame())
+            if (
+                team_id is not None
+                and isinstance(relations, pd.DataFrame)
+                and not relations.empty
+                and {"player_id", "team_id", "season"}.issubset(relations.columns)
+            ):
+                relation_rows = relations.copy()
+                relation_rows["_year"] = relation_rows["season"].map(safe_season_year)
+                relation_rows = relation_rows[
+                    (relation_rows["team_id"].map(_to_int) == team_id)
+                    & (relation_rows["_year"] == season)
+                ]
+                if not relation_rows.empty:
+                    roster_member_ids.update(
+                        pid for pid in relation_rows["player_id"].map(_to_int).tolist()
+                        if pid is not None
+                    )
+                    roster_source = "season_roster_relations"
+
+            observed_team_ids = {
+                pid for pid in exact_team_stats.get("player_id", pd.Series(dtype=object)).map(_to_int).tolist()
+                if pid is not None
+            }
+            if observed_team_ids:
+                roster_member_ids.update(observed_team_ids)
+                roster_source = (
+                    "season_roster_relations_plus_observed_stats"
+                    if roster_source == "season_roster_relations"
+                    else "observed_player_competition_stats"
+                )
+            if roster_member_ids and not context_stats.empty:
+                roster_stats = unique_player_rows(
+                    context_stats[context_stats["player_id"].map(_to_int).isin(roster_member_ids)]
+                )
+                if "games_played" in roster_stats.columns:
+                    appeared = pd.to_numeric(roster_stats["games_played"], errors="coerce") > 0
+                    if appeared.any():
+                        roster_stats = roster_stats[appeared].copy()
+            if not roster_member_ids:
+                team_fit_reason = "Il roster della squadra non è disponibile per la stagione richiesta."
+            elif len(roster_stats) < 2:
+                team_fit_reason = (
+                    "Sono disponibili meno di due giocatori del roster con statistiche "
+                    "nella stessa lega, stagione e competizione; il fit individuale resta disponibile."
+                )
+            else:
+                team_fit_status = "available"
+
+        # Compute league-relative percentiles for every archetype, not just the
+        # requested one. Those profiles identify which dimensions look weakest
+        # in the current roster and whether a candidate can help address them.
+        all_archetype_metrics = sorted({
+            metric for weights in archetype_metrics.values() for metric in weights
+        })
+        metric_distributions: dict[str, np.ndarray] = {}
+        for metric in all_archetype_metrics:
+            if metric not in pool.columns:
+                continue
+            values = pd.to_numeric(pool[metric], errors="coerce").dropna().to_numpy(dtype=float)
+            if values.size:
+                metric_distributions[metric] = np.sort(values)
+
+        def metric_percentile(metric: str, value: Any) -> float | None:
+            distribution = metric_distributions.get(metric)
+            number = _finite(value, float("nan"))
+            if distribution is None or distribution.size == 0 or not math.isfinite(number):
+                return None
+            left = int(np.searchsorted(distribution, number, side="left"))
+            right = int(np.searchsorted(distribution, number, side="right"))
+            return float((left + (right - left) / 2.0) / distribution.size)
+
+        def archetype_strength(record: dict[str, Any], label: str) -> float | None:
+            weighted_values: list[tuple[float, float]] = []
+            for metric, weight in archetype_metrics[label].items():
+                pct = metric_percentile(metric, record.get(metric))
+                if pct is None:
+                    continue
+                if weight < 0:
+                    pct = 1.0 - pct
+                weighted_values.append((pct, abs(weight)))
+            total_weight = sum(weight for _, weight in weighted_values)
+            if total_weight <= 0:
+                return None
+            return 100.0 * sum(value * weight for value, weight in weighted_values) / total_weight
+
+        if team_fit_status == "available":
+            roster_records = roster_stats.to_dict("records")
+            for label in archetype_metrics:
+                values = [
+                    strength for record in roster_records
+                    if (strength := archetype_strength(record, label)) is not None
+                ]
+                if values:
+                    roster_strengths[label] = float(np.mean(values))
+            roster_needs = [
+                {
+                    "archetype": label,
+                    "roster_strength_score": round(strength, 1),
+                    "need_score": round(max(0.0, 100.0 - strength), 1),
+                }
+                for label, strength in roster_strengths.items()
+            ]
+            roster_needs.sort(key=lambda item: item["need_score"], reverse=True)
+
+            for pid in roster_member_ids:
+                pos = listed_position(pid)
+                for token in position_tokens(pos):
+                    position_depth[token] = position_depth.get(token, 0) + 1
+            # Two listed players at a primary position is a transparent depth
+            # heuristic, not a claim about an ideal rotation for every coach.
+            positional_needs = {
+                pos: round(max(0.0, (2.0 - position_depth.get(pos, 0)) / 2.0 * 100.0), 1)
+                for pos in core_positions
+            }
+
+            def row_pair_score(first: dict[str, Any], second: dict[str, Any], first_pos: str, second_pos: str) -> float:
+                first_usage = _ratio(first.get("usg_pct"), 0.18)
+                second_usage = _ratio(second.get("usg_pct"), 0.18)
+                usage_overlap = max(0.0, first_usage + second_usage - 0.50)
+                first_three = _ratio(first.get("three_point_pct"), 0.33)
+                second_three = _ratio(second.get("three_point_pct"), 0.33)
+                spacing = float(np.clip((first_three + second_three) / 0.80, 0.0, 1.0))
+                creation = float(np.clip(
+                    (_finite(first.get("assists"), 3.0) / 10.0 + _finite(second.get("assists"), 3.0) / 10.0) / 1.20,
+                    0.0, 1.0,
+                ))
+                defense = float(np.clip(
+                    0.5 + (_finite(first.get("dbpm"), 0.0) / 6.0 + _finite(second.get("dbpm"), 0.0) / 6.0) / 2.0,
+                    0.0, 1.0,
+                ))
+                first_primary = first_pos.split("/")[0].strip() if first_pos else ""
+                second_primary = second_pos.split("/")[0].strip() if second_pos else ""
+                positional_overlap = 1.0 if first_primary and first_primary == second_primary else 0.0
+                return float(np.clip(
+                    0.50 + spacing * 0.18 + creation * 0.14 + defense * 0.12
+                    - usage_overlap * 0.42 - positional_overlap * 0.10,
+                    0.0, 1.0,
+                ))
+
+            for candidate_index, candidate in candidates.iterrows():
+                candidate_id = _to_int(candidate.get("_pid"))
+                if candidate_id is None:
+                    continue
+                candidate_meta = metadata.get(candidate_id, {}) or {}
+                candidate_global_id = str(candidate_meta.get("global_id", "") or "").strip()
+                candidate_position = listed_position(candidate_id, candidate.get("_position"))
+                pair_values: list[tuple[float, str]] = []
+                for teammate in roster_records:
+                    teammate_id = _to_int(teammate.get("player_id"))
+                    if teammate_id is None:
+                        continue
+                    teammate_meta = metadata.get(teammate_id, {}) or {}
+                    teammate_global_id = str(teammate_meta.get("global_id", "") or "").strip()
+                    if teammate_id == candidate_id or (
+                        candidate_global_id and teammate_global_id
+                        and candidate_global_id == teammate_global_id
+                    ):
+                        continue
+                    teammate_position = listed_position(teammate_id, teammate.get("position"))
+                    pair_score = row_pair_score(
+                        candidate.to_dict(), teammate, candidate_position, teammate_position
+                    )
+                    pair_values.append((pair_score, self._player_name(teammate_id)))
+                pair_values.sort(key=lambda pair: pair[0])
+                pair_count = len(pair_values)
+                total_complementarity_pairs += pair_count
+                complementarity_score = (
+                    100.0 * float(np.mean([value for value, _ in pair_values]))
+                    if pair_values else None
+                )
+
+                candidate_arch_scores = {
+                    label: archetype_strength(candidate.to_dict(), label)
+                    for label in archetype_metrics
+                }
+                need_terms = [
+                    (max(0.0, 100.0 - strength), candidate_arch_scores.get(label))
+                    for label, strength in roster_strengths.items()
+                    if candidate_arch_scores.get(label) is not None
+                    and max(0.0, 100.0 - strength) > 0
+                ]
+                need_weight = sum(weight for weight, _ in need_terms)
+                need_alignment_score = (
+                    sum(weight * float(value) for weight, value in need_terms) / need_weight
+                    if need_weight > 0 else None
+                )
+                candidate_positions = position_tokens(candidate_position)
+                position_values = [
+                    positional_needs[pos] for pos in candidate_positions if pos in positional_needs
+                ]
+                position_need_score = float(np.mean(position_values)) if position_values else None
+
+                score_components: list[tuple[float, float]] = [
+                    (0.40, _finite(candidate.get("_scouting_fit_score"), 50.0))
+                ]
+                if complementarity_score is not None:
+                    score_components.append((0.30, complementarity_score))
+                if need_alignment_score is not None:
+                    score_components.append((0.20, need_alignment_score))
+                if position_need_score is not None:
+                    score_components.append((0.10, position_need_score))
+                component_weight = sum(weight for weight, _ in score_components)
+                team_fit_score = (
+                    sum(weight * value for weight, value in score_components) / component_weight
+                    if component_weight > 0 and complementarity_score is not None else None
+                )
+
+                candidate_team_fit[candidate_index] = {
+                    "team_fit_score": round(team_fit_score, 1) if team_fit_score is not None else None,
+                    "complementarity_score": round(complementarity_score, 1) if complementarity_score is not None else None,
+                    "complementarity_pairs": pair_count,
+                    "need_alignment_score": round(need_alignment_score, 1) if need_alignment_score is not None else None,
+                    "position_need_score": round(position_need_score, 1) if position_need_score is not None else None,
+                    "best_roster_match": (
+                        {"player": pair_values[-1][1], "score": round(pair_values[-1][0] * 100.0, 1)}
+                        if pair_values else None
+                    ),
+                    "weakest_roster_match": (
+                        {"player": pair_values[0][1], "score": round(pair_values[0][0] * 100.0, 1)}
+                        if pair_values else None
+                    ),
+                }
+
+            candidates["_team_fit_score"] = pd.Series(
+                {index: values["team_fit_score"] for index, values in candidate_team_fit.items()},
+                dtype=float,
+            ).reindex(candidates.index)
+            candidates["_fit_score"] = candidates["_team_fit_score"].where(
+                candidates["_team_fit_score"].notna(), candidates["_scouting_fit_score"]
+            )
+
+        if not teams:
+            team_fit_payload: dict[str, Any] = {
+                "status": "not_requested",
+                "team": None,
+                "reason": "Indicare una squadra per valutare il roster e la complementarità.",
+            }
+        elif team_fit_status != "available":
+            team_fit_payload = {
+                "status": "unavailable",
+                "team": target_team,
+                "season": season,
+                "competition": competition,
+                "roster_source": roster_source,
+                "roster_player_count": len(roster_member_ids),
+                "roster_players_with_stats": int(len(roster_stats)),
+                "reason": team_fit_reason or "Dati roster insufficienti nel contesto richiesto.",
+            }
+        else:
+            roster_player_names = [
+                self._player_name(pid) for pid in sorted(roster_member_ids)
+            ]
+            members_with_stats = {
+                _to_int(pid) for pid in roster_stats.get("player_id", pd.Series(dtype=object)).map(_to_int)
+                if _to_int(pid) is not None
+            }
+            team_fit_payload = {
+                "status": "available",
+                "team": target_team,
+                "league": self._league_name(league_id),
+                "season": season,
+                "competition": competition,
+                "method": "roster_pairwise_complementarity_plus_archetype_and_position_needs",
+                "roster_source": roster_source,
+                "roster_player_count": len(roster_member_ids),
+                "roster_players_with_stats": int(len(roster_stats)),
+                "roster_members_without_stats": [
+                    self._player_name(pid) for pid in sorted(roster_member_ids - members_with_stats)[:10]
+                ],
+                "roster_players": roster_player_names[:15],
+                "archetype_strengths": {
+                    label: round(value, 1) for label, value in roster_strengths.items()
+                },
+                "roster_needs": roster_needs[:3],
+                "position_depth": {pos: int(position_depth.get(pos, 0)) for pos in core_positions},
+                "positional_needs": [
+                    {"position": pos, "need_score": score}
+                    for pos, score in sorted(positional_needs.items(), key=lambda item: item[1], reverse=True)[:3]
+                ],
+                "positional_depth_target": 2,
+                "complementarity_pairs_evaluated": int(total_complementarity_pairs),
+                "score_components": {
+                    "individual_scouting": 0.40,
+                    "roster_complementarity": 0.30,
+                    "roster_need_alignment": 0.20,
+                    "positional_depth": 0.10,
+                },
+                "score_note": (
+                    "Punteggio analitico 0-100; pesi normalizzati se un componente manca. "
+                    "Non è una probabilità né una previsione ML calibrata."
+                ),
+            }
+
         ranked = candidates.sort_values(["_fit_score", "rating"], ascending=[False, False]).head(int(spec.get("top_n", 5)))
         results = []
         for _, row in ranked.iterrows():
@@ -2305,9 +2682,19 @@ class ChatScenarioEngine:
                 evidence_metrics[metric] = {"value": round(_finite(row.get(metric)), 4), "percentile": round(float(value), 3)}
                 if value >= .75:
                     strengths.append(metric)
+            team_detail = candidate_team_fit.get(row.name, {})
+            individual_score = _finite(row.get("_scouting_fit_score"), 50.0)
             results.append({
                 "player": row["_name"],
-                "fit_score": round(float(row["_fit_score"]), 1),
+                "fit_score": round(_finite(row.get("_fit_score"), individual_score), 1),
+                "scouting_fit_score": round(individual_score, 1),
+                "team_fit_score": team_detail.get("team_fit_score"),
+                "complementarity_score": team_detail.get("complementarity_score"),
+                "complementarity_pairs": int(team_detail.get("complementarity_pairs", 0)),
+                "need_alignment_score": team_detail.get("need_alignment_score"),
+                "position_need_score": team_detail.get("position_need_score"),
+                "best_roster_match": team_detail.get("best_roster_match"),
+                "weakest_roster_match": team_detail.get("weakest_roster_match"),
                 "position": row["_position"],
                 "nationality": row["_nationality"],
                 "age": int(row["_age"]) if row["_age"] is not None and pd.notna(row["_age"]) else None,
@@ -2317,12 +2704,35 @@ class ChatScenarioEngine:
                 "strengths": strengths[:5],
                 "metrics": evidence_metrics,
             })
-        target_team = self._team_name(teams[0]) if teams else None
         limitations = [
-            "Il fit score è un ranking percentile trasparente per archetipo, non una probabilità calibrata né il BB-Rating.",
-            "Il ranking confronta candidati della stessa lega, stagione e competizione; il fit tattico specifico con una squadra richiede un'analisi team-fit separata.",
+            "Il punteggio individuale per archetipo è un ranking percentile trasparente, non una probabilità calibrata né il BB-Rating.",
             "Nazionalità ed età sono filtri rigidi solo quando i relativi dati d'identità sono disponibili; i record con dato mancante vengono esclusi.",
         ]
+        if team_fit_status == "available":
+            limitations.extend([
+                "Il Team Fit usa complementarità analitica candidato-compagni, lacune di archetipi e una stima indicativa della profondità per ruolo; non è un modello ML calibrato.",
+                "La complementarità considera tutti i membri del roster con statistiche nella stessa lega, stagione e competizione. I membri senza dati statistici sono elencati ma non entrano nei confronti pairwise.",
+                "Il target di profondità di due giocatori per ruolo è euristico e non descrive minuti, sistema tattico o preferenze dello staff.",
+            ])
+            if roster_source != "season_roster_relations_plus_observed_stats":
+                limitations.append(
+                    "Il roster proviene dalle statistiche osservate della squadra perché non è disponibile una relazione stagionale completa."
+                )
+        else:
+            limitations.append(
+                "La squadra, se indicata, definisce il contesto ma il Team Fit completo non è stato calcolato perché i dati di roster/statistiche non sono sufficienti."
+            )
+
+        evidence = [
+            {"type": "same_league_season_competition_pool", "count": int(len(pool))},
+            {"type": "eligible_candidates", "count": int(len(accepted))},
+            {"type": "missing_identity_exclusions", "count": excluded_missing_identity},
+        ]
+        if teams:
+            evidence.append({"type": "team_roster_members", "count": int(len(roster_member_ids))})
+            evidence.append({"type": "roster_members_with_statistics", "count": int(len(roster_stats))})
+            if team_fit_status == "available":
+                evidence.append({"type": "roster_complementarity_pairs", "count": int(total_complementarity_pairs)})
         return {
             "result": {
                 "archetype": archetype,
@@ -2330,16 +2740,20 @@ class ChatScenarioEngine:
                 "nationality_filter": parameters.get("nationality") or None,
                 "age_range": {"min": int(min_age) if min_age is not None else None, "max": int(max_age) if max_age is not None else None},
                 "team_context": target_team,
+                "team_fit": team_fit_payload,
+                "ranking_basis": "team_fit" if team_fit_status == "available" else "individual_scouting",
                 "league": self._league_name(league_id),
                 "season": season,
                 "competition": competition,
                 "candidates": results,
                 "candidates_considered": len(accepted),
             },
-            "evidence": [{"type": "same_league_season_competition_pool", "count": len(pool)},
-                         {"type": "eligible_candidates", "count": len(accepted)},
-                         {"type": "missing_identity_exclusions", "count": excluded_missing_identity}],
-            "support": {"method": "transparent_weighted_percentile_scouting", "samples": len(accepted), "confidence": _confidence(len(accepted))},
+            "evidence": evidence,
+            "support": {
+                "method": "roster_aware_scouting_fit" if team_fit_status == "available" else "transparent_weighted_percentile_scouting",
+                "samples": len(accepted),
+                "confidence": _confidence(total_complementarity_pairs) if team_fit_status == "available" else _confidence(len(accepted)),
+            },
             "limitations": limitations,
         }
 
