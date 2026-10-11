@@ -74,7 +74,7 @@ and global identifiers before Chat V3 receives them.
 
 ## Player Scouting & Fit (initial version)
 
-The canonical nationality format is ISO 3166-1 alpha-2 (`DE`, not `DEU`). ISO alpha-3 codes and common basketball aliases are normalized before the nationality filter is applied.
+Nationality values follow the database/basketball feed convention: `ITA` stays `ITA`, while the Germany alias `DEU` is normalized to `DE`. The implementation only rewrites configured aliases; it does not convert all three-letter codes to two letters.
 
 The `player_scouting` scenario accepts `parameters.archetype` (`playmaker`,
 `scorer`, `connector`, `defender`, `big`, or `balanced`) and optional strict
