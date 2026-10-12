@@ -117,10 +117,12 @@ def map_advanced_roles(
     combined = _normalise_role(combined_role)
     ordered: list[str] = []
     sources: dict[str, list[str]] = {}
+    # Global/combined role is the most compact summary, then preserve the
+    # offensive and defensive specialisations as complementary labels.
     for source, role, mapping in (
+        ("combined", combined, COMBINED_ROLE_ARCHETYPES),
         ("offensive", offensive, OFFENSIVE_ROLE_ARCHETYPES),
         ("defensive", defensive, DEFENSIVE_ROLE_ARCHETYPES),
-        ("combined", combined, COMBINED_ROLE_ARCHETYPES),
     ):
         mapped = list(mapping.get(role, ()))
         sources[source] = mapped
