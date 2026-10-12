@@ -218,8 +218,10 @@ After each ETL context completes, refresh only its serving partition:
 CALL "AI_Source"."RefreshContext"('ITA1', 2025, 'RS');
 ```
 
-To refresh **all leagues and every competition found for one season** (for
-example all 2026 contexts), use the one-argument overload:
+The year-wide overload is defined in `basketball_ai/data/ai_source_full.sql`.
+After installing both SQL contracts in the documented order (source first,
+then `ai_scenario_serving.sql`), refresh **all leagues and every competition
+found for one season** with one call:
 
 ```sql
 CALL "AI_Source"."RefreshContext"(2026);
@@ -230,11 +232,11 @@ It discovers distinct contexts from both `PlayerCompetitionStats` and
 aggregates and `ServingRefreshState` for each context. The existing three-
 argument call remains available for a single league/season/competition.
 
-This procedure refreshes serving from the **current canonical AI_Source tables**;
-it does not rebuild those canonical tables from `Analisi.AdvancedStats_*`.
-When those source statistics have changed and are not yet reflected in
-`PlayerCompetitionStats` / `TeamCompetitionStats`, rebuild/apply
-`ai_source_full.sql` after ETL and then run the yearly refresh.
+The annual procedure refreshes serving from the **current canonical AI_Source
+tables**; it does not itself rebuild those tables from `Analisi.AdvancedStats_*`.
+When source statistics change, run `ai_source_full.sql` after ETL to rebuild the
+canonical tables, then run the annual refresh (with the serving contract
+installed).
 
 The same single-context hook is available to n8n/systemd/cron without embedding SQL:
 
