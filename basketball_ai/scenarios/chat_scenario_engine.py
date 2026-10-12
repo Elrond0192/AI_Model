@@ -2679,6 +2679,20 @@ class ChatScenarioEngine:
 
         if team_fit_status in {"available", "partial"}:
             roster_records = roster_stats.to_dict("records")
+            # Count upstream archetypes from the already-calculated HoopmetricsEngine
+            # offensive, defensive and combined roles. Count each archetype once
+            # per roster member even when multiple role dimensions map to it.
+            roster_role_archetype_counts: dict[str, int] = {}
+            for roster_record in roster_records:
+                role_profile = map_advanced_roles(
+                    roster_record.get("ruolo_offensivo"),
+                    roster_record.get("ruolo_difensivo"),
+                    roster_record.get("ruolo_combinato"),
+                )
+                for role_archetype in set(role_profile["archetypes"]):
+                    roster_role_archetype_counts[role_archetype] = (
+                        roster_role_archetype_counts.get(role_archetype, 0) + 1
+                    )
             for label in archetype_metrics:
                 values = [
                     strength for record in roster_records
@@ -2774,9 +2788,36 @@ class ChatScenarioEngine:
                     and max(0.0, 100.0 - strength) > 0
                 ]
                 need_weight = sum(weight for weight, _ in need_terms)
-                need_alignment_score = (
+                metric_need_alignment_score = (
                     sum(weight * float(value) for weight, value in need_terms) / need_weight
                     if need_weight > 0 else None
+                )
+                candidate_role_profile = map_advanced_roles(
+                    candidate.get("ruolo_offensivo"),
+                    candidate.get("ruolo_difensivo"),
+                    candidate.get("ruolo_combinato"),
+                )
+                candidate_role_archetypes = set(candidate_role_profile["archetypes"])
+                role_need_values = [
+                    max(0.0, 100.0 - 50.0 * roster_role_archetype_counts.get(label, 0))
+                    for label in candidate_role_archetypes
+                ]
+                role_need_alignment_score = (
+                    float(np.mean(role_need_values)) if role_need_values else None
+                )
+                available_need_components = [
+                    (0.65, metric_need_alignment_score),
+                    (0.35, role_need_alignment_score),
+                ]
+                available_need_components = [
+                    (weight, value) for weight, value in available_need_components
+                    if value is not None
+                ]
+                need_component_weight = sum(weight for weight, _ in available_need_components)
+                need_alignment_score = (
+                    sum(weight * float(value) for weight, value in available_need_components)
+                    / need_component_weight
+                    if need_component_weight > 0 else None
                 )
                 candidate_positions = position_tokens(candidate_position)
                 position_values = [
@@ -2804,6 +2845,8 @@ class ChatScenarioEngine:
                     "complementarity_score": round(complementarity_score, 1) if complementarity_score is not None else None,
                     "complementarity_pairs": pair_count,
                     "need_alignment_score": round(need_alignment_score, 1) if need_alignment_score is not None else None,
+                    "metric_need_alignment_score": round(metric_need_alignment_score, 1) if metric_need_alignment_score is not None else None,
+                    "role_need_alignment_score": round(role_need_alignment_score, 1) if role_need_alignment_score is not None else None,
                     "position_need_score": round(position_need_score, 1) if position_need_score is not None else None,
                     "best_roster_match": (
                         {"player": pair_values[-1][1], "score": round(pair_values[-1][0] * 100.0, 1)}
