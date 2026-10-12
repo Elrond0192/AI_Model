@@ -13,6 +13,7 @@ from typing import Any, Iterable
 import numpy as np
 import pandas as pd
 
+from basketball_ai.scenarios.scouting_archetypes import ARCHETYPE_METRICS
 from basketball_ai.data.nationality_codes import nationality_matches, normalize_nationality
 from basketball_ai.scenarios.acquisition_impact import (
     fit_acquisition_impact_model,
@@ -2367,16 +2368,12 @@ class ChatScenarioEngine:
         season = int(spec["season"])
         competition = normalize_competition(spec.get("target_competition") or spec["competition"])
         archetype = str(parameters.get("archetype", "balanced")).strip().lower()
-        archetype_metrics = {
-            "playmaker": {"assists": 0.22, "ast_pct": 0.24, "tov_pct": -0.18, "bpm": 0.12, "ts_pct": 0.10, "usg_pct": 0.06},
-            "scorer": {"points": 0.22, "usg_pct": 0.18, "ts_pct": 0.20, "three_point_pct": 0.12, "bpm": 0.12, "tov_pct": -0.06},
-            "connector": {"ast_pct": 0.22, "assists": 0.18, "tov_pct": -0.18, "ts_pct": 0.16, "bpm": 0.12, "usg_pct": -0.06},
-            "defender": {"dbpm": 0.28, "steals": 0.14, "blocks": 0.14, "rebounds": 0.10, "bpm": 0.14, "tov_pct": -0.04},
-            "big": {"rebounds": 0.22, "blocks": 0.18, "dbpm": 0.18, "ts_pct": 0.16, "bpm": 0.12, "points": 0.08},
-            "balanced": {"rating": 0.24, "bpm": 0.18, "ts_pct": 0.16, "ast_pct": 0.12, "dbpm": 0.12, "points": 0.10, "rebounds": 0.08},
-        }
+        archetype_metrics = ARCHETYPE_METRICS
         if archetype not in archetype_metrics:
-            raise ValueError(f"unsupported scouting archetype {archetype!r}; choose from {sorted(archetype_metrics)}")
+            raise ValueError(
+                f"unsupported scouting archetype {archetype!r}; "
+                f"choose from {sorted(archetype_metrics)}"
+            )
 
         stats = self.data.get("player_stats", pd.DataFrame()).copy()
         if stats.empty:
@@ -3061,6 +3058,30 @@ class ChatScenarioEngine:
                     strengths.append(metric)
             team_detail = candidate_team_fit.get(row.name, {})
             individual_score = _finite(row.get("_scouting_fit_score"), 50.0)
+            archetype_scores = []
+            for label in archetype_metrics:
+                score = archetype_strength(row.to_dict(), label)
+                if score is None:
+                    continue
+                supported_metrics = sum(
+                    1 for metric in archetype_metrics[label]
+                    if metric in metric_distributions
+                    and _finite(row.get(metric), float("nan")) == _finite(row.get(metric), float("nan"))
+                )
+                expected_metrics = len(archetype_metrics[label])
+                archetype_scores.append({
+                    "archetype": label,
+                    "score": round(score, 1),
+                    "evidence_metrics": supported_metrics,
+                    "metrics_defined": expected_metrics,
+                    "evidence_coverage_pct": round(100.0 * supported_metrics / expected_metrics, 1) if expected_metrics else 0.0,
+                    "confidence": "high" if supported_metrics >= 4 else "medium" if supported_metrics >= 2 else "low",
+                })
+            archetype_scores.sort(key=lambda item: item["score"], reverse=True)
+            primary_archetypes = [
+                item["archetype"] for item in archetype_scores
+                if item["score"] >= 65.0
+            ][:3]
             results.append({
                 "player": row["_name"],
                 "fit_score": round(_finite(row.get("_fit_score"), individual_score), 1),
@@ -3084,6 +3105,9 @@ class ChatScenarioEngine:
                 "games_played": int(_finite(row.get("games_played"))),
                 "minutes_per_game": round(_finite(row.get("minutes_per_game")), 1),
                 "strengths": strengths[:5],
+                "archetype_profiles": archetype_scores[:8],
+                "primary_archetypes": primary_archetypes,
+                "archetype_evidence": "league_season_competition_percentiles",
                 "metrics": evidence_metrics,
             })
         limitations = [
