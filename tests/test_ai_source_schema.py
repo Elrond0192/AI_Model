@@ -157,6 +157,20 @@ def test_ai_source_uses_native_typed_columns_for_row_transforms():
     assert "hashtextextended" in sql
 
 
+def test_year_wide_refresh_is_owned_by_ai_source_full():
+    source = SOURCE_SQL.read_text(encoding="utf-8").lower()
+    serving = SERVING_SQL.read_text(encoding="utf-8").lower()
+
+    assert 'create or replace procedure "ai_source"."refreshcontext"(\n    p_season integer\n)' in source
+    assert 'from "ai_source"."playercompetitionstats"' in source
+    assert 'from "ai_source"."teamcompetitionstats"' in source
+    assert 'where season = p_season' in source
+    assert 'call "ai_source"."refreshcontext"(\n            ctx.league_key,\n            ctx.season,\n            ctx.competition\n        )' in source
+    assert 'grant execute on procedure "ai_source"."refreshcontext"(integer)' in source
+    assert 'create or replace procedure "ai_source"."refreshcontext"(\n    p_season integer\n)' not in serving
+    assert '"ai_source"."refreshcontext"(integer)' not in serving
+
+
 def test_ai_source_schemas_have_no_sql_server_ddl():
     sql = (
         SOURCE_SQL.read_text(encoding="utf-8")
@@ -184,11 +198,6 @@ def test_scenario_serving_is_physical_indexed_and_incremental():
     assert 'create or replace procedure "ai_source"."refreshscenarioserving"' in sql
     assert 'create or replace procedure "ai_source"."refreshtrainingserving"' in sql
     assert 'create or replace procedure "ai_source"."refreshcontext"' in sql
-    assert 'create or replace procedure "ai_source"."refreshcontext"(p_season integer)' in sql
-    assert 'from "ai_source"."playercompetitionstats"' in sql
-    assert 'from "ai_source"."teamcompetitionstats"' in sql
-    assert 'call "ai_source"."refreshcontext"(' in sql
-    assert '"ai_source"."refreshcontext"(integer)' in sql
     assert 'create table if not exists "ai_source"."servingrefreshstate"' in sql
     assert "p_league_key text" in sql
     assert "p_season integer" in sql
