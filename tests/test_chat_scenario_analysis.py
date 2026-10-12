@@ -8,6 +8,9 @@ import pytest
 from pydantic import ValidationError
 
 from basketball_ai.api.scenario_contracts_v2 import ScenarioRequestV2
+from basketball_ai.data.nationality_codes import nationality_matches, normalize_nationality
+from basketball_ai.scenarios.scouting_archetypes import ARCHETYPE_METRICS
+from basketball_ai.scenarios.advanced_role_archetypes import map_advanced_roles
 from basketball_ai.scenarios.chat_scenario_engine import ChatScenarioEngine
 
 
@@ -306,6 +309,193 @@ def test_decomposition():
     assert result["result"]["deltas"]["impact"]["rating"] == pytest.approx(0.2)
 
 
+
+def test_player_scouting_filters_identity_and_ranks_playmakers():
+    engine = _engine()
+    data = engine.data
+    data["player_dict"][1].update({"position": "PG", "nationality": "ITA", "birth_date": "2000-01-01"})
+    data["player_dict"][2].update({"position": "SG", "nationality": "USA", "birth_date": "1998-01-01"})
+    data["player_dict"][3].update({"position": "PG", "nationality": "ITA", "birth_date": "2002-01-01"})
+    data["player_dict"][4].update({"position": "C", "nationality": "ITA", "birth_date": "1997-01-01"})
+    result = engine.evaluate(
+        {"scenario": "player_scouting", "season": 2024, "competition": "RS", "top_n": 5,
+         "parameters": {"archetype": "playmaker", "role": "PG", "nationality": "ITA",
+                        "age_range": [20, 25], "min_games": 10}},
+        [], [], 10, None,
+    )
+    candidates = result["result"]["candidates"]
+    assert candidates
+    assert all(row["position"] == "PG" for row in candidates)
+    assert all(row["nationality"] == "ITA" for row in candidates)
+    assert all(20 <= row["age"] <= 25 for row in candidates)
+    assert all(0 <= row["fit_score"] <= 100 for row in candidates)
+    assert result["support"]["method"] == "transparent_weighted_percentile_scouting"
+
+
+
+def test_player_scouting_scores_roster_complementarity_when_team_is_provided():
+    engine = _engine()
+    engine.data["team_player_relations"] = pd.DataFrame([
+        {"player_id": 1, "team_id": 101, "season": 2024, "role": "PG"},
+        {"player_id": 2, "team_id": 101, "season": 2024, "role": "SG"},
+    ])
+    result = engine.evaluate(
+        {
+            "scenario": "player_scouting",
+            "season": 2024,
+            "competition": "RS",
+            "top_n": 10,
+            "parameters": {"archetype": "balanced", "min_games": 10},
+        },
+        [],
+        [101],
+        10,
+        None,
+    )
+
+    team_fit = result["result"]["team_fit"]
+    candidates = {row["player"]: row for row in result["result"]["candidates"]}
+    assert team_fit["status"] == "available"
+    assert team_fit["completeness"] == "full"
+    assert team_fit["team"] == "Red"
+    assert team_fit["roster_source"] == "season_roster_relations_plus_observed_stats"
+    assert team_fit["roster_player_count"] == 2
+    assert team_fit["roster_players_with_stats"] == 2
+    assert team_fit["roster_stats_coverage"]["statistics_coverage_pct"] == 100.0
+    assert team_fit["roster_stats_coverage"]["complete"] is True
+    assert team_fit["roster_needs"]
+    assert result["result"]["ranking_basis"] == "team_fit"
+    assert result["support"]["method"] == "roster_aware_scouting_fit"
+
+    # Candidates outside the roster are compared with both current roster players;
+    # existing roster members are compared with the other member, not themselves.
+    assert candidates["Gamma"]["complementarity_pairs"] == 2
+    assert candidates["Delta"]["complementarity_pairs"] == 2
+    assert candidates["Alpha"]["complementarity_pairs"] == 1
+    assert candidates["Beta"]["complementarity_pairs"] == 1
+    assert all(
+        row["team_fit_score"] is not None
+        and 0 <= row["fit_score"] <= 100
+        and row["complementarity_score"] is not None
+        for row in candidates.values()
+    )
+    assert team_fit["complementarity_pairs_evaluated"] == 6
+    assert result["evidence"][-1] == {"type": "roster_complementarity_pairs", "count": 6}
+    assert result["result"]["acquisition_impact_model"]["status"] == "roster_history_unavailable"
+    assert all(row["acquisition_impact"]["estimated_incremental_net_rating"] is None for row in candidates.values())
+
+
+
+def test_player_scouting_marks_observed_stats_fallback_as_partial_fit():
+    engine = _engine()
+    result = engine.evaluate(
+        {
+            "scenario": "player_scouting",
+            "season": 2024,
+            "competition": "RS",
+            "top_n": 10,
+            "parameters": {"archetype": "balanced", "min_games": 10},
+        },
+        [],
+        [101],
+        10,
+        None,
+    )
+
+    team_fit = result["result"]["team_fit"]
+    assert team_fit["status"] == "partial"
+    assert team_fit["completeness"] == "partial"
+    assert team_fit["roster_source"] == "observed_player_competition_stats"
+    assert team_fit["roster_stats_coverage"]["membership_source_is_authoritative"] is False
+    assert team_fit["roster_stats_coverage"]["complete"] is False
+    assert result["result"]["ranking_basis"] == "team_fit_partial"
+    assert result["support"]["method"] == "partial_roster_aware_scouting_fit"
+    assert all(row["team_fit_score"] is not None for row in result["result"]["candidates"])
+    assert any("non va interpretata come valutazione completa" in item for item in result["limitations"])
+
+
+def test_player_scouting_marks_missing_roster_statistics_as_partial_fit():
+    engine = _engine()
+    engine.data["team_player_relations"] = pd.DataFrame([
+        {"player_id": 1, "team_id": 101, "season": 2024, "role": "PG"},
+        {"player_id": 2, "team_id": 101, "season": 2024, "role": "SG"},
+        {"player_id": 99, "team_id": 101, "season": 2024, "role": "C"},
+    ])
+    result = engine.evaluate(
+        {
+            "scenario": "player_scouting",
+            "season": 2024,
+            "competition": "RS",
+            "top_n": 10,
+            "parameters": {"archetype": "balanced", "min_games": 10},
+        },
+        [],
+        [101],
+        10,
+        None,
+    )
+
+    team_fit = result["result"]["team_fit"]
+    coverage = team_fit["roster_stats_coverage"]
+    assert team_fit["status"] == "partial"
+    assert team_fit["roster_player_count"] == 3
+    assert team_fit["roster_players_with_stats"] == 2
+    assert coverage["members_without_usable_stats"] == 1
+    assert coverage["statistics_coverage_pct"] == pytest.approx(66.7)
+    assert coverage["complete"] is False
+    assert result["result"]["ranking_basis"] == "team_fit_partial"
+
+
+def test_player_scouting_does_not_claim_team_fit_without_roster_context():
+    result = _engine().evaluate(
+        {
+            "scenario": "player_scouting",
+            "season": 2024,
+            "competition": "RS",
+            "top_n": 3,
+            "parameters": {"archetype": "balanced", "min_games": 10},
+        },
+        [],
+        [999],
+        10,
+        None,
+    )
+
+    assert result["result"]["team_fit"]["status"] == "unavailable"
+    assert result["result"]["ranking_basis"] == "individual_scouting"
+    assert all(row["team_fit_score"] is None for row in result["result"]["candidates"])
+    assert any("Team Fit completo non è stato calcolato" in item for item in result["limitations"])
+
+def test_player_scouting_rejects_unknown_archetype():
+    with pytest.raises(ValueError, match="unsupported scouting archetype"):
+        _engine().evaluate(
+            {"scenario": "player_scouting", "season": 2024, "competition": "RS",
+             "source_league": "10", "parameters": {"archetype": "magic"}},
+            [], [], 10, None,
+        )
+
+
+
+def test_player_scouting_is_registered_in_request_contract():
+    request = ScenarioRequestV2(
+        scenario="player_scouting",
+        source_league="ITA1",
+        season=2026,
+        competition="RS",
+        top_n=10,
+        parameters={
+            "archetype": "playmaker",
+            "nationality": "ITA",
+            "min_age": 22,
+            "max_age": 28,
+            "role": "PG",
+        },
+    )
+    assert request.scenario == "player_scouting"
+    assert request.parameters["archetype"] == "playmaker"
+    assert request.top_n == 10
+
+
 def test_player_intelligence_finds_recent_contexts_across_adjacent_seasons():
     data = _analysis_data()
     players = data["players"].copy()
@@ -366,3 +556,71 @@ def test_player_intelligence_finds_recent_contexts_across_adjacent_seasons():
     # identity must expose both recent contexts while excluding league 20's 2024
     # row from discovery.
     assert contexts == [10, 20]
+
+
+
+def test_nationality_codes_are_canonicalized_and_matched_exactly():
+    assert normalize_nationality("DEU") == "DE"
+    assert normalize_nationality("GER") == "DE"
+    assert normalize_nationality("ITA") == "ITA"
+    assert nationality_matches("DE", "DEU")
+    assert nationality_matches("DEU", "DE")
+    assert nationality_matches("ITA", "ITA")
+    assert not nationality_matches("IT", "ITA")
+    assert nationality_matches("Germany", "DEU")
+    assert not nationality_matches("DE", "DEN")
+
+
+def test_player_scouting_exposes_extensible_multi_label_archetype_profiles():
+    engine = _engine()
+    result = engine.evaluate(
+        {
+            "scenario": "player_scouting",
+            "season": 2024,
+            "competition": "RS",
+            "top_n": 5,
+            "parameters": {"archetype": "balanced", "min_games": 0},
+        },
+        [], [], 10, None,
+    )
+    candidates = result["result"]["candidates"]
+    assert len(ARCHETYPE_METRICS) >= 50
+    assert {"playmaker", "scorer", "perimeter_defender", "rim_protector",
+            "three_and_d", "high_impact_low_usage", "big"}.issubset(ARCHETYPE_METRICS)
+    assert candidates
+    for candidate in candidates:
+        profiles = candidate["archetype_profiles"]
+        assert profiles
+        assert len(profiles) <= 8
+        assert all(0 <= item["score"] <= 100 for item in profiles)
+        assert all(item["confidence"] in {"low", "medium", "high"} for item in profiles)
+        assert candidate["archetype_evidence"] == "league_season_competition_percentiles"
+        coverage = candidate["archetype_profile_coverage"]
+        assert coverage["catalog_size"] == len(ARCHETYPE_METRICS)
+        assert coverage["scored_profiles"] + coverage["unscored_profile_count"] == coverage["catalog_size"]
+        assert isinstance(candidate["primary_archetypes"], list)
+
+
+def test_hoopmetrics_advanced_roles_map_to_primary_scouting_archetypes():
+    mapped = map_advanced_roles(
+        "PRIMARY BALL HANDLER",
+        "PERIMETER DEFENDER",
+        "ELITE 2-WAY PG",
+    )
+    assert mapped["offensive"] == "PRIMARY BALL HANDLER"
+    assert mapped["defensive"] == "PERIMETER DEFENDER"
+    assert mapped["combined"] == "ELITE 2-WAY PG"
+    assert {"playmaker", "primary_creator", "perimeter_defender", "two_way"}.issubset(
+        set(mapped["archetypes"])
+    )
+    assert mapped["source"] == "hoopmetrics_engine_advanced_roles"
+    assert mapped["mapping_coverage"] == 1.0
+
+
+def test_hoopmetrics_unknown_advanced_role_is_preserved_and_reported():
+    mapped = map_advanced_roles("NEW FUTURE ROLE", None, None)
+    assert mapped["offensive"] == "NEW FUTURE ROLE"
+    assert mapped["archetypes"] == []
+    assert mapped["unmapped_roles"] == [
+        {"dimension": "offensive", "role": "NEW FUTURE ROLE"}
+    ]

@@ -13,6 +13,14 @@ from typing import Any, Iterable
 import numpy as np
 import pandas as pd
 
+from basketball_ai.scenarios.scouting_archetypes import ARCHETYPE_METRICS
+from basketball_ai.scenarios.advanced_role_archetypes import map_advanced_roles
+from basketball_ai.data.nationality_codes import nationality_matches, normalize_nationality
+from basketball_ai.scenarios.acquisition_impact import (
+    fit_acquisition_impact_model,
+    predict_acquisition_impact,
+)
+
 from basketball_ai.bb_rating.competition_tiers import (
     competition_tier,
     competition_tier_label,
@@ -148,6 +156,7 @@ class ChatScenarioEngine:
             "team_replace_player": self._team_replace_player,
             "best_team_fit": self._best_team_fit,
             "best_player_fit": self._best_player_fit,
+            "player_scouting": self._player_scouting,
             "player_similarity": self._player_similarity,
             "age_trajectory": self._age_trajectory,
             "probabilistic_boxscore": self.advanced.probabilistic_boxscore,
@@ -2002,38 +2011,114 @@ class ChatScenarioEngine:
         ]
         return sorted(result, key=lambda item: item[1], reverse=True)
 
-    def _team_impact_slope(self, league_id: int, competition: str, through_season: int) -> tuple[float | None, int]:
-        teams = self.data.get("team_season_stats", pd.DataFrame()).copy()
-        stats = self.data.get("player_stats", pd.DataFrame()).copy()
-        if teams.empty or stats.empty:
-            return None, 0
-        teams["_year"] = teams["season"].map(_year)
-        stats["_year"] = stats["season"].map(_year)
-        teams = teams[(teams["league_id"].map(_to_int) == _to_int(league_id)) & (teams["competition"].map(normalize_competition) == competition) & (teams["_year"] <= through_season)]
-        stats = stats[(stats["league_id"].map(_to_int) == _to_int(league_id)) & (stats["competition"].map(normalize_competition) == competition) & (stats["_year"] <= through_season)]
-        samples: list[tuple[float, float]] = []
-        for team in teams.to_dict("records"):
-            if pd.isna(team.get("net_rtg")):
-                continue
-            roster = stats[(stats["team_id"].map(_to_int) == _to_int(team["team_id"])) & (stats["_year"] == int(team["_year"]))]
-            ratings = sorted(pd.to_numeric(roster.get("rating"), errors="coerce").dropna().tolist(), reverse=True)[:8]
-            if len(ratings) < 5:
-                continue
-            samples.append((float(np.mean(ratings)), _finite(team["net_rtg"])))
-        if len(samples) < 5:
-            return None, len(samples)
-        x = np.asarray([row[0] for row in samples], dtype=float)
-        y = np.asarray([row[1] for row in samples], dtype=float)
-        if float(np.std(x)) < 1e-6:
-            return None, len(samples)
-        slope = float(np.cov(x, y, ddof=0)[0, 1] / np.var(x))
-        return float(np.clip(slope, -8.0, 8.0)), len(samples)
+    def _team_roster_size(
+        self, team_id: int, league_id: int, competition: str, season: int
+    ) -> int:
+        relations = self.data.get("team_player_relations", pd.DataFrame())
+        if isinstance(relations, pd.DataFrame) and not relations.empty and {
+            "team_id", "player_id", "season"
+        }.issubset(relations.columns):
+            relation_year = relations["season"].map(_year)
+            selected = relations[
+                (relations["team_id"].map(_to_int) == _to_int(team_id))
+                & (relation_year == int(season))
+            ]
+            if "league_id" in selected.columns:
+                selected = selected[selected["league_id"].map(_to_int) == _to_int(league_id)]
+            size = int(selected["player_id"].map(_to_int).dropna().nunique())
+            if size > 0:
+                return size
 
-    def _project_player_for_team(self, spec, player_id: int, team_id: int, source_league: int, target_league: int) -> dict[str, Any]:
-        result = self._player_team(spec, [player_id], [team_id], source_league, target_league)
-        payload = result["result"]
-        rating = payload.get("predicted_rating", payload.get("projected_rating"))
-        return {"rating": float(rating), "analysis": result}
+        stats = self.data.get("player_stats", pd.DataFrame())
+        if not isinstance(stats, pd.DataFrame) or stats.empty or not {
+            "team_id", "player_id", "league_id", "season", "competition"
+        }.issubset(stats.columns):
+            return 0
+        stat_year = stats["season"].map(_year)
+        rows = stats[
+            (stats["team_id"].map(_to_int) == _to_int(team_id))
+            & (stats["league_id"].map(_to_int) == _to_int(league_id))
+            & (stats["competition"].map(normalize_competition) == normalize_competition(competition))
+            & (stat_year == int(season))
+        ]
+        return int(rows["player_id"].map(_to_int).dropna().nunique())
+
+    def _team_acquisition_forecast(
+        self,
+        team_id: int,
+        league_id: int,
+        competition: str,
+        season: int,
+        rotation_quality_delta: float,
+        roster_size: int,
+        impact_model: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Return a fail-closed, walk-forward-validated acquisition estimate."""
+        team_rows = self._team_rows(team_id, league_id, competition, season)
+        if team_rows.empty or int(_year(team_rows.iloc[-1]["season"])) != int(season):
+            return {
+                "status": "team_context_unavailable",
+                "reason": "Net Rating e roster della stagione target non sono disponibili.",
+                "current_net_rtg": None,
+                "impact": {"status": "team_context_unavailable", "available": False},
+            }
+
+        current_row = self._latest(team_rows)
+        current_net = _finite(current_row.get("net_rtg"), float("nan"))
+        if len(team_rows) < 2:
+            return {
+                "status": "team_history_unavailable",
+                "reason": "Servono almeno due stagioni consecutive di Net Rating per impostare il forecast.",
+                "current_net_rtg": current_net if math.isfinite(current_net) else None,
+                "impact": {"status": "team_history_unavailable", "available": False},
+            }
+        prior_row = team_rows.iloc[-2]
+        if int(_year(prior_row["season"])) != int(season) - 1:
+            return {
+                "status": "team_history_gap",
+                "reason": "Manca la stagione immediatamente precedente per calcolare il trend della squadra.",
+                "current_net_rtg": current_net if math.isfinite(current_net) else None,
+                "impact": {"status": "team_history_gap", "available": False},
+            }
+        prior_net = _finite(prior_row.get("net_rtg"), float("nan"))
+        if not math.isfinite(current_net) or not math.isfinite(prior_net):
+            return {
+                "status": "team_net_rating_unavailable",
+                "reason": "Net Rating mancante nella serie storica della squadra.",
+                "current_net_rtg": None,
+                "impact": {"status": "team_net_rating_unavailable", "available": False},
+            }
+
+        prior_change = current_net - prior_net
+        model = impact_model if isinstance(impact_model, dict) else fit_acquisition_impact_model(
+            self.data, league_id, competition, through_season=season
+        )
+        transaction_turnover = min(1.0, 2.0 / max(1, int(roster_size)))
+        impact = predict_acquisition_impact(
+            model,
+            roster_quality_delta=float(rotation_quality_delta),
+            transaction_turnover_delta=transaction_turnover,
+            prior_net_rtg=current_net,
+            prior_net_rtg_change=prior_change,
+        )
+        return {
+            "status": str(model.get("status", "uncalibrated")),
+            "reason": str(model.get("reason", "")),
+            "current_net_rtg": current_net,
+            "target_season": int(season) + 1,
+            "roster_size": int(roster_size),
+            "rotation_quality_delta": round(float(rotation_quality_delta), 4),
+            "transaction_turnover_delta": round(transaction_turnover, 4),
+            "model": {
+                "status": str(model.get("status", "uncalibrated")),
+                "reason": str(model.get("reason", "")),
+                "method": str(model.get("method", "")),
+                "training_samples": int(model.get("training_samples", 0)),
+                "training_seasons": int(model.get("training_seasons", 0)),
+                "validation": model.get("validation", {}),
+            },
+            "impact": impact,
+        }
 
     def _team_add_player(self, spec, players, teams, source_league, target_league):
         if not players or not teams:
@@ -2046,36 +2131,76 @@ class ChatScenarioEngine:
         season = int(spec["season"])
         projection = self._project_player_for_team(spec, players[0], teams[0], source_league, target_league)
         rotation = self._rotation_ratings(teams[0], target_league, competition, season)
-        if not rotation:
-            raise ValueError("Target team rotation is unavailable")
+        if len(rotation) < 5:
+            raise ValueError("Target team needs at least five rotation ratings for an acquisition what-if")
+        if any(pid == _to_int(players[0]) for pid, _ in rotation):
+            raise ValueError("The incoming player is already in the target team's observed rotation")
         top = rotation[:8]
         before = float(np.mean([rating for _, rating in top]))
         incoming = projection["rating"]
         replaced = min(top, key=lambda item: item[1])
         after_values = [rating for pid, rating in top if pid != replaced[0]] + [incoming]
-        after = float(np.mean(after_values[:8]))
-        slope, samples = self._team_impact_slope(target_league, competition, season)
-        team_row = self._latest(self._team_rows(teams[0], target_league, competition, season))
-        base_net = _finite(team_row.get("net_rtg"))
-        net_delta = (after - before) * slope if slope is not None else None
+        after = float(np.mean(after_values))
+        roster_size = self._team_roster_size(teams[0], target_league, competition, season) or int(len({pid for pid, _ in rotation}))
+        forecast = self._team_acquisition_forecast(
+            teams[0], target_league, competition, season,
+            rotation_quality_delta=after - before, roster_size=roster_size,
+        )
+        impact = forecast.get("impact", {}) if isinstance(forecast.get("impact"), dict) else {}
+        estimate_available = bool(impact.get("available"))
+        current_net = forecast.get("current_net_rtg")
+        net_change_with = impact.get("predicted_team_net_rating_change_with_acquisition") if estimate_available else None
+        net_change_without = impact.get("predicted_team_net_rating_change_without_acquisition") if estimate_available else None
+        estimated_after = (
+            float(current_net) + float(net_change_with)
+            if estimate_available and current_net is not None and net_change_with is not None else None
+        )
+        limitations = [
+            "L'impatto stimato è un'associazione osservazionale ricavata da transizioni storiche di roster; non identifica l'effetto causale del singolo acquisto.",
+            "Il forecast considera la qualità relativa della rotazione, il turnover storico e il Net Rating precedente; non modella direttamente infortuni, minuti promessi, compatibilità nello spogliatoio o decisioni dell'allenatore.",
+        ]
+        if not estimate_available:
+            limitations.append(
+                "Nessun valore numerico dell'impatto viene pubblicato perché il modello storico non ha superato i requisiti minimi di validazione: "
+                + str(forecast.get("reason") or impact.get("reason") or "validazione non disponibile")
+            )
         return {
             "result": {
                 "team": self._team_name(teams[0]),
                 "player": self._player_name(players[0]),
                 "competition": competition,
+                "source_season": season,
+                "target_season": int(season) + 1,
                 "projected_player_rating": round(incoming, 3),
                 "rotation_rating_before": round(before, 3),
                 "rotation_rating_after": round(after, 3),
                 "rotation_delta": round(after - before, 3),
                 "replacement_level_rating": round(replaced[1], 3),
-                "team_net_rating_before": round(base_net, 3),
-                "estimated_net_rating_delta": round(net_delta, 3) if net_delta is not None else None,
-                "estimated_net_rating_after": round(base_net + net_delta, 3) if net_delta is not None else None,
+                "team_net_rating_before": round(float(current_net), 3) if current_net is not None else None,
+                "acquisition_impact_status": str(impact.get("status", forecast.get("status", "uncalibrated"))),
+                "estimated_net_rating_delta": impact.get("estimated_incremental_net_rating") if estimate_available else None,
+                "estimated_net_rating_delta_interval_90": impact.get("incremental_net_rating_interval_90") if estimate_available else None,
+                "predicted_team_net_rating_change_without_acquisition": net_change_without,
+                "predicted_team_net_rating_change_with_acquisition": net_change_with,
+                "predicted_team_net_rating_change_interval_80": impact.get("predicted_team_net_rating_change_interval_80") if estimate_available else None,
+                "estimated_net_rating_after": round(estimated_after, 3) if estimated_after is not None else None,
+                "impact_model": forecast.get("model", {
+                    "status": forecast.get("status"),
+                    "reason": forecast.get("reason"),
+                }),
                 "player_projection": projection["analysis"]["result"],
             },
-            "evidence": [{"type": "team_impact_regression_samples", "count": samples}, {"type": "rotation_players", "count": len(top)}],
-            "support": {"method": "rotation_replacement_plus_empirical_team_impact", "samples": samples, "confidence": _confidence(samples)},
-            "limitations": [] if slope is not None else ["Too few historical team samples to translate rotation improvement into Net Rating."],
+            "evidence": [
+                {"type": "historical_roster_transitions", "count": int(forecast.get("model", {}).get("training_samples", 0))},
+                {"type": "walk_forward_validation_predictions", "count": int(forecast.get("model", {}).get("validation", {}).get("samples", 0))},
+                {"type": "rotation_players", "count": len(top)},
+            ],
+            "support": {
+                "method": "walk_forward_validated_acquisition_impact" if estimate_available else "acquisition_impact_not_validated",
+                "samples": int(forecast.get("model", {}).get("training_samples", 0)),
+                "confidence": _confidence(int(forecast.get("model", {}).get("validation", {}).get("samples", 0))) if estimate_available else "low",
+            },
+            "limitations": limitations,
         }
 
     def _team_replace_player(self, spec, players, teams, source_league, target_league):
@@ -2085,25 +2210,102 @@ class ChatScenarioEngine:
         source_league = source_league or target_league
         if target_league is None or source_league is None:
             raise ValueError("league context is required")
-        competition, season = normalize_competition(spec.get("target_competition") or spec["competition"]), int(spec["season"])
+        competition = normalize_competition(spec.get("target_competition") or spec["competition"])
+        season = int(spec["season"])
         projection = self._project_player_for_team(spec, players[0], teams[0], source_league, target_league)
         rotation = self._rotation_ratings(teams[0], target_league, competition, season)
-        outgoing = next((rating for pid, rating in rotation if pid == _to_int(players[1])), None)
+        if len(rotation) < 5:
+            raise ValueError("Target team needs at least five rotation ratings for a replacement what-if")
+        outgoing_id = _to_int(players[1])
+        incoming_id = _to_int(players[0])
+        outgoing = next((rating for pid, rating in rotation if pid == outgoing_id), None)
         if outgoing is None:
             raise ValueError("Outgoing player is not in the target context rotation")
+        if incoming_id != outgoing_id and any(pid == incoming_id for pid, _ in rotation):
+            raise ValueError("The incoming player is already in the target team's observed rotation")
         top = rotation[:8]
+        if not any(pid == outgoing_id for pid, _ in top):
+            raise ValueError("Outgoing player is outside the top-eight modeled rotation")
         before = float(np.mean([rating for _, rating in top]))
-        values = [rating for pid, rating in top if pid != _to_int(players[1])]
+        values = [rating for pid, rating in top if pid != outgoing_id]
         values.append(projection["rating"])
-        after = float(np.mean(sorted(values, reverse=True)[:8]))
-        slope, samples = self._team_impact_slope(target_league, competition, season)
-        net_delta = (after - before) * slope if slope is not None else None
+        after = float(np.mean(values))
+        relations = self.data.get("team_player_relations", pd.DataFrame())
+        roster_size = 0
+        if isinstance(relations, pd.DataFrame) and not relations.empty and {
+            "team_id", "player_id", "season"
+        }.issubset(relations.columns):
+            relation_year = relations["season"].map(_year)
+            selected = relations[
+                (relations["team_id"].map(_to_int) == _to_int(teams[0]))
+                & (relation_year == season)
+            ]
+            roster_size = int(selected["player_id"].map(_to_int).dropna().nunique())
+        if roster_size == 0:
+            roster_size = int(len({pid for pid, _ in rotation}))
+        forecast = self._team_acquisition_forecast(
+            teams[0], target_league, competition, season,
+            rotation_quality_delta=after - before, roster_size=roster_size,
+        )
+        impact = forecast.get("impact", {}) if isinstance(forecast.get("impact"), dict) else {}
+        estimate_available = bool(impact.get("available"))
+        current_net = forecast.get("current_net_rtg")
+        net_change_with = impact.get("predicted_team_net_rating_change_with_acquisition") if estimate_available else None
+        net_change_without = impact.get("predicted_team_net_rating_change_without_acquisition") if estimate_available else None
+        estimated_after = (
+            float(current_net) + float(net_change_with)
+            if estimate_available and current_net is not None and net_change_with is not None else None
+        )
+        limitations = [
+            "L'impatto stimato è un'associazione osservazionale ricavata da transizioni storiche di roster; non identifica l'effetto causale del singolo acquisto.",
+            "Il forecast considera la qualità relativa della rotazione, il turnover storico e il Net Rating precedente; non modella direttamente infortuni, minuti promessi, compatibilità nello spogliatoio o decisioni dell'allenatore.",
+        ]
+        if not estimate_available:
+            limitations.append(
+                "Nessun valore numerico dell'impatto viene pubblicato perché il modello storico non ha superato i requisiti minimi di validazione: "
+                + str(forecast.get("reason") or impact.get("reason") or "validazione non disponibile")
+            )
         return {
-            "result": {"team": self._team_name(teams[0]), "incoming_player": self._player_name(players[0]), "outgoing_player": self._player_name(players[1]), "incoming_rating": round(projection["rating"], 3), "outgoing_rating": round(outgoing, 3), "rotation_delta": round(after - before, 3), "estimated_net_rating_delta": round(net_delta, 3) if net_delta is not None else None},
-            "evidence": [{"type": "team_impact_regression_samples", "count": samples}],
-            "support": {"method": "explicit_rotation_replacement", "samples": samples, "confidence": _confidence(samples)},
-            "limitations": [] if slope is not None else ["Net Rating delta is unavailable because historical support is insufficient."],
+            "result": {
+                "team": self._team_name(teams[0]),
+                "incoming_player": self._player_name(players[0]),
+                "outgoing_player": self._player_name(players[1]),
+                "source_season": season,
+                "target_season": int(season) + 1,
+                "incoming_rating": round(projection["rating"], 3),
+                "outgoing_rating": round(outgoing, 3),
+                "rotation_delta": round(after - before, 3),
+                "acquisition_impact_status": str(impact.get("status", forecast.get("status", "uncalibrated"))),
+                "estimated_net_rating_delta": impact.get("estimated_incremental_net_rating") if estimate_available else None,
+                "estimated_net_rating_delta_interval_90": impact.get("incremental_net_rating_interval_90") if estimate_available else None,
+                "predicted_team_net_rating_change_without_acquisition": net_change_without,
+                "predicted_team_net_rating_change_with_acquisition": net_change_with,
+                "predicted_team_net_rating_change_interval_80": impact.get("predicted_team_net_rating_change_interval_80") if estimate_available else None,
+                "estimated_net_rating_after": round(estimated_after, 3) if estimated_after is not None else None,
+                "impact_model": forecast.get("model", {
+                    "status": forecast.get("status"),
+                    "reason": forecast.get("reason"),
+                }),
+            },
+            "evidence": [
+                {"type": "historical_roster_transitions", "count": int(forecast.get("model", {}).get("training_samples", 0))},
+                {"type": "walk_forward_validation_predictions", "count": int(forecast.get("model", {}).get("validation", {}).get("samples", 0))},
+                {"type": "rotation_players", "count": len(top)},
+            ],
+            "support": {
+                "method": "walk_forward_validated_acquisition_impact" if estimate_available else "acquisition_impact_not_validated",
+                "samples": int(forecast.get("model", {}).get("training_samples", 0)),
+                "confidence": _confidence(int(forecast.get("model", {}).get("validation", {}).get("samples", 0))) if estimate_available else "low",
+            },
+            "limitations": limitations,
         }
+
+
+    def _project_player_for_team(self, spec, player_id: int, team_id: int, source_league: int, target_league: int) -> dict[str, Any]:
+        result = self._player_team(spec, [player_id], [team_id], source_league, target_league)
+        payload = result["result"]
+        rating = payload.get("predicted_rating", payload.get("projected_rating"))
+        return {"rating": float(rating), "analysis": result}
 
     def _best_team_fit(self, spec, players, teams, source_league, target_league):
         del teams
@@ -2151,6 +2353,932 @@ class ChatScenarioEngine:
                 continue
         results.sort(key=lambda row: row["rating"], reverse=True)
         return {"result": {"team": self._team_name(teams[0]), "competition": competition, "players": results[: int(spec.get("top_n", 5))]}, "evidence": [{"type": "players_evaluated", "count": len(results)}], "support": {"method": "strict_ensemble_rank", "samples": len(results), "confidence": _confidence(len(results))}, "limitations": []}
+
+    def _player_scouting(self, spec, players, teams, source_league, target_league):
+        """Rank a league-scoped player pool against explicit scouting filters and archetypes.
+
+        This is a transparent percentile-based fit score, not a trained prediction
+        or a replacement for BB-Rating. Filters are strict; unavailable identity
+        fields never silently satisfy nationality/age requirements.
+        """
+        del players
+        parameters = spec.get("parameters", {}) or {}
+        league_id = target_league if target_league is not None else source_league
+        if league_id is None:
+            raise ValueError("source_league or target_league is required to keep candidate comparisons in one league")
+        season = int(spec["season"])
+        competition = normalize_competition(spec.get("target_competition") or spec["competition"])
+        archetype = str(parameters.get("archetype", "balanced")).strip().lower()
+        archetype_metrics = ARCHETYPE_METRICS
+        if archetype not in archetype_metrics:
+            raise ValueError(
+                f"unsupported scouting archetype {archetype!r}; "
+                f"choose from {sorted(archetype_metrics)}"
+            )
+
+        stats = self.data.get("player_stats", pd.DataFrame()).copy()
+        if stats.empty:
+            raise ValueError("Player competition statistics are unavailable")
+        required = {"player_id", "league_id", "season", "competition"}
+        if not required.issubset(stats.columns):
+            raise ValueError("Canonical player statistics are missing required columns")
+        stats["_year"] = stats["season"].map(_year)
+        pool = stats[
+            (stats["league_id"].map(_to_int) == _to_int(league_id))
+            & (stats["competition"].map(normalize_competition) == competition)
+            & (stats["_year"] == season)
+        ].copy()
+        if pool.empty:
+            raise ValueError("No player scouting pool exists for the requested league, season and competition")
+
+        # Resolve duplicate team rows to one candidate observation per player.
+        sort_cols = [column for column in ("games_played", "minutes_per_game", "rating") if column in pool.columns]
+        if sort_cols:
+            pool = pool.sort_values(sort_cols, ascending=[False] * len(sort_cols))
+        pool = pool.drop_duplicates(subset=["player_id"], keep="first").copy()
+
+        requested_position = str(parameters.get("role", "") or "").strip().upper()
+        nationality = str(parameters.get("nationality", "") or "").strip()
+        age_range = parameters.get("age_range")
+        min_age = parameters.get("min_age")
+        max_age = parameters.get("max_age")
+        if isinstance(age_range, (list, tuple)) and len(age_range) == 2:
+            min_age = age_range[0] if min_age is None else min_age
+            max_age = age_range[1] if max_age is None else max_age
+        min_games = int(parameters.get("min_games", 5))
+        min_minutes = float(parameters.get("min_minutes_per_game", 0.0))
+        if min_games < 0 or min_games > 82 or min_minutes < 0 or min_minutes > 48:
+            raise ValueError("min_games must be 0..82 and min_minutes_per_game must be 0..48")
+        if min_age is not None and not 16 <= int(min_age) <= 50:
+            raise ValueError("min_age must be between 16 and 50")
+        if max_age is not None and not 16 <= int(max_age) <= 50:
+            raise ValueError("max_age must be between 16 and 50")
+        if min_age is not None and max_age is not None and int(min_age) > int(max_age):
+            raise ValueError("min_age cannot exceed max_age")
+
+        metadata = self.data.get("player_dict", {}) or {}
+        accepted = []
+        excluded_missing_identity = 0
+        for row in pool.to_dict("records"):
+            pid = _to_int(row.get("player_id"))
+            meta = metadata.get(pid, {}) or {}
+            position = str(meta.get("position", meta.get("ruolo", row.get("position", ""))) or "").upper()
+            if requested_position and requested_position not in {part.strip() for part in position.replace("-", "/").split("/")}:
+                continue
+            player_nationality_raw = str(meta.get("nationality", meta.get("nationality_code", "")) or "").strip()
+            player_nationality = normalize_nationality(player_nationality_raw)
+            if nationality:
+                if not player_nationality:
+                    excluded_missing_identity += 1
+                    continue
+                if not nationality_matches(nationality, player_nationality_raw):
+                    continue
+            birth_date = meta.get("birth_date", meta.get("date_of_birth"))
+            age = None
+            try:
+                age = season - int(str(birth_date)[:4])
+            except (TypeError, ValueError):
+                try:
+                    age = int(meta.get("age"))
+                except (TypeError, ValueError):
+                    pass
+            if min_age is not None or max_age is not None:
+                if age is None:
+                    excluded_missing_identity += 1
+                    continue
+                if min_age is not None and age < int(min_age):
+                    continue
+                if max_age is not None and age > int(max_age):
+                    continue
+            games = _finite(row.get("games_played"), 0)
+            minutes = _finite(row.get("minutes_per_game"), 0)
+            if games < min_games or minutes < min_minutes:
+                continue
+            accepted.append({**row, "_pid": pid, "_name": self._player_name(pid), "_position": position or None,
+                             "_nationality": player_nationality or None, "_age": age})
+
+        if not accepted:
+            raise ValueError("No candidates match the scouting filters; verify role, nationality, age and minimum playing-time requirements")
+        candidates = pd.DataFrame(accepted)
+        metrics = archetype_metrics[archetype]
+        weighted_metrics = [(metric, weight) for metric, weight in metrics.items() if metric in candidates.columns]
+        if not weighted_metrics:
+            raise ValueError("None of the metrics required by this scouting archetype are available")
+
+        # Keep the individual scouting score and its metric evidence. When a team
+        # is supplied, this score becomes one component of a separate roster-aware
+        # score rather than being misrepresented as team fit by itself.
+        percentile_values: dict[str, pd.Series] = {}
+        for metric, weight in weighted_metrics:
+            values = pd.to_numeric(candidates[metric], errors="coerce")
+            if values.notna().sum() == 0:
+                continue
+            pct = values.rank(method="average", pct=True)
+            if weight < 0:
+                pct = 1.0 - pct
+            percentile_values[metric] = pct
+        if not percentile_values:
+            raise ValueError("Scouting metrics are present but contain no usable values")
+        scores = pd.Series(0.0, index=candidates.index)
+        available_weight = pd.Series(0.0, index=candidates.index)
+        metric_percentiles: dict[str, pd.Series] = {}
+        for metric, weight in weighted_metrics:
+            if metric not in percentile_values:
+                continue
+            pct = percentile_values[metric]
+            magnitude = abs(weight)
+            scores = scores.add(pct.fillna(0.0) * magnitude, fill_value=0.0)
+            available_weight = available_weight.add(pct.notna().astype(float) * magnitude, fill_value=0.0)
+            metric_percentiles[metric] = pct
+        candidates["_scouting_fit_score"] = (
+            scores / available_weight.replace(0, np.nan) * 100.0
+        ).fillna(50.0).clip(0, 100)
+        candidates["_fit_score"] = candidates["_scouting_fit_score"]
+
+        target_team = self._team_name(teams[0]) if teams else None
+        team_fit_status = "not_requested" if not teams else "unavailable"
+        team_fit_reason = "Nessuna squadra target indicata." if not teams else ""
+        roster_source = None
+        roster_member_ids: set[int] = set()
+        roster_stats = pd.DataFrame()
+        roster_strengths: dict[str, float] = {}
+        roster_needs: list[dict[str, Any]] = []
+        position_depth: dict[str, int] = {}
+        positional_needs: dict[str, float] = {}
+        candidate_team_fit: dict[Any, dict[str, Any]] = {}
+        total_complementarity_pairs = 0
+        core_positions = ("PG", "SG", "SF", "PF", "C")
+
+        def safe_season_year(value: Any) -> int | None:
+            try:
+                return _year(value)
+            except (TypeError, ValueError, OverflowError):
+                return None
+
+        def position_tokens(value: Any) -> set[str]:
+            raw = str(value or "").upper().replace("-", "/").replace(",", "/")
+            tokens = {part.strip() for part in raw.split("/") if part.strip()}
+            mapped: set[str] = set()
+            for token in tokens:
+                if token in core_positions:
+                    mapped.add(token)
+                elif token in {"G", "GUARD", "GUARDS"}:
+                    mapped.update(("PG", "SG"))
+                elif token in {"F", "FORWARD", "FORWARDS"}:
+                    mapped.update(("SF", "PF"))
+                elif token in {"C", "CENTER", "CENTRE"}:
+                    mapped.add("C")
+            return mapped
+
+        def listed_position(player_id: int, fallback: Any = "") -> str:
+            meta = metadata.get(_to_int(player_id), {}) or {}
+            value = meta.get("position", meta.get("ruolo", fallback))
+            return str(value or "").strip().upper()
+
+        def unique_player_rows(frame: pd.DataFrame) -> pd.DataFrame:
+            if frame.empty or "player_id" not in frame.columns:
+                return frame.iloc[0:0].copy()
+            ordered = frame.copy()
+            order_columns = [
+                column for column in ("games_played", "minutes_per_game", "rating")
+                if column in ordered.columns
+            ]
+            if order_columns:
+                ordered = ordered.sort_values(
+                    order_columns, ascending=[False] * len(order_columns), na_position="last"
+                )
+            return ordered.drop_duplicates(subset=["player_id"], keep="first").copy()
+
+        # Prefer the season-specific roster relation. PlayerCompetitionStats
+        # supplies the same-context performance observations used in the fit.
+        # If no season relation exists, fall back to players with observed stats
+        # explicitly attached to this team; the response declares that fallback.
+        if teams:
+            team_id = _to_int(teams[0])
+            raw_stats = self.data.get("player_stats", pd.DataFrame()).copy()
+            context_stats = pd.DataFrame()
+            exact_team_stats = pd.DataFrame()
+            if not raw_stats.empty and {"player_id", "league_id", "season", "competition"}.issubset(raw_stats.columns):
+                raw_stats["_year"] = raw_stats["season"].map(safe_season_year)
+                stats_mask = (
+                    (raw_stats["league_id"].map(_to_int) == _to_int(league_id))
+                    & (raw_stats["competition"].map(normalize_competition) == competition)
+                    & (raw_stats["_year"] == season)
+                )
+                context_stats = raw_stats[stats_mask].copy()
+                if "team_id" in raw_stats.columns:
+                    exact_team_stats = context_stats[
+                        context_stats["team_id"].map(_to_int) == team_id
+                    ].copy()
+
+            relations = self.data.get("team_player_relations", pd.DataFrame())
+            if (
+                team_id is not None
+                and isinstance(relations, pd.DataFrame)
+                and not relations.empty
+                and {"player_id", "team_id", "season"}.issubset(relations.columns)
+            ):
+                relation_rows = relations.copy()
+                relation_rows["_year"] = relation_rows["season"].map(safe_season_year)
+                relation_rows = relation_rows[
+                    (relation_rows["team_id"].map(_to_int) == team_id)
+                    & (relation_rows["_year"] == season)
+                ]
+                if not relation_rows.empty:
+                    roster_member_ids.update(
+                        pid for pid in relation_rows["player_id"].map(_to_int).tolist()
+                        if pid is not None
+                    )
+                    roster_source = "season_roster_relations"
+
+            observed_team_ids = {
+                pid for pid in exact_team_stats.get("player_id", pd.Series(dtype=object)).map(_to_int).tolist()
+                if pid is not None
+            }
+            if observed_team_ids:
+                roster_member_ids.update(observed_team_ids)
+                roster_source = (
+                    "season_roster_relations_plus_observed_stats"
+                    if roster_source == "season_roster_relations"
+                    else "observed_player_competition_stats"
+                )
+            if roster_member_ids and not context_stats.empty:
+                roster_stats = unique_player_rows(
+                    context_stats[context_stats["player_id"].map(_to_int).isin(roster_member_ids)]
+                )
+                if "games_played" in roster_stats.columns:
+                    appeared = pd.to_numeric(
+                        roster_stats["games_played"], errors="coerce"
+                    ).fillna(0) > 0
+                    roster_stats = roster_stats[appeared].copy()
+            if not roster_member_ids:
+                team_fit_reason = "Il roster della squadra non è disponibile per la stagione richiesta."
+            elif len(roster_stats) < 2:
+                team_fit_reason = (
+                    "Sono disponibili meno di due giocatori del roster con statistiche "
+                    "nella stessa lega, stagione e competizione; il fit individuale resta disponibile."
+                )
+            else:
+                has_authoritative_roster = roster_source in {
+                    "season_roster_relations",
+                    "season_roster_relations_plus_observed_stats",
+                }
+                has_full_statistics_coverage = len(roster_stats) >= len(roster_member_ids)
+                if has_authoritative_roster and has_full_statistics_coverage:
+                    team_fit_status = "available"
+                else:
+                    team_fit_status = "partial"
+                    if not has_authoritative_roster:
+                        team_fit_reason = (
+                            "La relazione stagionale del roster non è disponibile: "
+                            "il fit può usare soltanto i giocatori osservati nelle statistiche "
+                            "della squadra e non può certificare la copertura dell'intero roster."
+                        )
+                    else:
+                        team_fit_reason = (
+                            f"Fit parziale: statistiche utilizzabili per {len(roster_stats)} "
+                            f"di {len(roster_member_ids)} membri del roster."
+                        )
+
+        # Compute league-relative percentiles for every archetype, not just the
+        # requested one. Those profiles identify which dimensions look weakest
+        # in the current roster and whether a candidate can help address them.
+        all_archetype_metrics = sorted({
+            metric for weights in archetype_metrics.values() for metric in weights
+        })
+        metric_distributions: dict[str, np.ndarray] = {}
+        for metric in all_archetype_metrics:
+            if metric not in pool.columns:
+                continue
+            values = pd.to_numeric(pool[metric], errors="coerce").dropna().to_numpy(dtype=float)
+            if values.size:
+                metric_distributions[metric] = np.sort(values)
+
+        def metric_percentile(metric: str, value: Any) -> float | None:
+            distribution = metric_distributions.get(metric)
+            number = _finite(value, float("nan"))
+            if distribution is None or distribution.size == 0 or not math.isfinite(number):
+                return None
+            left = int(np.searchsorted(distribution, number, side="left"))
+            right = int(np.searchsorted(distribution, number, side="right"))
+            return float((left + (right - left) / 2.0) / distribution.size)
+
+        def archetype_strength(record: dict[str, Any], label: str) -> float | None:
+            weighted_values: list[tuple[float, float]] = []
+            for metric, weight in archetype_metrics[label].items():
+                pct = metric_percentile(metric, record.get(metric))
+                if pct is None:
+                    continue
+                if weight < 0:
+                    pct = 1.0 - pct
+                weighted_values.append((pct, abs(weight)))
+            total_weight = sum(weight for _, weight in weighted_values)
+            if total_weight <= 0:
+                return None
+            return 100.0 * sum(value * weight for value, weight in weighted_values) / total_weight
+
+        if team_fit_status in {"available", "partial"}:
+            roster_records = roster_stats.to_dict("records")
+            # Count upstream archetypes from the already-calculated HoopmetricsEngine
+            # offensive, defensive and combined roles. Count each archetype once
+            # per roster member even when multiple role dimensions map to it.
+            roster_role_archetype_counts: dict[str, int] = {}
+            for roster_record in roster_records:
+                role_profile = map_advanced_roles(
+                    roster_record.get("ruolo_offensivo"),
+                    roster_record.get("ruolo_difensivo"),
+                    roster_record.get("ruolo_combinato"),
+                )
+                for role_archetype in set(role_profile["archetypes"]):
+                    roster_role_archetype_counts[role_archetype] = (
+                        roster_role_archetype_counts.get(role_archetype, 0) + 1
+                    )
+            for label in archetype_metrics:
+                values = [
+                    strength for record in roster_records
+                    if (strength := archetype_strength(record, label)) is not None
+                ]
+                if values:
+                    roster_strengths[label] = float(np.mean(values))
+            roster_needs = [
+                {
+                    "archetype": label,
+                    "roster_strength_score": round(strength, 1),
+                    "need_score": round(max(0.0, 100.0 - strength), 1),
+                }
+                for label, strength in roster_strengths.items()
+            ]
+            roster_needs.sort(key=lambda item: item["need_score"], reverse=True)
+
+            for pid in roster_member_ids:
+                pos = listed_position(pid)
+                for token in position_tokens(pos):
+                    position_depth[token] = position_depth.get(token, 0) + 1
+            # Two listed players at a primary position is a transparent depth
+            # heuristic, not a claim about an ideal rotation for every coach.
+            positional_needs = {
+                pos: round(max(0.0, (2.0 - position_depth.get(pos, 0)) / 2.0 * 100.0), 1)
+                for pos in core_positions
+            }
+
+            def row_pair_score(first: dict[str, Any], second: dict[str, Any], first_pos: str, second_pos: str) -> float:
+                first_usage = _ratio(first.get("usg_pct"), 0.18)
+                second_usage = _ratio(second.get("usg_pct"), 0.18)
+                usage_overlap = max(0.0, first_usage + second_usage - 0.50)
+                first_three = _ratio(first.get("three_point_pct"), 0.33)
+                second_three = _ratio(second.get("three_point_pct"), 0.33)
+                spacing = float(np.clip((first_three + second_three) / 0.80, 0.0, 1.0))
+                creation = float(np.clip(
+                    (_finite(first.get("assists"), 3.0) / 10.0 + _finite(second.get("assists"), 3.0) / 10.0) / 1.20,
+                    0.0, 1.0,
+                ))
+                defense = float(np.clip(
+                    0.5 + (_finite(first.get("dbpm"), 0.0) / 6.0 + _finite(second.get("dbpm"), 0.0) / 6.0) / 2.0,
+                    0.0, 1.0,
+                ))
+                first_primary = first_pos.split("/")[0].strip() if first_pos else ""
+                second_primary = second_pos.split("/")[0].strip() if second_pos else ""
+                positional_overlap = 1.0 if first_primary and first_primary == second_primary else 0.0
+                return float(np.clip(
+                    0.50 + spacing * 0.18 + creation * 0.14 + defense * 0.12
+                    - usage_overlap * 0.42 - positional_overlap * 0.10,
+                    0.0, 1.0,
+                ))
+
+            for candidate_index, candidate in candidates.iterrows():
+                candidate_id = _to_int(candidate.get("_pid"))
+                if candidate_id is None:
+                    continue
+                candidate_meta = metadata.get(candidate_id, {}) or {}
+                candidate_global_id = str(candidate_meta.get("global_id", "") or "").strip()
+                candidate_position = listed_position(candidate_id, candidate.get("_position"))
+                pair_values: list[tuple[float, str]] = []
+                for teammate in roster_records:
+                    teammate_id = _to_int(teammate.get("player_id"))
+                    if teammate_id is None:
+                        continue
+                    teammate_meta = metadata.get(teammate_id, {}) or {}
+                    teammate_global_id = str(teammate_meta.get("global_id", "") or "").strip()
+                    if teammate_id == candidate_id or (
+                        candidate_global_id and teammate_global_id
+                        and candidate_global_id == teammate_global_id
+                    ):
+                        continue
+                    teammate_position = listed_position(teammate_id, teammate.get("position"))
+                    pair_score = row_pair_score(
+                        candidate.to_dict(), teammate, candidate_position, teammate_position
+                    )
+                    pair_values.append((pair_score, self._player_name(teammate_id)))
+                pair_values.sort(key=lambda pair: pair[0])
+                pair_count = len(pair_values)
+                total_complementarity_pairs += pair_count
+                complementarity_score = (
+                    100.0 * float(np.mean([value for value, _ in pair_values]))
+                    if pair_values else None
+                )
+
+                candidate_arch_scores = {
+                    label: archetype_strength(candidate.to_dict(), label)
+                    for label in archetype_metrics
+                }
+                need_terms = [
+                    (max(0.0, 100.0 - strength), candidate_arch_scores.get(label))
+                    for label, strength in roster_strengths.items()
+                    if candidate_arch_scores.get(label) is not None
+                    and max(0.0, 100.0 - strength) > 0
+                ]
+                need_weight = sum(weight for weight, _ in need_terms)
+                metric_need_alignment_score = (
+                    sum(weight * float(value) for weight, value in need_terms) / need_weight
+                    if need_weight > 0 else None
+                )
+                candidate_role_profile = map_advanced_roles(
+                    candidate.get("ruolo_offensivo"),
+                    candidate.get("ruolo_difensivo"),
+                    candidate.get("ruolo_combinato"),
+                )
+                candidate_role_archetypes = set(candidate_role_profile["archetypes"])
+                role_need_values = [
+                    max(0.0, 100.0 - 50.0 * roster_role_archetype_counts.get(label, 0))
+                    for label in candidate_role_archetypes
+                ]
+                role_need_alignment_score = (
+                    float(np.mean(role_need_values)) if role_need_values else None
+                )
+                available_need_components = [
+                    (0.65, metric_need_alignment_score),
+                    (0.35, role_need_alignment_score),
+                ]
+                available_need_components = [
+                    (weight, value) for weight, value in available_need_components
+                    if value is not None
+                ]
+                need_component_weight = sum(weight for weight, _ in available_need_components)
+                need_alignment_score = (
+                    sum(weight * float(value) for weight, value in available_need_components)
+                    / need_component_weight
+                    if need_component_weight > 0 else None
+                )
+                candidate_positions = position_tokens(candidate_position)
+                position_values = [
+                    positional_needs[pos] for pos in candidate_positions if pos in positional_needs
+                ]
+                position_need_score = float(np.mean(position_values)) if position_values else None
+
+                score_components: list[tuple[float, float]] = [
+                    (0.40, _finite(candidate.get("_scouting_fit_score"), 50.0))
+                ]
+                if complementarity_score is not None:
+                    score_components.append((0.30, complementarity_score))
+                if need_alignment_score is not None:
+                    score_components.append((0.20, need_alignment_score))
+                if position_need_score is not None:
+                    score_components.append((0.10, position_need_score))
+                component_weight = sum(weight for weight, _ in score_components)
+                team_fit_score = (
+                    sum(weight * value for weight, value in score_components) / component_weight
+                    if component_weight > 0 and complementarity_score is not None else None
+                )
+
+                candidate_team_fit[candidate_index] = {
+                    "team_fit_score": round(team_fit_score, 1) if team_fit_score is not None else None,
+                    "complementarity_score": round(complementarity_score, 1) if complementarity_score is not None else None,
+                    "complementarity_pairs": pair_count,
+                    "need_alignment_score": round(need_alignment_score, 1) if need_alignment_score is not None else None,
+                    "metric_need_alignment_score": round(metric_need_alignment_score, 1) if metric_need_alignment_score is not None else None,
+                    "role_need_alignment_score": round(role_need_alignment_score, 1) if role_need_alignment_score is not None else None,
+                    "position_need_score": round(position_need_score, 1) if position_need_score is not None else None,
+                    "best_roster_match": (
+                        {"player": pair_values[-1][1], "score": round(pair_values[-1][0] * 100.0, 1)}
+                        if pair_values else None
+                    ),
+                    "weakest_roster_match": (
+                        {"player": pair_values[0][1], "score": round(pair_values[0][0] * 100.0, 1)}
+                        if pair_values else None
+                    ),
+                }
+
+            candidates["_team_fit_score"] = pd.Series(
+                {index: values["team_fit_score"] for index, values in candidate_team_fit.items()},
+                dtype=float,
+            ).reindex(candidates.index)
+            candidates["_fit_score"] = candidates["_team_fit_score"].where(
+                candidates["_team_fit_score"].notna(), candidates["_scouting_fit_score"]
+            )
+
+        if not teams:
+            team_fit_payload: dict[str, Any] = {
+                "status": "not_requested",
+                "team": None,
+                "reason": "Indicare una squadra per valutare il roster e la complementarità.",
+            }
+        elif team_fit_status not in {"available", "partial"}:
+            team_fit_payload = {
+                "status": "unavailable",
+                "team": target_team,
+                "season": season,
+                "competition": competition,
+                "roster_source": roster_source,
+                "roster_player_count": len(roster_member_ids),
+                "roster_players_with_stats": int(len(roster_stats)),
+                "reason": team_fit_reason or "Dati roster insufficienti nel contesto richiesto.",
+            }
+        else:
+            roster_player_names = [
+                self._player_name(pid) for pid in sorted(roster_member_ids)
+            ]
+            members_with_stats = {
+                _to_int(pid) for pid in roster_stats.get("player_id", pd.Series(dtype=object)).map(_to_int)
+                if _to_int(pid) is not None
+            }
+            team_fit_payload = {
+                "status": team_fit_status,
+                "completeness": "full" if team_fit_status == "available" else "partial",
+                "team": target_team,
+                "league": self._league_name(league_id),
+                "season": season,
+                "competition": competition,
+                "method": "roster_pairwise_complementarity_plus_archetype_and_position_needs",
+                "roster_source": roster_source,
+                "roster_player_count": len(roster_member_ids),
+                "roster_players_with_stats": int(len(roster_stats)),
+                "roster_stats_coverage": {
+                    "registered_members_in_resolved_scope": int(len(roster_member_ids)),
+                    "members_with_usable_stats": int(len(roster_stats)),
+                    "members_without_usable_stats": int(max(0, len(roster_member_ids) - len(roster_stats))),
+                    "statistics_coverage_pct": round(
+                        100.0 * len(roster_stats) / len(roster_member_ids), 1
+                    ) if roster_member_ids else 0.0,
+                    "membership_source_is_authoritative": roster_source in {
+                        "season_roster_relations",
+                        "season_roster_relations_plus_observed_stats",
+                    },
+                    "complete": team_fit_status == "available",
+                },
+                "completeness_note": (
+                    "Copertura roster completa nel contesto richiesto."
+                    if team_fit_status == "available"
+                    else team_fit_reason
+                ),
+                "roster_members_without_stats": [
+                    self._player_name(pid) for pid in sorted(roster_member_ids - members_with_stats)[:10]
+                ],
+                "roster_players": roster_player_names[:15],
+                "archetype_strengths": {
+                    label: round(value, 1) for label, value in roster_strengths.items()
+                },
+                "roster_needs": roster_needs[:3],
+                "position_depth": {pos: int(position_depth.get(pos, 0)) for pos in core_positions},
+                "positional_needs": [
+                    {"position": pos, "need_score": score}
+                    for pos, score in sorted(positional_needs.items(), key=lambda item: item[1], reverse=True)[:3]
+                ],
+                "positional_depth_target": 2,
+                "complementarity_pairs_evaluated": int(total_complementarity_pairs),
+                "score_components": {
+                    "individual_scouting": 0.40,
+                    "roster_complementarity": 0.30,
+                    "roster_need_alignment": 0.20,
+                    "positional_depth": 0.10,
+                },
+                "score_note": (
+                    "Punteggio analitico 0-100; pesi normalizzati se un componente manca. "
+                    "Non è una probabilità né una previsione ML calibrata."
+                ),
+            }
+
+        ranked = candidates.sort_values(["_fit_score", "rating"], ascending=[False, False]).head(int(spec.get("top_n", 5)))
+        acquisition_impact_model: dict[str, Any] | None = None
+        acquisition_impact_summary: dict[str, Any] = {
+            "status": "not_requested" if not teams else "unavailable",
+            "reason": "Nessuna squadra target indicata." if not teams else "Modello d'impatto non valutato.",
+            "training_samples": 0,
+            "training_seasons": 0,
+            "validation": {"samples": 0, "seasons": 0},
+        }
+        candidate_acquisition_impacts: dict[Any, dict[str, Any]] = {}
+        if teams:
+            team_id = _to_int(teams[0])
+            if team_id is not None:
+                acquisition_impact_model = fit_acquisition_impact_model(
+                    self.data, int(league_id), competition, through_season=season
+                )
+                acquisition_impact_summary = {
+                    "status": str(acquisition_impact_model.get("status", "uncalibrated")),
+                    "reason": str(acquisition_impact_model.get("reason", "")),
+                    "method": str(acquisition_impact_model.get("method", "")),
+                    "training_samples": int(acquisition_impact_model.get("training_samples", 0)),
+                    "training_seasons": int(acquisition_impact_model.get("training_seasons", 0)),
+                    "validation": acquisition_impact_model.get("validation", {}),
+                    "numeric_estimates_allowed": acquisition_impact_model.get("status") == "validated",
+                }
+                rotation = self._rotation_ratings(team_id, int(league_id), competition, season)
+                top_rotation = rotation[:8]
+                if acquisition_impact_model.get("status") == "validated" and len(top_rotation) >= 5:
+                    replacement = min(top_rotation, key=lambda item: item[1])
+                    replacement_rating = float(replacement[1])
+                    rotation_slots = max(1, len(top_rotation))
+                    roster_size = self._team_roster_size(
+                        team_id, int(league_id), competition, season
+                    ) or len({pid for pid, _ in rotation})
+                    global_id_by_player: dict[int, str] = {}
+                    players_frame = self.data.get("players", pd.DataFrame())
+                    if isinstance(players_frame, pd.DataFrame) and {"id", "global_id"}.issubset(players_frame.columns):
+                        for identity_row in players_frame[["id", "global_id"]].to_dict("records"):
+                            identity_pid = _to_int(identity_row.get("id"))
+                            raw_global_id = identity_row.get("global_id")
+                            global_id = "" if raw_global_id is None or pd.isna(raw_global_id) else str(raw_global_id).strip()
+                            if global_id.lower() in {"nan", "none", "null"}:
+                                global_id = ""
+                            if identity_pid is not None and global_id:
+                                global_id_by_player[identity_pid] = global_id
+                    for identity_pid, identity_meta in metadata.items():
+                        parsed_pid = _to_int(identity_pid)
+                        if parsed_pid is None or parsed_pid in global_id_by_player or not isinstance(identity_meta, dict):
+                            continue
+                        raw_global_id = identity_meta.get("global_id")
+                        global_id = "" if raw_global_id is None or pd.isna(raw_global_id) else str(raw_global_id).strip()
+                        if global_id.lower() in {"nan", "none", "null"}:
+                            global_id = ""
+                        if global_id:
+                            global_id_by_player[parsed_pid] = global_id
+                    roster_global_ids = {
+                        global_id_by_player[pid]
+                        for raw_pid in roster_member_ids
+                        if (pid := _to_int(raw_pid)) is not None and pid in global_id_by_player
+                    }
+                    for candidate_index, candidate in ranked.iterrows():
+                        candidate_id = _to_int(candidate.get("_pid"))
+                        if candidate_id is None:
+                            candidate_acquisition_impacts[candidate_index] = {
+                                "status": "candidate_identity_unavailable",
+                                "estimated_incremental_net_rating": None,
+                            }
+                            continue
+                        candidate_global_id = global_id_by_player.get(candidate_id, "")
+                        if candidate_id in roster_member_ids or (
+                            candidate_global_id and candidate_global_id in roster_global_ids
+                        ):
+                            candidate_acquisition_impacts[candidate_index] = {
+                                "status": "already_on_roster",
+                                "estimated_incremental_net_rating": None,
+                                "reason": "Il giocatore risulta già nel roster osservato della squadra.",
+                            }
+                            continue
+                        try:
+                            projection = self._project_player_for_team(
+                                spec, candidate_id, team_id, int(league_id), int(league_id)
+                            )
+                            projected_rating = float(projection["rating"])
+                            quality_delta = (projected_rating - replacement_rating) / rotation_slots
+                            forecast = self._team_acquisition_forecast(
+                                team_id, int(league_id), competition, season,
+                                rotation_quality_delta=quality_delta,
+                                roster_size=roster_size,
+                                impact_model=acquisition_impact_model,
+                            )
+                            impact = forecast.get("impact", {}) if isinstance(forecast.get("impact"), dict) else {}
+                            candidate_acquisition_impacts[candidate_index] = {
+                                "status": str(impact.get("status", forecast.get("status", "unavailable"))),
+                                "estimated_incremental_net_rating": impact.get("estimated_incremental_net_rating") if impact.get("available") else None,
+                                "incremental_net_rating_interval_90": impact.get("incremental_net_rating_interval_90") if impact.get("available") else None,
+                                "predicted_team_net_rating_change_without_acquisition": impact.get("predicted_team_net_rating_change_without_acquisition") if impact.get("available") else None,
+                                "predicted_team_net_rating_change_with_acquisition": impact.get("predicted_team_net_rating_change_with_acquisition") if impact.get("available") else None,
+                                "predicted_team_net_rating_change_interval_80": impact.get("predicted_team_net_rating_change_interval_80") if impact.get("available") else None,
+                                "target_season": int(season) + 1,
+                                "validation": acquisition_impact_summary["validation"],
+                            }
+                        except (ValueError, RuntimeError, TypeError, KeyError):
+                            candidate_acquisition_impacts[candidate_index] = {
+                                "status": "candidate_projection_unavailable",
+                                "estimated_incremental_net_rating": None,
+                                "reason": "Dati previsionali insufficienti per valutare il candidato nel contesto target.",
+                            }
+                elif acquisition_impact_model.get("status") == "validated":
+                    acquisition_impact_summary["status"] = "team_rotation_unavailable"
+                    acquisition_impact_summary["reason"] = (
+                        "Il modello supera il backtest, ma la rotazione osservata della squadra "
+                        "non contiene almeno cinque valutazioni utilizzabili."
+                    )
+            if isinstance(team_fit_payload, dict):
+                team_fit_payload["acquisition_impact_model"] = acquisition_impact_summary
+
+        impact_rankable = [
+            index for index, item in candidate_acquisition_impacts.items()
+            if item.get("status") == "validated"
+            and item.get("estimated_incremental_net_rating") is not None
+        ]
+        if impact_rankable:
+            ranked = ranked.copy()
+            ranked["_acquisition_impact_sort"] = ranked.index.map(
+                lambda index: _finite(
+                    candidate_acquisition_impacts.get(index, {}).get("estimated_incremental_net_rating"),
+                    float("-inf"),
+                )
+            )
+            ranked = ranked.sort_values(
+                ["_acquisition_impact_sort", "_fit_score", "rating"],
+                ascending=[False, False, False],
+                na_position="last",
+            ).drop(columns=["_acquisition_impact_sort"])
+            ranking_basis = "team_fit_plus_acquisition_impact"
+        else:
+            ranking_basis = (
+                "team_fit" if team_fit_status == "available"
+                else "team_fit_partial" if team_fit_status == "partial"
+                else "individual_scouting"
+            )
+
+        results = []
+        for _, row in ranked.iterrows():
+            strengths = []
+            evidence_metrics = {}
+            for metric, pct in metric_percentiles.items():
+                value = pct.loc[row.name]
+                if pd.isna(value):
+                    continue
+                evidence_metrics[metric] = {"value": round(_finite(row.get(metric)), 4), "percentile": round(float(value), 3)}
+                if value >= .75:
+                    strengths.append(metric)
+            team_detail = candidate_team_fit.get(row.name, {})
+            individual_score = _finite(row.get("_scouting_fit_score"), 50.0)
+            archetype_scores = []
+            for label in archetype_metrics:
+                score = archetype_strength(row.to_dict(), label)
+                if score is None:
+                    continue
+                supported_metrics = sum(
+                    1 for metric in archetype_metrics[label]
+                    if metric in metric_distributions
+                    and _finite(row.get(metric), float("nan")) == _finite(row.get(metric), float("nan"))
+                )
+                expected_metrics = len(archetype_metrics[label])
+                archetype_scores.append({
+                    "archetype": label,
+                    "score": round(score, 1),
+                    "evidence_metrics": supported_metrics,
+                    "metrics_defined": expected_metrics,
+                    "evidence_coverage_pct": round(100.0 * supported_metrics / expected_metrics, 1) if expected_metrics else 0.0,
+                    "confidence": "high" if supported_metrics >= 4 else "medium" if supported_metrics >= 2 else "low",
+                })
+            archetype_scores.sort(key=lambda item: item["score"], reverse=True)
+            advanced_roles = map_advanced_roles(
+                row.get("ruolo_offensivo"),
+                row.get("ruolo_difensivo"),
+                row.get("ruolo_combinato"),
+            )
+            # Upstream HoopmetricsEngine roles are authoritative for the primary
+            # archetype labels; percentile profiles remain supporting evidence.
+            primary_archetypes = list(advanced_roles["archetypes"])
+            for item in archetype_scores:
+                if item["score"] >= 65.0 and item["archetype"] not in primary_archetypes:
+                    primary_archetypes.append(item["archetype"])
+                if len(primary_archetypes) >= 3:
+                    break
+            primary_archetypes = primary_archetypes[:3]
+            results.append({
+                "player": row["_name"],
+                "fit_score": round(_finite(row.get("_fit_score"), individual_score), 1),
+                "scouting_fit_score": round(individual_score, 1),
+                "team_fit_score": team_detail.get("team_fit_score"),
+                "complementarity_score": team_detail.get("complementarity_score"),
+                "complementarity_pairs": int(team_detail.get("complementarity_pairs", 0)),
+                "need_alignment_score": team_detail.get("need_alignment_score"),
+                "position_need_score": team_detail.get("position_need_score"),
+                "best_roster_match": team_detail.get("best_roster_match"),
+                "weakest_roster_match": team_detail.get("weakest_roster_match"),
+                "acquisition_impact": candidate_acquisition_impacts.get(row.name, {
+                    "status": str(acquisition_impact_summary.get("status", "unavailable")),
+                    "estimated_incremental_net_rating": None,
+                    "reason": str(acquisition_impact_summary.get("reason", "")),
+                }) if teams else None,
+                "position": row["_position"],
+                "nationality": row["_nationality"],
+                "age": int(row["_age"]) if row["_age"] is not None and pd.notna(row["_age"]) else None,
+                "bb_rating_source_score": round(_finite(row.get("rating")), 3) if pd.notna(row.get("rating")) else None,
+                "games_played": int(_finite(row.get("games_played"))),
+                "minutes_per_game": round(_finite(row.get("minutes_per_game")), 1),
+                "strengths": strengths[:5],
+                "advanced_roles": {
+                    "offensive": advanced_roles["offensive"],
+                    "defensive": advanced_roles["defensive"],
+                    "combined": advanced_roles["combined"],
+                    "source": advanced_roles["source"],
+                    "mapping_coverage": advanced_roles["mapping_coverage"],
+                    "unmapped_roles": advanced_roles["unmapped_roles"],
+                },
+                "archetypes_from_advanced_roles": advanced_roles["archetypes"],
+                "archetype_profiles": archetype_scores[:8],
+                "archetype_profile_coverage": {
+                    "catalog_size": len(archetype_metrics),
+                    "scored_profiles": len(archetype_scores),
+                    "unscored_profile_count": max(0, len(archetype_metrics) - len(archetype_scores)),
+                    "unscored_examples": [
+                        label for label in archetype_metrics
+                        if label not in {item["archetype"] for item in archetype_scores}
+                    ][:5],
+                    "reason": "required metrics are missing or unusable in this league-season-competition context",
+                },
+                "primary_archetypes": primary_archetypes,
+                "archetype_evidence": "league_season_competition_percentiles",
+                "metrics": evidence_metrics,
+            })
+        limitations = [
+            "Il punteggio individuale per archetipo è un ranking percentile trasparente, non una probabilità calibrata né il BB-Rating.",
+            "Nazionalità ed età sono filtri rigidi solo quando i relativi dati d'identità sono disponibili; i record con dato mancante vengono esclusi.",
+        ]
+        if team_fit_status in {"available", "partial"}:
+            limitations.extend([
+                "Il Team Fit usa complementarità analitica candidato-compagni, lacune di archetipi e una stima indicativa della profondità per ruolo; non è un modello ML calibrato.",
+                "La complementarità confronta il candidato con tutti i membri risolti del roster che dispongono di statistiche utilizzabili nella stessa lega, stagione e competizione.",
+                "Il target di profondità di due giocatori per ruolo è euristico e non descrive minuti, sistema tattico o preferenze dello staff.",
+            ])
+            if team_fit_status == "partial":
+                limitations.append(
+                    "Team Fit parziale: la classifica usa solo la porzione di roster con evidenze utilizzabili "
+                    "e non va interpretata come valutazione completa della squadra."
+                )
+            if roster_source == "observed_player_competition_stats":
+                limitations.append(
+                    "Il roster proviene dalle statistiche osservate della squadra perché non è disponibile una relazione stagionale completa."
+                )
+        else:
+            limitations.append(
+                "La squadra definisce il contesto, ma il Team Fit non è stato calcolato perché i dati di roster/statistiche non sono sufficienti."
+            )
+
+        if teams:
+            validated_estimate_count = sum(
+                1 for item in candidate_acquisition_impacts.values()
+                if item.get("status") == "validated"
+                and item.get("estimated_incremental_net_rating") is not None
+            )
+            if validated_estimate_count > 0:
+                limitations.append(
+                    "Per alcuni candidati della shortlist è disponibile una stima osservazionale dell'impatto incrementale sul Net Rating della stagione successiva. "
+                    "La shortlist è pre-selezionata per Team Fit e ordinata per impatto soltanto tra i candidati con stima valida; non è una prova causale del singolo acquisto."
+                )
+            elif acquisition_impact_summary.get("status") == "validated":
+                limitations.append(
+                    "Il modello storico supera il backtest, ma nessun candidato in questa shortlist dispone di una stima d'acquisizione utilizzabile; l'ordinamento resta basato sul Team Fit."
+                )
+            else:
+                limitations.append(
+                    "La previsione dell'impatto d'acquisto non ha superato i requisiti di validazione per questo contesto; i campi numerici restano null e il ranking usa soltanto lo score analitico."
+                )
+
+        evidence = [
+            {"type": "same_league_season_competition_pool", "count": int(len(pool))},
+            {"type": "eligible_candidates", "count": int(len(accepted))},
+            {"type": "missing_identity_exclusions", "count": excluded_missing_identity},
+        ]
+        if teams:
+            evidence.append({"type": "team_roster_members", "count": int(len(roster_member_ids))})
+            evidence.append({"type": "roster_members_with_statistics", "count": int(len(roster_stats))})
+            evidence.append({
+                "type": "validated_acquisition_impact_estimates",
+                "count": sum(
+                    1 for item in candidate_acquisition_impacts.values()
+                    if item.get("status") == "validated" and item.get("estimated_incremental_net_rating") is not None
+                ),
+            })
+            if team_fit_status in {"available", "partial"}:
+                evidence.append({"type": "roster_complementarity_pairs", "count": int(total_complementarity_pairs)})
+        return {
+            "result": {
+                "archetype": archetype,
+                "role_filter": requested_position or None,
+                "nationality_filter": parameters.get("nationality") or None,
+                "age_range": {"min": int(min_age) if min_age is not None else None, "max": int(max_age) if max_age is not None else None},
+                "team_context": target_team,
+                "team_fit": team_fit_payload,
+                "ranking_basis": ranking_basis,
+                "acquisition_impact_model": acquisition_impact_summary,
+                "acquisition_impact_note": (
+                    "La shortlist viene pre-selezionata dal Team Fit e poi ordinata per impatto incrementale stimato fra i candidati valutati."
+                    if ranking_basis == "team_fit_plus_acquisition_impact"
+                    else "L'impatto d'acquisto non è disponibile o non ha superato la validazione; il ranking usa soltanto lo score di scouting/Team Fit."
+                ),
+                "league": self._league_name(league_id),
+                "season": season,
+                "competition": competition,
+                "candidates": results,
+                "candidates_considered": len(accepted),
+            },
+            "evidence": evidence,
+            "support": {
+                "method": (
+                    "roster_aware_scouting_fit_plus_walk_forward_acquisition_impact"
+                    if ranking_basis == "team_fit_plus_acquisition_impact"
+                    else "roster_aware_scouting_fit" if team_fit_status == "available"
+                    else "partial_roster_aware_scouting_fit" if team_fit_status == "partial"
+                    else "transparent_weighted_percentile_scouting"
+                ),
+                "samples": len(accepted),
+                "confidence": _confidence(len(roster_stats)) if team_fit_status in {"available", "partial"} else _confidence(len(accepted)),
+            },
+            "limitations": limitations,
+        }
 
     def _player_similarity(self, spec, players, teams, source_league, target_league):
         del teams, target_league

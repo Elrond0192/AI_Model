@@ -80,3 +80,48 @@ Chat V3 should therefore report the comparison explicitly per league (for exampl
 ## Final boundary
 
 The exact **causal team-effect claim** remains unavailable, but Chat V3 can now answer the user-facing question with an observational attribution. A statement such as “Team X caused this player to perform worse” is not supported; instead the response reports the player’s observed rating, the team-context association, observed team switches, and the remaining causal limitation.
+
+
+## Scouting & Player Fit
+
+The scenario registry now includes `player_scouting`: a first-stage shortlist
+that filters a single league/season/competition pool by position, nationality,
+age and playing-time requirements, then ranks eligible candidates against a
+transparent archetype profile (`playmaker`, `scorer`, `connector`,
+`defender`, `big`, `balanced`). The output includes fit score, supporting
+metric percentiles, strengths, sample support and explicit limitations.
+
+Nationality values follow the database's basketball-code convention: `ITA` remains `ITA`, while `DEU` is normalized to `DE` as a configured Germany alias. Other three-letter codes are preserved unless an explicit alias is defined.
+
+When a target team is supplied, Player Scouting attempts a roster-aware
+Team Fit: it resolves season membership from TeamPlayerRelations, compares each
+eligible candidate with every roster member who has usable statistics in the
+same league/season/competition, estimates archetype needs, and adds an
+indicative positional-depth signal. The result separates the individual
+scouting score from the combined Team Fit score and reports roster coverage,
+pair counts and missing evidence.
+
+The fit status is deliberately explicit. `available` requires a season roster
+relation and usable matching-context statistics for every resolved member.
+`partial` is returned if the relation is missing or some members cannot be
+evaluated; the candidate ranking may still be useful, but must not be called a
+complete roster fit. `unavailable` means fewer than two roster members have
+usable statistics. The scouting Team Fit remains a transparent analytical
+ranking, not the acquisition-impact forecast.
+
+For an explicit acquisition what-if, `team_add_player` and
+`team_replace_player` now use a separate historical roster-transition model
+with an expanding-window walk-forward evaluation. Numeric estimates are
+returned only when the model has at least 40 historical transitions, at least
+20 out-of-time predictions across at least three seasons, and improves on a
+zero-change Net Rating baseline without excessive prediction bias. Otherwise
+the output marks the impact model as unvalidated and leaves the numerical
+acquisition estimate empty. Even when validation passes, it is an observational
+forecast of team Net Rating change, not proof of the acquisition's causal
+effect. Cross-league transferability, contract status and cost still require
+additional evidence layers.
+
+
+### Reuse of HoopmetricsEngine advanced roles
+
+Player Scouting reads the already-calculated `ruolo_offensivo`, `ruolo_difensivo` and `ruolo_combinato` fields exposed through AI_Source. These are the authoritative source for primary archetype labels; the scouting layer maps known role labels to one or more readable archetypes without recomputing the upstream role classification. The original role labels are returned in `advanced_roles`, mapped labels in `archetypes_from_advanced_roles`, and unknown labels are preserved and reported rather than silently discarded. Team Fit also compares archetype coverage from these existing role labels across the target roster; where role fields are unavailable, it falls back to metric-derived need alignment. Statistical `archetype_profiles` remain supporting, cohort-relative evidence and are not a replacement for the advanced roles. If role fields are missing for a player/context, metric-derived profiles remain available and the role mapping coverage is zero.
