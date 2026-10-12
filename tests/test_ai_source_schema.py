@@ -184,6 +184,11 @@ def test_scenario_serving_is_physical_indexed_and_incremental():
     assert 'create or replace procedure "ai_source"."refreshscenarioserving"' in sql
     assert 'create or replace procedure "ai_source"."refreshtrainingserving"' in sql
     assert 'create or replace procedure "ai_source"."refreshcontext"' in sql
+    assert 'create or replace procedure "ai_source"."refreshcontext"(p_season integer)' in sql
+    assert 'from "ai_source"."playercompetitionstats"' in sql
+    assert 'from "ai_source"."teamcompetitionstats"' in sql
+    assert 'call "ai_source"."refreshcontext"(' in sql
+    assert '"ai_source"."refreshcontext"(integer)' in sql
     assert 'create table if not exists "ai_source"."servingrefreshstate"' in sql
     assert "p_league_key text" in sql
     assert "p_season integer" in sql
