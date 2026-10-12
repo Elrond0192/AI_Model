@@ -583,7 +583,7 @@ def test_player_scouting_exposes_extensible_multi_label_archetype_profiles():
         [], [], 10, None,
     )
     candidates = result["result"]["candidates"]
-    assert len(ARCHETYPE_METRICS) >= 35
+    assert len(ARCHETYPE_METRICS) >= 50
     assert {"playmaker", "scorer", "perimeter_defender", "rim_protector",
             "three_and_d", "high_impact_low_usage", "big"}.issubset(ARCHETYPE_METRICS)
     assert candidates
@@ -594,4 +594,7 @@ def test_player_scouting_exposes_extensible_multi_label_archetype_profiles():
         assert all(0 <= item["score"] <= 100 for item in profiles)
         assert all(item["confidence"] in {"low", "medium", "high"} for item in profiles)
         assert candidate["archetype_evidence"] == "league_season_competition_percentiles"
+        coverage = candidate["archetype_profile_coverage"]
+        assert coverage["catalog_size"] == len(ARCHETYPE_METRICS)
+        assert coverage["scored_profiles"] + coverage["unscored_profile_count"] == coverage["catalog_size"]
         assert isinstance(candidate["primary_archetypes"], list)
