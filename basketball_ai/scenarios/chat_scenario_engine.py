@@ -14,6 +14,7 @@ import numpy as np
 import pandas as pd
 
 from basketball_ai.scenarios.scouting_archetypes import ARCHETYPE_METRICS
+from basketball_ai.scenarios.advanced_role_archetypes import map_advanced_roles
 from basketball_ai.data.nationality_codes import nationality_matches, normalize_nationality
 from basketball_ai.scenarios.acquisition_impact import (
     fit_acquisition_impact_model,
@@ -3078,10 +3079,20 @@ class ChatScenarioEngine:
                     "confidence": "high" if supported_metrics >= 4 else "medium" if supported_metrics >= 2 else "low",
                 })
             archetype_scores.sort(key=lambda item: item["score"], reverse=True)
-            primary_archetypes = [
-                item["archetype"] for item in archetype_scores
-                if item["score"] >= 65.0
-            ][:3]
+            advanced_roles = map_advanced_roles(
+                row.get("ruolo_offensivo"),
+                row.get("ruolo_difensivo"),
+                row.get("ruolo_combinato"),
+            )
+            # Upstream HoopmetricsEngine roles are authoritative for the primary
+            # archetype labels; percentile profiles remain supporting evidence.
+            primary_archetypes = list(advanced_roles["archetypes"])
+            for item in archetype_scores:
+                if item["score"] >= 65.0 and item["archetype"] not in primary_archetypes:
+                    primary_archetypes.append(item["archetype"])
+                if len(primary_archetypes) >= 3:
+                    break
+            primary_archetypes = primary_archetypes[:3]
             results.append({
                 "player": row["_name"],
                 "fit_score": round(_finite(row.get("_fit_score"), individual_score), 1),
@@ -3105,6 +3116,15 @@ class ChatScenarioEngine:
                 "games_played": int(_finite(row.get("games_played"))),
                 "minutes_per_game": round(_finite(row.get("minutes_per_game")), 1),
                 "strengths": strengths[:5],
+                "advanced_roles": {
+                    "offensive": advanced_roles["offensive"],
+                    "defensive": advanced_roles["defensive"],
+                    "combined": advanced_roles["combined"],
+                    "source": advanced_roles["source"],
+                    "mapping_coverage": advanced_roles["mapping_coverage"],
+                    "unmapped_roles": advanced_roles["unmapped_roles"],
+                },
+                "archetypes_from_advanced_roles": advanced_roles["archetypes"],
                 "archetype_profiles": archetype_scores[:8],
                 "archetype_profile_coverage": {
                     "catalog_size": len(archetype_metrics),
