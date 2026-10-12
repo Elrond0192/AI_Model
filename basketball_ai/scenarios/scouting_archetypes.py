@@ -48,6 +48,7 @@ ARCHETYPE_METRICS: dict[str, dict[str, float]] = {
     "defensive_rebounder": {"dreb": .38, "rebounds": .24, "blocks": .12, "dbpm": .12, "bpm": .08, "minutes_per_game": .06},
     "roll_man": {"two_point_pct": .24, "ts_pct": .22, "rebounds": .16, "blocks": .10, "fta": .10, "bpm": .10, "turnovers": -.08},
     "post_big": {"rebounds": .20, "two_point_pct": .18, "points": .16, "blocks": .12, "dbpm": .12, "ts_pct": .14, "bpm": .08},
+    "big": {"rebounds": .22, "blocks": .18, "dbpm": .18, "ts_pct": .16, "bpm": .12, "points": .08},
     "passing_center": {"assists": .20, "ast_pct": .22, "rebounds": .18, "blocks": .10, "tov_pct": -.12, "bpm": .18},
     # Role and broad utility profiles
     "three_and_d": {"three_point_pct": .22, "three_point_attempts": .14, "three_point_rate": .12, "dbpm": .22, "steals": .10, "blocks": .08, "bpm": .12},
