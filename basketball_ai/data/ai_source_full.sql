@@ -8,11 +8,13 @@
 --   TeamPlayerRelations
 --   PlayerCompetitionStats
 --   TeamCompetitionStats
+--   RefreshContext(integer) — year-wide serving refresh entry point
 --
 -- Design:
 --   * no RawInternal views
 --   * no simulation/PBP objects
---   * no persistent helper functions in AI_Source
+--   * no persistent data-transformation helper functions; only the year-wide
+--     serving orchestration procedure is persistent
 --   * no to_jsonb/jsonb_each parsing
 --   * no row-by-row PL/pgSQL data transformation
 --   * dynamic discovery uses pg_catalog only
@@ -1768,6 +1770,105 @@ CREATE UNIQUE INDEX "ux_Teams_id"
 
 CREATE UNIQUE INDEX "ux_Leagues_id"
     ON "AI_Source"."Leagues"(id);
+
+-- ---------------------------------------------------------------------------
+-- Year-wide serving refresh entry point.
+--
+-- Refreshes every distinct league/season/competition context in the canonical
+-- tables for one season. The three-argument RefreshContext procedure and its
+-- serving tables are installed by ai_scenario_serving.sql; invoke this
+-- one-argument overload only after both SQL contracts have been installed.
+-- ---------------------------------------------------------------------------
+
+-- Year-wide overload: refresh every league and every observed competition for a
+-- season, retaining the three-argument overload for targeted ETL refreshes.
+-- This operates on the current canonical AI_Source tables; it does not rebuild
+-- PlayerCompetitionStats/TeamCompetitionStats from Analisi source tables.
+CREATE OR REPLACE PROCEDURE "AI_Source"."RefreshContext"(
+    p_season integer
+)
+LANGUAGE plpgsql
+AS $refresh_year$
+DECLARE
+    ctx record;
+    processed_contexts integer := 0;
+BEGIN
+    IF p_season IS NULL THEN
+        RAISE EXCEPTION 'season is required';
+    END IF;
+
+    FOR ctx IN
+        SELECT contexts.league_key, contexts.season, contexts.competition
+        FROM (
+            SELECT
+                NULLIF(btrim(league_key), '') AS league_key,
+                season,
+                upper(btrim(competition)) AS competition
+            FROM "AI_Source"."PlayerCompetitionStats"
+            WHERE season = p_season
+
+            UNION
+
+            SELECT
+                NULLIF(btrim(league_key), '') AS league_key,
+                season,
+                upper(btrim(competition)) AS competition
+            FROM "AI_Source"."TeamCompetitionStats"
+            WHERE season = p_season
+        ) AS contexts
+        WHERE contexts.league_key IS NOT NULL
+          AND contexts.competition IS NOT NULL
+        ORDER BY contexts.league_key, contexts.season, contexts.competition
+    LOOP
+        CALL "AI_Source"."RefreshContext"(
+            ctx.league_key,
+            ctx.season,
+            ctx.competition
+        );
+        processed_contexts := processed_contexts + 1;
+    END LOOP;
+
+    IF processed_contexts = 0 THEN
+        RAISE NOTICE 'No AI_Source contexts found for season %', p_season;
+    ELSE
+        RAISE NOTICE 'Refreshed % AI_Source contexts for season %',
+            processed_contexts, p_season;
+    END IF;
+END;
+$refresh_year$;
+
+DO $grant_ai_source_year_refresh$
+DECLARE
+    requested_role text := NULLIF(
+        btrim(current_setting('app.ai_source_read_role', true)),
+        ''
+    );
+    read_role text;
+BEGIN
+    FOREACH read_role IN ARRAY ARRAY[
+        'ai_model',
+        'hm_admin',
+        requested_role
+    ]
+    LOOP
+        CONTINUE WHEN read_role IS NULL OR btrim(read_role) = '';
+
+        IF EXISTS (
+            SELECT 1
+            FROM pg_catalog.pg_roles
+            WHERE rolname = read_role
+        ) THEN
+            EXECUTE format(
+                'GRANT EXECUTE ON PROCEDURE "AI_Source"."RefreshContext"(integer) TO %I',
+                read_role
+            );
+            RAISE NOTICE
+                'AI_Source year-wide refresh execute access granted to role %',
+                read_role;
+        END IF;
+    END LOOP;
+END;
+$grant_ai_source_year_refresh$;
 
 ANALYZE "AI_Source"."PlayerCompetitionStats";
 ANALYZE "AI_Source"."TeamCompetitionStats";
