@@ -218,7 +218,25 @@ After each ETL context completes, refresh only its serving partition:
 CALL "AI_Source"."RefreshContext"('ITA1', 2025, 'RS');
 ```
 
-The same hook is available to n8n/systemd/cron without embedding SQL:
+To refresh **all leagues and every competition found for one season** (for
+example all 2026 contexts), use the one-argument overload:
+
+```sql
+CALL "AI_Source"."RefreshContext"(2026);
+```
+
+It discovers distinct contexts from both `PlayerCompetitionStats` and
+`TeamCompetitionStats`, then refreshes the training-serving tables, scenario
+aggregates and `ServingRefreshState` for each context. The existing three-
+argument call remains available for a single league/season/competition.
+
+This procedure refreshes serving from the **current canonical AI_Source tables**;
+it does not rebuild those canonical tables from `Analisi.AdvancedStats_*`.
+When those source statistics have changed and are not yet reflected in
+`PlayerCompetitionStats` / `TeamCompetitionStats`, rebuild/apply
+`ai_source_full.sql` after ETL and then run the yearly refresh.
+
+The same single-context hook is available to n8n/systemd/cron without embedding SQL:
 
 ```bash
 python main.py --mode refresh-serving --database-profile production \
