@@ -47,3 +47,25 @@ those global identifiers to internal keys.
 
 Every response carries `support.method`, sample counts and material
 `limitations`; Chat V3 must preserve those distinctions.
+
+
+## Extensible player archetypes
+
+Player Scouting uses the catalog in `basketball_ai/scenarios/scouting_archetypes.py`.
+The catalog defines overlapping statistical archetypes across creation, scoring,
+shooting, defense, rebounding/interior play and two-way/utility roles. It is not a
+closed set of mutually exclusive player types: a player can score highly in
+several archetypes at once, and new definitions can be added in the catalog
+without adding a branch to the scenario engine.
+
+Each candidate returns up to eight `archetype_profiles`, each with a
+league/season/competition-relative score, count of available metric evidence,
+coverage and a qualitative evidence-confidence label. `primary_archetypes`
+contains up to three profiles scoring at least 65/100. These values are
+descriptive percentiles, not calibrated probabilities or causal conclusions.
+Metrics absent from the source cohort are omitted and weights are renormalized;
+the output must not be interpreted as evidence for an archetype whose underlying
+metrics are unavailable. Traditional box-score proxies cannot fully identify
+tactical roles such as screen-setting, off-ball movement, switch defense or
+pick-and-roll coverage; those need play-by-play, tracking or lineup evidence
+before being presented as directly measured.
