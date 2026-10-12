@@ -149,3 +149,8 @@ statistical coverage; `partial` means roster/evidence is incomplete;
 after sufficient history and out-of-time tests beat the zero-change baseline.
 Even then, it is an observational forecast, not a calibrated causal effect of
 the individual signing or a coach-specific rotation model.
+
+
+### Reuse of HoopmetricsEngine advanced roles
+
+Player Scouting reads the already-calculated `ruolo_offensivo`, `ruolo_difensivo` and `ruolo_combinato` fields exposed through AI_Source. These are the authoritative source for primary archetype labels; the scouting layer maps known role labels to one or more readable archetypes without recomputing the upstream role classification. The original role labels are returned in `advanced_roles`, mapped labels in `archetypes_from_advanced_roles`, and unknown labels are preserved and reported rather than silently discarded. Statistical `archetype_profiles` remain supporting, cohort-relative evidence and are not a replacement for the advanced roles. If role fields are missing for a player/context, metric-derived profiles remain available and the role mapping coverage is zero.
