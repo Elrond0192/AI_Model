@@ -10,6 +10,7 @@ from pydantic import ValidationError
 from basketball_ai.api.scenario_contracts_v2 import ScenarioRequestV2
 from basketball_ai.data.nationality_codes import nationality_matches, normalize_nationality
 from basketball_ai.scenarios.scouting_archetypes import ARCHETYPE_METRICS
+from basketball_ai.scenarios.advanced_role_archetypes import map_advanced_roles
 from basketball_ai.scenarios.chat_scenario_engine import ChatScenarioEngine
 
 
@@ -598,3 +599,28 @@ def test_player_scouting_exposes_extensible_multi_label_archetype_profiles():
         assert coverage["catalog_size"] == len(ARCHETYPE_METRICS)
         assert coverage["scored_profiles"] + coverage["unscored_profile_count"] == coverage["catalog_size"]
         assert isinstance(candidate["primary_archetypes"], list)
+
+
+def test_hoopmetrics_advanced_roles_map_to_primary_scouting_archetypes():
+    mapped = map_advanced_roles(
+        "PRIMARY BALL HANDLER",
+        "PERIMETER DEFENDER",
+        "ELITE 2-WAY PG",
+    )
+    assert mapped["offensive"] == "PRIMARY BALL HANDLER"
+    assert mapped["defensive"] == "PERIMETER DEFENDER"
+    assert mapped["combined"] == "ELITE 2-WAY PG"
+    assert {"playmaker", "primary_creator", "perimeter_defender", "two_way"}.issubset(
+        set(mapped["archetypes"])
+    )
+    assert mapped["source"] == "hoopmetrics_engine_advanced_roles"
+    assert mapped["mapping_coverage"] == 1.0
+
+
+def test_hoopmetrics_unknown_advanced_role_is_preserved_and_reported():
+    mapped = map_advanced_roles("NEW FUTURE ROLE", None, None)
+    assert mapped["offensive"] == "NEW FUTURE ROLE"
+    assert mapped["archetypes"] == []
+    assert mapped["unmapped_roles"] == [
+        {"dimension": "offensive", "role": "NEW FUTURE ROLE"}
+    ]
