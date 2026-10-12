@@ -9,6 +9,7 @@ from pydantic import ValidationError
 
 from basketball_ai.api.scenario_contracts_v2 import ScenarioRequestV2
 from basketball_ai.data.nationality_codes import nationality_matches, normalize_nationality
+from basketball_ai.scenarios.scouting_archetypes import ARCHETYPE_METRICS
 from basketball_ai.scenarios.chat_scenario_engine import ChatScenarioEngine
 
 
@@ -567,3 +568,30 @@ def test_nationality_codes_are_canonicalized_and_matched_exactly():
     assert not nationality_matches("IT", "ITA")
     assert nationality_matches("Germany", "DEU")
     assert not nationality_matches("DE", "DEN")
+
+
+def test_player_scouting_exposes_extensible_multi_label_archetype_profiles():
+    engine = _engine()
+    result = engine.evaluate(
+        {
+            "scenario": "player_scouting",
+            "season": 2024,
+            "competition": "RS",
+            "top_n": 5,
+            "parameters": {"archetype": "balanced", "min_games": 0},
+        },
+        [], [], 10, None,
+    )
+    candidates = result["result"]["candidates"]
+    assert len(ARCHETYPE_METRICS) >= 35
+    assert {"playmaker", "scorer", "perimeter_defender", "rim_protector",
+            "three_and_d", "high_impact_low_usage", "big"}.issubset(ARCHETYPE_METRICS)
+    assert candidates
+    for candidate in candidates:
+        profiles = candidate["archetype_profiles"]
+        assert profiles
+        assert len(profiles) <= 8
+        assert all(0 <= item["score"] <= 100 for item in profiles)
+        assert all(item["confidence"] in {"low", "medium", "high"} for item in profiles)
+        assert candidate["archetype_evidence"] == "league_season_competition_percentiles"
+        assert isinstance(candidate["primary_archetypes"], list)
