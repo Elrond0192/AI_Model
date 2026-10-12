@@ -245,63 +245,6 @@ BEGIN
 END;
 $$;
 
--- Year-wide overload: refresh every league and every observed competition for a
--- season, retaining the three-argument overload for targeted ETL refreshes.
--- This operates on the current canonical AI_Source tables; it does not rebuild
--- PlayerCompetitionStats/TeamCompetitionStats from Analisi source tables.
-CREATE OR REPLACE PROCEDURE "AI_Source"."RefreshContext"(
-    p_season integer
-)
-LANGUAGE plpgsql
-AS $refresh_year$
-DECLARE
-    ctx record;
-    processed_contexts integer := 0;
-BEGIN
-    IF p_season IS NULL THEN
-        RAISE EXCEPTION 'season is required';
-    END IF;
-
-    FOR ctx IN
-        SELECT contexts.league_key, contexts.season, contexts.competition
-        FROM (
-            SELECT
-                NULLIF(btrim(league_key), '') AS league_key,
-                season,
-                upper(btrim(competition)) AS competition
-            FROM "AI_Source"."PlayerCompetitionStats"
-            WHERE season = p_season
-
-            UNION
-
-            SELECT
-                NULLIF(btrim(league_key), '') AS league_key,
-                season,
-                upper(btrim(competition)) AS competition
-            FROM "AI_Source"."TeamCompetitionStats"
-            WHERE season = p_season
-        ) AS contexts
-        WHERE contexts.league_key IS NOT NULL
-          AND contexts.competition IS NOT NULL
-        ORDER BY contexts.league_key, contexts.season, contexts.competition
-    LOOP
-        CALL "AI_Source"."RefreshContext"(
-            ctx.league_key,
-            ctx.season,
-            ctx.competition
-        );
-        processed_contexts := processed_contexts + 1;
-    END LOOP;
-
-    IF processed_contexts = 0 THEN
-        RAISE NOTICE 'No AI_Source contexts found for season %', p_season;
-    ELSE
-        RAISE NOTICE 'Refreshed % AI_Source contexts for season %',
-            processed_contexts, p_season;
-    END IF;
-END;
-$refresh_year$;
-
 -- Administrative/runtime read access is re-applied on every serving rebuild.
 DO $grant_ai_source_serving$
 DECLARE
@@ -343,8 +286,7 @@ BEGIN
             EXECUTE format(
                 'GRANT EXECUTE ON PROCEDURE "AI_Source"."RefreshScenarioServing"(text, integer, text),
                                          "AI_Source"."RefreshTrainingServing"(text, integer, text),
-                                         "AI_Source"."RefreshContext"(text, integer, text),
-                                         "AI_Source"."RefreshContext"(integer)
+                                         "AI_Source"."RefreshContext"(text, integer, text)
                  TO %I',
                 read_role
             );
