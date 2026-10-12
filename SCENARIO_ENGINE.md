@@ -115,10 +115,18 @@ and global identifiers before Chat V3 receives them.
 
 ## Player Scouting filters and Team Fit
 
-The `player_scouting` scenario accepts `parameters.archetype` (`playmaker`,
-`scorer`, `connector`, `defender`, `big`, or `balanced`) and optional strict
-filters: `role` (position code), `nationality`, `min_age`, `max_age`,
-`min_games`, and `min_minutes_per_game`. The request must identify a source or
+The `player_scouting` scenario accepts `parameters.archetype` from the
+extensible catalog in `basketball_ai/scenarios/scouting_archetypes.py` (currently
+39 overlapping archetypes spanning creation, scoring, shooting, defense,
+rebounding/interior play and utility/two-way roles) and optional strict filters:
+`role` (position code), `nationality`, `min_age`, `max_age`, `min_games`,
+and `min_minutes_per_game`. Existing request values `playmaker`, `scorer`,
+`connector`, `defender`, `big` and `balanced` remain supported. Every
+candidate is also scored against the catalog using available metrics and returns
+up to eight `archetype_profiles` with cohort-relative scores, evidence coverage
+and qualitative confidence, plus up to three `primary_archetypes` scoring at
+least 65/100. These are descriptive statistical proxies, not mutually exclusive
+labels or calibrated probabilities. The request must identify a source or
 target league so candidates are compared inside one league/season/competition
 cohort. Missing nationality or age excludes a candidate when that filter is
 requested.
