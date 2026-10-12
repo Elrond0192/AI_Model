@@ -253,7 +253,7 @@ CREATE OR REPLACE PROCEDURE "AI_Source"."RefreshContext"(
     p_season integer
 )
 LANGUAGE plpgsql
-AS $
+AS $refresh_year$
 DECLARE
     ctx record;
     processed_contexts integer := 0;
@@ -300,7 +300,7 @@ BEGIN
             processed_contexts, p_season;
     END IF;
 END;
-$;
+$refresh_year$;
 
 -- Administrative/runtime read access is re-applied on every serving rebuild.
 DO $grant_ai_source_serving$
