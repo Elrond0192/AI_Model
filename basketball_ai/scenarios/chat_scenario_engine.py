@@ -3106,6 +3106,16 @@ class ChatScenarioEngine:
                 "minutes_per_game": round(_finite(row.get("minutes_per_game")), 1),
                 "strengths": strengths[:5],
                 "archetype_profiles": archetype_scores[:8],
+                "archetype_profile_coverage": {
+                    "catalog_size": len(archetype_metrics),
+                    "scored_profiles": len(archetype_scores),
+                    "unscored_profile_count": max(0, len(archetype_metrics) - len(archetype_scores)),
+                    "unscored_examples": [
+                        label for label in archetype_metrics
+                        if label not in {item["archetype"] for item in archetype_scores}
+                    ][:5],
+                    "reason": "required metrics are missing or unusable in this league-season-competition context",
+                },
                 "primary_archetypes": primary_archetypes,
                 "archetype_evidence": "league_season_competition_percentiles",
                 "metrics": evidence_metrics,
