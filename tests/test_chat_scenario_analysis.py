@@ -251,6 +251,26 @@ def test_player_intelligence_orchestrates_question_layers():
     assert result["result"]["answer_mode"] == "evidence_composition"
 
 
+def test_player_intelligence_composes_performance_attribution_bundle():
+    result = _engine().evaluate(
+        {"scenario": "player_intelligence", "season": 2024, "competition": "RS",
+         "parameters": {"question_key": "performance_attribution"}},
+        [1], [], 10, None,
+    )
+    analyses = result["result"]["analyses"]
+    assert set(analyses) == {
+        "performance_decomposition",
+        "role_analysis",
+        "team_usage_analysis",
+        "causal_team_effect",
+        "metric_explanation",
+    }
+    assert analyses["performance_decomposition"]["result"]["previous_season"] == 2023
+    assert analyses["team_usage_analysis"]["result"]["team"] == "Red"
+    assert analyses["causal_team_effect"]["result"]["causal_identification"] == "unavailable"
+    assert analyses["causal_team_effect"]["result"]["causal_effect"] is None
+
+
 def test_player_intelligence_composes_multiple_question_keys():
     result = _engine().evaluate(
         {"scenario": "player_intelligence", "season": 2024, "competition": "RS",
