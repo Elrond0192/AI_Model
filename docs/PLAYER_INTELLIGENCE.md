@@ -28,6 +28,7 @@ The registry is exposed at:
 
 ## Still intentionally limited
 
+- **performance_attribution** combines season-over-season decomposition, role/usage changes, team-style alignment and observed team-context association. It is deliberately **partial**: it does not isolate individual teammate/lineup effects or prove causality.
 - **causal_team_effect** is now partially answerable: it measures the observed association between a player’s team context and his own rating across team-season observations, including team switches when available. The causal effect itself remains unavailable because explicit identification, confounder control and a defensible counterfactual design are still missing.
 - **potential_synthesis** does not replace the dedicated Prediction/Future Performance models.
 - **team_counterfactual** remains a fit/scenario estimate, not a causal statement.
@@ -50,6 +51,7 @@ This is intended for Chat V3 questions such as "is he improving, what is his rol
 The `player_intelligence` scenario now composes the appropriate analysis layers from a `question_key`. Examples:
 
 - `why_performing` → performance decomposition + metric explanation
+- `performance_attribution` → decomposition + role analysis + team usage + observed team-context association + metric explanation; teammate/lineup attribution remains explicitly unsupported
 - `change_vs_last_season` → decomposition + role analysis
 - `real_improvement` → decomposition + metric explanation
 - `current_role` → role analysis
