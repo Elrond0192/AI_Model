@@ -107,6 +107,28 @@ QUESTION_CAPABILITIES: tuple[QuestionCapability, ...] = (
         limitation="La stima è uno scenario controfattuale modellato, non un effetto causale certo.",
     ),
     QuestionCapability(
+        key="performance_attribution",
+        question="Il cambiamento dipende dal giocatore, dal ruolo o dal contesto della squadra?",
+        status="partial",
+        analyses=(
+            "performance_decomposition",
+            "role_analysis",
+            "team_usage_analysis",
+            "causal_team_effect",
+            "metric_explanation",
+        ),
+        missing_analyses=("teammate_lineup_attribution", "causal_identification"),
+        evidence=(
+            "season_over_season_player_metrics",
+            "role_and_usage_changes",
+            "observed_team_context_association",
+        ),
+        limitation=(
+            "La composizione distingue cambiamenti individuali e associazioni con il contesto squadra; "
+            "non isola l'effetto causale dei singoli compagni senza dati di lineup e un disegno causale."
+        ),
+    ),
+    QuestionCapability(
         key="causal_team_effect",
         question="La squadra sta causando il suo rendimento?",
         status="partial",

@@ -1753,6 +1753,13 @@ class ChatScenarioEngine:
         bundles = {
             "current_level": ("player_competition", "model_evidence", "metric_explanation"),
             "why_performing": ("performance_decomposition", "metric_explanation"),
+            "performance_attribution": (
+                "performance_decomposition",
+                "role_analysis",
+                "team_usage_analysis",
+                "causal_team_effect",
+                "metric_explanation",
+            ),
             "change_vs_last_season": ("performance_decomposition", "role_analysis", "metric_explanation"),
             "real_improvement": ("performance_decomposition", "metric_explanation"),
             "current_role": ("role_analysis",),
@@ -1816,12 +1823,25 @@ class ChatScenarioEngine:
             contexts = []
             for league_id in context_leagues:
                 context_analyses = {}
+                context_teams = list(teams)
+                if not context_teams and "team_usage_analysis" in scenarios:
+                    try:
+                        player_rows = self._player_rows(
+                            players[0], league_id, normalize_competition(spec.get("competition", "RS")),
+                            int(spec["season"]),
+                        )
+                        if not player_rows.empty:
+                            inferred_team = _to_int(player_rows.iloc[-1].get("team_id"))
+                            if inferred_team is not None:
+                                context_teams = [inferred_team]
+                    except (ValueError, KeyError, TypeError):
+                        pass
                 for name in scenarios:
                     if name == "compatibility":
                         continue
                     try:
                         context_analyses[name] = dispatch_multi[name](
-                            spec, players, teams, league_id, target_league
+                            spec, players, context_teams, league_id, target_league
                         )
                     except (ValueError, KeyError) as exc:
                         context_analyses[name] = {"available": False, "reason": str(exc)}
@@ -1956,6 +1976,20 @@ class ChatScenarioEngine:
             "clutch_analysis": self._clutch_analysis,
             "causal_team_effect": self._causal_team_effect,
         }
+        analysis_teams = list(teams)
+        if not analysis_teams and "team_usage_analysis" in scenarios and source_league is not None:
+            try:
+                player_rows = self._player_rows(
+                    players[0], source_league, normalize_competition(spec.get("competition", "RS")),
+                    int(spec["season"]),
+                )
+                if not player_rows.empty:
+                    inferred_team = _to_int(player_rows.iloc[-1].get("team_id"))
+                    if inferred_team is not None:
+                        analysis_teams = [inferred_team]
+            except (ValueError, KeyError, TypeError):
+                pass
+
         analyses = {}
         limitations = [
             "Player Intelligence compone evidenze descrittive e predittive esistenti; non trasforma una correlazione in causalità."
@@ -1965,7 +1999,7 @@ class ChatScenarioEngine:
                 continue
             fn = dispatch[name]
             try:
-                payload = fn(spec, players, teams, source_league, target_league)
+                payload = fn(spec, players, analysis_teams, source_league, target_league)
             except (ValueError, KeyError) as exc:
                 payload = {"available": False, "reason": str(exc)}
             analyses[name] = payload
