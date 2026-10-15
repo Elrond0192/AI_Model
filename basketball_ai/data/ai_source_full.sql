@@ -1728,6 +1728,38 @@ BEGIN
 END;
 $grant_ai_source$;
 
+-- ---------------------------------------------------------------------------
+-- Full access for the local worker role.
+--
+-- ai_source_full recreates canonical tables, while other AI_Source tables
+-- (for example, serving tables) may already exist. Grant all table/sequence
+-- privileges across the schema after the rebuild, without transferring object
+-- ownership away from hm_admin. Default privileges cover future objects created
+-- in this schema by the role executing this script.
+-- ---------------------------------------------------------------------------
+
+DO $grant_hm_local_workers$
+BEGIN
+    IF EXISTS (
+        SELECT 1
+        FROM pg_catalog.pg_roles
+        WHERE rolname = 'hm_local_workers'
+    ) THEN
+        EXECUTE 'GRANT USAGE ON SCHEMA "AI_Source" TO hm_local_workers';
+        EXECUTE 'GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA "AI_Source" TO hm_local_workers';
+        EXECUTE 'GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA "AI_Source" TO hm_local_workers';
+        EXECUTE 'ALTER DEFAULT PRIVILEGES IN SCHEMA "AI_Source" GRANT ALL PRIVILEGES ON TABLES TO hm_local_workers';
+        EXECUTE 'ALTER DEFAULT PRIVILEGES IN SCHEMA "AI_Source" GRANT ALL PRIVILEGES ON SEQUENCES TO hm_local_workers';
+
+        RAISE NOTICE
+            'AI_Source full table/sequence access granted to hm_local_workers';
+    ELSE
+        RAISE NOTICE
+            'AI_Source worker role "hm_local_workers" does not exist; no grant applied';
+    END IF;
+END;
+$grant_hm_local_workers$;
+
 -- Only final canonical indexes. The model mostly bulk-loads these tables, so
 -- indexes are limited to identity/time access paths actually used downstream.
 -- ---------------------------------------------------------------------------
