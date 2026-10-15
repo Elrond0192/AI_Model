@@ -114,51 +114,88 @@ BEGIN
         RAISE EXCEPTION 'league_key, season and competition are required';
     END IF;
 
+    -- Simulation feeds are optional external inputs. ai_source_full.sql must
+    -- not drop them, but a database without a feed must still be refreshable.
+    -- Clear stale derived rows first, then copy only when each source exists.
     DELETE FROM "AI_Source"."ScenarioPlayTypeStats"
      WHERE league_key = p_league_key AND season = p_season AND competition = normalized_competition;
-    INSERT INTO "AI_Source"."ScenarioPlayTypeStats"
-    SELECT player_id, team_id, opponent_team_id, league_key, season, upper(competition),
-           play_type, possessions, ppp, ppp_allowed
-      FROM "AI_Source"."SimulationPlayTypeStats"
-     WHERE league_key = p_league_key AND season = p_season
-       AND upper(competition) = normalized_competition;
+    IF to_regclass('"AI_Source"."SimulationPlayTypeStats"') IS NOT NULL THEN
+        EXECUTE $copy_play_type$
+            INSERT INTO "AI_Source"."ScenarioPlayTypeStats" (
+                player_id, team_id, opponent_team_id, league_key, season, competition,
+                play_type, possessions, ppp, ppp_allowed
+            )
+            SELECT player_id, team_id, opponent_team_id, league_key, season, upper(competition),
+                   play_type, possessions, ppp, ppp_allowed
+              FROM "AI_Source"."SimulationPlayTypeStats"
+             WHERE league_key = $1 AND season = $2 AND upper(competition) = $3
+        $copy_play_type$ USING p_league_key, p_season, normalized_competition;
+    ELSE
+        RAISE NOTICE 'Skipping play-type scenario feed: AI_Source.SimulationPlayTypeStats is missing';
+    END IF;
 
     DELETE FROM "AI_Source"."ScenarioShotProfiles"
      WHERE league_key = p_league_key AND season = p_season AND competition = normalized_competition;
-    INSERT INTO "AI_Source"."ScenarioShotProfiles"
-    SELECT player_id, team_id, league_key, season, upper(competition), zone, attempts, fg_pct
-      FROM "AI_Source"."SimulationShotProfiles"
-     WHERE league_key = p_league_key AND season = p_season
-       AND upper(competition) = normalized_competition;
+    IF to_regclass('"AI_Source"."SimulationShotProfiles"') IS NOT NULL THEN
+        EXECUTE $copy_shot_profiles$
+            INSERT INTO "AI_Source"."ScenarioShotProfiles" (
+                player_id, team_id, league_key, season, competition, zone, attempts, fg_pct
+            )
+            SELECT player_id, team_id, league_key, season, upper(competition), zone, attempts, fg_pct
+              FROM "AI_Source"."SimulationShotProfiles"
+             WHERE league_key = $1 AND season = $2 AND upper(competition) = $3
+        $copy_shot_profiles$ USING p_league_key, p_season, normalized_competition;
+    ELSE
+        RAISE NOTICE 'Skipping shot-profile scenario feed: AI_Source.SimulationShotProfiles is missing';
+    END IF;
 
     DELETE FROM "AI_Source"."ScenarioDefenderMatchups"
      WHERE league_key = p_league_key AND season = p_season AND competition = normalized_competition;
-    INSERT INTO "AI_Source"."ScenarioDefenderMatchups"
-    SELECT offensive_player_id, defender_id, team_id, opponent_team_id,
-           league_key, season, upper(competition), count(*)::double precision,
-           avg(assignment_probability), sum(points),
-           sum(CASE WHEN turnover THEN 1 ELSE 0 END)::double precision
-      FROM "AI_Source"."SimulationPbpEvents"
-     WHERE league_key = p_league_key AND season = p_season
-       AND upper(competition) = normalized_competition AND defender_id IS NOT NULL
-     GROUP BY offensive_player_id, defender_id, team_id, opponent_team_id,
-              league_key, season, upper(competition);
+    IF to_regclass('"AI_Source"."SimulationPbpEvents"') IS NOT NULL THEN
+        EXECUTE $copy_defender_matchups$
+            INSERT INTO "AI_Source"."ScenarioDefenderMatchups" (
+                offensive_player_id, defender_id, team_id, opponent_team_id,
+                league_key, season, competition, possessions, assignment_probability,
+                points, turnovers_forced
+            )
+            SELECT offensive_player_id, defender_id, team_id, opponent_team_id,
+                   league_key, season, upper(competition), count(*)::double precision,
+                   avg(assignment_probability), sum(points),
+                   sum(CASE WHEN turnover THEN 1 ELSE 0 END)::double precision
+              FROM "AI_Source"."SimulationPbpEvents"
+             WHERE league_key = $1 AND season = $2
+               AND upper(competition) = $3 AND defender_id IS NOT NULL
+             GROUP BY offensive_player_id, defender_id, team_id, opponent_team_id,
+                      league_key, season, upper(competition)
+        $copy_defender_matchups$ USING p_league_key, p_season, normalized_competition;
+    ELSE
+        RAISE NOTICE 'Skipping defender matchup feed: AI_Source.SimulationPbpEvents is missing';
+    END IF;
 
     DELETE FROM "AI_Source"."ScenarioLineupStats"
      WHERE league_key = p_league_key AND season = p_season AND competition = normalized_competition;
-    INSERT INTO "AI_Source"."ScenarioLineupStats"
-    SELECT player_ids, team_id, opponent_team_id, offense_player_id, defense_player_id,
-           league_key, season, upper(competition),
-           avg(assignment_probability), sum(possessions), sum(points), sum(points_allowed),
-           sum(turnovers_forced),
-           sum(ortg * possessions) / NULLIF(sum(possessions), 0),
-           sum(drtg * possessions) / NULLIF(sum(possessions), 0),
-           sum(net_rtg * possessions) / NULLIF(sum(possessions), 0)
-      FROM "AI_Source"."SimulationLineupStints"
-     WHERE league_key = p_league_key AND season = p_season
-       AND upper(competition) = normalized_competition
-     GROUP BY player_ids, team_id, opponent_team_id, offense_player_id,
-              defense_player_id, league_key, season, upper(competition);
+    IF to_regclass('"AI_Source"."SimulationLineupStints"') IS NOT NULL THEN
+        EXECUTE $copy_lineup_stats$
+            INSERT INTO "AI_Source"."ScenarioLineupStats" (
+                player_ids, team_id, opponent_team_id, offense_player_id, defense_player_id,
+                league_key, season, competition, assignment_probability, possessions, points,
+                points_allowed, turnovers_forced, ortg, drtg, net_rtg
+            )
+            SELECT player_ids, team_id, opponent_team_id, offense_player_id, defense_player_id,
+                   league_key, season, upper(competition),
+                   avg(assignment_probability), sum(possessions), sum(points), sum(points_allowed),
+                   sum(turnovers_forced),
+                   sum(ortg * possessions) / NULLIF(sum(possessions), 0),
+                   sum(drtg * possessions) / NULLIF(sum(possessions), 0),
+                   sum(net_rtg * possessions) / NULLIF(sum(possessions), 0)
+              FROM "AI_Source"."SimulationLineupStints"
+             WHERE league_key = $1 AND season = $2 AND upper(competition) = $3
+             GROUP BY player_ids, team_id, opponent_team_id, offense_player_id,
+                      defense_player_id, league_key, season, upper(competition)
+        $copy_lineup_stats$ USING p_league_key, p_season, normalized_competition;
+    ELSE
+        RAISE NOTICE 'Skipping lineup scenario feed: AI_Source.SimulationLineupStints is missing';
+    END IF;
 END;
 $$;
 
