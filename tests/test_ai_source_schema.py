@@ -148,6 +148,16 @@ def test_ai_source_reapplies_hm_admin_access_on_rebuild():
     assert "grant select on table" in sql
 
 
+def test_ai_source_grants_full_access_to_hm_local_workers_on_rebuild():
+    sql = SOURCE_SQL.read_text(encoding="utf-8").lower()
+    assert "where rolname = 'hm_local_workers'" in sql
+    assert 'grant usage on schema "ai_source" to hm_local_workers' in sql
+    assert 'grant all privileges on all tables in schema "ai_source" to hm_local_workers' in sql
+    assert 'grant all privileges on all sequences in schema "ai_source" to hm_local_workers' in sql
+    assert 'alter default privileges in schema "ai_source" grant all privileges on tables to hm_local_workers' in sql
+    assert 'alter default privileges in schema "ai_source" grant all privileges on sequences to hm_local_workers' in sql
+
+
 def test_ai_source_uses_native_typed_columns_for_row_transforms():
     sql = SOURCE_SQL.read_text(encoding="utf-8").lower()
     assert "pg_temp.ai_expr" in sql
