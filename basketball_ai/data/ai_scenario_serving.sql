@@ -339,6 +339,18 @@ BEGIN
 END;
 $refresh_year$;
 
+-- Backward-compatible public name used by seasonal ETL jobs. Delegate to the
+-- canonical year-wide refresh so there is a single implementation of the loop.
+CREATE OR REPLACE PROCEDURE "AI_Source"."RefreshContextSeasonal"(
+    p_season integer
+)
+LANGUAGE plpgsql
+AS $refresh_seasonal$
+BEGIN
+    CALL "AI_Source"."RefreshContext"(p_season);
+END;
+$refresh_seasonal$;
+
 -- Administrative/runtime read access is re-applied on every serving rebuild.
 DO $grant_ai_source_serving$
 DECLARE
@@ -381,7 +393,8 @@ BEGIN
                 'GRANT EXECUTE ON PROCEDURE "AI_Source"."RefreshScenarioServing"(text, integer, text),
                                          "AI_Source"."RefreshTrainingServing"(text, integer, text),
                                          "AI_Source"."RefreshContext"(text, integer, text),
-                                         "AI_Source"."RefreshContext"(integer)
+                                         "AI_Source"."RefreshContext"(integer),
+                                         "AI_Source"."RefreshContextSeasonal"(integer)
                  TO %I',
                 read_role
             );
