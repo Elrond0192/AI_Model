@@ -363,6 +363,7 @@ BEGIN
     FOREACH read_role IN ARRAY ARRAY[
         'ai_model',
         'hm_admin',
+        'hm_local_workers',
         requested_role
     ]
     LOOP
