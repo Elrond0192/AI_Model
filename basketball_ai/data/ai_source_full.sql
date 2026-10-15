@@ -29,9 +29,10 @@ BEGIN;
 CREATE SCHEMA IF NOT EXISTS "AI_Source";
 
 -- ---------------------------------------------------------------------------
--- Remove only the canonical objects owned by this bootstrap plus legacy
--- RawInternal/simulation objects from previous versions. Serving tables
--- (Training*, Scenario*, ServingRefreshState, etc.) are intentionally kept.
+-- Remove only the canonical objects owned by this bootstrap and obsolete
+-- RawInternal objects. Simulation* feed tables are external inputs consumed by
+-- ai_scenario_serving.sql; preserve them across canonical rebuilds. Serving
+-- tables (Training*, Scenario*, ServingRefreshState, etc.) are intentionally kept.
 -- ---------------------------------------------------------------------------
 
 DO $cleanup$
@@ -86,10 +87,7 @@ BEGIN
         FROM pg_catalog.pg_class c
         JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
         WHERE n.nspname = 'AI_Source'
-          AND (
-              c.relname LIKE '%RawInternal'
-              OR c.relname LIKE 'Simulation%'
-          )
+          AND c.relname LIKE '%RawInternal'
           AND c.relkind IN ('r', 'p', 'v', 'm')
     LOOP
         IF r.relkind = 'm' THEN
