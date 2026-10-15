@@ -72,6 +72,7 @@ def test_competition_schema_keeps_tot_separate_from_rs():
 
 def test_ai_source_does_not_own_simulation_feeds():
     sql = SOURCE_SQL.read_text(encoding="utf-8").lower()
+    assert "c.relname like 'simulation%'" not in sql
     for token in (
         "simulationpbpevents",
         "simulationlineupstints",
@@ -180,6 +181,21 @@ def test_ai_source_schemas_have_no_sql_server_ddl():
         assert token not in sql
 
 
+def test_scenario_serving_tolerates_missing_optional_simulation_feeds():
+    sql = SERVING_SQL.read_text(encoding="utf-8").lower()
+    for relation in (
+        '"ai_source"."simulationplaytypestats"',
+        '"ai_source"."simulationshotprofiles"',
+        '"ai_source"."simulationpbpevents"',
+        '"ai_source"."simulationlineupstints"',
+    ):
+        assert f"to_regclass({relation!r}) is not null" in sql
+    assert "skipping play-type scenario feed" in sql
+    assert "skipping shot-profile scenario feed" in sql
+    assert "skipping defender matchup feed" in sql
+    assert "skipping lineup scenario feed" in sql
+
+
 def test_scenario_serving_is_physical_indexed_and_incremental():
     sql = SERVING_SQL.read_text(encoding="utf-8").lower()
     for table in (
@@ -195,6 +211,10 @@ def test_scenario_serving_is_physical_indexed_and_incremental():
     assert 'create or replace procedure "ai_source"."refreshtrainingserving"' in sql
     assert 'create or replace procedure "ai_source"."refreshcontext"' in sql
     assert 'create or replace procedure "ai_source"."refreshcontext"(p_season integer)' in sql
+    assert "'hm_local_workers'" in sql
+    assert 'create or replace procedure "ai_source"."refreshcontextseasonal"(' in sql
+    assert 'call "ai_source"."refreshcontext"(p_season)' in sql
+    assert '"ai_source"."refreshcontextseasonal"(integer)' in sql
     assert 'from "ai_source"."playercompetitionstats"' in sql
     assert 'from "ai_source"."teamcompetitionstats"' in sql
     assert 'call "ai_source"."refreshcontext"(' in sql
