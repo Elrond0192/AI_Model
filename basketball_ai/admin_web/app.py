@@ -614,7 +614,7 @@ def _future_performance_worker(active_profile: str | None, actor: str) -> None:
             raise RuntimeError("Nessun dato player_stats disponibile per Future Performance")
 
         observed_seasons = _seasons(data)
-        training_target_seasons, excluded_in_progress, blocking = (
+        training_target_seasons, excluded_latest, blocking = (
             _future_performance_training_seasons(observed_seasons)
         )
         if blocking:
@@ -627,7 +627,7 @@ def _future_performance_worker(active_profile: str | None, actor: str) -> None:
                 "Servono almeno cinque stagioni target idonee per Future Performance. "
                 f"Stagioni osservate: {observed_seasons}; "
                 f"stagioni target idonee: {training_target_seasons}; "
-                f"stagioni in corso escluse: {excluded_in_progress}."
+                f"ultima stagione osservata esclusa: {excluded_latest}."
             )
 
         _set_future_performance(
@@ -636,7 +636,7 @@ def _future_performance_worker(active_profile: str | None, actor: str) -> None:
             message=(
                 "Costruzione delle coppie t→t+1, validazione expanding OOS e fit multivariato…"
                 + (
-                    f" ({len(excluded_in_progress)} stagione/i in corso escluse come target)"
+                    f" ({len(excluded_latest)} ultima/e stagione/i osservata/e escluse come target)"
                     if excluded_in_progress
                     else ""
                 )
@@ -665,6 +665,7 @@ def _future_performance_worker(active_profile: str | None, actor: str) -> None:
             "n_pairs": metadata.get("n_pairs"),
             "n_players": metadata.get("n_players"),
             "target_seasons": training_target_seasons,
+            "excluded_latest_observed_seasons": excluded_latest,
         }
         _audit(
             "future_performance_training_completed",
