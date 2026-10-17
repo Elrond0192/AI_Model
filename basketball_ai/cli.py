@@ -161,17 +161,43 @@ def mode_prediction_calibrate(args: argparse.Namespace) -> None:
     if args.database_profile:
         os.environ["DATABASE_PROFILE"] = args.database_profile
 
-    data = _load_data(args)
+    # Calibration needs the complete historical source, not the potentially
+    # truncated TrainingPlayerCompetitionStats serving materialization. Use an
+    # explicit snapshot only when the operator deliberately requested one.
+    if getattr(args, "snapshot_id", None):
+        data = _load_data(args)
+    else:
+        from basketball_ai.data.postgres_loader import load_all_data
+
+        data = load_all_data(purpose="analysis")
+
     stats = data["player_stats"].copy()
-    # The latest observed season may still be in progress. It is a source season
-    # for serving, but it must not be used as a completed OOS calibration target.
-    seasons = sorted({int(str(v).split("-")[0]) for v in stats["season"].dropna()})
+    if stats.empty or "season" not in stats.columns:
+        raise RuntimeError("Prediction calibration requires player season history")
+
+    # Match the project's season convention (integer year or "YYYY-YYYY"),
+    # and avoid pd.to_numeric() directly on season strings such as "2025-2026".
+    season_years = pd.to_numeric(
+        stats["season"].astype(str).str.split("-", n=1).str[0],
+        errors="coerce",
+    )
+    seasons = sorted({int(value) for value in season_years.dropna()})
     if len(seasons) < 5:
-        raise RuntimeError("At least five seasons are required for Prediction calibration")
+        source_contract = data.get("source_contract", "unknown")
+        raise RuntimeError(
+            "At least five seasons are required for Prediction calibration; "
+            f"loaded {len(seasons)} season(s) {seasons} from {source_contract}. "
+            "Calibration must read complete AI_Source.PlayerCompetitionStats history."
+        )
+
+    # The newest season may be in progress; it may supply features for serving,
+    # but it cannot be a completed outcome target for calibration.
     completed_max = max(seasons) - 1
-    stats = stats.loc[pd.to_numeric(stats["season"], errors="coerce") <= completed_max].copy()
+    stats = stats.loc[season_years <= completed_max].copy()
     if stats.empty:
-        raise RuntimeError("No completed seasons remain for Prediction calibration")
+        raise RuntimeError(
+            f"No completed seasons remain for Prediction calibration (latest={max(seasons)})"
+        )
     calibration_data = {**data, "player_stats": stats.reset_index(drop=True)}
 
     report = run_backtest(
