@@ -202,6 +202,26 @@ def test_mode_api_fails_closed_without_production(monkeypatch, tmp_path):
         )
 
 
+def test_main_dispatches_prediction_calibration(monkeypatch):
+    import basketball_ai.cli as cli
+
+    seen = {}
+
+    def fake_calibrate(args):
+        seen["mode"] = args.mode
+        seen["output_dir"] = args.prediction_calibration_output_dir
+
+    monkeypatch.setattr(cli, "mode_prediction_calibrate", fake_calibrate)
+    cli.main([
+        "--mode", "prediction-calibrate",
+        "--prediction-calibration-output-dir", "/tmp/prediction-calibration",
+    ])
+    assert seen == {
+        "mode": "prediction-calibrate",
+        "output_dir": "/tmp/prediction-calibration",
+    }
+
+
 def test_main_dispatches(monkeypatch):
     import basketball_ai.cli as cli
 
