@@ -478,6 +478,7 @@ def main(argv: list[str] | None = None) -> None:
     {
         "train": mode_train,
         "backtest": mode_backtest,
+        "prediction-calibrate": mode_prediction_calibrate,
         "validate-data": mode_validate_data,
         "bb-rating-calibrate": mode_bb_rating_calibrate,
         "future-performance-train": mode_future_performance_train,
