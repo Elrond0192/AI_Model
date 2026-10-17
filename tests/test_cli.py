@@ -202,6 +202,70 @@ def test_mode_api_fails_closed_without_production(monkeypatch, tmp_path):
         )
 
 
+def test_prediction_calibration_uses_full_canonical_history(monkeypatch, capsys, tmp_path):
+    import basketball_ai.cli as cli
+    import basketball_ai.data.postgres_loader as postgres_loader
+    import basketball_ai.models.backtest as backtest
+    import basketball_ai.prediction_calibration as calibration_module
+
+    seen = {}
+    seasons = [f"{year}-{year + 1}" for year in range(2018, 2027)]
+    data = {
+        "player_stats": pd.DataFrame({"season": seasons, "player_id": range(len(seasons))}),
+        "team_season_stats": pd.DataFrame({"season": seasons}),
+        "source_contract": "competition-v2:canonical",
+    }
+
+    def fake_load_all_data(*, purpose):
+        seen["purpose"] = purpose
+        return data
+
+    def fake_backtest(calibration_data, **kwargs):
+        years = pd.to_numeric(
+            calibration_data["player_stats"]["season"].astype(str).str.split("-").str[0],
+            errors="coerce",
+        )
+        seen["years"] = sorted(years.astype(int).unique().tolist())
+        seen["return_records"] = kwargs.get("return_records")
+        return {"valid": True, "_oos_records": [{"prediction": 5.0, "actual": 5.5}]}
+
+    calibration = {
+        "calibration_version": "1.0",
+        "prediction_model_version": "2.6.0",
+        "dataset": {"rows": 1, "target_seasons": [2025]},
+        "validation": {"status": "validated_oos", "n_folds": 1},
+        "fit": {
+            "raw_rmse_native": 1.0,
+            "calibrated_rmse_native": 0.9,
+            "raw_mae_native": 0.8,
+            "calibrated_mae_native": 0.7,
+        },
+    }
+
+    monkeypatch.setattr(postgres_loader, "load_all_data", fake_load_all_data)
+    monkeypatch.setattr(backtest, "run_backtest", fake_backtest)
+    monkeypatch.setattr(calibration_module, "build_prediction_calibration", lambda records: calibration)
+    monkeypatch.setattr(
+        calibration_module,
+        "write_prediction_calibration",
+        lambda report, output_dir: {"json": str(tmp_path / "prediction_rating_calibration.json"),
+                                    "markdown": str(tmp_path / "prediction_rating_calibration.md")},
+    )
+
+    cli.mode_prediction_calibrate(
+        argparse.Namespace(
+            database_profile="production",
+            snapshot_id=None,
+            prediction_calibration_output_dir=str(tmp_path),
+        )
+    )
+    report = json.loads(capsys.readouterr().out)
+    assert seen["purpose"] == "analysis"
+    assert seen["years"] == list(range(2018, 2026))
+    assert seen["return_records"] is True
+    assert report["dataset"]["rows"] == 1
+
+
 def test_main_dispatches_prediction_calibration(monkeypatch):
     import basketball_ai.cli as cli
 
