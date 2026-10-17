@@ -625,7 +625,7 @@ def _future_performance_worker(active_profile: str | None, actor: str) -> None:
         )
         if blocking:
             raise RuntimeError(
-                "Snapshot contiene stagioni non idonee al training: "
+                "Dataset contiene stagioni bloccate o con stato lifecycle non valido: "
                 + ", ".join(map(str, blocking))
             )
         if len(training_target_seasons) < 5:
