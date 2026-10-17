@@ -92,6 +92,55 @@ def test_training_seasons_filters_in_progress_and_blocks_unknown(monkeypatch, tm
     assert blocked == [2026]
 
 
+
+def test_future_performance_training_uses_historical_in_progress_seasons(monkeypatch, tmp_path):
+    """Only the latest in-progress season is excluded from Future Performance."""
+    seasons = list(range(2018, 2027))
+    lifecycle_path = tmp_path / "season-lifecycle.json"
+    lifecycle_path.write_text(
+        json.dumps({
+            "2018": {"status": "in_progress"},
+            "2019": {"status": "in_progress"},
+            "2020": {"status": "complete"},
+            "2021": {"status": "in_progress"},
+            "2022": {"status": "complete"},
+            "2023": {"status": "in_progress"},
+            "2024": {"status": "complete"},
+            "2025": {"status": "in_progress"},
+            "2026": {"status": "in_progress"},
+        }),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(admin, "SEASON_LIFECYCLE_FILE", lifecycle_path)
+
+    training, excluded, blocking = admin._future_performance_training_seasons(seasons)
+
+    # The historical range supports target seasons 2019–2025 (with 2018 acting
+    # as the first source season); 2026 is the active/in-progress frontier.
+    assert training == list(range(2018, 2026))
+    assert excluded == [2026]
+    assert blocking == []
+
+
+def test_future_performance_training_keeps_locked_seasons_blocking(monkeypatch, tmp_path):
+    lifecycle_path = tmp_path / "season-lifecycle.json"
+    lifecycle_path.write_text(
+        json.dumps({
+            "2022": {"status": "complete"},
+            "2023": {"status": "locked"},
+            "2024": {"status": "complete"},
+            "2025": {"status": "in_progress"},
+        }),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(admin, "SEASON_LIFECYCLE_FILE", lifecycle_path)
+
+    training, excluded, blocking = admin._future_performance_training_seasons([2022, 2023, 2024, 2025])
+
+    assert training == [2022, 2024]
+    assert excluded == [2025]
+    assert blocking == [2023]
+
 def _request(cookies: dict[str, str] | None = None) -> Request:
     cookie = "; ".join(f"{k}={v}" for k, v in (cookies or {}).items())
     headers = [(b"cookie", cookie.encode())] if cookie else []
