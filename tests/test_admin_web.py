@@ -122,6 +122,41 @@ def test_future_performance_training_uses_historical_in_progress_seasons(monkeyp
     assert blocking == []
 
 
+def test_future_performance_accepts_legacy_historical_seasons_without_lifecycle_rows(monkeypatch, tmp_path):
+    """Historical observed seasons predate the lifecycle registry; only the frontier is excluded."""
+    seasons = list(range(2018, 2027))
+    lifecycle_path = tmp_path / "season-lifecycle.json"
+    # Simulate a lifecycle file populated only for newer seasons. Historical
+    # observed years without entries must not prevent retraining the model.
+    lifecycle_path.write_text(
+        json.dumps({
+            "2024": {"status": "complete"},
+            "2025": {"status": "unclassified"},
+            "2026": {"status": "unclassified"},
+        }),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(admin, "SEASON_LIFECYCLE_FILE", lifecycle_path)
+
+    training, excluded, blocking = admin._future_performance_training_seasons(seasons)
+
+    assert training == list(range(2018, 2026))
+    assert excluded == [2026]
+    assert blocking == []
+
+
+def test_future_performance_with_no_lifecycle_file_uses_observed_history(monkeypatch, tmp_path):
+    """A missing optional lifecycle file must not block all legacy Future Performance data."""
+    lifecycle_path = tmp_path / "missing-season-lifecycle.json"
+    monkeypatch.setattr(admin, "SEASON_LIFECYCLE_FILE", lifecycle_path)
+
+    training, excluded, blocking = admin._future_performance_training_seasons(list(range(2018, 2027)))
+
+    assert training == list(range(2018, 2026))
+    assert excluded == [2026]
+    assert blocking == []
+
+
 def test_future_performance_training_keeps_locked_seasons_blocking(monkeypatch, tmp_path):
     lifecycle_path = tmp_path / "season-lifecycle.json"
     lifecycle_path.write_text(
