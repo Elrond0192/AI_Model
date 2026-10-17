@@ -84,9 +84,11 @@ This is an evaluation gate, not an automatic quality claim: the Control Center m
 
 ## Lifecycle and current-season handling
 
-The default training path excludes the latest observed season as a target. This matches the live-data lifecycle where the latest season may still be **In corso**.
+The default training path excludes the latest observed season as a target when its lifecycle status is **In corso** or **unclassified**. The latest season can still be used as the source season for serving.
 
-The latest season can still be used as the source season for serving. A future 2027 forecast can therefore use observed 2026 features without making 2026 a training target until that season is complete.
+Historical observed seasons that predate or are missing from the lifecycle registry remain eligible for pair construction once a later season is observed. This avoids treating legacy historical data as blocked merely because the lifecycle file has no entry for those years. Explicitly **locked** seasons and invalid lifecycle statuses remain blocking. In all cases, training pairs are still built only for consecutive player + league + competition seasons; a missing season is never bridged.
+
+A future 2027 forecast can therefore use observed 2026 features without making an in-progress or unclassified 2026 season a training target.
 
 ## Artifact
 
