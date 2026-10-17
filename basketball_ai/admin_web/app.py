@@ -636,8 +636,8 @@ def _future_performance_worker(active_profile: str | None, actor: str) -> None:
             message=(
                 "Costruzione delle coppie t→t+1, validazione expanding OOS e fit multivariato…"
                 + (
-                    f" ({len(excluded_latest)} ultima/e stagione/i osservata/e escluse come target)"
-                    if excluded_in_progress
+                    f" (stagione/i più recente/i {excluded_latest} esclusa/e come target)"
+                    if excluded_latest
                     else ""
                 )
             ),
