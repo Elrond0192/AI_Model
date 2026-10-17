@@ -223,14 +223,18 @@ def _training_seasons(seasons: list[int]) -> tuple[list[int], list[int], list[in
 def _future_performance_training_seasons(
     seasons: list[int],
 ) -> tuple[list[int], list[int], list[int]]:
-    """Select Future Performance target years without treating stale historical
-    'in_progress' labels as current seasons.
+    """Select eligible Future Performance target years from observed season data.
 
-    Future Performance is trained on observed t -> t+1 transitions. If data for
-    a later season exists, an older season labelled in_progress is no longer the
-    active frontier and can be used as a historical target. Only the latest
-    observed in-progress season is excluded. Explicitly locked and unclassified
-    seasons remain fail-closed, as in the Prediction Model lifecycle contract.
+    Unlike the general Prediction Model training gate, this is a transition-based
+    trainer: it can only fit rows where the same player/league/competition has
+    consecutive source and target seasons. Older observed seasons labelled
+    in_progress by a stale lifecycle file, or left unclassified because the
+    lifecycle registry was introduced later, are historical once a later season
+    is present and remain eligible for pair construction.
+
+    The latest observed season is excluded as a target when it is in progress or
+    unclassified. Explicit locked seasons and invalid lifecycle values remain
+    blocking; those are deliberate controls and must not be bypassed.
     """
     observed = sorted({int(season) for season in seasons})
     if not observed:
@@ -242,27 +246,29 @@ def _future_performance_training_seasons(
         season: str(values.get(str(season), {}).get("status", "unclassified")).strip().lower()
         for season in observed
     }
-    training_target_seasons = sorted(
-        season
-        for season in observed
-        if lifecycle.get(season) == "complete"
-        or (
-            lifecycle.get(season) == "in_progress"
-            and season < latest_observed
-        )
-    )
-    excluded_in_progress = sorted(
-        season
-        for season in observed
-        if lifecycle.get(season) == "in_progress" and season == latest_observed
-    )
-    blocking = sorted(
-        season
-        for season in observed
-        if lifecycle.get(season) not in {"complete", "in_progress"}
-    )
-    return training_target_seasons, excluded_in_progress, blocking
 
+    training_target_seasons: list[int] = []
+    excluded_latest: list[int] = []
+    blocking: list[int] = []
+
+    for season in observed:
+        status = lifecycle[season]
+        if status == "locked":
+            blocking.append(season)
+        elif status == "complete":
+            training_target_seasons.append(season)
+        elif status in {"in_progress", "unclassified"}:
+            if season < latest_observed:
+                # A later observed season proves this is no longer the active
+                # frontier; actual training pairs are still checked strictly
+                # for consecutive years in PlayerFuturePerformanceModel._build_pairs.
+                training_target_seasons.append(season)
+            else:
+                excluded_latest.append(season)
+        else:
+            blocking.append(season)
+
+    return training_target_seasons, excluded_latest, blocking
 
 def _filter_training_data(data: dict[str, Any]) -> dict[str, Any]:
     """Exclude in-progress seasons from model fitting/backtesting while preserving them in snapshots."""
