@@ -225,21 +225,25 @@ def _future_performance_training_seasons(
 ) -> tuple[list[int], list[int], list[int]]:
     """Select eligible Future Performance target years from observed season data.
 
-    Unlike the general Prediction Model training gate, this is a transition-based
-    trainer: it can only fit rows where the same player/league/competition has
-    consecutive source and target seasons. Older observed seasons labelled
-    in_progress by a stale lifecycle file, or left unclassified because the
-    lifecycle registry was introduced later, are historical once a later season
-    is present and remain eligible for pair construction.
+    Future Performance learns only consecutive t -> t+1 pairs within each player,
+    league and competition. At the dataset level, a year can be a target only
+    when the immediately preceding year is also observed. This excludes the
+    earliest season, which can supply source features but cannot be a target.
 
-    The latest observed season is excluded as a target when it is in progress or
-    unclassified. Explicit locked seasons and invalid lifecycle values remain
-    blocking; those are deliberate controls and must not be bypassed.
+    Older observed seasons labelled in_progress by a stale lifecycle file, or
+    left unclassified because the lifecycle registry was introduced later, are
+    historical once a later season is present and remain eligible for pair
+    construction. The latest observed season is excluded as a target when it is
+    in_progress or unclassified. Explicit locked seasons and invalid lifecycle
+    values remain blocking; those are deliberate controls and must not be
+    bypassed.
     """
     observed = sorted({int(season) for season in seasons})
     if not observed:
         return [], [], []
 
+    observed_set = set(observed)
+    candidate_targets = {season for season in observed if season - 1 in observed_set}
     values = _season_lifecycle()
     latest_observed = observed[-1]
     lifecycle = {
@@ -256,14 +260,16 @@ def _future_performance_training_seasons(
         if status == "locked":
             blocking.append(season)
         elif status == "complete":
-            training_target_seasons.append(season)
+            if season in candidate_targets:
+                training_target_seasons.append(season)
         elif status in {"in_progress", "unclassified"}:
             if season < latest_observed:
-                # A later observed season proves this is no longer the active
-                # frontier; actual training pairs are still checked strictly
-                # for consecutive years in PlayerFuturePerformanceModel._build_pairs.
-                training_target_seasons.append(season)
-            else:
+                if season in candidate_targets:
+                    # A later observed year proves this is no longer the active
+                    # frontier; exact training pairs are still checked within
+                    # each player/league/competition by _build_pairs.
+                    training_target_seasons.append(season)
+            elif season in candidate_targets:
                 excluded_latest.append(season)
         else:
             blocking.append(season)
