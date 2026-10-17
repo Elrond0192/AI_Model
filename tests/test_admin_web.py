@@ -115,9 +115,8 @@ def test_future_performance_training_uses_historical_in_progress_seasons(monkeyp
 
     training, excluded, blocking = admin._future_performance_training_seasons(seasons)
 
-    # The historical range supports target seasons 2019–2025 (with 2018 acting
-    # as the first source season); 2026 is the active/in-progress frontier.
-    assert training == list(range(2018, 2026))
+    # 2018 is source-only; eligible target years are 2019–2025.
+    assert training == list(range(2019, 2026))
     assert excluded == [2026]
     assert blocking == []
 
@@ -140,7 +139,7 @@ def test_future_performance_accepts_legacy_historical_seasons_without_lifecycle_
 
     training, excluded, blocking = admin._future_performance_training_seasons(seasons)
 
-    assert training == list(range(2018, 2026))
+    assert training == list(range(2019, 2026))
     assert excluded == [2026]
     assert blocking == []
 
@@ -152,7 +151,7 @@ def test_future_performance_with_no_lifecycle_file_uses_observed_history(monkeyp
 
     training, excluded, blocking = admin._future_performance_training_seasons(list(range(2018, 2027)))
 
-    assert training == list(range(2018, 2026))
+    assert training == list(range(2019, 2026))
     assert excluded == [2026]
     assert blocking == []
 
@@ -172,7 +171,8 @@ def test_future_performance_training_keeps_locked_seasons_blocking(monkeypatch, 
 
     training, excluded, blocking = admin._future_performance_training_seasons([2022, 2023, 2024, 2025])
 
-    assert training == [2022, 2024]
+    # 2022 is source-only; 2024 is the only eligible unlocked target.
+    assert training == [2024]
     assert excluded == [2025]
     assert blocking == [2023]
 
