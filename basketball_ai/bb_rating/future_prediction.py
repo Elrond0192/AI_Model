@@ -718,4 +718,10 @@ class BBRatingFuturePredictionModel:
             raise ValueError("Invalid BB Prediction Model artifact")
         if metadata.get("feature_version") != FEATURE_VERSION:
             raise ValueError("Unsupported BB Prediction Model feature version")
+        if metadata.get("target") != "official_bb_rating_t_plus_1" or metadata.get("target_scale") != [1, 100]:
+            raise ValueError("BB Prediction Model target contract is not official 1-100 BB-Rating")
+        if metadata.get("model_version") != model.metadata.get("model_version"):
+            raise ValueError("BB Prediction Model metadata/artifact version mismatch")
+        if model.calibrator is None or not model.residual_intervals.get("global"):
+            raise ValueError("BB Prediction Model calibration or uncertainty artifact is incomplete")
         return model
