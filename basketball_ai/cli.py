@@ -78,8 +78,9 @@ def mode_prepare_snapshot(args: argparse.Namespace) -> None:
 
 
 def mode_refresh_serving(args: argparse.Namespace) -> None:
-    if not args.league_key or args.season is None or not args.competition:
-        raise SystemExit("--league-key, --season and --competition are required")
+    """Refresh every league/competition partition for one season."""
+    if args.season is None:
+        raise SystemExit("--season is required")
     if args.database_profile:
         os.environ["DATABASE_PROFILE"] = args.database_profile
     from sqlalchemy import text
@@ -90,16 +91,16 @@ def mode_refresh_serving(args: argparse.Namespace) -> None:
     try:
         with engine.begin() as connection:
             connection.execute(
-                text('CALL "AI_Source"."RefreshContext"(:league, :season, :competition)'),
-                {
-                    "league": args.league_key,
-                    "season": args.season,
-                    "competition": args.competition,
-                },
+                text('CALL "AI_Source"."RefreshContextSeasonal"(:season)'),
+                {"season": args.season},
             )
     finally:
         engine.dispose()
-    print(json.dumps({"refreshed": True, "league_key": args.league_key, "season": args.season, "competition": args.competition.upper()}))
+    print(json.dumps({
+        "refreshed": True,
+        "season": args.season,
+        "scope": "all_leagues_and_competitions",
+    }))
 
 
 def _latest_season(data: dict[str, Any]) -> int:
