@@ -139,6 +139,6 @@ an unavailable source field remain distinguishable.
 - `Anagrafiche`, `Analisi`, `Boxscore`: source schemas, never written by AI_Model.
 
 
-## Metric Rating deployment caveat
+## Metric Rating storage
 
-The Metric Rating runtime expects versioned tables in schema `"AI"` (`MetricDefinition`, `MetricDistribution`, `MetricRating`). The current repository references `basketball_ai/data/ai_metric_schema.sql` from its backfill workflow, but that file is absent from the tracked tree. A fresh database cannot be considered fully provisioned for Metric Rating until the DDL is restored and validated; do not assume `ai_schema.sql` creates these metric-rating tables.
+When Metric Rating is enabled, install its independent storage contract with `psql -d YOUR_DATABASE -f basketball_ai/data/ai_metric_schema.sql` after the base `ai_schema.sql`. This creates the versioned `AI.MetricDefinition`, `AI.MetricDistribution` and `AI.MetricRating` tables. It is separate from the prediction output schema and does not modify `AI_Source`.
