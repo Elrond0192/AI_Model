@@ -6,6 +6,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ---
 
 ## [Unreleased]
+### Documentation
+- Repository-wide Markdown audit: corrected the PostgreSQL installation order, replaced the obsolete `PlayerStats` references with the competition-preserving `PlayerCompetitionStats` contract, documented the current API route families and health/restart behavior, refreshed the first-prediction tutorial and architecture overview, and added the referenced WordPress/Chat V3 integration guide.
 ### Added
 - Model Center P0/P1 model lifecycle controls: isolated candidate artifacts for
   Prediction 1–100 calibration, BB-Rating and Future Performance; artifact
