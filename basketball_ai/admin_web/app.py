@@ -2239,12 +2239,18 @@ async def api_health(user: dict[str, str] = Depends(_operator)) -> dict[str, Any
             "feature_version": bb_body.get("future_performance_feature_version"),
             "artifact_version": future_status.get("future_performance_version"),
         },
+        "bb_rating_prediction": {
+            "loaded": bool(bb_body.get("bb_rating_future_prediction_loaded")),
+            "version": bb_body.get("bb_rating_future_prediction_version"),
+            "target_scale": "1-100",
+        },
         "endpoints": [
             "GET /health/live",
             "GET /health/ready",
             "GET /health",
             "POST /api/v2/predictions/player-team",
             "POST /api/v2/bb-rating/player",
+            "POST /api/v2/bb-rating-prediction/player",
             "POST /api/v2/future-performance/player",
             "POST /api/v2/scenarios/evaluate",
         ],
