@@ -272,6 +272,7 @@ def test_model_release_buttons_use_node_list_and_cancel_jobs_are_exposed():
     assert "$('.release-rollback').forEach" in js
     assert "$('.release-promote').forEach" not in js
     assert "$('.release-rollback').forEach" not in js
+    assert "candidate_id:item.candidate?.id" in js
     assert "/admin-api/jobs/training/cancel" in js
     assert "/admin-api/jobs/bb-rating/cancel" in js
     assert "/admin-api/jobs/prediction-calibration/cancel" in js
