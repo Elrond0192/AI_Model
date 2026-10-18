@@ -251,7 +251,12 @@ def test_v2_regular_season_uses_isolated_context(monkeypatch):
     assert seen["league_id"] == 303
     assert seen["scope_competition"] == "RS"
     assert body["target_season"] == 2026
-    assert body["predicted_rating"] == 7.25
+    assert body["predicted_rating_100"] is None
+    assert body["confidence_low_100"] is None
+    assert body["confidence_high_100"] is None
+    assert "predicted_rating" not in body
+    assert "confidence_low" not in body
+    assert "confidence_high" not in body
     assert body["competition"] == "RS"
     assert body["competition_support"]["mode"] == "isolated"
     assert body["competition_support"]["calibration_scope"] == "global"
@@ -284,17 +289,19 @@ def test_v2_performance_vs_expectation_uses_calibrated_range(monkeypatch):
     )
     assert response.status_code == 200
     body = response.json()
+    assert body["predicted_rating_100"] == 72.775
+    assert body["confidence_low_100"] == 68.32
+    assert body["confidence_high_100"] == 77.23
+    assert body["prediction_calibration_version"] == "1.0"
+    assert "predicted_rating" not in body
+    assert "confidence_low" not in body
+    assert "confidence_high" not in body
     pve = body["performance_vs_expectation"]
-    assert pve["available"] is True
+    assert pve["available"] is False
     assert pve["target_season"] == 2026
-    assert pve["expected_rating_100"] == 72.775
-    assert pve["actual_rating_100"] == 79.0
-    assert pve["delta_rating_points"] == 6.225
-    assert pve["expected_low_100"] == 68.32
-    assert pve["expected_high_100"] == 77.23
-    assert pve["assessment"] == "above_expectations"
-    assert pve["actual_quality"] == "good"
-    assert pve["actual_metric_coverage"] == 0.88
+    assert pve.get("actual_rating_100") is None
+    assert pve.get("delta_rating_points") is None
+    assert "non è direttamente confrontabile" in pve["explanation"]
 
 def test_v2_playoffs_are_normalised_and_isolated(monkeypatch):
     from basketball_ai.api.routes.predictions_v2 import router
