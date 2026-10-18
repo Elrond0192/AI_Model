@@ -497,6 +497,11 @@ class BBRatingFuturePredictionModel:
         engine = BBRatingEngine(stats, players, data.get("leagues"))
         frame = engine.frame.copy()
         frame["_year"] = _numeric_seasons(frame)
+        frame["league_key"] = frame["league_key"].astype(str).str.strip().str.upper()
+        frame["competition"] = frame["competition"].map(normalize_competition)
+        frame = frame.drop_duplicates(
+            subset=["player_global_id", "league_key", "_year", "competition"], keep="first"
+        ).copy()
         source = frame[
             (frame["player_global_id"].astype(str) == str(player_global_id))
             & (frame["_year"] == int(source_season))
