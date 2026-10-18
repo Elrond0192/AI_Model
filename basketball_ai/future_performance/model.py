@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 import json
 import logging
 from pathlib import Path
-from typing import Any, Dict, Iterable, Optional
+from typing import Any, Callable, Dict, Iterable, Optional
 
 import joblib
 import numpy as np
@@ -344,11 +344,21 @@ class PlayerFuturePerformanceModel:
             device=_XGB_DEVICE,
         )
 
-    def _fit_one(self, X: pd.DataFrame, y: pd.Series) -> XGBRegressor:
+    def _fit_one(
+        self,
+        X: pd.DataFrame,
+        y: pd.Series,
+        *,
+        cancel_check: Optional[Callable[[], None]] = None,
+    ) -> XGBRegressor:
         if len(y) < MIN_TRAIN_SAMPLES:
             raise ValueError(f"Only {len(y)} training rows for target; minimum is {MIN_TRAIN_SAMPLES}")
+        if cancel_check:
+            cancel_check()
         model = self._model()
         model.fit(X, y.to_numpy(dtype=float), verbose=False)
+        if cancel_check:
+            cancel_check()
         return model
 
     @staticmethod
@@ -370,6 +380,7 @@ class PlayerFuturePerformanceModel:
         *,
         target_seasons: Optional[Iterable[int]] = None,
         min_train_target_seasons: int = 3,
+        cancel_check: Optional[Callable[[], None]] = None,
     ) -> Dict[str, Any]:
         """Expanding walk-forward OOS evaluation by target season."""
         pairs = self._build_pairs(data, target_seasons=set(target_seasons) if target_seasons is not None else None)
@@ -378,6 +389,8 @@ class PlayerFuturePerformanceModel:
         per_target: Dict[str, list[dict[str, float]]] = {spec.key: [] for spec in TARGET_SPECS}
         oos_residuals: Dict[str, list[float]] = {spec.key: [] for spec in TARGET_SPECS}
         for target_year in years:
+            if cancel_check:
+                cancel_check()
             prior_years = [year for year in years if year < target_year]
             if len(prior_years) < min_train_target_seasons:
                 continue
@@ -386,6 +399,8 @@ class PlayerFuturePerformanceModel:
             fold_targets: Dict[str, Any] = {}
             fold_valid = False
             for spec in TARGET_SPECS:
+                if cancel_check:
+                    cancel_check()
                 y_train = pd.to_numeric(train[f"__target__{spec.key}"], errors="coerce")
                 y_test = pd.to_numeric(test[f"__target__{spec.key}"], errors="coerce")
                 train_mask = np.isfinite(y_train.to_numpy(dtype=float))
@@ -394,7 +409,7 @@ class PlayerFuturePerformanceModel:
                     continue
                 X_train = train.loc[train_mask, self._feature_columns(pairs["__meta__league_key"])].fillna(0.0)
                 X_test = test.loc[test_mask, X_train.columns].fillna(0.0)
-                model = self._fit_one(X_train, y_train.loc[train_mask])
+                model = self._fit_one(X_train, y_train.loc[train_mask], cancel_check=cancel_check)
                 prediction = np.clip(model.predict(X_test.to_numpy()), spec.lower, spec.upper)
                 actual_values = y_test.loc[test_mask].to_numpy(dtype=float)
                 metrics = self._metrics(actual_values, prediction)
@@ -451,7 +466,10 @@ class PlayerFuturePerformanceModel:
         *,
         target_seasons: Optional[Iterable[int]] = None,
         backtest: bool = True,
+        cancel_check: Optional[Callable[[], None]] = None,
     ) -> Dict[str, Any]:
+        if cancel_check:
+            cancel_check()
         target_set = set(int(value) for value in target_seasons) if target_seasons is not None else None
         pairs = self._build_pairs(data, target_seasons=target_set)
         league_values = sorted(set(str(v).strip().upper() for v in pairs["__meta__league_key"].tolist() if str(v).strip()))
@@ -461,6 +479,7 @@ class PlayerFuturePerformanceModel:
             self.walk_forward_backtest(
                 data,
                 target_seasons=sorted(target_set) if target_set is not None else None,
+                cancel_check=cancel_check,
             )
             if backtest else {"status": "disabled", "folds": [], "summary": {}}
         )
@@ -468,12 +487,14 @@ class PlayerFuturePerformanceModel:
         training_targets: Dict[str, Dict[str, Any]] = {}
         all_residuals: list[float] = []
         for spec in TARGET_SPECS:
+            if cancel_check:
+                cancel_check()
             y = pd.to_numeric(pairs[f"__target__{spec.key}"], errors="coerce")
             mask = np.isfinite(y.to_numpy(dtype=float))
             if mask.sum() < MIN_TRAIN_SAMPLES:
                 continue
             X = pairs.loc[mask, self.feature_names].fillna(0.0)
-            model = self._fit_one(X, y.loc[mask])
+            model = self._fit_one(X, y.loc[mask], cancel_check=cancel_check)
             self.models[spec.key] = model
             predictions = model.predict(X.to_numpy())
             residuals = np.abs(predictions - y.loc[mask].to_numpy(dtype=float))
