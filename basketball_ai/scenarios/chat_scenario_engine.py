@@ -1617,7 +1617,7 @@ class ChatScenarioEngine:
             if current_team_id is not None and source_league is not None:
                 prediction, _ = self._direct_prediction(player_id, current_team_id, source_league, season, competition)
                 result["prediction_model"] = {"available": True, "scope": "current_team_context", "team": self._team_name(current_team_id), "predicted_rating": round(float(prediction.predicted_rating), 3), "confidence_low": round(float(prediction.confidence_low), 3), "confidence_high": round(float(prediction.confidence_high), 3), "base_rating": round(float(prediction.base_rating), 3), "age_factor": round(float(prediction.age_factor), 4), "compatibility_factor": round(float(prediction.compatibility_factor), 4), "league_factor": round(float(prediction.league_factor), 4), "context_adjustment": round(float(prediction.context_adjustment), 4), "delta_vs_observed": round(float(prediction.predicted_rating) - observed_rating, 3) if math.isfinite(observed_rating) else None, "interpretation": "Stima del livello nel contesto della squadra corrente; non è una previsione di cambio squadra né una proiezione per-36."}
-        except (ValueError, RuntimeError, KeyError, TypeError) as exc:
+        except (ValueError, RuntimeError, KeyError, TypeError, AttributeError) as exc:
             result["prediction_model"]["reason"] = str(exc)
 
         return result
