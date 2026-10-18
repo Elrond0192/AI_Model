@@ -1904,11 +1904,17 @@ class ChatScenarioEngine:
                         previous_year = decomposition_result.get("previous_season")
                         current_year = decomposition_result.get("current_season")
                         previous_bb_rating = (
-                            self._bb_rating_for_season(player_global_id, league_id, int(previous_year), competition)
+                            self._bb_rating_for_season(
+                                player_global_id, league_id, int(previous_year),
+                                normalize_competition(spec.get("competition", "RS")),
+                            )
                             if previous_year is not None else None
                         )
                         current_bb_rating = (
-                            self._bb_rating_for_season(player_global_id, league_id, int(current_year), competition)
+                            self._bb_rating_for_season(
+                                player_global_id, league_id, int(current_year),
+                                normalize_competition(spec.get("competition", "RS")),
+                            )
                             if current_year is not None else None
                         )
                         season_comparison = {
