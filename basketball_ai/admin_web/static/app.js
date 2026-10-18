@@ -311,6 +311,8 @@ async function renderModelReleases(){
     ['BB-Rating loaded',health.bb_rating?.loaded?'Yes':'No'],
     ['BB-Rating uncertainty loaded',health.bb_rating?.uncertainty_loaded?'Yes':'No'],
     ['Future Performance loaded',health.future_performance?.loaded?'Yes':'No'],
+    ['BB Prediction Model loaded',health.bb_rating_prediction?.loaded?'Yes':'No'],
+    ['BB Prediction Model version',health.bb_rating_prediction?.version||'—'],
     ['BB-Rating runtime version',health.bb_rating?.runtime_calibration_version||'—'],
     ['Future Performance runtime version',health.future_performance?.version||'—'],
     ['Automatic API restart',data.automatic_api_restart_configured?'Configured (restart + readiness check)':'Not configured (API_KEY missing)'],
@@ -318,6 +320,7 @@ async function renderModelReleases(){
   $('#model-release-serving').innerHTML=summaryRows(servingRows);
   $('#release-bb-rating').innerHTML=fmtRelease(models['bb-rating']||{});
   $('#release-future-performance').innerHTML=fmtRelease(models['future-performance']||{});
+  $('#release-bb-rating-prediction').innerHTML=fmtRelease(models['bb-rating-prediction']||{});
   $('#prediction-calibration-release').innerHTML=fmtRelease(release);
   $('#prediction-calibration-job').innerHTML='<div class="job-head"><div><div class="job-status">'+esc(job.stage||'Ready')+'</div><div class="job-message">'+esc(job.error||job.message||'Nessuna calibrazione eseguita.')+'</div></div><span class="registry-badge '+(['running','queued'].includes(job.status)?'candidate':'')+'">'+esc(job.status||'idle')+'</span></div>'+
     (job.output?'<div class="summary-list">'+[['OOS rows',job.output.rows],['Target seasons',(job.output.target_seasons||[]).join(', ')],['OOS folds',job.output.n_folds],['Prediction version',job.output.prediction_model_version]].map(([a,b])=>'<div class="summary-row"><span>'+esc(a)+'</span><strong>'+esc(b??'—')+'</strong></div>').join('')+'</div>':'')+
