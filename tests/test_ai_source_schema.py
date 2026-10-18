@@ -209,16 +209,17 @@ def test_scenario_serving_is_physical_indexed_and_incremental():
         assert f'create table if not exists "ai_source"."{table}"' in sql
     assert 'create or replace procedure "ai_source"."refreshscenarioserving"' in sql
     assert 'create or replace procedure "ai_source"."refreshtrainingserving"' in sql
-    assert 'create or replace procedure "ai_source"."refreshcontext"' in sql
-    assert 'create or replace procedure "ai_source"."refreshcontext"(p_season integer)' in sql
     assert "'hm_local_workers'" in sql
-    assert 'create or replace procedure "ai_source"."refreshcontextseasonal"(' in sql
-    assert 'call "ai_source"."refreshcontext"(p_season)' in sql
+    assert 'create or replace procedure "ai_source"."refreshcontextseasonal"(p_season integer)' in sql
     assert '"ai_source"."refreshcontextseasonal"(integer)' in sql
+    assert 'call "ai_source"."refreshtrainingserving"(' in sql
+    assert 'call "ai_source"."refreshscenarioserving"(' in sql
     assert 'from "ai_source"."playercompetitionstats"' in sql
     assert 'from "ai_source"."teamcompetitionstats"' in sql
-    assert 'call "ai_source"."refreshcontext"(' in sql
-    assert '"ai_source"."refreshcontext"(integer)' in sql
+    assert 'drop procedure if exists "ai_source"."refreshcontext"(text, integer, text)' in sql
+    assert 'drop procedure if exists "ai_source"."refreshcontext"(integer)' in sql
+    assert 'create or replace procedure "ai_source"."refreshcontext"(' not in sql
+    assert 'call "ai_source"."refreshcontext"(' not in sql
     assert 'create table if not exists "ai_source"."servingrefreshstate"' in sql
     assert "p_league_key text" in sql
     assert "p_season integer" in sql
