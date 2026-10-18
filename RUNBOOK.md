@@ -266,11 +266,12 @@ In **Model Releases**, inspect the production and candidate validation state bef
 
 Prediction 1–100 calibration only fits the display mapping from OOS records; it does not retrain or replace the native Prediction Model. The minimum 500 OOS rows is an operational artifact gate, not a guarantee of statistical quality. Review the saved report's temporal folds and raw-versus-calibrated metrics before promotion.
 
-Example deployment after reviewing a release:
+Manual recovery only (for example, if the Model Center reports that its automatic restart/readiness check failed):
 ```bash
 docker compose restart api
 docker compose ps
+curl -fsS http://127.0.0.1:8000/health/ready
 docker compose logs --tail=150 api
 ```
 
-Do not promote if validation fails or if the expected uncertainty/model files are absent. Keep the prior release until the restarted API passes its health and inference smoke tests.
+Do not promote if validation fails or if the expected uncertainty/model files are absent. Keep the prior release until the API passes its health and inference smoke tests. For CLI promotion/rollback, follow the manual restart steps in the relevant CLI section; the Model Center UI handles restart and readiness checks automatically.
