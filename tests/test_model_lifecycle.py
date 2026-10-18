@@ -103,3 +103,57 @@ def test_future_performance_candidate_requires_all_declared_model_files(tmp_path
 def test_unsupported_model_is_rejected():
     with pytest.raises(ValueError, match="Unsupported model"):
         inspect_model(".", "../prediction-calibration")
+
+
+def test_bb_rating_candidate_can_be_promoted_with_matching_uncertainty(tmp_path: Path):
+    candidate = tmp_path / "candidates" / "bb-rating" / "candidate-bb"
+    candidate.mkdir(parents=True)
+    (candidate / "bb_rating_calibration.json").write_text(
+        json.dumps({
+            "calibration_version": "1.18",
+            "bb_rating_version": "1.9",
+            "dataset": {"rows": 1200, "seasons": [2022, 2023, 2024, 2025], "season_max": 2025},
+        }),
+        encoding="utf-8",
+    )
+    (candidate / "bb_rating_uncertainty.json").write_text(
+        json.dumps({"status": "fitted", "bb_rating_version": "1.9"}),
+        encoding="utf-8",
+    )
+
+    result = promote_model(tmp_path, "bb-rating", "candidate-bb")
+
+    production = tmp_path / "bb_rating_calibration"
+    assert result["promoted"] is True
+    assert validate_artifact("bb-rating", production)["valid"] is True
+    inspected = inspect_model(tmp_path, "bb-rating")
+    assert inspected["production"]["version"] == "1.18"
+    assert inspected["production"]["seasons"] == [2022, 2023, 2024, 2025]
+    assert not candidate.exists()
+
+
+def test_future_performance_candidate_can_be_promoted_with_model_files(tmp_path: Path):
+    candidate = tmp_path / "candidates" / "future-performance" / "candidate-fp"
+    (candidate / "models").mkdir(parents=True)
+    (candidate / "models" / "target.joblib").write_bytes(b"test-artifact")
+    (candidate / "metadata.json").write_text(
+        json.dumps({
+            "status": "fitted",
+            "future_performance_version": "1.1",
+            "feature_version": "player-future-performance-v1",
+            "training_target_seasons": [2021, 2022, 2023, 2024, 2025],
+            "n_pairs": 1500,
+            "model_files": {"target": "models/target.joblib"},
+        }),
+        encoding="utf-8",
+    )
+
+    result = promote_model(tmp_path, "future-performance", "candidate-fp")
+
+    production = tmp_path / "future_performance"
+    assert result["promoted"] is True
+    assert validate_artifact("future-performance", production)["valid"] is True
+    inspected = inspect_model(tmp_path, "future-performance")
+    assert inspected["production"]["version"] == "1.1"
+    assert inspected["production"]["seasons"] == [2021, 2022, 2023, 2024, 2025]
+    assert not candidate.exists()
