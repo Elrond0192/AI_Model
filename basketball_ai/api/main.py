@@ -167,10 +167,13 @@ def _load_bb_rating_future_prediction_model(model_dir: str):
     candidates = []
     if configured:
         candidates.append(Path(configured))
-    # Only an explicitly configured release or a model bundled inside the
-    # active production directory is loadable. Candidate output is never
-    # auto-promoted merely because the API restarts.
-    candidates.append(model_path / "bb_rating_future_prediction")
+    # The Model Center promotes the release beside production/ (MODEL_ROOT),
+    # while a self-contained deployment may keep it inside MODEL_DIR. Candidate
+    # directories live under candidates/bb-rating-prediction and are never loaded.
+    candidates.extend([
+        model_path / "bb_rating_future_prediction",
+        model_path.parent / "bb_rating_future_prediction",
+    ])
     seen: set[str] = set()
     for path in candidates:
         key = str(path)
