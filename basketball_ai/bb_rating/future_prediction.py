@@ -190,6 +190,11 @@ class BBRatingFuturePredictionModel:
         frame["_year"] = frame["_year"].astype(int)
         frame["competition"] = frame["competition"].map(normalize_competition)
         frame["league_key"] = frame["league_key"].astype(str).str.strip().str.upper()
+        # Match BBRatingEngine.rate_player identity semantics and avoid overweighting
+        # provider-specific duplicate player IDs in the same canonical context.
+        frame = frame.drop_duplicates(
+            subset=["player_global_id", "league_key", "_year", "competition"], keep="first"
+        ).copy()
         # Official labels are computed from the full peer context for each target
         # season. The model never receives target-season statistics as features.
         labels: dict[tuple[str, int, str, str], int] = {}
