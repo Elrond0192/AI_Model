@@ -13,6 +13,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   Future Performance artifacts.
 - Prefer the lifecycle-managed BB-Rating release over a stale legacy uncertainty
   JSON when loading the runtime artifact.
+- Remove orphaned release-candidate directories when the required primary artifact
+  was never written; show/promote the newest valid candidate instead of a stale,
+  incomplete directory. Prediction calibration failures now retain the real error
+  and clean up candidates that never produced their JSON artifact.
 
 ### Documentation
 - Repository-wide Markdown audit: corrected the PostgreSQL installation order, replaced the obsolete `PlayerStats` references with the competition-preserving `PlayerCompetitionStats` contract, documented the current API route families and health/restart behavior, refreshed the first-prediction tutorial and architecture overview, and added the referenced WordPress/Chat V3 integration guide.
