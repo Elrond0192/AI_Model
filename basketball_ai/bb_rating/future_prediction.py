@@ -478,16 +478,25 @@ class BBRatingFuturePredictionModel:
         baseline = oof["baseline_bb_rating"].to_numpy(float)
         calibrated = oof["calibrated_bb_rating"].to_numpy(float)
 
-        def metric_pack(mask: np.ndarray) -> dict[str, float | int | None]:
+        def metric_pack(mask: np.ndarray) -> dict[str, float | int | bool | None]:
             if not np.any(mask):
-                return {"n": 0, "mae": None, "rmse": None, "bias": None, "calibration_error": None}
-            truth, prediction = actual[mask], calibrated[mask]
+                return {
+                    "n": 0, "mae": None, "rmse": None, "bias": None,
+                    "calibration_error": None, "baseline_mae": None,
+                    "baseline_rmse": None, "beats_baseline": None,
+                }
+            truth, prediction, baseline_prediction = actual[mask], calibrated[mask], baseline[mask]
+            mae = float(mean_absolute_error(truth, prediction))
+            baseline_mae_group = float(mean_absolute_error(truth, baseline_prediction))
             return {
                 "n": int(mask.sum()),
-                "mae": float(mean_absolute_error(truth, prediction)),
+                "mae": mae,
                 "rmse": float(np.sqrt(mean_squared_error(truth, prediction))),
                 "bias": float(np.mean(prediction - truth)),
                 "calibration_error": float(abs(np.mean(prediction) - np.mean(truth))),
+                "baseline_mae": baseline_mae_group,
+                "baseline_rmse": float(np.sqrt(mean_squared_error(truth, baseline_prediction))),
+                "beats_baseline": bool(mae < baseline_mae_group),
             }
 
         by_scenario = {}
