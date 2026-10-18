@@ -1950,6 +1950,15 @@ async def api_health(user: dict[str, str] = Depends(_operator)) -> dict[str, Any
         "base_url": API_BASE_URL,
         "live": live,
         "ready": ready,
+        "prediction_model": {
+            "loaded": bool(bb_body.get("prediction_model_loaded")),
+            "run_id": bb_body.get("prediction_model_run_id"),
+            "version": bb_body.get("prediction_model_version"),
+            "feature_version": bb_body.get("prediction_feature_version"),
+            "data_cutoff": bb_body.get("prediction_data_cutoff"),
+            "production_model_files": bb_body.get("production_model_files") or {},
+            "metric_distributions_count": bb_body.get("metric_distributions_count", 0),
+        },
         "bb_rating": {
             "api": bb,
             "loaded": bool(bb_body.get("bb_rating_loaded")),
