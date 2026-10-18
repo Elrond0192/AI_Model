@@ -1864,13 +1864,38 @@ class ChatScenarioEngine:
         usage = _ratio(latest.get("usg_pct"), 0.0)
         ast_pct = _ratio(latest.get("ast_pct"), 0.0)
         ts_pct = _ratio(latest.get("ts_pct"), 0.0)
-        rating = _finite(latest.get("rating"), np.nan)
-        previous_rating = _finite(rows.iloc[-2].get("rating"), np.nan) if len(rows) >= 2 else np.nan
-        rating_delta = round(rating - previous_rating, 3) if math.isfinite(rating) and math.isfinite(previous_rating) else None
-        rating_series = pd.to_numeric(rows.get("rating"), errors="coerce").dropna()
-        trend = float(np.polyfit(rows.loc[rating_series.index, "_year"].astype(float), rating_series.to_numpy(float), 1)[0]) if len(rating_series) >= 2 else 0.0
-        rating_std = float(np.std(rating_series)) if len(rating_series) else None
-        stability_score = float(np.clip(np.exp(-rating_std / 1.25) * min(1.0, len(rating_series) / 4.0), 0.0, 1.0)) if rating_std is not None else None
+        player_meta = self.data.get("player_dict", {}).get(player_id, {})
+        global_id = str(player_meta.get("global_id", "")).strip() if isinstance(player_meta, dict) else ""
+        bb_series = []
+        for raw_year in rows["_year"].tolist():
+            try:
+                year = int(raw_year)
+            except (TypeError, ValueError):
+                continue
+            score = self._bb_rating_for_season(
+                global_id, source_league, year, competition
+            )
+            if score is not None:
+                bb_series.append((year, float(score)))
+        bb_scores = np.asarray([item[1] for item in bb_series], dtype=float)
+        bb_years = np.asarray([item[0] for item in bb_series], dtype=float)
+        current_bb_rating = float(bb_scores[-1]) if len(bb_scores) else None
+        previous_bb_rating = float(bb_scores[-2]) if len(bb_scores) >= 2 else None
+        bb_rating_delta = (
+            current_bb_rating - previous_bb_rating
+            if current_bb_rating is not None and previous_bb_rating is not None
+            else None
+        )
+        trend = (
+            float(np.polyfit(bb_years, bb_scores, 1)[0])
+            if len(bb_scores) >= 2 and len(set(bb_years.tolist())) >= 2
+            else None
+        )
+        bb_rating_std = float(np.std(bb_scores)) if len(bb_scores) else None
+        stability_score = (
+            float(np.clip(np.exp(-bb_rating_std / 25.0) * min(1.0, len(bb_scores) / 4.0), 0.0, 1.0))
+            if bb_rating_std is not None else None
+        )
         team_context = {}
         team_id = _to_int(latest.get("team_id"))
         if team_id is not None:
@@ -1896,10 +1921,21 @@ class ChatScenarioEngine:
             "role": {"position": position or None, "role_label": str(role_label) if role_label else None, "minutes_per_game": round(minutes, 2), "usage_pct": round(usage * 100.0, 2), "assist_pct": round(ast_pct * 100.0, 2), "offensive_responsibility": "high" if usage >= 0.24 or (usage >= 0.21 and ast_pct >= 0.18) else "medium" if usage >= 0.17 or ast_pct >= 0.14 else "low", "creation_signal": "primary_or_secondary_creator" if ast_pct >= 0.18 else "secondary_creator" if ast_pct >= 0.14 else "finisher_or_off_ball"},
             "opportunity": {"minutes_per_game": round(minutes, 2), "usage_pct": round(usage * 100.0, 2), "team_pace": team_context.get("pace"), "estimated_player_possession_share": round(usage, 4), "interpretation": "USG% è un proxy della quota di possessi offensivi, non un conteggio PBP dei possessi individuali."},
             "efficiency_vs_volume": {"ts_pct": round(ts_pct * 100.0, 2), "usage_pct": round(usage * 100.0, 2), "points_per_game": round(_finite(latest.get("points")), 2), "three_point_pct": round(_ratio(latest.get("three_point_pct")) * 100.0, 2), "profile": "efficiency_favored" if ts_pct >= 0.60 and usage < 0.22 else "volume_favored" if usage >= 0.24 else "balanced"},
-            "trend": {"current_rating": round(rating, 3) if math.isfinite(rating) else None, "change_vs_previous_season": rating_delta, "trend_slope_per_season": round(trend, 4)},
-            "stability": {"observed_seasons": int(len(rating_series)), "games_current_season": games, "rating_std": round(rating_std, 3) if rating_std is not None else None, "stability_score": round(stability_score, 3) if stability_score is not None else None, "confidence": _confidence(games), "interpretation": "limited_current_sample" if games < 10 else "stable_profile" if stability_score is not None and stability_score >= 0.65 else "variable_profile"},
+            "trend": {
+                "current_bb_rating": round(current_bb_rating, 1) if current_bb_rating is not None else None,
+                "bb_rating_change_vs_previous_season": round(bb_rating_delta, 1) if bb_rating_delta is not None else None,
+                "bb_rating_trend_slope_per_season": round(trend, 2) if trend is not None else None,
+            },
+            "stability": {
+                "observed_seasons": int(len(bb_scores)),
+                "games_current_season": games,
+                "bb_rating_std": round(bb_rating_std, 2) if bb_rating_std is not None else None,
+                "stability_score": round(stability_score, 3) if stability_score is not None else None,
+                "confidence": _confidence(games),
+                "interpretation": "limited_current_sample" if games < 10 else "stable_profile" if stability_score is not None and stability_score >= 0.65 else "variable_profile",
+            },
             "team_environment": team_context,
-            "evidence_strength": {"current_games": games, "historical_rating_seasons": int(len(rating_series)), "confidence": _confidence(max(games, len(rating_series) * 6))},
+            "evidence_strength": {"current_games": games, "historical_bb_rating_seasons": int(len(bb_scores)), "confidence": _confidence(max(games, len(bb_scores) * 6))},
         }
 
     def _player_intelligence_context_leagues(
