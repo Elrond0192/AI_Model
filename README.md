@@ -115,7 +115,10 @@ with artifact validation, candidate-specific promotion, previous-release rollbac
 and runtime-version diagnostics. The native Prediction Model registry remains a
 separate lifecycle. Training and calibration jobs can be cancelled from their
 pages; cancellation is cooperative and takes effect at the next safe checkpoint,
-removing incomplete candidate artifacts and leaving production unchanged.
+removing incomplete candidate artifacts and leaving production unchanged. Incomplete
+release directories without their required primary artifact are cleaned when the
+corresponding job is idle, and Model Releases selects only a valid candidate for
+promotion.
 Icons are Phosphor Icons, self-hosted under
 `static/assets/phosphor/` (regular + fill weights, woff2/woff only) —
 no external CDN calls, so the console keeps working fully offline/air-gapped.
