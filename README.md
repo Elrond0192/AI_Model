@@ -109,9 +109,20 @@ The admin service serves `AI Model Control Center`, a self-contained
 dashboard (vanilla HTML/CSS/JS, no framework) under
 `basketball_ai/admin_web/static/`: login, overview KPIs, data/snapshot
 lifecycle, training, backtests, Scenario Lab, model registry, health and
-audit pages. Icons are Phosphor Icons, self-hosted under
+audit pages. The **Model Releases** page also manages isolated calibration/model
+candidates for Prediction 1–100 calibration, BB-Rating and Future Performance,
+with validation, promotion, previous-release rollback and runtime-version
+diagnostics. The native Prediction Model registry remains a separate lifecycle.
+Icons are Phosphor Icons, self-hosted under
 `static/assets/phosphor/` (regular + fill weights, woff2/woff only) —
 no external CDN calls, so the console keeps working fully offline/air-gapped.
+
+Promotions and rollbacks initiated through the Control Center request an
+authenticated API restart and wait for `/health/ready` before reporting success.
+Candidate training/calibration does not restart production. If the automatic
+restart or readiness check fails, the operation result reports the failure.
+CLI operations that write or promote serving artifacts bypass this GUI workflow;
+follow the CLI-specific restart instructions in [RUNBOOK.md](RUNBOOK.md).
 
 ```bash
 docker compose up -d --build admin
@@ -281,7 +292,7 @@ docker compose run --rm admin \
   python main.py --mode rollback --model-dir /app/models_saved
 ```
 
-Restart/reload the API after promotion or rollback.
+Because these commands bypass the Model Center, restart the API after CLI promotion or rollback and verify `/health/ready`. Promotions and rollbacks performed in the Control Center restart the API automatically and wait for readiness.
 
 ## 6. Prediction API
 
