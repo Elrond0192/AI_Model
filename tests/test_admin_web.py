@@ -1045,6 +1045,43 @@ def test_scenario_entity_search_and_server_side_resolution():
     assert "team_selection_ids" not in resolved
 
 
+def test_automatic_api_restart_waits_for_readiness(monkeypatch):
+    monkeypatch.setenv("API_KEY", "test-api-key")
+    monkeypatch.setattr(admin.time, "sleep", lambda _: None)
+    monkeypatch.setattr(admin, "_probe", lambda path: {"ok": path == "/health/ready", "status": 200})
+
+    class Response:
+        status = 202
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            return False
+        def read(self):
+            return b'{"accepted": true}'
+
+    captured = {}
+    def fake_urlopen(request, timeout):
+        captured["url"] = request.full_url
+        captured["method"] = request.get_method()
+        captured["key"] = request.get_header("X-api-key")
+        return Response()
+
+    monkeypatch.setattr(admin, "urlopen", fake_urlopen)
+    result = admin._restart_inference_api(timeout_seconds=5)
+    assert result["ok"] is True
+    assert result["status"] == "ready"
+    assert captured["url"].endswith("/internal/restart")
+    assert captured["method"] == "POST"
+    assert captured["key"] == "test-api-key"
+
+
+def test_automatic_api_restart_fails_closed_without_api_key(monkeypatch):
+    monkeypatch.delenv("API_KEY", raising=False)
+    result = admin._restart_inference_api()
+    assert result["ok"] is False
+    assert "API_KEY" in result["error"]
+
+
 @pytest.mark.asyncio
 async def test_api_health(monkeypatch):
     monkeypatch.setattr(admin, "_probe", lambda path: {"ok": path.endswith("live"), "status": 200 if path.endswith("live") else 503})
