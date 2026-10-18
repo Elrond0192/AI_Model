@@ -75,7 +75,32 @@ def _analysis_data() -> dict:
 
 
 def _engine() -> ChatScenarioEngine:
-    return ChatScenarioEngine(SimpleNamespace(), _analysis_data())
+    data = _analysis_data()
+    for player_id, player in data["player_dict"].items():
+        player["global_id"] = f"PLAYER-{player_id}"
+
+    class _FixtureBBRating:
+        def rate_player(self, global_id, *, league, season, phase):
+            player_id = int(str(global_id).rsplit("-", 1)[1])
+            league_id = next(
+                key for key, value in data["league_dict"].items()
+                if str(value.get("league_key", "")).upper() == league
+            )
+            rows = data["player_stats"]
+            rows = rows[
+                (rows["player_id"] == player_id)
+                & (rows["league_id"] == league_id)
+                & (rows["season"].astype(int) == int(season))
+                & (rows["competition"].astype(str).str.upper() == phase)
+            ]
+            if rows.empty:
+                raise ValueError("fixture BB-Rating context unavailable")
+            score = int(round(float(rows.iloc[-1]["rating"]) * 10.0))
+            return SimpleNamespace(score=score, quality="good", metric_coverage=1.0)
+
+    return ChatScenarioEngine(
+        SimpleNamespace(), data, bb_rating_engine=_FixtureBBRating()
+    )
 
 
 def test_prediction_model_uses_loaded_calibration_and_hides_native_rating():
@@ -278,7 +303,9 @@ def test_metric_explanation_uses_same_context_percentiles():
         [1], [], 10, None,
     )
     metrics = {row["metric"]: row for row in result["result"]["metrics"]}
-    assert metrics["rating"]["context_percentile"] is not None
+    assert "rating" not in metrics
+    assert metrics["bb_rating"]["value"] == 72
+    assert metrics["ts_pct"]["context_percentile"] is not None
     assert metrics["usg_pct"]["meaning"] == "Share of team possessions used"
 
 
