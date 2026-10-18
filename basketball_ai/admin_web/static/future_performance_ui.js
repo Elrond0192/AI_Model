@@ -179,11 +179,29 @@
         '<div class="job-message">' + esc(job.error || job.message || 'Nessun training in corso.') + '</div></div>' +
         '<span class="registry-badge ' + (running ? 'candidate' : '') + '">' + esc(job.status || 'idle') + '</span></div>' +
         '<div class="progress-track"><div class="progress-bar" style="width:' +
-        Math.max(0, Math.min(100, Number(job.progress) || 0)) + '%"></div></div>'
+        Math.max(0, Math.min(100, Number(job.progress) || 0)) + '%"></div></div>' +
+        (running ? '<div class="button-row"><button id="future-performance-cancel" class="btn btn-danger btn-small" ' +
+          (job.cancel_requested ? 'disabled' : '') + '>' +
+          (job.cancel_requested ? 'Interruzione richiesta…' : 'Interrompi training') + '</button></div>' : '')
       );
 
       const trainButton = q('#future-performance-train');
       const refreshButton = q('#future-performance-refresh');
+      const cancelButton = q('#future-performance-cancel');
+      if (cancelButton) {
+        cancelButton.onclick = async () => {
+          cancelButton.disabled = true;
+          try {
+            await request('/admin-api/jobs/future-performance/cancel', { method:'POST', body: JSON.stringify({}), signal: controller.signal });
+            setText('#future-performance-error', 'Interruzione richiesta; il job terminerà al prossimo checkpoint sicuro.');
+            if (isLive()) await render();
+          } catch (error) {
+            if (error?.name === 'AbortError') return;
+            setText('#future-performance-error', error.message);
+            if (isLive()) cancelButton.disabled = false;
+          }
+        };
+      }
       if (!trainButton || !refreshButton) return;
       trainButton.disabled = running || !status.active_profile;
       trainButton.textContent = running ? 'Training in corso…' : 'Genera / aggiorna modello';
