@@ -1820,7 +1820,7 @@ def start_prediction_calibration(user: dict[str, str] = Depends(_csrf)) -> dict[
 @app.get("/admin-api/model-releases")
 def model_releases(user: dict[str, str] = Depends(_operator)) -> dict[str, Any]:
     del user
-    return {"models": {model: inspect_model(MODEL_ROOT, model) for model in ("prediction-calibration", "bb-rating", "future-performance")}, "prediction_model_registry": _registry(), "note": "Promotions affect files on disk; restart the inference API before expecting in-memory serving to change."}
+    return {"models": {model: inspect_model(MODEL_ROOT, model) for model in ("prediction-calibration", "bb-rating", "future-performance")}, "prediction_model_registry": _registry(), "automatic_api_restart_configured": bool(os.environ.get("API_KEY", "").strip()), "note": "Promotions and rollbacks request an API restart automatically and wait for readiness; candidate training does not restart production."}
 
 
 @app.post("/admin-api/model-releases/{model}/promote")
