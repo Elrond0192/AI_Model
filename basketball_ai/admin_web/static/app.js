@@ -276,6 +276,8 @@ async function renderModelReleases(){
       '<div class="summary-row"><span>Candidate</span><strong>'+esc(cand.id||'Nessuna')+'</strong></div>'+
       '<div class="summary-row"><span>Validazione candidate</span><strong>'+esc(cand.valid?'OK':(cand.reason||'Non disponibile'))+'</strong></div>'+
       '<div class="summary-row"><span>Versione candidate</span><strong>'+esc(cand.version||'—')+'</strong></div>'+
+      '<div class="summary-row"><span>Data cutoff</span><strong>'+esc(cand.data_cutoff||'—')+'</strong></div>'+
+      '<div class="summary-row"><span>Stagioni validate</span><strong>'+esc((cand.seasons||[]).join(', ')||'—')+'</strong></div>'+
       '<div class="summary-row"><span>Precedente disponibile</span><strong>'+esc(prev.valid?'Sì':'No')+'</strong></div>'+
       '</div>';
   };
