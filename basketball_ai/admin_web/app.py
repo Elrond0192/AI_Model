@@ -780,6 +780,39 @@ def _bb_rating_worker(active_profile: str | None, actor: str) -> None:
         )
 
 
+def _prediction_calibration_worker(active_profile: str | None, actor: str) -> None:
+    from basketball_ai.admin_web.model_lifecycle import validate_artifact
+    from basketball_ai.cli import mode_prediction_calibrate
+    candidate_id = f"{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}-{uuid.uuid4().hex[:8]}"
+    output_dir = MODEL_ROOT / "candidates" / "prediction-calibration" / candidate_id
+    try:
+        if not active_profile:
+            raise RuntimeError("Seleziona prima un profilo PostgreSQL")
+        os.environ["DATABASE_PROFILE"] = active_profile
+        with STATE.lock:
+            STATE.prediction_calibration.update(status="running", stage="Loading canonical history", progress=8, message="Caricamento dello storico completo per la calibrazione OOS…", error=None, started_at=_utcnow(), finished_at=None)
+        _audit("prediction_calibration_started", actor, active_profile)
+        output_dir.mkdir(parents=True, exist_ok=False)
+        args = argparse.Namespace(database_profile=active_profile, snapshot_id=None, snapshot_dir=None, prediction_calibration_output_dir=str(output_dir))
+        with STATE.lock:
+            STATE.prediction_calibration.update(stage="Walk-forward OOS calibration", progress=25, message="Esecuzione backtest expanding OOS e fitting della mappatura 1–100…")
+        with contextlib.redirect_stdout(io.StringIO()):
+            mode_prediction_calibrate(args)
+        report = json.loads((output_dir / "prediction_rating_calibration.json").read_text(encoding="utf-8"))
+        validation = validate_artifact("prediction-calibration", output_dir)
+        if not validation.get("valid"):
+            raise RuntimeError(validation.get("reason", "Prediction calibration artifact validation failed"))
+        details = {"candidate_id": candidate_id, "rows": (report.get("dataset") or {}).get("rows"), "target_seasons": (report.get("dataset") or {}).get("target_seasons") or [], "n_folds": (report.get("validation") or {}).get("n_folds"), "prediction_model_version": report.get("prediction_model_version")}
+        _audit("prediction_calibration_candidate_ready", actor, active_profile, json.dumps(details, ensure_ascii=False))
+        with STATE.lock:
+            STATE.prediction_calibration.update(status="complete", stage="Candidate validated", progress=100, message="Calibrazione validata come candidate. Il Prediction Model e la produzione non sono stati modificati.", error=None, finished_at=_utcnow(), candidate_id=candidate_id, output={**details, "path": str(output_dir), "validation": validation})
+    except Exception as exc:
+        error = _safe_error(exc)
+        _audit("prediction_calibration_failed", actor, active_profile or "", error)
+        with STATE.lock:
+            STATE.prediction_calibration.update(status="failed", stage="Failed", progress=100, message="Prediction 1–100 calibration failed; production unchanged.", error=error, finished_at=_utcnow())
+
+
 def _training_worker(
     data: dict[str, Any],
     active_profile: str | None,
@@ -1715,6 +1748,65 @@ async def evaluate_scenario(payload: dict[str, Any], user: dict[str, str] = Depe
         return await asyncio.to_thread(_evaluate_scenario, resolved_payload)
     except Exception as exc:
         raise HTTPException(status_code=502, detail=_safe_error(exc)) from exc
+
+
+@app.get("/admin-api/prediction-calibration")
+def prediction_calibration_status(user: dict[str, str] = Depends(_operator)) -> dict[str, Any]:
+    del user
+    with STATE.lock:
+        job = dict(STATE.prediction_calibration)
+    return {"job": job, "release": inspect_model(MODEL_ROOT, "prediction-calibration"), "minimum_oos_rows": 500, "native_prediction_model_changed": False}
+
+
+@app.post("/admin-api/prediction-calibration/calibrate")
+def start_prediction_calibration(user: dict[str, str] = Depends(_csrf)) -> dict[str, Any]:
+    actor = user["username"]
+    with STATE.lock:
+        job, active_profile = dict(STATE.prediction_calibration), STATE.active_profile
+    if job.get("status") in {"running", "queued"}:
+        raise HTTPException(status_code=409, detail="Prediction calibration already running")
+    if not active_profile:
+        raise HTTPException(status_code=400, detail="Seleziona prima un profilo PostgreSQL")
+    with STATE.lock:
+        STATE.prediction_calibration.update(status="queued", stage="Queued", progress=0, message="Prediction calibration queued.", error=None, started_at=_utcnow(), finished_at=None)
+    STATE.prediction_calibration_executor.submit(_prediction_calibration_worker, active_profile, actor)
+    with STATE.lock:
+        current = dict(STATE.prediction_calibration)
+    return {"ok": True, "profile": active_profile, "job": current}
+
+
+@app.get("/admin-api/model-releases")
+def model_releases(user: dict[str, str] = Depends(_operator)) -> dict[str, Any]:
+    del user
+    return {"models": {model: inspect_model(MODEL_ROOT, model) for model in ("prediction-calibration", "bb-rating", "future-performance")}, "note": "Promotions affect files on disk; restart the inference API before expecting in-memory serving to change."}
+
+
+@app.post("/admin-api/model-releases/{model}/promote")
+def promote_auxiliary_model(model: str, payload: ConfirmPayload, user: dict[str, str] = Depends(_csrf)) -> dict[str, Any]:
+    if not payload.confirm:
+        raise HTTPException(status_code=400, detail="Conferma richiesta")
+    try:
+        result = promote_model(MODEL_ROOT, model)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    _audit("model_release_promoted", user["username"], model, json.dumps(result, ensure_ascii=False))
+    return result
+
+
+@app.post("/admin-api/model-releases/{model}/rollback")
+def rollback_auxiliary_model(model: str, payload: ConfirmPayload, user: dict[str, str] = Depends(_csrf)) -> dict[str, Any]:
+    if not payload.confirm:
+        raise HTTPException(status_code=400, detail="Conferma richiesta")
+    try:
+        result = rollback_model(MODEL_ROOT, model)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    _audit("model_release_rollback", user["username"], model, json.dumps(result, ensure_ascii=False))
+    return result
 
 
 @app.get("/admin-api/bb-rating")
