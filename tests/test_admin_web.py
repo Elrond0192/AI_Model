@@ -1051,6 +1051,8 @@ async def test_api_health(monkeypatch):
     result = await admin.api_health({"username": "admin", "role": "admin", "token": "x"})
     assert result["live"]["ok"] is True
     assert result["ready"]["ok"] is False
+    assert "prediction_model" in result
+    assert "production_model_files" in result["prediction_model"]
     assert "/api/v2/scenarios/evaluate" in result["endpoints"][-1]
 
 
