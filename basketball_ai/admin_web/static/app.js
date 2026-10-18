@@ -1,4 +1,4 @@
-const App={user:null,page:'overview',overview:null,trainingTimer:null,bbRatingTimer:null,futurePerformanceTimer:null,controllers:new Set()};
+const App={user:null,page:'overview',overview:null,trainingTimer:null,bbRatingTimer:null,futurePerformanceTimer:null,predictionCalibrationTimer:null,controllers:new Set()};
 const $=(s,r=document)=>r.querySelector(s);const $$=(s,r=document)=>[...r.querySelectorAll(s)];
 const root=$('#page-root');
 
@@ -45,6 +45,7 @@ async function navigate(page){
   clearTimeout(App.trainingTimer);
   clearTimeout(App.bbRatingTimer);
   clearTimeout(App.futurePerformanceTimer);
+  clearTimeout(App.predictionCalibrationTimer);
   App.page=page;
   activateNav(page);
   mountTemplate(page);
@@ -57,6 +58,7 @@ async function navigate(page){
     if(page==='future-performance')await renderFuturePerformancePage();
     if(page==='scenarios')await renderScenarios();
     if(page==='registry')await renderRegistry();
+    if(page==='model-releases')await renderModelReleases();
     if(page==='health')await renderHealth();
     if(page==='diagnostics')await renderDiagnostics();
     if(page==='audit')await renderAudit();
@@ -257,6 +259,63 @@ async function renderBBRating(){
 
   $('#bb-rating-job').innerHTML=j.status&&j.status!=='idle'?'<div class="job-head"><div><div class="job-status">'+esc(j.stage||'Calibration')+'</div><div class="job-message">'+esc(j.error||j.message||'')+'</div></div><span class="registry-badge '+((j.status==='running'||j.status==='queued')?'candidate':'')+'">'+esc(j.status)+'</span></div><div class="progress-track"><div class="progress-bar" style="width:'+Math.max(0,Math.min(100,Number(j.progress)||0))+'%"></div></div>':'<div class="job-message">Nessuna calibrazione eseguita dal Control Center in questa sessione.</div>';
   if((j.status==='running'||j.status==='queued')&&App.page==='bb-rating')App.bbRatingTimer=setTimeout(()=>renderBBRating().catch(e=>toast(e.message,'error')),2200);
+}
+
+async function renderModelReleases(){
+  const data=await api('/admin-api/model-releases');
+  const calibration=await api('/admin-api/prediction-calibration');
+  const models=data.models||{};
+  const job=calibration.job||{};
+  const release=calibration.release||{};
+  const fmtRelease=(m)=>{
+    const prod=m.production||{},cand=m.candidate||{},prev=m.previous||{};
+    return '<div class="summary-list">'+
+      '<div class="summary-row"><span>Production</span><strong>'+esc(prod.valid?'Validata':'Non valida / assente')+'</strong></div>'+
+      '<div class="summary-row"><span>Versione produzione</span><strong>'+esc(prod.version||'—')+'</strong></div>'+
+      '<div class="summary-row"><span>Candidate</span><strong>'+esc(cand.id||'Nessuna')+'</strong></div>'+
+      '<div class="summary-row"><span>Validazione candidate</span><strong>'+esc(cand.valid?'OK':(cand.reason||'Non disponibile'))+'</strong></div>'+
+      '<div class="summary-row"><span>Versione candidate</span><strong>'+esc(cand.version||'—')+'</strong></div>'+
+      '<div class="summary-row"><span>Precedente disponibile</span><strong>'+esc(prev.valid?'Sì':'No')+'</strong></div>'+
+      '</div>';
+  };
+  $('#release-bb-rating').innerHTML=fmtRelease(models['bb-rating']||{});
+  $('#release-future-performance').innerHTML=fmtRelease(models['future-performance']||{});
+  $('#prediction-calibration-release').innerHTML=fmtRelease(release);
+  $('#prediction-calibration-job').innerHTML='<div class="job-head"><div><div class="job-status">'+esc(job.stage||'Ready')+'</div><div class="job-message">'+esc(job.error||job.message||'Nessuna calibrazione eseguita.')+'</div></div><span class="registry-badge '+(['running','queued'].includes(job.status)?'candidate':'')+'">'+esc(job.status||'idle')+'</span></div>'+
+    (job.output?'<div class="summary-list">'+[['OOS rows',job.output.rows],['Target seasons',(job.output.target_seasons||[]).join(', ')],['OOS folds',job.output.n_folds],['Prediction version',job.output.prediction_model_version]].map(([a,b])=>'<div class="summary-row"><span>'+esc(a)+'</span><strong>'+esc(b??'—')+'</strong></div>').join('')+'</div>':'')+
+    (job.progress!=null?'<div class="progress-track"><div class="progress-bar" style="width:'+Math.max(0,Math.min(100,Number(job.progress)||0))+'%"></div></div>':'');
+  const start=$('#prediction-calibration-start');
+  start.disabled=['running','queued'].includes(job.status)||!App.overview?.database;
+  start.textContent=['running','queued'].includes(job.status)?'Calibrazione in corso…':'Genera candidate';
+  start.onclick=async()=>{
+    start.disabled=true;
+    try{await api('/admin-api/prediction-calibration/calibrate',{method:'POST',body:{}});toast('Prediction calibration avviata');await renderModelReleases();}
+    catch(e){toast(e.message,'error');start.disabled=false;}
+  };
+  $('#model-releases-refresh').onclick=()=>renderModelReleases().catch(e=>toast(e.message,'error'));
+  $('.release-promote').forEach(button=>{
+    const model=button.dataset.model;
+    const item=model==='prediction-calibration'?release:(models[model]||{});
+    button.disabled=!(item.candidate&&item.candidate.valid);
+    button.onclick=async()=>{
+      if(!confirm('Promuovere il candidate '+model+'? L’API inference dovrà essere riavviata.'))return;
+      button.disabled=true;
+      try{const result=await api('/admin-api/model-releases/'+encodeURIComponent(model)+'/promote',{method:'POST',body:{confirm:true}});$('#model-release-result').textContent=(result.message||'Promozione completata')+' Versione: '+(result.version||'—');toast('Candidate promosso; riavvio API richiesto');await renderModelReleases();}
+      catch(e){toast(e.message,'error');button.disabled=false;}
+    };
+  });
+  $('.release-rollback').forEach(button=>{
+    const model=button.dataset.model;
+    const item=model==='prediction-calibration'?release:(models[model]||{});
+    button.disabled=!(item.previous&&item.previous.valid);
+    button.onclick=async()=>{
+      if(!confirm('Ripristinare la release precedente di '+model+'? L’API inference dovrà essere riavviata.'))return;
+      button.disabled=true;
+      try{const result=await api('/admin-api/model-releases/'+encodeURIComponent(model)+'/rollback',{method:'POST',body:{confirm:true}});$('#model-release-result').textContent=(result.message||'Rollback completato')+' Versione: '+(result.version||'—');toast('Rollback completato; riavvio API richiesto');await renderModelReleases();}
+      catch(e){toast(e.message,'error');button.disabled=false;}
+    };
+  });
+  if(['running','queued'].includes(job.status)&&App.page==='model-releases')App.predictionCalibrationTimer=setTimeout(()=>renderModelReleases().catch(e=>toast(e.message,'error')),2500);
 }
 
 function chartSvg(points){if(!points||points.length<1)return empty('⌁','Dati non disponibili','I fold walk-forward appariranno dopo il training.');const vals=points.map(p=>Number(p.rmse)).filter(Number.isFinite);if(!vals.length)return '';const min=Math.min(...vals),max=Math.max(...vals),range=Math.max(max-min,.001),w=640,h=210,pad=34;const coords=points.map((p,i)=>{const x=pad+(i*(w-pad*2)/Math.max(1,points.length-1));const y=h-pad-((Number(p.rmse)-min)/range)*(h-pad*2);return{x,y,p};});return `<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none"><line class="chart-grid-line" x1="${pad}" y1="${h-pad}" x2="${w-pad}" y2="${h-pad}"/><line class="chart-grid-line" x1="${pad}" y1="${pad}" x2="${w-pad}" y2="${pad}"/><polyline class="chart-line" points="${coords.map(c=>`${c.x},${c.y}`).join(' ')}"/>${coords.map(c=>`<circle class="chart-dot" cx="${c.x}" cy="${c.y}" r="5"/><text class="chart-label" x="${c.x}" y="${h-9}" text-anchor="middle">${esc(c.p.target_season??'')}</text>`).join('')}</svg>`;}
