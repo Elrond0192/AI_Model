@@ -188,6 +188,8 @@ def test_public_scenario_payload_suppresses_raw_rating_and_preserves_canonical_s
             },
             "prediction_model": {
                 "target_season": 2027,
+                "predicted_rating_delta": 0.8,
+                "outcome": {"label": "meaningful_positive_change"},
                 "predicted_rating": 7.25,
                 "confidence_low": 6.8,
                 "confidence_high": 7.7,
@@ -207,6 +209,8 @@ def test_public_scenario_payload_suppresses_raw_rating_and_preserves_canonical_s
     assert comparison["bb_rating_delta"] == -6
     assert [row["metric"] for row in clean["result"]["metric_explanation"]["metrics"]] == ["bb_rating"]
     forecast = clean["result"]["prediction_model"]
+    assert "predicted_rating_delta" not in forecast
+    assert "outcome" not in forecast
     assert forecast["predicted_rating_100"] == 72.8
     assert forecast["confidence_low_100"] == 68.3
     assert forecast["confidence_high_100"] == 77.2
