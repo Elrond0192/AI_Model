@@ -479,7 +479,7 @@ def mode_bb_rating_prediction_train(args: argparse.Namespace) -> None:
     if not metadata.get("promotion_gate_passed", False):
         print(json.dumps({
             "status": "validation_failed",
-            "reason": "Walk-forward MAE did not beat the context-aware baseline; no artifact was saved.",
+            "reason": "Walk-forward baseline or supported-segment regression gate failed; no artifact was saved.",
             "model": metadata,
         }, indent=2, default=str))
         raise SystemExit(2)
