@@ -45,8 +45,25 @@ def validate_artifact(model: str, directory: str | Path) -> dict[str, Any]:
         mapping = fit
         if int(dataset.get("rows") or 0) < 500:
             return {"valid": False, "reason": "Prediction calibration requires at least 500 OOS rows"}
-        if len(mapping.get("x_thresholds") or []) < 2 or len(mapping.get("y_thresholds_native") or []) < 2:
-            return {"valid": False, "reason": "Prediction calibration mapping has fewer than two thresholds"}
+        x_values = mapping.get("x_thresholds") or []
+        y_values = mapping.get("y_thresholds_native") or []
+        if len(x_values) < 2 or len(y_values) < 2 or len(x_values) != len(y_values):
+            return {"valid": False, "reason": "Prediction calibration mapping requires equally sized threshold arrays with at least two values"}
+        try:
+            x_numbers = [float(value) for value in x_values]
+            y_numbers = [float(value) for value in y_values]
+        except (TypeError, ValueError):
+            return {"valid": False, "reason": "Prediction calibration thresholds must be numeric"}
+        import math
+        if not all(math.isfinite(value) for value in x_numbers + y_numbers):
+            return {"valid": False, "reason": "Prediction calibration thresholds must be finite"}
+        if any(left >= right for left, right in zip(x_numbers, x_numbers[1:])):
+            return {"valid": False, "reason": "Prediction calibration x thresholds must be strictly increasing"}
+        if any(left > right for left, right in zip(y_numbers, y_numbers[1:])):
+            return {"valid": False, "reason": "Prediction calibration mapping must be monotonic"}
+        validation = artifact.get("validation") or {}
+        if validation.get("status") != "validated_oos" or int(validation.get("n_folds") or 0) < 1:
+            return {"valid": False, "reason": "Prediction calibration requires at least one valid temporal OOS fold"}
         if not artifact.get("prediction_model_version"):
             return {"valid": False, "reason": "Prediction model version is missing"}
     elif model == "bb-rating":
