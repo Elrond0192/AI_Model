@@ -78,6 +78,66 @@ def _engine() -> ChatScenarioEngine:
     return ChatScenarioEngine(SimpleNamespace(), _analysis_data())
 
 
+def test_prediction_model_uses_loaded_calibration_and_hides_native_rating():
+    data = _analysis_data()
+    data["player_dict"][1]["global_id"] = "PLAYER-ALPHA"
+
+    class HistoricalBBRating:
+        def rate_player(self, global_id, *, league, season, phase):
+            assert global_id == "PLAYER-ALPHA"
+            assert league == "A"
+            return SimpleNamespace(score={2023: 61, 2024: 65}[season])
+
+    calibration = {
+        "calibration_version": "1.0",
+        "fit": {
+            "x_thresholds": [0.0, 10.0],
+            "y_thresholds_native": [0.0, 10.0],
+        },
+    }
+    engine = ChatScenarioEngine(
+        SimpleNamespace(),
+        data,
+        bb_rating_engine=HistoricalBBRating(),
+        prediction_calibration=calibration,
+    )
+    engine._direct_prediction = lambda player_id, team_id, league_id, season, competition: (
+        SimpleNamespace(
+            predicted_rating=7.25,
+            confidence_low=6.8,
+            confidence_high=7.7,
+        ),
+        {},
+    )
+
+    result = engine.evaluate(
+        {
+            "scenario": "model_evidence",
+            "season": 2024,
+            "competition": "RS",
+            "parameters": {"question_key": "potential"},
+        },
+        [1],
+        [],
+        10,
+        None,
+    )["result"]
+
+    prediction = result["prediction_model"]
+    assert prediction["available"] is True
+    assert prediction["target_season"] == 2025
+    assert prediction["prediction_calibration_version"] == "1.0"
+    assert prediction["predicted_rating_100"] == pytest.approx(72.8)
+    assert prediction["confidence_low_100"] == pytest.approx(68.3)
+    assert prediction["confidence_high_100"] == pytest.approx(77.2)
+    assert prediction["current_bb_rating"] == 65
+    assert prediction["delta_vs_current_bb_rating"] == pytest.approx(7.8)
+    assert "predicted_rating" not in prediction
+    assert "confidence_low" not in prediction
+    assert "confidence_high" not in prediction
+    assert "base_rating" not in prediction
+
+
 def test_team_competition_compares_playoffs_to_regular_season():
     result = _engine().evaluate(
         {"scenario": "team_competition", "season": 2024, "competition": "PO", "comparison_competition": "RS"},
