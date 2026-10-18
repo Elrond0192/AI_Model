@@ -99,9 +99,9 @@ def validate_artifact(model: str, directory: str | Path) -> dict[str, Any]:
         "version": artifact.get("calibration_version") or artifact.get("future_performance_version") or artifact.get("bb_rating_version"),
         "prediction_model_version": artifact.get("prediction_model_version"),
         "feature_version": artifact.get("feature_version"),
-        "data_cutoff": artifact.get("data_cutoff"),
+        "data_cutoff": artifact.get("data_cutoff") or (artifact.get("dataset") or {}).get("data_cutoff") or (artifact.get("dataset") or {}).get("season_max"),
         "rows": (artifact.get("dataset") or {}).get("rows") or artifact.get("n_pairs"),
-        "seasons": (artifact.get("dataset") or {}).get("target_seasons") or artifact.get("training_target_seasons") or [],
+        "seasons": (artifact.get("dataset") or {}).get("target_seasons") or (artifact.get("dataset") or {}).get("seasons") or artifact.get("training_target_seasons") or artifact.get("seasons") or [],
         "validation": artifact.get("validation") or artifact.get("backtest") or {},
         "generated_at": artifact.get("generated_at"),
     }
@@ -156,9 +156,9 @@ def promote_model(root: str | Path, model: str, candidate_id: str | None = None)
     with _LOCK:
         candidates_root = _candidate_root(root, model)
         if candidate_id:
-            candidate = candidates_root / candidate_id
-            if candidate.parent != candidates_root:
+            if candidate_id in {".", ".."} or Path(candidate_id).name != candidate_id or "/" in candidate_id or "\\" in candidate_id:
                 raise ValueError("Invalid candidate id")
+            candidate = candidates_root / candidate_id
         else:
             available = sorted((p for p in candidates_root.iterdir() if p.is_dir()), key=lambda p: p.stat().st_mtime, reverse=True) if candidates_root.is_dir() else []
             candidate = available[0] if available else None
