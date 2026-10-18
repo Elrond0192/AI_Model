@@ -335,7 +335,7 @@ async function renderModelReleases(){
     catch(e){toast(e.message,'error');start.disabled=false;}
   };
   $('#model-releases-refresh').onclick=()=>renderModelReleases().catch(e=>toast(e.message,'error'));
-  $('.release-promote').forEach(button=>{
+  $$('.release-promote').forEach(button=>{
     const model=button.dataset.model;
     const item=model==='prediction-calibration'?release:(models[model]||{});
     button.disabled=!(item.candidate&&item.candidate.valid);
@@ -346,7 +346,7 @@ async function renderModelReleases(){
       catch(e){toast(e.message,'error');button.disabled=false;}
     };
   });
-  $('.release-rollback').forEach(button=>{
+  $$('.release-rollback').forEach(button=>{
     const model=button.dataset.model;
     const item=model==='prediction-calibration'?release:(models[model]||{});
     button.disabled=!(item.previous&&item.previous.valid);
