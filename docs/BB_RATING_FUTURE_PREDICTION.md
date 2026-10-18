@@ -45,7 +45,7 @@ python -m basketball_ai.cli --mode bb-rating-prediction-train \
   --bb-rating-prediction-output-dir models_saved
 ```
 
-The command writes a lifecycle-managed candidate under `models_saved/candidates/bb-rating-prediction/<candidate_id>/` only if enough walk-forward OOF predictions exist and the MAE gate passes. It does not automatically promote the candidate. Inspect it in Model Center → Model Releases → BB Prediction Model (1–100), then use the normal candidate validation/promotion/rollback controls. Keep the existing Prediction Model 2.6.0 and its artifacts intact.
+The command excludes the latest observed season as a target by default (it can still be used as source history) to avoid training on an in-progress season. Only pass `--bb-rating-prediction-include-latest-target-season` when that season has been confirmed complete. It writes a lifecycle-managed candidate under `models_saved/candidates/bb-rating-prediction/<candidate_id>/` only if enough walk-forward OOF predictions exist and the MAE gate passes. It does not automatically promote the candidate. Inspect it in Model Center → Model Releases → BB Prediction Model (1–100), then use the normal candidate validation/promotion/rollback controls. Keep the existing Prediction Model 2.6.0 and its artifacts intact.
 
 After independent review, promote the candidate through Model Center or set `BB_RATING_FUTURE_MODEL_DIR` to an explicitly approved release directory. The API loads only the promoted release path, never the candidate directory.
 
