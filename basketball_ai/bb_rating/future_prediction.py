@@ -601,7 +601,6 @@ class BBRatingFuturePredictionModel:
             "predicted_bb_rating": round(score, 1),
             "confidence_low_100": round(float(np.clip(score + interval["low"], 1, 100)), 1),
             "confidence_high_100": round(float(np.clip(score + interval["high"], 1, 100)), 1),
-            "raw_model_prediction": round(raw, 2),
             "calibration_level": calibrated["calibration_level"],
             "calibration_samples": int(calibrated["calibration_samples"]),
             "interval_samples": int(interval["n"]),
