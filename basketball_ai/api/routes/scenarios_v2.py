@@ -18,6 +18,50 @@ from basketball_ai.scenarios.chat_scenario_engine import ChatScenarioEngine
 router = APIRouter(prefix="/api/v2/scenarios", tags=["scenarios-v2"])
 logger = logging.getLogger(__name__)
 
+# Native/source rating values have meaning only inside the modeling pipeline.
+# Public scenario responses may include the canonical BB-Rating (1–100) and
+# calibrated forecasts, but must never leak the statistical 0–10 rating.
+_PUBLIC_RAW_RATING_KEYS = {
+    "rating", "current_rating", "previous_rating", "rating_delta",
+    "rating_change", "peak_rating", "historical_peak",
+    "rating_trend_per_season", "trend_slope_per_season", "rating_mean",
+    "rating_median", "rating_std", "recent_rating", "peak_premium",
+    "change_vs_previous_season", "first_rating", "second_rating",
+    "bb_rating_source_score", "source_rating", "raw_rating",
+    "statistical_rating", "statistical_rating_delta",
+    "previous_statistical_rating", "current_statistical_rating",
+    "predicted_rating", "confidence_low", "confidence_high", "base_rating",
+    "delta_vs_observed", "baseline_rating", "scenario_rating",
+    "rating_with_pair_context", "observed_rating", "expected_rating",
+    "actual_rating", "forecast_rating",
+}
+_PUBLIC_RAW_METRIC_NAMES = {"rating", "source_rating", "statistical_rating"}
+_DROP_PUBLIC_FIELD = object()
+
+
+def _sanitize_public_scenario_payload(value):
+    """Strip native/raw rating fields at the public API response boundary."""
+    if isinstance(value, dict):
+        metric_name = str(value.get("metric", "")).strip().lower()
+        if metric_name in _PUBLIC_RAW_METRIC_NAMES:
+            return _DROP_PUBLIC_FIELD
+        sanitized = {}
+        for key, item in value.items():
+            if str(key).strip().lower() in _PUBLIC_RAW_RATING_KEYS:
+                continue
+            clean_item = _sanitize_public_scenario_payload(item)
+            if clean_item is not _DROP_PUBLIC_FIELD:
+                sanitized[key] = clean_item
+        return sanitized
+    if isinstance(value, (list, tuple)):
+        sanitized_items = []
+        for item in value:
+            clean_item = _sanitize_public_scenario_payload(item)
+            if clean_item is not _DROP_PUBLIC_FIELD:
+                sanitized_items.append(clean_item)
+        return sanitized_items
+    return value
+
 
 def _resolve_global_ids(data: dict, values: list[str], entity: str) -> list[int]:
     dictionary = data.get("player_dict" if entity == "player" else "team_dict", {})
@@ -92,6 +136,7 @@ async def evaluate_scenario(body: ScenarioRequestV2, request: Request):
             source_league_id,
             target_league_id,
         )
+        payload = _sanitize_public_scenario_payload(payload)
         logger.info(
             "[scenario] success scenario=%s result_keys=%s evidence=%d",
             body.scenario, sorted(payload.get("result", {}).keys()), len(payload.get("evidence", [])),
