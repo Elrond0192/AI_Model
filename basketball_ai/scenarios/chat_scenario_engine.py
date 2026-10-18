@@ -108,8 +108,8 @@ class ChatScenarioEngine:
         data: dict[str, Any],
         bb_rating_engine: Any | None = None,
         bb_rating_uncertainty: Any | None = None,
-        prediction_calibration: dict[str, Any] | None = None,
         future_performance_model: Any | None = None,
+        prediction_calibration: dict[str, Any] | None = None,
     ) -> None:
         self.ensemble = ensemble
         self.data = data
