@@ -458,6 +458,8 @@ class BBRatingFuturePredictionModel:
             "calibration_samples": int(calibrated["calibration_samples"]),
             "interval_samples": int(interval["n"]),
             "scenario": scenario,
+            "source_league": features.get("source_league"),
+            "source_competition": features.get("source_competition"),
             "target_league": league,
             "target_competition": features.get("target_competition"),
             "target_season": features.get("target_season"),
@@ -469,6 +471,7 @@ class BBRatingFuturePredictionModel:
         self, data: dict[str, Any], *, player_global_id: str, source_season: int,
         target_league: str, target_competition: str = "RS",
         target_team_global_id: str | None = None,
+        source_league: str | None = None, source_competition: str = "RS",
     ) -> dict[str, Any]:
         stats = data.get("player_stats", pd.DataFrame())
         players = data.get("players", pd.DataFrame())
@@ -483,13 +486,30 @@ class BBRatingFuturePredictionModel:
             raise ValueError("Player has no source-season statistics")
         target_league = str(target_league).strip().upper()
         target_competition = normalize_competition(target_competition)
-        # Prefer the requested league/competition's most recent source row, then
-        # the player's latest observed context; destination context is explicit.
-        exact = source[
-            (source["league_key"].astype(str).str.upper() == target_league)
-            & (source["competition"].map(normalize_competition) == target_competition)
-        ]
-        row = (exact if not exact.empty else source).sort_values("_year").iloc[-1]
+        source_competition = normalize_competition(source_competition)
+        if source_competition:
+            matching_phase = source[
+                source["competition"].map(normalize_competition) == source_competition
+            ]
+            if not matching_phase.empty:
+                source = matching_phase
+            else:
+                raise ValueError(
+                    f"Player has no source-season rows for competition {source_competition}"
+                )
+        if source_league:
+            source = source[
+                source["league_key"].astype(str).str.upper() == str(source_league).strip().upper()
+            ]
+            if source.empty:
+                raise ValueError(f"Player has no source-season rows for league {source_league}")
+        # If the player has multiple simultaneous league contexts and the caller
+        # did not specify one, select the most-used source context deterministically.
+        for usage_column in ("games_played", "minutes_per_game", "minutes"):
+            if usage_column in source.columns:
+                source[usage_column] = pd.to_numeric(source[usage_column], errors="coerce")
+        sort_columns = [column for column in ("games_played", "minutes_per_game", "minutes", "league_key") if column in source.columns]
+        row = source.sort_values(sort_columns, ascending=[False] * (len(sort_columns) - 1) + [True] if sort_columns else [], na_position="last").iloc[0]
         team_map = _team_global_map(data)
         source_team = _team_identity(row, team_map)
         source_league = _clean(row.get("league_key")).upper()
