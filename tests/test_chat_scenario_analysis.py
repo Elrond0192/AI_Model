@@ -351,6 +351,7 @@ def test_player_intelligence_analysis_layers():
 
 def test_metric_explanation_uses_same_context_percentiles():
     data = _analysis_data()
+    data["player_dict"][1]["global_id"] = "PLAYER-1"
     extra_row = data["player_stats"][
         (data["player_stats"]["player_id"] == 4)
         & (data["player_stats"]["season"] == 2024)
