@@ -723,6 +723,7 @@ def _future_performance_worker(active_profile: str | None, actor: str, cancel_ev
         root.mkdir(parents=True, exist_ok=False)
         _check_cancelled(cancel_event)
         paths = model.save(root)
+        _check_cancelled(cancel_event)
         details = {
             "future_performance_version": metadata.get("future_performance_version"),
             "feature_version": metadata.get("feature_version"),
@@ -824,6 +825,7 @@ def _bb_rating_worker(active_profile: str | None, actor: str, cancel_event: thre
         output_dir.mkdir(parents=True, exist_ok=False)
         _check_cancelled(cancel_event)
         paths = write_calibration_report(report, str(output_dir))
+        _check_cancelled(cancel_event)
         details = {
             "calibration_version": report.get("calibration_version"),
             "bb_rating_version": report.get("bb_rating_version"),
@@ -886,6 +888,7 @@ def _prediction_calibration_worker(active_profile: str | None, actor: str, cance
         report = json.loads((output_dir / "prediction_rating_calibration.json").read_text(encoding="utf-8"))
         _check_cancelled(cancel_event)
         validation = validate_artifact("prediction-calibration", output_dir)
+        _check_cancelled(cancel_event)
         if not validation.get("valid"):
             raise RuntimeError(validation.get("reason", "Prediction calibration artifact validation failed"))
         details = {"candidate_id": candidate_id, "rows": (report.get("dataset") or {}).get("rows"), "target_seasons": (report.get("dataset") or {}).get("target_seasons") or [], "n_folds": (report.get("validation") or {}).get("n_folds"), "prediction_model_version": report.get("prediction_model_version")}
