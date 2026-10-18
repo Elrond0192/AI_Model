@@ -28,7 +28,7 @@ Install database contracts in order:
 1. `basketball_ai/data/ai_source_full.sql` — canonical entity and competition-preserving statistical source.
 2. `basketball_ai/data/ai_scenario_serving.sql` — indexed training/scenario serving tables and refresh procedures.
 3. `basketball_ai/data/ai_schema.sql` — model-owned prediction storage.
-4. Metric Rating Engine storage (`"AI"."MetricDefinition"`, `"AI"."MetricDistribution"`, `"AI"."MetricRating"`) is required when that feature is deployed. **The DDL file referenced by the backfill workflow (`basketball_ai/data/ai_metric_schema.sql`) is not present in the current repository tree; restore/validate it before treating a clean Metric Rating installation as reproducible.**
+4. `basketball_ai/data/ai_metric_schema.sql` — Metric Rating Engine tables (`"AI"."MetricDefinition"`, `"AI"."MetricDistribution"`, `"AI"."MetricRating"`) when that feature is deployed.
 
 After the upstream ETL has updated canonical AI_Source statistics, refresh a single context with:
 
