@@ -188,6 +188,7 @@ def _reset_state():
         admin.STATE.active_profile = None
         admin.STATE.summary = {}
         admin.STATE.snapshot = None
+        admin.STATE.prediction_calibration = {"status": "idle", "stage": "Ready", "progress": 0, "message": "No Prediction 1-100 calibration run in progress.", "error": None, "started_at": None, "finished_at": None, "output": None}
         admin.STATE.bb_rating = {
             "status": "idle",
             "stage": "Ready",
@@ -256,6 +257,10 @@ def test_helpers_and_static_assets(monkeypatch, tmp_path):
     assert "Prepara storico modello" in html
     assert "Dati e snapshot" in html
     assert "Model Registry" in html
+    assert "Model Releases" in html
+    assert "prediction-calibration" in js
+    assert "renderModelReleases" in js
+    assert "/admin-api/model-releases" in js
     assert "BB-Rating" in html
     assert 'id="diag-team-search"' in html
     assert 'id="diag-team"' in html
@@ -362,6 +367,35 @@ def test_bb_rating_calibration_start(monkeypatch, tmp_path):
     assert result["job"]["status"] == "queued"
     assert executor.submitted
 
+
+
+
+
+def test_prediction_calibration_start_queues_candidate_job(monkeypatch, tmp_path):
+    _reset_state()
+    monkeypatch.setattr(admin, "MODEL_ROOT", tmp_path / "models_saved")
+    with admin.STATE.lock:
+        admin.STATE.active_profile = "production"
+
+    class Executor:
+        def __init__(self):
+            self.submitted = []
+
+        def submit(self, fn, *args):
+            self.submitted.append((fn, args))
+
+    executor = Executor()
+    monkeypatch.setattr(admin.STATE, "prediction_calibration_executor", executor)
+    monkeypatch.setattr(admin, "_utcnow", lambda: "now")
+    monkeypatch.setattr(admin, "_audit", lambda *args, **kwargs: None)
+    result = admin.start_prediction_calibration(
+        {"username": "admin", "role": "admin", "token": "x"}
+    )
+    assert result["ok"] is True
+    assert result["profile"] == "production"
+    assert result["job"]["status"] == "queued"
+    assert executor.submitted
+    assert executor.submitted[0][0] is admin._prediction_calibration_worker
 
 
 def test_diagnostic_request_builds_whitelisted_payloads():
