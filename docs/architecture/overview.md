@@ -30,17 +30,15 @@ Install database contracts in order:
 3. `basketball_ai/data/ai_schema.sql` — model-owned prediction storage.
 4. `basketball_ai/data/ai_metric_schema.sql` — Metric Rating Engine tables (`"AI"."MetricDefinition"`, `"AI"."MetricDistribution"`, `"AI"."MetricRating"`) when that feature is deployed.
 
-After the upstream ETL has updated canonical AI_Source statistics, refresh a single context with:
-
-```sql
-CALL "AI_Source"."RefreshContextSeasonal"(2025);
-```
-
-Or refresh all discovered league/competition contexts for a season:
+After the upstream ETL has committed canonical AI_Source statistics for a season,
+refresh all discovered league/competition contexts for that season through the
+single public entry point:
 
 ```sql
 CALL "AI_Source"."RefreshContextSeasonal"(2026);
 ```
+
+There is no public single-context `RefreshContext` overload.
 
 The refresh procedure operates on the current canonical AI_Source tables; it does not itself rebuild those tables from HoopmetricsEngine source schemas. Follow the ETL/source-contract rebuild steps in [README](../../README.md) and [RUNBOOK](../../RUNBOOK.md).
 
