@@ -16,6 +16,7 @@ import re
 from pathlib import Path
 import secrets
 import threading
+import time
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request as URLRequest, urlopen
@@ -1015,6 +1016,41 @@ def _probe(path: str) -> dict[str, Any]:
         return {"ok": False, "status": None, "body": None, "error": str(exc)[:300]}
 
 
+def _restart_inference_api(timeout_seconds: float = 90.0) -> dict[str, Any]:
+    """Request a controlled API-container restart and wait for readiness."""
+    api_key = os.environ.get("API_KEY", "").strip()
+    if not api_key:
+        return {"ok": False, "error": "API_KEY is not configured; automatic API restart is unavailable"}
+    request = URLRequest(
+        f"{API_BASE_URL}/internal/restart",
+        data=b"{}",
+        headers={"Accept": "application/json", "Content-Type": "application/json", "X-API-Key": api_key},
+        method="POST",
+    )
+    try:
+        with urlopen(request, timeout=8.0) as response:
+            body = json.loads(response.read().decode("utf-8", errors="replace") or "{}")
+            if response.status != 202 or not body.get("accepted"):
+                return {"ok": False, "error": "Inference API did not accept the restart request", "status": response.status}
+    except Exception as exc:
+        return {"ok": False, "error": f"Could not request API restart: {str(exc)[:300]}"}
+
+    # Avoid mistaking the still-running old process for a successful restart.
+    time.sleep(2.0)
+    deadline = time.monotonic() + max(5.0, timeout_seconds)
+    last_probe: dict[str, Any] = {}
+    while time.monotonic() < deadline:
+        last_probe = _probe("/health/ready")
+        if last_probe.get("ok"):
+            return {"ok": True, "status": "ready", "health": last_probe.get("body")}
+        time.sleep(1.0)
+    return {
+        "ok": False,
+        "error": "Inference API did not become ready after the restart request",
+        "last_health": last_probe,
+    }
+
+
 def _scenario_entity_rows(entity: str, query: str, limit: int = 12) -> list[dict[str, Any]]:
     """Search canonical entities with DB lookup and optional loaded-data enrichment.
 
@@ -1797,6 +1833,9 @@ def promote_auxiliary_model(model: str, payload: ConfirmPayload, user: dict[str,
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    restart = _restart_inference_api()
+    result["api_restart"] = restart
+    result["restart_required"] = not restart.get("ok")
     _audit("model_release_promoted", user["username"], model, json.dumps(result, ensure_ascii=False))
     return result
 
@@ -1811,6 +1850,9 @@ def rollback_auxiliary_model(model: str, payload: ConfirmPayload, user: dict[str
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    restart = _restart_inference_api()
+    result["api_restart"] = restart
+    result["restart_required"] = not restart.get("ok")
     _audit("model_release_rollback", user["username"], model, json.dumps(result, ensure_ascii=False))
     return result
 
@@ -1899,6 +1941,9 @@ def promote(payload: ConfirmPayload, user: dict[str, str] = Depends(_csrf)) -> d
     result = promote_if_better(str(MODEL_ROOT))
     if not result.get("promoted"):
         raise HTTPException(status_code=409, detail=result.get("reason", "Promotion rejected"))
+    restart = _restart_inference_api()
+    result["api_restart"] = restart
+    result["restart_required"] = not restart.get("ok")
     return result
 
 
@@ -1910,6 +1955,9 @@ def rollback(payload: ConfirmPayload, user: dict[str, str] = Depends(_csrf)) -> 
     result = rollback_to_previous(str(MODEL_ROOT))
     if not result.get("rolled_back"):
         raise HTTPException(status_code=409, detail=result.get("reason", "Rollback unavailable"))
+    restart = _restart_inference_api()
+    result["api_restart"] = restart
+    result["restart_required"] = not restart.get("ok")
     return result
 
 
