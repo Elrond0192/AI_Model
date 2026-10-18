@@ -59,13 +59,15 @@ Example request:
 {
   "player_global_id": "174019",
   "source_season": 2026,
+  "source_league": "EL",
+  "source_competition": "RS",
   "target_league": "ITA1",
   "target_competition": "RS",
   "target_team_global_id": "TEAM_GLOBAL_ID"
 }
 ```
 
-The response contains a direct 1-100 BB-Rating prediction, empirical OOF 10th-90th residual interval, scenario, calibration level and support counts. The target team is optional; when omitted, the team transition is unknown and the model must not pretend it has calibrated a same-team or transfer scenario.
+The response contains a direct 1-100 BB-Rating prediction, empirical OOF 10th-90th residual interval, scenario, calibration level and support counts. The source league is optional; if omitted, the model deterministically selects the highest-usage source context in the requested source season/phase. Specify it when a player has simultaneous league contexts. The target team is optional; when omitted, the team transition is unknown and the model must not pretend it has calibrated a same-team or transfer scenario.
 
 The health response exposes `bb_rating_future_prediction_loaded` and the loaded model version. A missing release disables only this new endpoint; it does not silently substitute the native-rating Prediction Model.
 
