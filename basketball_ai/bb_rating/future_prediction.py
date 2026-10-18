@@ -505,6 +505,13 @@ class BBRatingFuturePredictionModel:
         by_destination = {}
         for league in sorted(oof["target_league"].astype(str).unique()):
             by_destination[league] = metric_pack(oof["target_league"].astype(str).to_numpy() == league)
+        by_destination_scenario = {}
+        for (league, scenario), group in oof.groupby(["target_league", "scenario"], sort=True):
+            key = f"{league}::{scenario}"
+            by_destination_scenario[key] = metric_pack(
+                (oof["target_league"].astype(str).to_numpy() == str(league))
+                & (oof["scenario"].astype(str).to_numpy() == str(scenario))
+            )
         mae_model = float(mean_absolute_error(actual, calibrated))
         mae_baseline = float(mean_absolute_error(actual, baseline))
 
@@ -512,6 +519,7 @@ class BBRatingFuturePredictionModel:
         for dimension, metrics_by_group in (
             ("scenario", by_scenario),
             ("destination_league", by_destination),
+            ("destination_league_scenario", by_destination_scenario),
         ):
             for group_name, metrics in metrics_by_group.items():
                 if int(metrics.get("n") or 0) < 40:
@@ -564,6 +572,7 @@ class BBRatingFuturePredictionModel:
             "promotion_gate": "overall_mae_must_beat_baseline_and_supported_segments_must_not_regress_by_more_than_10_percent_plus_0.25_points",
             "scenario_metrics": by_scenario,
             "destination_league_metrics": by_destination,
+            "destination_league_scenario_metrics": by_destination_scenario,
             "scenario_counts": {
                 str(k): int(v) for k, v in records["scenario"].value_counts().items()
             },
