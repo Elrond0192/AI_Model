@@ -36,9 +36,15 @@ def test_metric_rating_storage_matches_backfill_columns():
         ),
     }
     for table, columns in required_columns.items():
-        assert f'CREATE TABLE IF NOT EXISTS "AI"."{table}"' in sql
+        marker = f'CREATE TABLE IF NOT EXISTS "AI"."{table}" ('
+        assert marker in sql
+        table_block = sql.split(marker, 1)[1].split("\n);", 1)[0]
         for column in columns:
-            assert column in sql, f'{table} is missing backfill column: {column}'
+            assert any(
+                line.strip().split()[0].rstrip(",").lower() == column.lower()
+                for line in table_block.splitlines()
+                if line.strip() and not line.strip().startswith("--")
+            ), f'{table} is missing backfill column: {column}'
 
 
 def test_metric_rating_ddl_does_not_mutate_source_contract():
