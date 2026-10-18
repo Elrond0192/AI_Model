@@ -1,6 +1,6 @@
 -- Scalable scenario-serving layer.
--- Run after ai_source_full.sql, then refresh only the contexts changed by ETL:
---   CALL "AI_Source"."RefreshScenarioServing"('ITA1', 2025, 'RS');
+-- Run after ai_source_full.sql, then refresh a complete season:
+--   CALL "AI_Source"."RefreshContextSeasonal"(2026);
 
 BEGIN;
 
@@ -229,68 +229,14 @@ BEGIN
 END;
 $$;
 
--- Single ETL hook. Call it after HoopmetricsEngine/AdvanceStats has committed
--- every changed league-season-competition context, including same-day updates.
-CREATE OR REPLACE PROCEDURE "AI_Source"."RefreshContext"(
-    p_league_key text,
-    p_season integer,
-    p_competition text
-)
-LANGUAGE plpgsql
-AS $$
-DECLARE normalized_competition text := upper(btrim(p_competition));
-BEGIN
-    CALL "AI_Source"."RefreshTrainingServing"(
-        p_league_key, p_season, normalized_competition
-    );
-    CALL "AI_Source"."RefreshScenarioServing"(
-        p_league_key, p_season, normalized_competition
-    );
-
-    INSERT INTO "AI_Source"."ServingRefreshState" (
-        "LeagueKey", "Season", "Competition", "RefreshedAt",
-        "PlayerRows", "TeamRows", "PlayTypeRows", "ShotProfileRows",
-        "DefenderMatchupRows", "LineupRows"
-    )
-    SELECT p_league_key, p_season, normalized_competition, now(),
-        (SELECT count(*) FROM "AI_Source"."TrainingPlayerCompetitionStats"
-          WHERE league_key = p_league_key AND season = p_season
-            AND competition = normalized_competition),
-        (SELECT count(*) FROM "AI_Source"."TrainingTeamCompetitionStats"
-          WHERE league_key = p_league_key AND season = p_season
-            AND competition = normalized_competition),
-        (SELECT count(*) FROM "AI_Source"."ScenarioPlayTypeStats"
-          WHERE league_key = p_league_key AND season = p_season
-            AND competition = normalized_competition),
-        (SELECT count(*) FROM "AI_Source"."ScenarioShotProfiles"
-          WHERE league_key = p_league_key AND season = p_season
-            AND competition = normalized_competition),
-        (SELECT count(*) FROM "AI_Source"."ScenarioDefenderMatchups"
-          WHERE league_key = p_league_key AND season = p_season
-            AND competition = normalized_competition),
-        (SELECT count(*) FROM "AI_Source"."ScenarioLineupStats"
-          WHERE league_key = p_league_key AND season = p_season
-            AND competition = normalized_competition)
-    ON CONFLICT ("LeagueKey", "Season", "Competition") DO UPDATE SET
-        "RefreshedAt" = EXCLUDED."RefreshedAt",
-        "PlayerRows" = EXCLUDED."PlayerRows",
-        "TeamRows" = EXCLUDED."TeamRows",
-        "PlayTypeRows" = EXCLUDED."PlayTypeRows",
-        "ShotProfileRows" = EXCLUDED."ShotProfileRows",
-        "DefenderMatchupRows" = EXCLUDED."DefenderMatchupRows",
-        "LineupRows" = EXCLUDED."LineupRows";
-END;
-$$;
-
--- Year-wide overload: refresh every league and every observed competition for a
--- season, retaining the three-argument overload for targeted ETL refreshes.
--- This operates on the current canonical AI_Source tables; it does not rebuild
--- PlayerCompetitionStats/TeamCompetitionStats from Analisi source tables.
-CREATE OR REPLACE PROCEDURE "AI_Source"."RefreshContext"(
+-- Canonical ETL entry point: refresh every league and every competition for a
+-- season from the current canonical AI_Source statistical tables. Callers use
+-- RefreshContextSeasonal; there is no public single-context RefreshContext overload.
+CREATE OR REPLACE PROCEDURE "AI_Source"."RefreshContextSeasonal"(
     p_season integer
 )
 LANGUAGE plpgsql
-AS $refresh_year$
+AS $refresh_season$
 DECLARE
     ctx record;
     processed_contexts integer := 0;
@@ -322,11 +268,46 @@ BEGIN
           AND contexts.competition IS NOT NULL
         ORDER BY contexts.league_key, contexts.season, contexts.competition
     LOOP
-        CALL "AI_Source"."RefreshContext"(
-            ctx.league_key,
-            ctx.season,
-            ctx.competition
+        CALL "AI_Source"."RefreshTrainingServing"(
+            ctx.league_key, ctx.season, ctx.competition
         );
+        CALL "AI_Source"."RefreshScenarioServing"(
+            ctx.league_key, ctx.season, ctx.competition
+        );
+
+        INSERT INTO "AI_Source"."ServingRefreshState" (
+            "LeagueKey", "Season", "Competition", "RefreshedAt",
+            "PlayerRows", "TeamRows", "PlayTypeRows", "ShotProfileRows",
+            "DefenderMatchupRows", "LineupRows"
+        )
+        SELECT ctx.league_key, ctx.season, ctx.competition, now(),
+            (SELECT count(*) FROM "AI_Source"."TrainingPlayerCompetitionStats"
+              WHERE league_key = ctx.league_key AND season = ctx.season
+                AND competition = ctx.competition),
+            (SELECT count(*) FROM "AI_Source"."TrainingTeamCompetitionStats"
+              WHERE league_key = ctx.league_key AND season = ctx.season
+                AND competition = ctx.competition),
+            (SELECT count(*) FROM "AI_Source"."ScenarioPlayTypeStats"
+              WHERE league_key = ctx.league_key AND season = ctx.season
+                AND competition = ctx.competition),
+            (SELECT count(*) FROM "AI_Source"."ScenarioShotProfiles"
+              WHERE league_key = ctx.league_key AND season = ctx.season
+                AND competition = ctx.competition),
+            (SELECT count(*) FROM "AI_Source"."ScenarioDefenderMatchups"
+              WHERE league_key = ctx.league_key AND season = ctx.season
+                AND competition = ctx.competition),
+            (SELECT count(*) FROM "AI_Source"."ScenarioLineupStats"
+              WHERE league_key = ctx.league_key AND season = ctx.season
+                AND competition = ctx.competition)
+        ON CONFLICT ("LeagueKey", "Season", "Competition") DO UPDATE SET
+            "RefreshedAt" = EXCLUDED."RefreshedAt",
+            "PlayerRows" = EXCLUDED."PlayerRows",
+            "TeamRows" = EXCLUDED."TeamRows",
+            "PlayTypeRows" = EXCLUDED."PlayTypeRows",
+            "ShotProfileRows" = EXCLUDED."ShotProfileRows",
+            "DefenderMatchupRows" = EXCLUDED."DefenderMatchupRows",
+            "LineupRows" = EXCLUDED."LineupRows";
+
         processed_contexts := processed_contexts + 1;
     END LOOP;
 
@@ -337,19 +318,11 @@ BEGIN
             processed_contexts, p_season;
     END IF;
 END;
-$refresh_year$;
+$refresh_season$;
 
--- Backward-compatible public name used by seasonal ETL jobs. Delegate to the
--- canonical year-wide refresh so there is a single implementation of the loop.
-CREATE OR REPLACE PROCEDURE "AI_Source"."RefreshContextSeasonal"(
-    p_season integer
-)
-LANGUAGE plpgsql
-AS $refresh_seasonal$
-BEGIN
-    CALL "AI_Source"."RefreshContext"(p_season);
-END;
-$refresh_seasonal$;
+-- Remove legacy overloads when this SQL is reapplied to an existing database.
+DROP PROCEDURE IF EXISTS "AI_Source"."RefreshContext"(text, integer, text);
+DROP PROCEDURE IF EXISTS "AI_Source"."RefreshContext"(integer);
 
 -- Administrative/runtime read access is re-applied on every serving rebuild.
 DO $grant_ai_source_serving$
