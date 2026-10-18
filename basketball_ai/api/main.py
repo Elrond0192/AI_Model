@@ -614,9 +614,22 @@ def create_app() -> FastAPI:
         bb_rating = getattr(request.app.state, "bb_rating_engine", None)
         uncertainty = getattr(request.app.state, "bb_rating_uncertainty", None)
         future_model = getattr(request.app.state, "future_performance_model", None)
+        prediction_engine = getattr(request.app.state, "engine", None)
+        model_metadata = getattr(request.app.state, "model_metadata", {}) or {}
+        model_root = Path(os.environ.get("MODEL_DIR", "models_saved"))
         return {
             "status": "ok",
             "data_loaded": bool(data.get("player_dict")),
+            "prediction_model_loaded": prediction_engine is not None,
+            "prediction_model_run_id": model_metadata.get("model_run_id"),
+            "prediction_model_version": model_metadata.get("model_version"),
+            "prediction_feature_version": model_metadata.get("feature_version"),
+            "prediction_data_cutoff": model_metadata.get("data_cutoff"),
+            "production_model_files": {
+                "performance_model": (model_root / "performance_model.joblib").is_file(),
+                "compatibility_model": (model_root / "compatibility_model.joblib").is_file(),
+            },
+            "metric_distributions_count": len(getattr(request.app.state, "metric_distributions", []) or []),
             "bb_rating_loaded": bb_rating is not None,
             "bb_rating_uncertainty_loaded": uncertainty is not None,
             "bb_rating_version": getattr(bb_rating, "VERSION", None) or getattr(bb_rating, "version", None) or "1.9",

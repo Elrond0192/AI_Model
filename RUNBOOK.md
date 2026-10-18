@@ -253,3 +253,25 @@ docker compose up -d
 `api` and `admin` use separate image tags (`basketball-ai-api:latest` and `basketball-ai-admin:latest`) to avoid concurrent export collisions when `docker compose build` builds both services.
 
 Never commit `.env`, DB profile JSON, model artifacts, registries/metadata, sessions, audit DBs or one-time credentials.
+
+## Model Center: calibration candidates and safe releases
+
+The admin console writes auxiliary model outputs to immutable candidate directories under `runtime/models/candidates/<model>/<run-id>/`. Calibration/training must not write directly to serving paths.
+
+Supported release IDs:
+- `prediction-calibration`: `prediction_rating_calibration.json` (at least 500 OOS rows and a valid monotonic mapping).
+- `bb-rating`: calibration report plus `bb_rating_uncertainty.json`.
+- `future-performance`: fitted `metadata.json` plus every model file declared in `model_files`.
+
+In **Model Releases**, inspect the production and candidate validation state before promoting. Promotion validates the candidate and atomically swaps the artifact directory, keeping the prior production directory under `runtime/models/releases/<model>/`. Rollback restores that previous directory. The operation is audited. A promotion or rollback returns `restart_required=true`: restart the inference API service so its in-memory artifacts are reloaded, then verify `/health/ready` and the model-specific readiness/version diagnostics before considering the release complete.
+
+Prediction 1–100 calibration only fits the display mapping from OOS records; it does not retrain or replace the native Prediction Model. The minimum 500 OOS rows is an operational artifact gate, not a guarantee of statistical quality. Review the saved report's temporal folds and raw-versus-calibrated metrics before promotion.
+
+Example deployment after reviewing a release:
+```bash
+docker compose restart api
+docker compose ps
+docker compose logs --tail=150 api
+```
+
+Do not promote if validation fails or if the expected uncertainty/model files are absent. Keep the prior release until the restarted API passes its health and inference smoke tests.

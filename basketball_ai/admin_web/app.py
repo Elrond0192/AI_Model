@@ -5,6 +5,7 @@ It serves a same-origin static UI plus authenticated JSON endpoints on port 8501
 """
 from __future__ import annotations
 
+import argparse
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -48,6 +49,7 @@ from basketball_ai.data.training_snapshots import (
     load_training_snapshot,
 )
 from basketball_ai.models.production_training import _numeric_seasons
+from basketball_ai.admin_web.model_lifecycle import inspect_model, promote_model, rollback_model
 from basketball_ai.models.promote import (
     MAX_SEGMENT_REGRESSION_PCT,
     MIN_BACKTEST_SAMPLES,
@@ -89,6 +91,8 @@ class AdminState:
             "finished_at": None,
         }
     )
+    prediction_calibration: dict[str, Any] = field(default_factory=lambda: {"status": "idle", "stage": "Ready", "progress": 0, "message": "No Prediction 1-100 calibration run in progress.", "error": None, "started_at": None, "finished_at": None, "output": None})
+    prediction_calibration_executor: ThreadPoolExecutor = field(default_factory=lambda: ThreadPoolExecutor(max_workers=1, thread_name_prefix="ai-admin-prediction-calibration"))
     bb_rating: dict[str, Any] = field(
         default_factory=lambda: {
             "status": "idle",
@@ -656,14 +660,15 @@ def _future_performance_worker(active_profile: str | None, actor: str) -> None:
         )
 
         _set_future_performance(
-            stage="Saving production artifact",
+            stage="Saving candidate artifact",
             progress=88,
-            message="Scrittura artifact Future Performance separato dal Prediction Model…",
+            message="Scrittura candidate Future Performance; production resta invariato…",
             future_performance_version=metadata.get("future_performance_version"),
             feature_version=metadata.get("feature_version"),
         )
-        root = _future_performance_path()
-        root.mkdir(parents=True, exist_ok=True)
+        candidate_id = f"{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}-{uuid.uuid4().hex[:8]}"
+        root = MODEL_ROOT / "candidates" / "future-performance" / candidate_id
+        root.mkdir(parents=True, exist_ok=False)
         paths = model.save(root)
         details = {
             "future_performance_version": metadata.get("future_performance_version"),
@@ -683,7 +688,7 @@ def _future_performance_worker(active_profile: str | None, actor: str) -> None:
             status="complete",
             stage="Model ready",
             progress=100,
-            message="Future Performance model pronto. Prediction Model e BB-Rating non sono stati modificati.",
+            message="Future Performance candidate pronto e validabile. Production non è stata modificata.",
             error=None,
             finished_at=_utcnow(),
             future_performance_version=metadata.get("future_performance_version"),
@@ -747,7 +752,9 @@ def _bb_rating_worker(active_profile: str | None, actor: str) -> None:
             calibration_version=report.get("calibration_version"),
             bb_rating_version=report.get("bb_rating_version"),
         )
-        output_dir = MODEL_ROOT / "bb_rating_calibration"
+        candidate_id = f"{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}-{uuid.uuid4().hex[:8]}"
+        output_dir = MODEL_ROOT / "candidates" / "bb-rating" / candidate_id
+        output_dir.mkdir(parents=True, exist_ok=False)
         paths = write_calibration_report(report, str(output_dir))
         details = {
             "calibration_version": report.get("calibration_version"),
@@ -760,7 +767,7 @@ def _bb_rating_worker(active_profile: str | None, actor: str) -> None:
             status="complete",
             stage="Calibration ready",
             progress=100,
-            message="BB-Rating calibration and uncertainty artifact ready. Public BB-Rating is unchanged.",
+            message="BB-Rating calibration candidate pronto; production resta invariata fino alla promozione.",
             error=None,
             finished_at=_utcnow(),
             calibration_version=report.get("calibration_version"),
@@ -778,6 +785,38 @@ def _bb_rating_worker(active_profile: str | None, actor: str) -> None:
             error=error,
             finished_at=_utcnow(),
         )
+
+
+def _prediction_calibration_worker(active_profile: str | None, actor: str) -> None:
+    from basketball_ai.admin_web.model_lifecycle import validate_artifact
+    from basketball_ai.cli import mode_prediction_calibrate
+    candidate_id = f"{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}-{uuid.uuid4().hex[:8]}"
+    output_dir = MODEL_ROOT / "candidates" / "prediction-calibration" / candidate_id
+    try:
+        if not active_profile:
+            raise RuntimeError("Seleziona prima un profilo PostgreSQL")
+        os.environ["DATABASE_PROFILE"] = active_profile
+        with STATE.lock:
+            STATE.prediction_calibration.update(status="running", stage="Loading canonical history", progress=8, message="Caricamento dello storico completo per la calibrazione OOS…", error=None, started_at=_utcnow(), finished_at=None)
+        _audit("prediction_calibration_started", actor, active_profile)
+        output_dir.mkdir(parents=True, exist_ok=False)
+        args = argparse.Namespace(database_profile=active_profile, snapshot_id=None, snapshot_dir=None, prediction_calibration_output_dir=str(output_dir))
+        with STATE.lock:
+            STATE.prediction_calibration.update(stage="Walk-forward OOS calibration", progress=25, message="Esecuzione backtest expanding OOS e fitting della mappatura 1–100…")
+        mode_prediction_calibrate(args)
+        report = json.loads((output_dir / "prediction_rating_calibration.json").read_text(encoding="utf-8"))
+        validation = validate_artifact("prediction-calibration", output_dir)
+        if not validation.get("valid"):
+            raise RuntimeError(validation.get("reason", "Prediction calibration artifact validation failed"))
+        details = {"candidate_id": candidate_id, "rows": (report.get("dataset") or {}).get("rows"), "target_seasons": (report.get("dataset") or {}).get("target_seasons") or [], "n_folds": (report.get("validation") or {}).get("n_folds"), "prediction_model_version": report.get("prediction_model_version")}
+        _audit("prediction_calibration_candidate_ready", actor, active_profile, json.dumps(details, ensure_ascii=False))
+        with STATE.lock:
+            STATE.prediction_calibration.update(status="complete", stage="Candidate validated", progress=100, message="Calibrazione validata come candidate. Il Prediction Model e la produzione non sono stati modificati.", error=None, finished_at=_utcnow(), candidate_id=candidate_id, output={**details, "path": str(output_dir), "validation": validation})
+    except Exception as exc:
+        error = _safe_error(exc)
+        _audit("prediction_calibration_failed", actor, active_profile or "", error)
+        with STATE.lock:
+            STATE.prediction_calibration.update(status="failed", stage="Failed", progress=100, message="Prediction 1–100 calibration failed; production unchanged.", error=error, finished_at=_utcnow())
 
 
 def _training_worker(
@@ -1717,6 +1756,65 @@ async def evaluate_scenario(payload: dict[str, Any], user: dict[str, str] = Depe
         raise HTTPException(status_code=502, detail=_safe_error(exc)) from exc
 
 
+@app.get("/admin-api/prediction-calibration")
+def prediction_calibration_status(user: dict[str, str] = Depends(_operator)) -> dict[str, Any]:
+    del user
+    with STATE.lock:
+        job = dict(STATE.prediction_calibration)
+    return {"job": job, "release": inspect_model(MODEL_ROOT, "prediction-calibration"), "minimum_oos_rows": 500, "native_prediction_model_changed": False}
+
+
+@app.post("/admin-api/prediction-calibration/calibrate")
+def start_prediction_calibration(user: dict[str, str] = Depends(_csrf)) -> dict[str, Any]:
+    actor = user["username"]
+    with STATE.lock:
+        job, active_profile = dict(STATE.prediction_calibration), STATE.active_profile
+    if job.get("status") in {"running", "queued"}:
+        raise HTTPException(status_code=409, detail="Prediction calibration already running")
+    if not active_profile:
+        raise HTTPException(status_code=400, detail="Seleziona prima un profilo PostgreSQL")
+    with STATE.lock:
+        STATE.prediction_calibration.update(status="queued", stage="Queued", progress=0, message="Prediction calibration queued.", error=None, started_at=_utcnow(), finished_at=None)
+    STATE.prediction_calibration_executor.submit(_prediction_calibration_worker, active_profile, actor)
+    with STATE.lock:
+        current = dict(STATE.prediction_calibration)
+    return {"ok": True, "profile": active_profile, "job": current}
+
+
+@app.get("/admin-api/model-releases")
+def model_releases(user: dict[str, str] = Depends(_operator)) -> dict[str, Any]:
+    del user
+    return {"models": {model: inspect_model(MODEL_ROOT, model) for model in ("prediction-calibration", "bb-rating", "future-performance")}, "prediction_model_registry": _registry(), "note": "Promotions affect files on disk; restart the inference API before expecting in-memory serving to change."}
+
+
+@app.post("/admin-api/model-releases/{model}/promote")
+def promote_auxiliary_model(model: str, payload: ConfirmPayload, user: dict[str, str] = Depends(_csrf)) -> dict[str, Any]:
+    if not payload.confirm:
+        raise HTTPException(status_code=400, detail="Conferma richiesta")
+    try:
+        result = promote_model(MODEL_ROOT, model)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    _audit("model_release_promoted", user["username"], model, json.dumps(result, ensure_ascii=False))
+    return result
+
+
+@app.post("/admin-api/model-releases/{model}/rollback")
+def rollback_auxiliary_model(model: str, payload: ConfirmPayload, user: dict[str, str] = Depends(_csrf)) -> dict[str, Any]:
+    if not payload.confirm:
+        raise HTTPException(status_code=400, detail="Conferma richiesta")
+    try:
+        result = rollback_model(MODEL_ROOT, model)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    _audit("model_release_rollback", user["username"], model, json.dumps(result, ensure_ascii=False))
+    return result
+
+
 @app.get("/admin-api/bb-rating")
 def bb_rating_status(user: dict[str, str] = Depends(_operator)) -> dict[str, Any]:
     del user
@@ -1852,6 +1950,15 @@ async def api_health(user: dict[str, str] = Depends(_operator)) -> dict[str, Any
         "base_url": API_BASE_URL,
         "live": live,
         "ready": ready,
+        "prediction_model": {
+            "loaded": bool(bb_body.get("prediction_model_loaded")),
+            "run_id": bb_body.get("prediction_model_run_id"),
+            "version": bb_body.get("prediction_model_version"),
+            "feature_version": bb_body.get("prediction_feature_version"),
+            "data_cutoff": bb_body.get("prediction_data_cutoff"),
+            "production_model_files": bb_body.get("production_model_files") or {},
+            "metric_distributions_count": bb_body.get("metric_distributions_count", 0),
+        },
         "bb_rating": {
             "api": bb,
             "loaded": bool(bb_body.get("bb_rating_loaded")),
