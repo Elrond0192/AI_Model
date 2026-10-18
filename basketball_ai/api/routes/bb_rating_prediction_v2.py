@@ -16,6 +16,8 @@ class BBRatingFuturePredictionRequest(BaseModel):
     source_season: int = Field(ge=2000, le=2100)
     target_league: str = Field(min_length=1, max_length=32)
     target_competition: str = Field(default="RS", min_length=1, max_length=32)
+    source_league: str | None = Field(default=None, max_length=32)
+    source_competition: str = Field(default="RS", min_length=1, max_length=32)
     target_team_global_id: str | None = Field(default=None, max_length=128)
 
     @field_validator("target_league")
@@ -26,7 +28,12 @@ class BBRatingFuturePredictionRequest(BaseModel):
             raise ValueError("target_league is required")
         return result
 
-    @field_validator("target_competition")
+    @field_validator("source_league")
+    @classmethod
+    def normalize_source_league(cls, value: str | None) -> str | None:
+        return value.strip().upper() if value and value.strip() else None
+
+    @field_validator("source_competition", "target_competition")
     @classmethod
     def normalize_competition(cls, value: str) -> str:
         result = normalize_competition(value)
@@ -56,6 +63,8 @@ def predict_future_bb_rating(
             target_league=body.target_league,
             target_competition=body.target_competition,
             target_team_global_id=body.target_team_global_id,
+            source_league=body.source_league,
+            source_competition=body.source_competition,
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -65,6 +74,8 @@ def predict_future_bb_rating(
         "player_global_id": body.player_global_id,
         "source_season": body.source_season,
         "target_season": body.source_season + 1,
+        "source_league": body.source_league,
+        "source_competition": body.source_competition,
         "target_team_global_id": body.target_team_global_id,
         "method": "direct_bb_rating_t_plus_1",
         "prediction": result,
