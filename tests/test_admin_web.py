@@ -371,6 +371,39 @@ def test_bb_rating_calibration_start(monkeypatch, tmp_path):
 
 
 
+
+
+def test_prediction_calibration_worker_writes_candidate_without_touching_production(monkeypatch, tmp_path):
+    _reset_state()
+    root = tmp_path / "models_saved"
+    monkeypatch.setattr(admin, "MODEL_ROOT", root)
+    monkeypatch.setattr(admin, "_utcnow", lambda: "now")
+    monkeypatch.setattr(admin, "_audit", lambda *args, **kwargs: None)
+
+    def fake_calibrate(args):
+        output = Path(args.prediction_calibration_output_dir)
+        (output / "prediction_rating_calibration.json").write_text(
+            json.dumps({
+                "calibration_version": "1.0",
+                "prediction_model_version": "2.6.0",
+                "dataset": {"rows": 600, "target_seasons": [2022, 2023, 2024]},
+                "fit": {"x_thresholds": [0.0, 10.0], "y_thresholds_native": [0.0, 10.0]},
+                "validation": {"status": "validated_oos", "n_folds": 2},
+            }),
+            encoding="utf-8",
+        )
+
+    import basketball_ai.cli as cli
+    monkeypatch.setattr(cli, "mode_prediction_calibrate", fake_calibrate)
+    admin._prediction_calibration_worker("production", "admin")
+
+    job = admin.STATE.prediction_calibration
+    assert job["status"] == "complete"
+    assert job["output"]["rows"] == 600
+    assert (root / "candidates" / "prediction-calibration" / job["candidate_id"]).is_dir()
+    assert not (root / "prediction_calibration").exists()
+
+
 def test_prediction_calibration_start_queues_candidate_job(monkeypatch, tmp_path):
     _reset_state()
     monkeypatch.setattr(admin, "MODEL_ROOT", tmp_path / "models_saved")
