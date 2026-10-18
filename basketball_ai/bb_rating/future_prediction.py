@@ -28,7 +28,14 @@ from basketball_ai.models.competition_training import normalize_competition
 from basketball_ai.models.production_training import _numeric_seasons
 
 MODEL_VERSION = "1.0.0"
-FEATURE_VERSION = "bb-rating-direct-target-v1"
+FEATURE_VERSION = "bb-rating-direct-target-v2"
+_TEAM_NUMERIC_COLUMNS = (
+    "pace", "offensive_rating", "defensive_rating", "net_rating",
+    "three_point_attempt_rate", "assists_per_game", "star_player_usage",
+    "turnover_rate", "rebounds_per_game", "offensive_rebounds_per_game",
+    "three_point_pct", "free_throw_pct", "points_per_game", "win_pct",
+    "bench_minutes", "roster_depth",
+)
 _ID_COLUMNS = {
     "id", "player_id", "league_id", "team_id", "opponent_team_id",
     "season", "global_id", "player_global_id", "league_key", "competition",
@@ -92,6 +99,70 @@ def _team_identity(row: pd.Series, team_map: dict[tuple[str, str, int], str]) ->
     return team_map.get((team, league, year), f"{league}:{team}")
 
 
+def _team_context_index(data: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
+    history = data.get("team_season_stats", pd.DataFrame())
+    if history is None or history.empty or "global_id" not in history.columns:
+        return {}
+    rows = history.copy()
+    rows["_year"] = _numeric_seasons(rows)
+    leagues = data.get("leagues", pd.DataFrame())
+    league_map: dict[str, str] = {}
+    if leagues is not None and not leagues.empty:
+        for item in leagues.to_dict("records"):
+            league_id = _clean(item.get("id"))
+            league_key = _clean(item.get("league_key")) or _clean(item.get("name"))
+            if league_id and league_key:
+                league_map[league_id] = league_key.upper()
+    rows["_league_key"] = rows.get("league_key", pd.Series("", index=rows.index)).fillna("").astype(str).str.upper()
+    if "league_id" in rows.columns:
+        fallback = rows["league_id"].map(lambda value: league_map.get(_clean(value), ""))
+        rows["_league_key"] = rows["_league_key"].where(rows["_league_key"].ne(""), fallback)
+    rows = rows.dropna(subset=["_year", "global_id"])
+    index: dict[str, list[dict[str, Any]]] = {}
+    for row in rows.sort_values("_year", kind="stable").to_dict("records"):
+        key = _clean(row.get("global_id"))
+        if key:
+            index.setdefault(key, []).append(row)
+    return index
+
+
+def _team_context_features(
+    index: dict[str, list[dict[str, Any]]],
+    team_global_id: str | None,
+    target_league: str,
+    source_year: int,
+) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        f"target_team__{column}": np.nan for column in _TEAM_NUMERIC_COLUMNS
+    }
+    result["target_team_context_known"] = "no"
+    result["target_team_context_league"] = ""
+    result["target_team_context_seasons_ago"] = np.nan
+    if not team_global_id:
+        return result
+    candidates = [
+        row for row in index.get(str(team_global_id), [])
+        if _year(row.get("season")) is not None and _year(row.get("season")) <= int(source_year)
+    ]
+    if not candidates:
+        return result
+    same_league = [
+        row for row in candidates
+        if _clean(row.get("_league_key")).upper() == str(target_league).upper()
+    ]
+    chosen = max(same_league or candidates, key=lambda row: _year(row.get("season")) or 0)
+    context_year = _year(chosen.get("season"))
+    for column in _TEAM_NUMERIC_COLUMNS:
+        value = pd.to_numeric(pd.Series([chosen.get(column)]), errors="coerce").iloc[0]
+        result[f"target_team__{column}"] = float(value) if pd.notna(value) and np.isfinite(value) else np.nan
+    result["target_team_context_known"] = "yes"
+    result["target_team_context_league"] = _clean(chosen.get("_league_key")).upper()
+    result["target_team_context_seasons_ago"] = (
+        float(int(source_year) - context_year) if context_year is not None else np.nan
+    )
+    return result
+
+
 def _numeric_feature_columns(frame: pd.DataFrame) -> list[str]:
     columns: list[str] = []
     for column in frame.columns:
@@ -113,6 +184,7 @@ def _row_features(
     numeric_columns: list[str],
     target_tier: Any = None,
     source_bb_rating: float | None = None,
+    team_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     result: dict[str, Any] = {}
     for column in numeric_columns:
@@ -145,6 +217,7 @@ def _row_features(
         result["tier_transition"] = "unknown_tier"
     result["target_league"] = str(target_league).strip().upper()
     result["target_competition"] = normalize_competition(target_competition)
+    result.update(team_context or _team_context_features({}, None, target_league, source_year))
     result["scenario"] = classify_transition(
         source_team, target_team,
         _clean(row.get("league_key")) or _clean(row.get("league_id")),
@@ -176,7 +249,8 @@ class BBRatingFuturePredictionModel:
         self.categorical_columns = [
             "source_league", "source_competition", "source_position", "source_role",
             "target_league", "target_competition", "scenario", "source_tier",
-            "target_tier", "tier_transition",
+            "target_tier", "tier_transition", "target_team_context_known",
+            "target_team_context_league",
         ]
         self.residual_intervals: dict[str, dict[str, float | int]] = {}
         self.metadata: dict[str, Any] = {}
@@ -228,6 +302,7 @@ class BBRatingFuturePredictionModel:
                     continue
 
         team_map = _team_global_map(data)
+        team_context_index = _team_context_index(data)
         self.numeric_columns = _numeric_feature_columns(frame)
         records: list[dict[str, Any]] = []
         # Canonical global identity supports provider-specific player IDs changing.
@@ -267,6 +342,9 @@ class BBRatingFuturePredictionModel:
                             numeric_columns=self.numeric_columns,
                             target_tier=target.get("competition_tier"),
                             source_bb_rating=float(source_score),
+                            team_context=_team_context_features(
+                                team_context_index, target_team, target_league, source_year
+                            ),
                         )
                         records.append({
                             **features,
@@ -556,6 +634,7 @@ class BBRatingFuturePredictionModel:
         sort_columns = [column for column in ("games_played", "minutes_per_game", "minutes", "league_key") if column in source.columns]
         row = source.sort_values(sort_columns, ascending=[False] * (len(sort_columns) - 1) + [True] if sort_columns else [], na_position="last").iloc[0]
         team_map = _team_global_map(data)
+        team_context_index = _team_context_index(data)
         source_team = _team_identity(row, team_map)
         source_league = _clean(row.get("league_key")).upper()
         source_competition = normalize_competition(row.get("competition"))
@@ -573,6 +652,9 @@ class BBRatingFuturePredictionModel:
             target_team=target_team_global_id, numeric_columns=self.numeric_columns,
             target_tier=_target_league_tier(data, target_league),
             source_bb_rating=source_bb_rating,
+            team_context=_team_context_features(
+                team_context_index, target_team_global_id, target_league, int(source_season)
+            ),
         )
         features["target_season"] = int(source_season) + 1
         return self._predict_features(features)
