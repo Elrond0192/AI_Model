@@ -1555,10 +1555,24 @@ class ChatScenarioEngine:
                 latest = self._latest(rows)
                 current_minutes = _finite(latest.get("minutes_per_game"), 0.0)
                 current_usage = _ratio(latest.get("usg_pct"), 0.0)
-                current_rating = _finite(latest.get("rating"), 0.0)
-                prior_rating = (
-                    _finite(rows.iloc[-2].get("rating"), current_rating)
-                    if len(rows) >= 2 else current_rating
+                current_observed_year = int(latest.get("_year", season))
+                prior_observed_year = (
+                    int(rows.iloc[-2].get("_year"))
+                    if len(rows) >= 2 else None
+                )
+                current_bb_rating = self._bb_rating_for_season(
+                    global_id, source_league, current_observed_year, competition
+                )
+                prior_bb_rating = (
+                    self._bb_rating_for_season(
+                        global_id, source_league, prior_observed_year, competition
+                    )
+                    if prior_observed_year is not None else None
+                )
+                bb_rating_change = (
+                    current_bb_rating - prior_bb_rating
+                    if current_bb_rating is not None and prior_bb_rating is not None
+                    else None
                 )
                 position = str(
                     self.data.get("player_dict", {})
@@ -1598,10 +1612,8 @@ class ChatScenarioEngine:
                         if projected_minutes is not None else None
                     ),
                     "current_usage_pct": round(current_usage * 100.0, 2),
-                    "current_rating": round(current_rating, 3),
-                    "rating_change_vs_previous_season": round(
-                        current_rating - prior_rating, 3
-                    ) if len(rows) >= 2 else None,
+                    "current_bb_rating": current_bb_rating,
+                    "bb_rating_change_vs_previous_season": bb_rating_change,
                     "current_team": (
                         self._team_name(current_team_id)
                         if current_team_id is not None else None
@@ -1634,17 +1646,60 @@ class ChatScenarioEngine:
         if not forward_requested:
             return result
 
-        # Prediction Model: observed current-team context, not a future-team counterfactual.
+        # The model output is native 0-10 and must never enter Chat as a raw
+        # rating. Only publish its calibrated 1-100 forecast when the active
+        # Prediction calibration release is loaded.
         try:
             rows = self._player_rows(player_id, source_league, competition, season)
             latest = self._latest(rows)
             current_team_id = _to_int(latest.get("team_id"))
-            observed_rating = _finite(latest.get("rating"), np.nan)
+            current_observed_year = int(latest.get("_year", season))
+            current_bb_rating = self._bb_rating_for_season(
+                global_id, source_league, current_observed_year, competition
+            )
             if current_team_id is not None and source_league is not None:
-                prediction, _ = self._direct_prediction(player_id, current_team_id, source_league, season, competition)
-                result["prediction_model"] = {"available": True, "scope": "current_team_context", "team": self._team_name(current_team_id), "predicted_rating": round(float(prediction.predicted_rating), 3), "confidence_low": round(float(prediction.confidence_low), 3), "confidence_high": round(float(prediction.confidence_high), 3), "base_rating": round(float(prediction.base_rating), 3), "age_factor": round(float(prediction.age_factor), 4), "compatibility_factor": round(float(prediction.compatibility_factor), 4), "league_factor": round(float(prediction.league_factor), 4), "context_adjustment": round(float(prediction.context_adjustment), 4), "delta_vs_observed": round(float(prediction.predicted_rating) - observed_rating, 3) if math.isfinite(observed_rating) else None, "interpretation": "Stima del livello nel contesto della squadra corrente; non è una previsione di cambio squadra né una proiezione per-36."}
+                prediction, _ = self._direct_prediction(
+                    player_id, current_team_id, source_league, season, competition
+                )
+                calibration = self.prediction_calibration
+                fit = calibration.get("fit") if isinstance(calibration, dict) else None
+                if not isinstance(fit, dict):
+                    result["prediction_model"] = {
+                        "available": False,
+                        "reason": "prediction_calibration_unavailable",
+                        "target_season": season + 1,
+                    }
+                else:
+                    from basketball_ai.prediction_calibration import native_to_100
+
+                    predicted_100 = native_to_100(float(prediction.predicted_rating), fit)
+                    low_100 = native_to_100(float(prediction.confidence_low), fit)
+                    high_100 = native_to_100(float(prediction.confidence_high), fit)
+                    result["prediction_model"] = {
+                        "available": True,
+                        "scope": "current_team_context",
+                        "target_season": season + 1,
+                        "team": self._team_name(current_team_id),
+                        "predicted_rating_100": round(predicted_100, 1),
+                        "confidence_low_100": round(min(low_100, high_100), 1),
+                        "confidence_high_100": round(max(low_100, high_100), 1),
+                        "prediction_calibration_version": calibration.get("calibration_version"),
+                        "current_bb_rating": current_bb_rating,
+                        "delta_vs_current_bb_rating": (
+                            round(predicted_100 - current_bb_rating, 1)
+                            if current_bb_rating is not None else None
+                        ),
+                        "interpretation": (
+                            f"Previsione calibrata del BB-Rating per la stagione {season + 1}. "
+                            "È una stima futura, non il rendimento osservato della stagione corrente."
+                        ),
+                    }
         except (ValueError, RuntimeError, KeyError, TypeError, AttributeError) as exc:
-            result["prediction_model"]["reason"] = str(exc)
+            result["prediction_model"] = {
+                "available": False,
+                "reason": str(exc),
+                "target_season": season + 1,
+            }
 
         return result
 
