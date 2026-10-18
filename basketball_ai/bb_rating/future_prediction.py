@@ -1,0 +1,412 @@
+"""Direct season-ahead prediction of the official contextual BB-Rating.
+
+This is deliberately separate from Prediction Model 2.6.0. Training labels are
+recomputed by BBRatingEngine in each target-season/league/competition context;
+features are restricted to the source season. Validation is rolling-origin OOF.
+"""
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Any
+
+import joblib
+import numpy as np
+import pandas as pd
+from sklearn.ensemble import HistGradientBoostingRegressor
+from sklearn.isotonic import IsotonicRegression
+from sklearn.metrics import mean_absolute_error, mean_squared_error
+
+from basketball_ai.bb_rating.engine import BBRatingEngine
+from basketball_ai.bb_rating.prediction_scenarios import (
+    BBRatingScenarioCalibrator,
+    SCENARIO_UNKNOWN,
+    classify_transition,
+)
+from basketball_ai.models.competition_training import normalize_competition
+from basketball_ai.models.production_training import _numeric_seasons
+
+MODEL_VERSION = "1.0.0"
+FEATURE_VERSION = "bb-rating-direct-target-v1"
+_ID_COLUMNS = {
+    "id", "player_id", "league_id", "team_id", "opponent_team_id",
+    "season", "global_id", "player_global_id", "league_key", "competition",
+    "rating", "bb_rating", "target_rating", "prediction", "score",
+}
+_EXCLUDED_NUMERIC = _ID_COLUMNS | {
+    "age_band", "position_family", "competition_tier_label",
+    "competition_tier", "birth_date", "date_of_birth",
+}
+
+
+def _year(value: Any) -> int | None:
+    try:
+        parsed = int(str(value).split("-")[0])
+        return parsed if 1900 <= parsed <= 2200 else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _clean(value: Any) -> str:
+    if value is None or pd.isna(value):
+        return ""
+    return str(value).strip()
+
+
+def _team_global_map(data: dict[str, Any]) -> dict[tuple[str, str, int], str]:
+    frame = data.get("team_season_stats", pd.DataFrame())
+    if frame is None or frame.empty:
+        return {}
+    result: dict[tuple[str, str, int], str] = {}
+    for row in frame.to_dict("records"):
+        year = _year(row.get("season"))
+        team = _clean(row.get("team_id"))
+        league = _clean(row.get("league_id"))
+        global_id = _clean(row.get("global_id"))
+        if year is not None and team and league and global_id:
+            result[(team, league, year)] = global_id
+    return result
+
+
+def _team_identity(row: pd.Series, team_map: dict[tuple[str, str, int], str]) -> str | None:
+    team = _clean(row.get("team_id"))
+    league = _clean(row.get("league_id"))
+    year = _year(row.get("season"))
+    if not team or year is None:
+        return None
+    return team_map.get((team, league, year), f"{league}:{team}")
+
+
+def _numeric_feature_columns(frame: pd.DataFrame) -> list[str]:
+    columns: list[str] = []
+    for column in frame.columns:
+        if column in _EXCLUDED_NUMERIC or column.startswith("_"):
+            continue
+        if pd.api.types.is_numeric_dtype(frame[column]):
+            columns.append(column)
+    return sorted(columns)
+
+
+def _row_features(
+    row: pd.Series,
+    *,
+    source_year: int,
+    target_league: str,
+    target_competition: str,
+    source_team: str | None,
+    target_team: str | None,
+    numeric_columns: list[str],
+) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for column in numeric_columns:
+        value = pd.to_numeric(pd.Series([row.get(column)]), errors="coerce").iloc[0]
+        result[f"stat__{column}"] = float(value) if pd.notna(value) and np.isfinite(value) else np.nan
+    birth_date = row.get("birth_date", row.get("date_of_birth"))
+    birth_year = _year(birth_date)
+    age = source_year - birth_year if birth_year else pd.to_numeric(
+        pd.Series([row.get("age")]), errors="coerce"
+    ).iloc[0]
+    result["age_as_of_source"] = float(age) if pd.notna(age) else np.nan
+    result["source_league"] = _clean(row.get("league_key")) or _clean(row.get("league_id"))
+    result["source_competition"] = normalize_competition(row.get("competition"))
+    result["source_position"] = _clean(row.get("position"))
+    result["source_role"] = _clean(row.get("ruolo_combinato"))
+    result["target_league"] = str(target_league).strip().upper()
+    result["target_competition"] = normalize_competition(target_competition)
+    result["scenario"] = classify_transition(
+        source_team, target_team,
+        _clean(row.get("league_key")) or _clean(row.get("league_id")),
+        str(target_league).strip().upper(),
+    )
+    return result
+
+
+def _encode(frame: pd.DataFrame, categorical: list[str], columns: list[str] | None = None):
+    encoded = pd.get_dummies(frame, columns=categorical, dummy_na=True, dtype=float)
+    if columns is not None:
+        encoded = encoded.reindex(columns=columns, fill_value=0.0)
+    return encoded.fillna(0.0).astype(float)
+
+
+class BBRatingFuturePredictionModel:
+    """Predict official BB-Rating(t+1) directly on its 1-100 scale."""
+
+    def __init__(self, *, min_oof_samples: int = 500, random_state: int = 42) -> None:
+        self.min_oof_samples = max(20, int(min_oof_samples))
+        self.random_state = int(random_state)
+        self.model: HistGradientBoostingRegressor | None = None
+        self.calibrator: BBRatingScenarioCalibrator | None = None
+        self.feature_columns: list[str] = []
+        self.numeric_columns: list[str] = []
+        self.categorical_columns = [
+            "source_league", "source_competition", "source_position", "source_role",
+            "target_league", "target_competition", "scenario",
+        ]
+        self.residual_intervals: dict[str, dict[str, float | int]] = {}
+        self.metadata: dict[str, Any] = {}
+        self.is_trained = False
+
+    def _build_records(self, data: dict[str, Any]) -> pd.DataFrame:
+        stats = data.get("player_stats", pd.DataFrame())
+        players = data.get("players", pd.DataFrame())
+        if stats is None or stats.empty:
+            raise ValueError("BB Prediction Model requires canonical player season statistics")
+        engine = BBRatingEngine(stats, players, data.get("leagues"))
+        frame = engine.frame.copy()
+        frame["_year"] = _numeric_seasons(frame)
+        frame = frame.dropna(subset=["_year", "player_global_id", "league_key", "competition"])
+        frame["_year"] = frame["_year"].astype(int)
+        frame["competition"] = frame["competition"].map(normalize_competition)
+        frame["league_key"] = frame["league_key"].astype(str).str.strip().str.upper()
+        # Official labels are computed from the full peer context for each target
+        # season. The model never receives target-season statistics as features.
+        labels: dict[tuple[str, int, str, str], int] = {}
+        for (league, season, competition), group in frame.groupby(
+            ["league_key", "_year", "competition"], sort=False
+        ):
+            for player_global_id in group["player_global_id"].astype(str).unique():
+                try:
+                    result = engine.rate_player(
+                        player_global_id, league=str(league), season=int(season), phase=str(competition)
+                    )
+                    labels[(str(player_global_id), int(season), str(league), str(competition))] = int(result.score)
+                except (ValueError, KeyError):
+                    continue
+
+        team_map = _team_global_map(data)
+        self.numeric_columns = _numeric_feature_columns(frame)
+        records: list[dict[str, Any]] = []
+        # Canonical global identity supports provider-specific player IDs changing.
+        grouped = {key: group for key, group in frame.groupby("player_global_id", sort=False)}
+        for player_global_id, group in grouped.items():
+            source_rows = group.to_dict("records")
+            by_year: dict[int, list[dict[str, Any]]] = {}
+            for row in source_rows:
+                year = int(row["_year"])
+                by_year.setdefault(year, []).append(row)
+            for source_year, origins in by_year.items():
+                destinations = by_year.get(source_year + 1, [])
+                if not destinations:
+                    continue
+                for source_raw in origins:
+                    source = pd.Series(source_raw)
+                    source_team = _team_identity(source, team_map)
+                    for target_raw in destinations:
+                        target = pd.Series(target_raw)
+                        target_league = _clean(target.get("league_key")).upper()
+                        target_comp = normalize_competition(target.get("competition"))
+                        label_key = (str(player_global_id), source_year + 1, target_league, target_comp)
+                        target_score = labels.get(label_key)
+                        if target_score is None:
+                            continue
+                        target_team = _team_identity(target, team_map)
+                        features = _row_features(
+                            source, source_year=source_year,
+                            target_league=target_league, target_competition=target_comp,
+                            source_team=source_team, target_team=target_team,
+                            numeric_columns=self.numeric_columns,
+                        )
+                        records.append({
+                            **features,
+                            "observed_bb_rating": float(target_score),
+                            "target_season": source_year + 1,
+                            "player_global_id": str(player_global_id),
+                            "source_team": source_team or "",
+                            "target_team": target_team or "",
+                        })
+        result = pd.DataFrame(records)
+        if result.empty:
+            raise ValueError("No consecutive-season BB-Rating target pairs could be constructed")
+        result = result.replace([np.inf, -np.inf], np.nan)
+        result = result.dropna(subset=["observed_bb_rating", "target_season"])
+        result["observed_bb_rating"] = pd.to_numeric(result["observed_bb_rating"], errors="coerce")
+        result = result[result["observed_bb_rating"].between(1, 100)]
+        if result.empty:
+            raise ValueError("No valid official BB-Rating labels in the 1-100 range")
+        return result
+
+    def fit(self, data: dict[str, Any]) -> dict[str, Any]:
+        records = self._build_records(data)
+        feature_frame = records.drop(columns=[
+            "observed_bb_rating", "target_season", "player_global_id", "source_team", "target_team"
+        ])
+        encoded = _encode(feature_frame, self.categorical_columns)
+        self.feature_columns = list(encoded.columns)
+        y = records["observed_bb_rating"].to_numpy(dtype=float)
+        years = records["target_season"].to_numpy(dtype=int)
+        oof_predictions = np.full(len(records), np.nan, dtype=float)
+        # Expanding walk-forward: each fold trains strictly before its target season.
+        for target_year in sorted(set(years)):
+            test_idx = np.flatnonzero(years == target_year)
+            train_idx = np.flatnonzero(years < target_year)
+            if len(train_idx) < 100 or len(test_idx) == 0:
+                continue
+            fold = HistGradientBoostingRegressor(
+                max_iter=180, learning_rate=0.06, max_leaf_nodes=15,
+                l2_regularization=2.0, random_state=self.random_state,
+            )
+            fold.fit(encoded.iloc[train_idx], y[train_idx])
+            oof_predictions[test_idx] = np.clip(fold.predict(encoded.iloc[test_idx]), 1, 100)
+
+        valid_oof = np.isfinite(oof_predictions)
+        oof = records.loc[valid_oof].copy()
+        oof["predicted_bb_rating"] = oof_predictions[valid_oof]
+        if len(oof) < self.min_oof_samples:
+            raise ValueError(
+                f"Only {len(oof)} walk-forward OOF BB-Rating predictions; "
+                f"at least {self.min_oof_samples} are required. No artifact was created."
+            )
+        self.calibrator = BBRatingScenarioCalibrator(min_samples=40)
+        self.calibrator.fit(oof)
+        calibrated = np.asarray([
+            self.calibrator.predict(
+                float(row.predicted_bb_rating), scenario=str(row.scenario),
+                target_league_id=str(row.target_league),
+            )["predicted_bb_rating"]
+            for row in oof.itertuples()
+        ], dtype=float)
+        residual = oof["observed_bb_rating"].to_numpy(float) - calibrated
+        self.residual_intervals = {"global": {
+            "n": int(len(residual)),
+            "low": float(np.quantile(residual, 0.10)),
+            "high": float(np.quantile(residual, 0.90)),
+        }}
+        for (league, scenario), group in oof.assign(_residual=residual).groupby(
+            ["target_league", "scenario"], sort=False
+        ):
+            if len(group) >= 40:
+                self.residual_intervals[f"{league}::{scenario}"] = {
+                    "n": int(len(group)),
+                    "low": float(group["_residual"].quantile(0.10)),
+                    "high": float(group["_residual"].quantile(0.90)),
+                }
+
+        self.model = HistGradientBoostingRegressor(
+            max_iter=220, learning_rate=0.05, max_leaf_nodes=15,
+            l2_regularization=2.0, random_state=self.random_state,
+        )
+        self.model.fit(encoded, y)
+        calibrated_oof = np.clip(calibrated, 1, 100)
+        self.metadata = {
+            "model": "BBRatingFuturePredictionModel",
+            "model_version": MODEL_VERSION,
+            "feature_version": FEATURE_VERSION,
+            "target": "official_bb_rating_t_plus_1",
+            "target_scale": [1, 100],
+            "bb_rating_version": "1.9",
+            "calibration_method": "walk_forward_oof_isotonic_by_destination_league_and_scenario",
+            "training_samples": int(len(records)),
+            "oof_samples": int(len(oof)),
+            "target_seasons": sorted(int(v) for v in set(years)),
+            "oof_mae_before_calibration": float(mean_absolute_error(
+                oof["observed_bb_rating"], oof["predicted_bb_rating"]
+            )),
+            "oof_mae_after_calibration": float(mean_absolute_error(
+                oof["observed_bb_rating"], calibrated_oof
+            )),
+            "oof_rmse_after_calibration": float(np.sqrt(mean_squared_error(
+                oof["observed_bb_rating"], calibrated_oof
+            ))),
+            "scenario_counts": {
+                str(k): int(v) for k, v in records["scenario"].value_counts().items()
+            },
+            "residual_interval_method": "empirical_oof_10_90_percentiles",
+            "data_cutoff_season": int(records["target_season"].max()),
+        }
+        self.is_trained = True
+        return dict(self.metadata)
+
+    def _predict_features(self, features: dict[str, Any]) -> dict[str, Any]:
+        if not self.is_trained or self.model is None or self.calibrator is None:
+            raise RuntimeError("BB Prediction Model artifact is not trained")
+        encoded = _encode(pd.DataFrame([features]), self.categorical_columns, self.feature_columns)
+        raw = float(np.clip(self.model.predict(encoded)[0], 1, 100))
+        scenario = str(features.get("scenario") or SCENARIO_UNKNOWN)
+        league = str(features.get("target_league") or "")
+        calibrated = self.calibrator.predict(
+            raw, scenario=scenario, target_league_id=league
+        )
+        interval = self.residual_intervals.get(
+            f"{league}::{scenario}", self.residual_intervals["global"]
+        )
+        score = float(calibrated["predicted_bb_rating"])
+        return {
+            "predicted_bb_rating": round(score, 1),
+            "confidence_low_100": round(float(np.clip(score + interval["low"], 1, 100)), 1),
+            "confidence_high_100": round(float(np.clip(score + interval["high"], 1, 100)), 1),
+            "raw_model_prediction": round(raw, 2),
+            "calibration_level": calibrated["calibration_level"],
+            "calibration_samples": int(calibrated["calibration_samples"]),
+            "interval_samples": int(interval["n"]),
+            "scenario": scenario,
+            "target_league": league,
+            "target_competition": features.get("target_competition"),
+            "target_season": features.get("target_season"),
+            "model_version": MODEL_VERSION,
+            "target_scale": "BB-Rating 1-100",
+        }
+
+    def predict_from_data(
+        self, data: dict[str, Any], *, player_global_id: str, source_season: int,
+        target_league: str, target_competition: str = "RS",
+        target_team_global_id: str | None = None,
+    ) -> dict[str, Any]:
+        stats = data.get("player_stats", pd.DataFrame())
+        players = data.get("players", pd.DataFrame())
+        engine = BBRatingEngine(stats, players, data.get("leagues"))
+        frame = engine.frame.copy()
+        frame["_year"] = _numeric_seasons(frame)
+        source = frame[
+            (frame["player_global_id"].astype(str) == str(player_global_id))
+            & (frame["_year"] == int(source_season))
+        ].copy()
+        if source.empty:
+            raise ValueError("Player has no source-season statistics")
+        target_league = str(target_league).strip().upper()
+        target_competition = normalize_competition(target_competition)
+        # Prefer the requested league/competition's most recent source row, then
+        # the player's latest observed context; destination context is explicit.
+        exact = source[
+            (source["league_key"].astype(str).str.upper() == target_league)
+            & (source["competition"].map(normalize_competition) == target_competition)
+        ]
+        row = (exact if not exact.empty else source).sort_values("_year").iloc[-1]
+        team_map = _team_global_map(data)
+        source_team = _team_identity(row, team_map)
+        features = _row_features(
+            row, source_year=int(source_season), target_league=target_league,
+            target_competition=target_competition, source_team=source_team,
+            target_team=target_team_global_id, numeric_columns=self.numeric_columns,
+        )
+        features["target_season"] = int(source_season) + 1
+        return self._predict_features(features)
+
+    def save(self, directory: str | Path) -> dict[str, Any]:
+        if not self.is_trained:
+            raise RuntimeError("Refusing to save an untrained BB Prediction Model")
+        path = Path(directory)
+        path.mkdir(parents=True, exist_ok=True)
+        joblib.dump(self, path / "bb_rating_future_model.joblib")
+        metadata = dict(self.metadata)
+        metadata["artifact_file"] = "bb_rating_future_model.joblib"
+        (path / "metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+        if self.calibrator is not None:
+            (path / "calibration.json").write_text(
+                json.dumps(self.calibrator.to_dict(), indent=2), encoding="utf-8"
+            )
+        return metadata
+
+    @classmethod
+    def load(cls, directory: str | Path) -> "BBRatingFuturePredictionModel":
+        path = Path(directory)
+        metadata_path = path / "metadata.json"
+        artifact_path = path / "bb_rating_future_model.joblib"
+        if not metadata_path.is_file() or not artifact_path.is_file():
+            raise FileNotFoundError(f"Incomplete BB Prediction Model release: {path}")
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        model = joblib.load(artifact_path)
+        if not isinstance(model, cls) or not model.is_trained:
+            raise ValueError("Invalid BB Prediction Model artifact")
+        if metadata.get("feature_version") != FEATURE_VERSION:
+            raise ValueError("Unsupported BB Prediction Model feature version")
+        return model
