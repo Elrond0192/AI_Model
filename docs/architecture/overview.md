@@ -33,13 +33,13 @@ Install database contracts in order:
 After the upstream ETL has updated canonical AI_Source statistics, refresh a single context with:
 
 ```sql
-CALL "AI_Source"."RefreshContext"('ITA1', 2025, 'RS');
+CALL "AI_Source"."RefreshContextSeasonal"(2025);
 ```
 
 Or refresh all discovered league/competition contexts for a season:
 
 ```sql
-CALL "AI_Source"."RefreshContext"(2026);
+CALL "AI_Source"."RefreshContextSeasonal"(2026);
 ```
 
 The refresh procedure operates on the current canonical AI_Source tables; it does not itself rebuild those tables from HoopmetricsEngine source schemas. Follow the ETL/source-contract rebuild steps in [README](../../README.md) and [RUNBOOK](../../RUNBOOK.md).
