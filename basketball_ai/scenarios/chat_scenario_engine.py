@@ -1830,14 +1830,10 @@ class ChatScenarioEngine:
                         "confidence_low_100": round(min(low_100, high_100), 1),
                         "confidence_high_100": round(max(low_100, high_100), 1),
                         "prediction_calibration_version": calibration.get("calibration_version"),
-                        "current_bb_rating": current_bb_rating,
-                        "delta_vs_current_bb_rating": (
-                            round(predicted_100 - current_bb_rating, 1)
-                            if current_bb_rating is not None else None
-                        ),
                         "interpretation": (
-                            f"Previsione calibrata del BB-Rating per la stagione {season + 1}. "
-                            "È una stima futura, non il rendimento osservato della stagione corrente."
+                            f"Punteggio previsionale calibrato su scala 1–100 per la stagione {season + 1}. "
+                            "È una previsione del rating sorgente, non il BB-Rating contestuale osservato; "
+                            "non va confrontata direttamente con il BB-Rating storico."
                         ),
                     }
         except (ValueError, RuntimeError, KeyError, TypeError, AttributeError) as exc:
