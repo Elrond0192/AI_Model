@@ -146,7 +146,7 @@ def test_prediction_model_uses_loaded_calibration_and_hides_native_rating():
         [],
         10,
         None,
-    )["result"]
+    )
 
     prediction = result["prediction_model"]
     assert prediction["available"] is True
@@ -298,7 +298,21 @@ def test_player_intelligence_analysis_layers():
 
 
 def test_metric_explanation_uses_same_context_percentiles():
-    result = _engine().evaluate(
+    data = _analysis_data()
+    extra_row = data["player_stats"][
+        (data["player_stats"]["player_id"] == 4)
+        & (data["player_stats"]["season"] == 2024)
+        & (data["player_stats"]["competition"] == "RS")
+    ].iloc[0].to_dict()
+    extra_row.update({"player_id": 5, "rating": 7.4, "ts_pct": .66, "usg_pct": .19})
+    data["player_stats"] = pd.concat(
+        [data["player_stats"], pd.DataFrame([extra_row])],
+        ignore_index=True,
+    )
+    engine = _engine()
+    engine.data = data
+    engine.advanced = engine.advanced.__class__(data)
+    result = engine.evaluate(
         {"scenario": "metric_explanation", "season": 2024, "competition": "RS"},
         [1], [], 10, None,
     )
@@ -324,7 +338,7 @@ def test_regression_risk_is_descriptive_not_probability():
         [1], [], 10, None,
     )
     assert 0.0 <= result["result"]["risk_index"] <= 1.0
-    assert "not a calibrated probability" in result["limitations"][0]
+    assert "probabilità calibrata" in result["limitations"][0]
 
 
 def test_player_intelligence_orchestrates_question_layers():
