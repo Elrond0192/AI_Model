@@ -51,7 +51,12 @@ from basketball_ai.data.training_snapshots import (
     load_training_snapshot,
 )
 from basketball_ai.models.production_training import _numeric_seasons
-from basketball_ai.admin_web.model_lifecycle import inspect_model, promote_model, rollback_model
+from basketball_ai.admin_web.model_lifecycle import (
+    cleanup_incomplete_candidates,
+    inspect_model,
+    promote_model,
+    rollback_model,
+)
 from basketball_ai.models.promote import (
     MAX_SEGMENT_REGRESSION_PCT,
     MIN_BACKTEST_SAMPLES,
@@ -885,7 +890,13 @@ def _prediction_calibration_worker(active_profile: str | None, actor: str, cance
         _check_cancelled(cancel_event)
         mode_prediction_calibrate(args)
         _check_cancelled(cancel_event)
-        report = json.loads((output_dir / "prediction_rating_calibration.json").read_text(encoding="utf-8"))
+        artifact_path = output_dir / "prediction_rating_calibration.json"
+        if not artifact_path.is_file():
+            raise RuntimeError(
+                "Prediction calibration finished without writing its expected artifact "
+                f"to {artifact_path}"
+            )
+        report = json.loads(artifact_path.read_text(encoding="utf-8"))
         _check_cancelled(cancel_event)
         validation = validate_artifact("prediction-calibration", output_dir)
         _check_cancelled(cancel_event)
@@ -905,9 +916,33 @@ def _prediction_calibration_worker(active_profile: str | None, actor: str, cance
                 STATE.prediction_calibration.update(status="cancelled", stage="Cancelled", progress=100, message="Calibration cancelled; production unchanged.", error=None, finished_at=_utcnow())
     except Exception as exc:
         error = _safe_error(exc)
-        _audit("prediction_calibration_failed", actor, active_profile or "", error)
+        expected_artifact = output_dir / "prediction_rating_calibration.json"
+        candidate_cleanup = "not_needed"
+        if not expected_artifact.is_file():
+            shutil.rmtree(output_dir, ignore_errors=True)
+            candidate_cleanup = "removed_incomplete_candidate"
+        _audit(
+            "prediction_calibration_failed",
+            actor,
+            active_profile or "",
+            json.dumps({
+                "candidate_id": candidate_id,
+                "error": error,
+                "candidate_cleanup": candidate_cleanup,
+            }, ensure_ascii=False),
+        )
         with STATE.lock:
-            STATE.prediction_calibration.update(status="failed", stage="Failed", progress=100, message="Prediction 1–100 calibration failed; production unchanged.", error=error, finished_at=_utcnow())
+            STATE.prediction_calibration.update(
+                status="failed",
+                stage="Failed",
+                progress=100,
+                message="Prediction 1–100 calibration failed; production unchanged.",
+                error=error,
+                candidate_id=None,
+                output=None,
+                cancel_requested=False,
+                finished_at=_utcnow(),
+            )
 
 
 def _training_worker(
@@ -1930,9 +1965,33 @@ async def evaluate_scenario(payload: dict[str, Any], user: dict[str, str] = Depe
         raise HTTPException(status_code=502, detail=_safe_error(exc)) from exc
 
 
+def _cleanup_idle_incomplete_model_candidates() -> dict[str, list[str]]:
+    with STATE.lock:
+        jobs = {
+            "prediction-calibration": STATE.prediction_calibration.get("status"),
+            "bb-rating": STATE.bb_rating.get("status"),
+            "future-performance": STATE.future_performance.get("status"),
+        }
+    removed: dict[str, list[str]] = {}
+    for model, status in jobs.items():
+        if status in {"queued", "running"}:
+            continue
+        stale = cleanup_incomplete_candidates(MODEL_ROOT, model)
+        if stale:
+            removed[model] = stale
+            _audit(
+                "incomplete_model_candidates_removed",
+                "system",
+                model,
+                json.dumps({"candidate_ids": stale}, ensure_ascii=False),
+            )
+    return removed
+
+
 @app.get("/admin-api/prediction-calibration")
 def prediction_calibration_status(user: dict[str, str] = Depends(_operator)) -> dict[str, Any]:
     del user
+    _cleanup_idle_incomplete_model_candidates()
     with STATE.lock:
         job = dict(STATE.prediction_calibration)
     return {"job": job, "release": inspect_model(MODEL_ROOT, "prediction-calibration"), "minimum_oos_rows": 500, "native_prediction_model_changed": False}
@@ -1959,6 +2018,7 @@ def start_prediction_calibration(user: dict[str, str] = Depends(_csrf)) -> dict[
 @app.get("/admin-api/model-releases")
 def model_releases(user: dict[str, str] = Depends(_operator)) -> dict[str, Any]:
     del user
+    _cleanup_idle_incomplete_model_candidates()
     return {"models": {model: inspect_model(MODEL_ROOT, model) for model in ("prediction-calibration", "bb-rating", "future-performance")}, "prediction_model_registry": _registry(), "automatic_api_restart_configured": bool(os.environ.get("API_KEY", "").strip()), "note": "Promotions and rollbacks request an API restart automatically and wait for readiness; candidate training does not restart production."}
 
 
