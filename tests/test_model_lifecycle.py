@@ -5,7 +5,13 @@ from pathlib import Path
 
 import pytest
 
-from basketball_ai.admin_web.model_lifecycle import inspect_model, promote_model, rollback_model, validate_artifact
+from basketball_ai.admin_web.model_lifecycle import (
+    cleanup_incomplete_candidates,
+    inspect_model,
+    promote_model,
+    rollback_model,
+    validate_artifact,
+)
 
 
 def _prediction_artifact(path: Path, version: str = "1.0", rows: int = 600) -> None:
@@ -20,6 +26,43 @@ def _prediction_artifact(path: Path, version: str = "1.0", rows: int = 600) -> N
         }),
         encoding="utf-8",
     )
+
+
+def test_incomplete_newest_candidate_does_not_hide_valid_candidate(tmp_path: Path):
+    valid = tmp_path / "candidates" / "prediction-calibration" / "candidate-valid"
+    _prediction_artifact(valid, version="1.2")
+    incomplete = tmp_path / "candidates" / "prediction-calibration" / "20261018T175520Z-d99e8891"
+    incomplete.mkdir(parents=True)
+
+    inspected = inspect_model(tmp_path, "prediction-calibration")
+
+    assert inspected["candidate"]["id"] == "candidate-valid"
+    assert inspected["candidate"]["valid"] is True
+    assert inspected["latest_invalid_candidate"]["id"] == incomplete.name
+    assert inspected["latest_invalid_candidate"]["valid"] is False
+    assert "Missing or invalid prediction_rating_calibration.json" in inspected["latest_invalid_candidate"]["reason"]
+
+    promoted = promote_model(tmp_path, "prediction-calibration")
+    assert promoted["promoted"] is True
+    assert validate_artifact("prediction-calibration", tmp_path / "prediction_calibration")["version"] == "1.2"
+
+
+def test_cleanup_incomplete_candidates_removes_only_missing_primary_artifact(tmp_path: Path):
+    root = tmp_path / "candidates" / "prediction-calibration"
+    incomplete = root / "incomplete"
+    incomplete.mkdir(parents=True)
+    malformed = root / "malformed"
+    malformed.mkdir(parents=True)
+    (malformed / "prediction_rating_calibration.json").write_text("{", encoding="utf-8")
+    valid = root / "valid"
+    _prediction_artifact(valid, version="1.3")
+
+    removed = cleanup_incomplete_candidates(tmp_path, "prediction-calibration")
+
+    assert removed == ["incomplete"]
+    assert not incomplete.exists()
+    assert (malformed / "prediction_rating_calibration.json").is_file()
+    assert (valid / "prediction_rating_calibration.json").is_file()
 
 
 def test_candidate_must_validate_before_promotion(tmp_path: Path):
