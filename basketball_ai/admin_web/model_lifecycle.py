@@ -214,6 +214,8 @@ def rollback_model(root: str | Path, model: str) -> dict[str, Any]:
         except (OSError, ValueError, KeyError, json.JSONDecodeError) as exc:
             raise RuntimeError("No previous release is available") from exc
         target = root / _MODEL_PATHS[model][0]
+        if previous.resolve().parent != releases.resolve():
+            raise RuntimeError("Previous release pointer is outside the model release directory")
         if not previous.is_dir():
             raise RuntimeError("Previous release directory is missing")
         validation = validate_artifact(model, previous)
