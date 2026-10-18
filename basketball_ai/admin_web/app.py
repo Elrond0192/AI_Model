@@ -8,8 +8,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
-import contextlib
-import io
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import json
@@ -805,8 +803,7 @@ def _prediction_calibration_worker(active_profile: str | None, actor: str) -> No
         args = argparse.Namespace(database_profile=active_profile, snapshot_id=None, snapshot_dir=None, prediction_calibration_output_dir=str(output_dir))
         with STATE.lock:
             STATE.prediction_calibration.update(stage="Walk-forward OOS calibration", progress=25, message="Esecuzione backtest expanding OOS e fitting della mappatura 1–100…")
-        with contextlib.redirect_stdout(io.StringIO()):
-            mode_prediction_calibrate(args)
+        mode_prediction_calibrate(args)
         report = json.loads((output_dir / "prediction_rating_calibration.json").read_text(encoding="utf-8"))
         validation = validate_artifact("prediction-calibration", output_dir)
         if not validation.get("valid"):
