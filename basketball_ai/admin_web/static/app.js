@@ -285,7 +285,7 @@ async function renderModelReleases(){
     (job.output?'<div class="summary-list">'+[['OOS rows',job.output.rows],['Target seasons',(job.output.target_seasons||[]).join(', ')],['OOS folds',job.output.n_folds],['Prediction version',job.output.prediction_model_version]].map(([a,b])=>'<div class="summary-row"><span>'+esc(a)+'</span><strong>'+esc(b??'—')+'</strong></div>').join('')+'</div>':'')+
     (job.progress!=null?'<div class="progress-track"><div class="progress-bar" style="width:'+Math.max(0,Math.min(100,Number(job.progress)||0))+'%"></div></div>':'');
   const start=$('#prediction-calibration-start');
-  start.disabled=['running','queued'].includes(job.status)||!App.overview?.database;
+  start.disabled=['running','queued'].includes(job.status);
   start.textContent=['running','queued'].includes(job.status)?'Calibrazione in corso…':'Genera candidate';
   start.onclick=async()=>{
     start.disabled=true;
