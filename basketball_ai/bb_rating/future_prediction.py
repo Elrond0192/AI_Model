@@ -257,6 +257,7 @@ class BBRatingFuturePredictionModel:
                 f"at least {self.min_oof_samples} are required. No artifact was created."
             )
         self.calibrator = BBRatingScenarioCalibrator(min_samples=40)
+        oof["target_league_id"] = oof["target_league"].astype(str)
         self.calibrator.fit(oof)
         calibrated = np.asarray([
             self.calibrator.predict(
