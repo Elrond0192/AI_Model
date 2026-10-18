@@ -159,6 +159,37 @@ def _load_prediction_calibration(model_dir: str):
     logger.warning("[API] Prediction 1-100 calibration artifact not found")
     return None
 
+def _load_bb_rating_future_prediction_model(model_dir: str):
+    from basketball_ai.bb_rating.future_prediction import BBRatingFuturePredictionModel
+
+    configured = os.environ.get("BB_RATING_FUTURE_MODEL_DIR", "").strip()
+    model_path = Path(model_dir)
+    candidates = []
+    if configured:
+        candidates.append(Path(configured))
+    candidates.extend([
+        model_path / "bb_rating_future_prediction",
+        model_path.parent / "bb_rating_future_prediction",
+    ])
+    seen: set[str] = set()
+    for path in candidates:
+        key = str(path)
+        if key in seen:
+            continue
+        seen.add(key)
+        if not (path / "metadata.json").is_file():
+            continue
+        try:
+            model = BBRatingFuturePredictionModel.load(path)
+            logger.info("[API] Loaded direct BB-Rating future prediction model from %s", path)
+            return model
+        except Exception as exc:
+            logger.error("[API] BB-Rating future prediction artifact invalid at %s: %s", path, exc)
+            return None
+    logger.warning("[API] Direct BB-Rating future prediction release not found")
+    return None
+
+
 def _load_future_performance_model(model_dir: str):
     from basketball_ai.future_performance import PlayerFuturePerformanceModel
 
@@ -233,6 +264,7 @@ def _load_app_state() -> None:
         app_state["bb_rating_uncertainty"] = None
         app_state["prediction_calibration"] = None
         app_state["future_performance_model"] = None
+        app_state["bb_rating_future_prediction_model"] = None
         return
 
     app_state["data"] = data
@@ -264,6 +296,12 @@ def _load_app_state() -> None:
         logger.warning("[API] Prediction 1-100 calibration unavailable: %s", exc)
         app_state["prediction_calibration"] = None
 
+
+    try:
+        app_state["bb_rating_future_prediction_model"] = _load_bb_rating_future_prediction_model(model_dir)
+    except Exception as exc:
+        logger.error("[API] Direct BB-Rating future prediction model unavailable: %s", exc)
+        app_state["bb_rating_future_prediction_model"] = None
 
     try:
         app_state["future_performance_model"] = _load_future_performance_model(model_dir)
@@ -363,6 +401,7 @@ async def lifespan(app: FastAPI):
     app.state.bb_rating_uncertainty = app_state.get("bb_rating_uncertainty")
     app.state.prediction_calibration = app_state.get("prediction_calibration")
     app.state.future_performance_model = app_state.get("future_performance_model")
+    app.state.bb_rating_future_prediction_model = app_state.get("bb_rating_future_prediction_model")
     app.state.model_metadata = _model_metadata(os.environ.get("MODEL_DIR", "models_saved"))
 
     yield
@@ -582,6 +621,7 @@ def create_app() -> FastAPI:
     from basketball_ai.api.routes.metric_rating_v2 import router as metric_rating_v2_router
     from basketball_ai.api.routes.bb_rating_v2 import router as bb_rating_v2_router
     from basketball_ai.api.routes.future_performance_v2 import router as future_performance_v2_router
+    from basketball_ai.api.routes.bb_rating_prediction_v2 import router as bb_rating_prediction_v2_router
     from basketball_ai.api.routes.player_intelligence_v2 import router as player_intelligence_v2_router
 
     app.include_router(predictions_v2_router)
@@ -589,6 +629,7 @@ def create_app() -> FastAPI:
     app.include_router(metric_rating_v2_router)
     app.include_router(bb_rating_v2_router)
     app.include_router(future_performance_v2_router)
+    app.include_router(bb_rating_prediction_v2_router)
     app.include_router(player_intelligence_v2_router)
 
     @app.post("/api/v2/debug/chat")
@@ -619,6 +660,7 @@ def create_app() -> FastAPI:
         bb_rating = getattr(request.app.state, "bb_rating_engine", None)
         uncertainty = getattr(request.app.state, "bb_rating_uncertainty", None)
         future_model = getattr(request.app.state, "future_performance_model", None)
+        bb_rating_future_model = getattr(request.app.state, "bb_rating_future_prediction_model", None)
         prediction_engine = getattr(request.app.state, "engine", None)
         model_metadata = getattr(request.app.state, "model_metadata", {}) or {}
         model_root = Path(os.environ.get("MODEL_DIR", "models_saved"))
@@ -641,6 +683,8 @@ def create_app() -> FastAPI:
             "bb_rating_calibration_version": getattr(uncertainty, "calibration_version", None),
             "bb_rating_uncertainty_version": getattr(uncertainty, "bb_rating_version", None),
             "future_performance_loaded": future_model is not None,
+            "bb_rating_future_prediction_loaded": bb_rating_future_model is not None,
+            "bb_rating_future_prediction_version": getattr(bb_rating_future_model, "metadata", {}).get("model_version"),
             "future_performance_version": getattr(future_model, "metadata", {}).get("future_performance_version"),
             "future_performance_feature_version": getattr(future_model, "metadata", {}).get("feature_version"),
         }
