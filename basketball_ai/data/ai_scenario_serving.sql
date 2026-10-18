@@ -232,9 +232,7 @@ $$;
 -- Canonical ETL entry point: refresh every league and every competition for a
 -- season from the current canonical AI_Source statistical tables. Callers use
 -- RefreshContextSeasonal; there is no public single-context RefreshContext overload.
-CREATE OR REPLACE PROCEDURE "AI_Source"."RefreshContextSeasonal"(
-    p_season integer
-)
+CREATE OR REPLACE PROCEDURE "AI_Source"."RefreshContextSeasonal"(p_season integer)
 LANGUAGE plpgsql
 AS $refresh_season$
 DECLARE
