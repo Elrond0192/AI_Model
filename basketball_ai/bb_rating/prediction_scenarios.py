@@ -27,6 +27,8 @@ def classify_transition(
     target_league_id: Any,
     source_competition: Any = None,
     target_competition: Any = None,
+    source_tier: Any = None,
+    target_tier: Any = None,
 ) -> str:
     """Classify team, league and competition transitions.
 
@@ -48,16 +50,32 @@ def classify_transition(
     else:
         same_competition = True
     if same_team and same_league:
-        return SCENARIO_SAME_TEAM if same_competition else "competition_change_same_team_same_league"
-    if not same_team and same_league:
-        return SCENARIO_TEAM_CHANGE if same_competition else "team_and_competition_change_same_league"
-    if same_team and not same_league:
-        return SCENARIO_LEAGUE_CHANGE if same_competition else "league_and_competition_change_same_team"
-    return (
-        SCENARIO_TEAM_AND_LEAGUE_CHANGE
-        if same_competition
-        else "team_league_and_competition_change"
-    )
+        scenario = SCENARIO_SAME_TEAM if same_competition else "competition_change_same_team_same_league"
+    elif not same_team and same_league:
+        scenario = SCENARIO_TEAM_CHANGE if same_competition else "team_and_competition_change_same_league"
+    elif same_team and not same_league:
+        scenario = SCENARIO_LEAGUE_CHANGE if same_competition else "league_and_competition_change_same_team"
+    else:
+        scenario = (
+            SCENARIO_TEAM_AND_LEAGUE_CHANGE
+            if same_competition
+            else "team_league_and_competition_change"
+        )
+
+    # League changes can be split by tier direction where authoritative tier
+    # metadata exists. Lower tier number means a stronger competition tier.
+    if not same_league and source_tier is not None and target_tier is not None:
+        try:
+            source_rank, target_rank = int(float(source_tier)), int(float(target_tier))
+            tier_label = (
+                "tier_up" if target_rank < source_rank
+                else "tier_down" if target_rank > source_rank
+                else "same_tier"
+            )
+            scenario = f"{scenario}_{tier_label}"
+        except (TypeError, ValueError):
+            pass
+    return scenario
 
 
 @dataclass
