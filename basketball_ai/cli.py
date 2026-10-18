@@ -36,7 +36,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument("--output-dir", default="models_saved/bb_rating_calibration")
-    parser.add_argument("--bb-rating-prediction-output-dir", default="models_saved/bb_rating_future_prediction")
+    parser.add_argument("--bb-rating-prediction-output-dir", default="models_saved/candidates/bb_rating_future_prediction")
     parser.add_argument("--bb-rating-prediction-min-oof-samples", type=int, default=500)
     parser.add_argument("--prediction-calibration-output-dir", default="models_saved/prediction_calibration")
     parser.add_argument("--future-performance-model-dir", default=None)
