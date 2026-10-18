@@ -38,6 +38,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--output-dir", default="models_saved/bb_rating_calibration")
     parser.add_argument("--bb-rating-prediction-output-dir", default="models_saved")
     parser.add_argument("--bb-rating-prediction-min-oof-samples", type=int, default=500)
+    parser.add_argument("--bb-rating-prediction-include-latest-target-season", action="store_true", help="Include the latest observed target season only when it is confirmed complete.")
     parser.add_argument("--prediction-calibration-output-dir", default="models_saved/prediction_calibration")
     parser.add_argument("--future-performance-model-dir", default=None)
     parser.add_argument("--future-performance-max-target-season", type=int, default=None)
@@ -468,7 +469,10 @@ def mode_bb_rating_prediction_train(args: argparse.Namespace) -> None:
     model = BBRatingFuturePredictionModel(
         min_oof_samples=args.bb_rating_prediction_min_oof_samples
     )
-    metadata = model.fit(data)
+    metadata = model.fit(
+        data,
+        include_latest_target_season=args.bb_rating_prediction_include_latest_target_season,
+    )
     metadata["database_profile"] = args.database_profile or os.getenv("DATABASE_PROFILE", "")
     metadata["training_snapshot_id"] = data.get("training_snapshot_manifest", {}).get("snapshot_id")
     model.metadata.update(metadata)
