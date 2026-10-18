@@ -185,7 +185,19 @@ def test_player_intelligence_reports_season_comparison_separately_for_each_leagu
         }
     data["player_dict"][1]["global_id"] = "PLAYER-CANONICAL"
 
-    result = ChatScenarioEngine(SimpleNamespace(), data).evaluate(
+    class _HistoricalBBRating:
+        def rate_player(self, global_id, league, season, phase):
+            assert global_id == "PLAYER-CANONICAL"
+            return SimpleNamespace(score={
+                ("A", 2024): 62,
+                ("A", 2025): 70,
+                ("EL", 2024): 51,
+                ("EL", 2025): 59,
+            }[(league, season)])
+
+    result = ChatScenarioEngine(
+        SimpleNamespace(), data, bb_rating_engine=_HistoricalBBRating()
+    ).evaluate(
         {
             "scenario": "player_intelligence",
             "season": 2025,
@@ -200,12 +212,13 @@ def test_player_intelligence_reports_season_comparison_separately_for_each_leagu
     comparisons = {item["league_key"]: item["season_comparison"] for item in contexts}
     assert comparisons["A"]["previous_season"] == 2024
     assert comparisons["A"]["current_season"] == 2025
-    assert comparisons["A"]["previous_rating"] == 6.3
-    assert comparisons["A"]["current_rating"] == 7.4
-    assert comparisons["A"]["rating_delta"] == 1.1
-    assert comparisons["EL"]["previous_rating"] == 5.9
-    assert comparisons["EL"]["current_rating"] == 6.9
-    assert comparisons["EL"]["rating_delta"] == 1.0
+    assert comparisons["A"]["previous_bb_rating"] == 62
+    assert comparisons["A"]["current_bb_rating"] == 70
+    assert comparisons["A"]["bb_rating_delta"] == 8
+    assert comparisons["EL"]["previous_bb_rating"] == 51
+    assert comparisons["EL"]["current_bb_rating"] == 59
+    assert comparisons["EL"]["bb_rating_delta"] == 8
+    assert all("model_evidence" in item["analyses"] for item in contexts)
     assert result["result"]["season_comparisons"] == [
         comparisons["A"],
         comparisons["EL"],
