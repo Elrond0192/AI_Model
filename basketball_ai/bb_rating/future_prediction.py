@@ -273,6 +273,7 @@ class BBRatingFuturePredictionModel:
         y = records["observed_bb_rating"].to_numpy(dtype=float)
         years = records["target_season"].to_numpy(dtype=int)
         oof_predictions = np.full(len(records), np.nan, dtype=float)
+        baseline_predictions = np.full(len(records), np.nan, dtype=float)
         # Expanding walk-forward: each fold trains strictly before its target season.
         for target_year in sorted(set(years)):
             test_idx = np.flatnonzero(years == target_year)
@@ -286,25 +287,69 @@ class BBRatingFuturePredictionModel:
             fold.fit(encoded.iloc[train_idx], y[train_idx])
             oof_predictions[test_idx] = np.clip(fold.predict(encoded.iloc[test_idx]), 1, 100)
 
+            train_records = records.iloc[train_idx]
+            global_mean = float(np.mean(y[train_idx]))
+            for idx in test_idx:
+                sample = records.iloc[idx]
+                same_context = (
+                    str(sample["source_league"]).upper() == str(sample["target_league"]).upper()
+                    and str(sample["source_competition"]).upper() == str(sample["target_competition"]).upper()
+                )
+                if same_context and pd.notna(sample.get("source_bb_rating")):
+                    baseline_predictions[idx] = float(sample["source_bb_rating"])
+                    continue
+                destination = train_records[
+                    (train_records["target_league"].astype(str) == str(sample["target_league"]))
+                    & (train_records["target_competition"].astype(str) == str(sample["target_competition"]))
+                ]
+                if destination.empty:
+                    destination = train_records[
+                        train_records["target_league"].astype(str) == str(sample["target_league"])
+                    ]
+                baseline_predictions[idx] = float(
+                    destination["observed_bb_rating"].mean()
+                    if not destination.empty else global_mean
+                )
+
         valid_oof = np.isfinite(oof_predictions)
         oof = records.loc[valid_oof].copy()
         oof["predicted_bb_rating"] = oof_predictions[valid_oof]
+        oof["baseline_bb_rating"] = baseline_predictions[valid_oof]
         if len(oof) < self.min_oof_samples:
             raise ValueError(
                 f"Only {len(oof)} walk-forward OOF BB-Rating predictions; "
                 f"at least {self.min_oof_samples} are required. No artifact was created."
             )
+
+        # Evaluate calibration itself without fitting it on the row being scored:
+        # each target-season cohort uses calibration rows from earlier OOF seasons only.
+        nested_calibrated = oof["predicted_bb_rating"].to_numpy(float).copy()
+        for target_year in sorted(oof["target_season"].unique()):
+            test_positions = np.flatnonzero(oof["target_season"].to_numpy() == target_year)
+            prior = oof[oof["target_season"] < target_year].copy()
+            if len(prior) < 40:
+                continue
+            prior["target_league_id"] = prior["target_league"].astype(str)
+            fold_calibrator = BBRatingScenarioCalibrator(min_samples=40)
+            try:
+                fold_calibrator.fit(prior)
+                for position in test_positions:
+                    row = oof.iloc[position]
+                    nested_calibrated[position] = fold_calibrator.predict(
+                        float(row["predicted_bb_rating"]),
+                        scenario=str(row["scenario"]),
+                        target_league_id=str(row["target_league"]),
+                    )["predicted_bb_rating"]
+            except (ValueError, RuntimeError):
+                # Insufficient diversity in earlier OOF predictions: preserve
+                # the uncalibrated model result rather than fabricate a mapping.
+                continue
+
+        oof["calibrated_bb_rating"] = np.clip(nested_calibrated, 1, 100)
         self.calibrator = BBRatingScenarioCalibrator(min_samples=40)
         oof["target_league_id"] = oof["target_league"].astype(str)
         self.calibrator.fit(oof)
-        calibrated = np.asarray([
-            self.calibrator.predict(
-                float(row.predicted_bb_rating), scenario=str(row.scenario),
-                target_league_id=str(row.target_league),
-            )["predicted_bb_rating"]
-            for row in oof.itertuples()
-        ], dtype=float)
-        residual = oof["observed_bb_rating"].to_numpy(float) - calibrated
+        residual = oof["observed_bb_rating"].to_numpy(float) - nested_calibrated
         self.residual_intervals = {"global": {
             "n": int(len(residual)),
             "low": float(np.quantile(residual, 0.10)),
@@ -319,6 +364,32 @@ class BBRatingFuturePredictionModel:
                     "low": float(group["_residual"].quantile(0.10)),
                     "high": float(group["_residual"].quantile(0.90)),
                 }
+
+        actual = oof["observed_bb_rating"].to_numpy(float)
+        raw = oof["predicted_bb_rating"].to_numpy(float)
+        baseline = oof["baseline_bb_rating"].to_numpy(float)
+        calibrated = oof["calibrated_bb_rating"].to_numpy(float)
+
+        def metric_pack(mask: np.ndarray) -> dict[str, float | int | None]:
+            if not np.any(mask):
+                return {"n": 0, "mae": None, "rmse": None, "bias": None, "calibration_error": None}
+            truth, prediction = actual[mask], calibrated[mask]
+            return {
+                "n": int(mask.sum()),
+                "mae": float(mean_absolute_error(truth, prediction)),
+                "rmse": float(np.sqrt(mean_squared_error(truth, prediction))),
+                "bias": float(np.mean(prediction - truth)),
+                "calibration_error": float(abs(np.mean(prediction) - np.mean(truth))),
+            }
+
+        by_scenario = {}
+        for scenario in sorted(oof["scenario"].astype(str).unique()):
+            by_scenario[scenario] = metric_pack(oof["scenario"].astype(str).to_numpy() == scenario)
+        by_destination = {}
+        for league in sorted(oof["target_league"].astype(str).unique()):
+            by_destination[league] = metric_pack(oof["target_league"].astype(str).to_numpy() == league)
+        mae_model = float(mean_absolute_error(actual, calibrated))
+        mae_baseline = float(mean_absolute_error(actual, baseline))
 
         self.model = HistGradientBoostingRegressor(
             max_iter=220, learning_rate=0.05, max_leaf_nodes=15,
