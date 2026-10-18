@@ -17,7 +17,7 @@ from sklearn.ensemble import HistGradientBoostingRegressor
 from sklearn.isotonic import IsotonicRegression
 from sklearn.metrics import mean_absolute_error, mean_squared_error
 
-from basketball_ai.bb_rating.engine import BBRatingEngine
+from basketball_ai.bb_rating.engine import BBRatingEngine, BB_RATING_VERSION
 from basketball_ai.bb_rating.competition_tiers import competition_tier
 from basketball_ai.bb_rating.prediction_scenarios import (
     BBRatingScenarioCalibrator,
@@ -137,6 +137,7 @@ def _row_features(
         str(target_league).strip().upper(),
         normalize_competition(row.get("competition")),
         normalize_competition(target_competition),
+        row.get("competition_tier"), resolved_target_tier,
     )
     return result
 
@@ -403,7 +404,7 @@ class BBRatingFuturePredictionModel:
             "feature_version": FEATURE_VERSION,
             "target": "official_bb_rating_t_plus_1",
             "target_scale": [1, 100],
-            "bb_rating_version": "1.9",
+            "bb_rating_version": BB_RATING_VERSION,
             "calibration_method": "walk_forward_oof_isotonic_by_destination_league_and_scenario",
             "training_samples": int(len(records)),
             "oof_samples": int(len(oof)),
