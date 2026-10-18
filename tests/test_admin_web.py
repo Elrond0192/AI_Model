@@ -521,6 +521,53 @@ def test_prediction_calibration_worker_writes_candidate_without_touching_product
     assert not (root / "prediction_calibration").exists()
 
 
+def test_prediction_calibration_worker_removes_candidate_when_cli_fails(monkeypatch, tmp_path):
+    _reset_state()
+    root = tmp_path / "models_saved"
+    monkeypatch.setattr(admin, "MODEL_ROOT", root)
+    monkeypatch.setattr(admin, "_utcnow", lambda: "now")
+    monkeypatch.setattr(admin, "_audit", lambda *args, **kwargs: None)
+
+    def fail_calibrate(args):
+        raise RuntimeError("walk-forward backtest failed before artifact write")
+
+    import basketball_ai.cli as cli
+    monkeypatch.setattr(cli, "mode_prediction_calibrate", fail_calibrate)
+
+    admin._prediction_calibration_worker("production", "admin")
+
+    job = admin.STATE.prediction_calibration
+    assert job["status"] == "failed"
+    assert "walk-forward backtest failed before artifact write" in job["error"]
+    candidate_root = root / "candidates" / "prediction-calibration"
+    assert not candidate_root.exists() or not list(candidate_root.iterdir())
+    assert job["candidate_id"] is None
+    assert job["output"] is None
+
+
+def test_model_release_read_cleans_stale_candidate_only_when_idle(monkeypatch, tmp_path):
+    _reset_state()
+    root = tmp_path / "models_saved"
+    stale = root / "candidates" / "prediction-calibration" / "20261018T175520Z-d99e8891"
+    stale.mkdir(parents=True)
+    monkeypatch.setattr(admin, "MODEL_ROOT", root)
+    monkeypatch.setattr(admin, "_audit", lambda *args, **kwargs: None)
+
+    removed = admin._cleanup_idle_incomplete_model_candidates()
+    assert removed["prediction-calibration"] == ["20261018T175520Z-d99e8891"]
+    assert not stale.exists()
+
+    active = root / "candidates" / "prediction-calibration" / "active-job"
+    active.mkdir(parents=True)
+    with admin.STATE.lock:
+        admin.STATE.prediction_calibration["status"] = "running"
+
+    removed = admin._cleanup_idle_incomplete_model_candidates()
+    assert "prediction-calibration" not in removed
+    assert active.exists()
+    _reset_state()
+
+
 def test_prediction_calibration_start_queues_candidate_job(monkeypatch, tmp_path):
     _reset_state()
     monkeypatch.setattr(admin, "MODEL_ROOT", tmp_path / "models_saved")
