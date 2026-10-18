@@ -10,7 +10,7 @@ The native statistical rating (0-10) and its existing 1-100 display calibration 
 
 ## Model and labels
 
-`basketball_ai.bb_rating.future_prediction.BBRatingFuturePredictionModel` builds target labels by calling the official `BBRatingEngine` for each available player + target season + destination league + competition context. Training features are taken only from source-season rows; source BB-Rating is itself calculated from that source-season context. Canonical player global identity is used to join seasons when provider-specific player IDs change.
+`basketball_ai.bb_rating.future_prediction.BBRatingFuturePredictionModel` builds target labels by calling the official `BBRatingEngine` for each available player + target season + destination league + competition context. Player features and destination-team context are restricted to information available at or before the source season; team context uses the destination team's latest available historical season, never its target-season performance. Source BB-Rating is itself calculated from that source-season context. Canonical player global identity is used to join seasons when provider-specific player IDs change.
 
 The model uses an expanding walk-forward evaluation by target season. Each fold trains only on target seasons earlier than its test season. Calibration for OOF evaluation is itself temporal: a target-season fold can use only calibration rows from earlier OOF target seasons. The final serving calibrator is then fit on the complete OOF record set.
 
