@@ -98,6 +98,7 @@ def _row_features(
     target_team: str | None,
     numeric_columns: list[str],
     target_tier: Any = None,
+    source_bb_rating: float | None = None,
 ) -> dict[str, Any]:
     result: dict[str, Any] = {}
     for column in numeric_columns:
@@ -109,6 +110,7 @@ def _row_features(
         pd.Series([row.get("age")]), errors="coerce"
     ).iloc[0]
     result["age_as_of_source"] = float(age) if pd.notna(age) else np.nan
+    result["source_bb_rating"] = float(source_bb_rating) if source_bb_rating is not None and np.isfinite(source_bb_rating) else np.nan
     result["source_league"] = _clean(row.get("league_key")) or _clean(row.get("league_id"))
     result["source_competition"] = normalize_competition(row.get("competition"))
     result["source_position"] = _clean(row.get("position"))
@@ -226,7 +228,10 @@ class BBRatingFuturePredictionModel:
                         target_comp = normalize_competition(target.get("competition"))
                         label_key = (str(player_global_id), source_year + 1, target_league, target_comp)
                         target_score = labels.get(label_key)
-                        if target_score is None:
+                        source_league = _clean(source.get("league_key")).upper()
+                        source_comp = normalize_competition(source.get("competition"))
+                        source_score = labels.get((str(player_global_id), source_year, source_league, source_comp))
+                        if target_score is None or source_score is None:
                             continue
                         target_team = _team_identity(target, team_map)
                         features = _row_features(
@@ -235,6 +240,7 @@ class BBRatingFuturePredictionModel:
                             source_team=source_team, target_team=target_team,
                             numeric_columns=self.numeric_columns,
                             target_tier=target.get("competition_tier"),
+                            source_bb_rating=float(source_score),
                         )
                         records.append({
                             **features,
@@ -243,6 +249,8 @@ class BBRatingFuturePredictionModel:
                             "player_global_id": str(player_global_id),
                             "source_team": source_team or "",
                             "target_team": target_team or "",
+                            "source_league": source_league,
+                            "source_competition": source_comp,
                         })
         result = pd.DataFrame(records)
         if result.empty:
@@ -404,11 +412,22 @@ class BBRatingFuturePredictionModel:
         row = (exact if not exact.empty else source).sort_values("_year").iloc[-1]
         team_map = _team_global_map(data)
         source_team = _team_identity(row, team_map)
+        source_league = _clean(row.get("league_key")).upper()
+        source_competition = normalize_competition(row.get("competition"))
+        try:
+            source_result = engine.rate_player(
+                str(player_global_id), league=source_league,
+                season=int(source_season), phase=source_competition,
+            )
+            source_bb_rating = float(source_result.score)
+        except ValueError:
+            source_bb_rating = None
         features = _row_features(
             row, source_year=int(source_season), target_league=target_league,
             target_competition=target_competition, source_team=source_team,
             target_team=target_team_global_id, numeric_columns=self.numeric_columns,
             target_tier=competition_tier(target_league),
+            source_bb_rating=source_bb_rating,
         )
         features["target_season"] = int(source_season) + 1
         return self._predict_features(features)
