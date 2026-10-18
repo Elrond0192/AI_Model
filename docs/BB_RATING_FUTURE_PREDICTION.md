@@ -42,12 +42,12 @@ Run against a complete canonical training snapshot or the intended analysis data
 python -m basketball_ai.cli --mode bb-rating-prediction-train \
   --database-profile production \
   --bb-rating-prediction-min-oof-samples 500 \
-  --bb-rating-prediction-output-dir models_saved/candidates/bb_rating_future_prediction
+  --bb-rating-prediction-output-dir models_saved
 ```
 
-The command writes a candidate only if enough walk-forward OOF predictions exist and the MAE gate passes. It does not automatically promote the candidate. Keep the existing Prediction Model 2.6.0 and its artifacts intact.
+The command writes a lifecycle-managed candidate under `models_saved/candidates/bb-rating-prediction/<candidate_id>/` only if enough walk-forward OOF predictions exist and the MAE gate passes. It does not automatically promote the candidate. Inspect it in Model Center → Model Releases → BB Prediction Model (1–100), then use the normal candidate validation/promotion/rollback controls. Keep the existing Prediction Model 2.6.0 and its artifacts intact.
 
-After independent review, place the validated artifact directory under the active model directory as `bb_rating_future_prediction/`, or set `BB_RATING_FUTURE_MODEL_DIR` to the approved release directory. The API deliberately does not load the candidate directory by default.
+After independent review, promote the candidate through Model Center or set `BB_RATING_FUTURE_MODEL_DIR` to an explicitly approved release directory. The API loads only the promoted release path, never the candidate directory.
 
 ## API
 
