@@ -120,7 +120,7 @@ def validate_artifact(model: str, directory: str | Path) -> dict[str, Any]:
         "data_cutoff": artifact.get("data_cutoff") or artifact.get("data_cutoff_season") or (artifact.get("dataset") or {}).get("data_cutoff") or (artifact.get("dataset") or {}).get("season_max"),
         "rows": (artifact.get("dataset") or {}).get("rows") or artifact.get("n_pairs") or artifact.get("oof_samples") or artifact.get("training_samples"),
         "seasons": (artifact.get("dataset") or {}).get("target_seasons") or (artifact.get("dataset") or {}).get("seasons") or artifact.get("training_target_seasons") or artifact.get("target_seasons") or artifact.get("seasons") or [],
-        "validation": artifact.get("validation") or artifact.get("backtest") or ({"oof_mae_after_calibration": artifact.get("oof_mae_after_calibration"), "oof_baseline_mae": artifact.get("oof_baseline_mae"), "scenario_metrics": artifact.get("scenario_metrics")} if model == "bb-rating-prediction" else {}),
+        "validation": artifact.get("validation") or artifact.get("backtest") or ({"oof_mae_after_calibration": artifact.get("oof_mae_after_calibration"), "oof_baseline_mae": artifact.get("oof_baseline_mae"), "scenario_metrics": artifact.get("scenario_metrics"), "destination_league_metrics": artifact.get("destination_league_metrics"), "destination_league_scenario_metrics": artifact.get("destination_league_scenario_metrics")} if model == "bb-rating-prediction" else {}),
         "generated_at": artifact.get("generated_at"),
     }
 
