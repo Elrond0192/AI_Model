@@ -1971,6 +1971,7 @@ def _cleanup_idle_incomplete_model_candidates() -> dict[str, list[str]]:
             "prediction-calibration": STATE.prediction_calibration.get("status"),
             "bb-rating": STATE.bb_rating.get("status"),
             "future-performance": STATE.future_performance.get("status"),
+            "bb-rating-prediction": None,
         }
     removed: dict[str, list[str]] = {}
     for model, status in jobs.items():
@@ -2030,7 +2031,7 @@ def start_prediction_calibration(user: dict[str, str] = Depends(_csrf)) -> dict[
 def model_releases(user: dict[str, str] = Depends(_operator)) -> dict[str, Any]:
     del user
     _cleanup_idle_incomplete_model_candidates()
-    return {"models": {model: inspect_model(MODEL_ROOT, model) for model in ("prediction-calibration", "bb-rating", "future-performance")}, "prediction_model_registry": _registry(), "automatic_api_restart_configured": bool(os.environ.get("API_KEY", "").strip()), "note": "Promotions and rollbacks request an API restart automatically and wait for readiness; candidate training does not restart production."}
+    return {"models": {model: inspect_model(MODEL_ROOT, model) for model in ("prediction-calibration", "bb-rating", "future-performance", "bb-rating-prediction")}, "prediction_model_registry": _registry(), "automatic_api_restart_configured": bool(os.environ.get("API_KEY", "").strip()), "note": "Promotions and rollbacks request an API restart automatically and wait for readiness; candidate training does not restart production."}
 
 
 @app.post("/admin-api/model-releases/{model}/promote")
