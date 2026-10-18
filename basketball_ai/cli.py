@@ -36,7 +36,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument("--output-dir", default="models_saved/bb_rating_calibration")
-    parser.add_argument("--bb-rating-prediction-output-dir", default="models_saved/candidates/bb_rating_future_prediction")
+    parser.add_argument("--bb-rating-prediction-output-dir", default="models_saved")
     parser.add_argument("--bb-rating-prediction-min-oof-samples", type=int, default=500)
     parser.add_argument("--prediction-calibration-output-dir", default="models_saved/prediction_calibration")
     parser.add_argument("--future-performance-model-dir", default=None)
@@ -479,11 +479,17 @@ def mode_bb_rating_prediction_train(args: argparse.Namespace) -> None:
             "model": metadata,
         }, indent=2, default=str))
         raise SystemExit(2)
-    artifact = model.save(args.bb_rating_prediction_output_dir)
+    candidate_id = f"{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}-{uuid.uuid4().hex[:8]}"
+    candidate_dir = (
+        Path(args.bb_rating_prediction_output_dir)
+        / "candidates" / "bb-rating-prediction" / candidate_id
+    )
+    artifact = model.save(candidate_dir)
     print(json.dumps({
         "status": "candidate_created",
+        "candidate_id": candidate_id,
         "model": artifact,
-        "artifact_dir": args.bb_rating_prediction_output_dir,
+        "artifact_dir": str(candidate_dir),
         "promotion": "not_promoted",
     }, indent=2, default=str))
 
