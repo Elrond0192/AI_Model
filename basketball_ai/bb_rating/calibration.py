@@ -1199,12 +1199,17 @@ def _markdown(report: dict[str, Any]) -> str:
         summary = row["percentile_summary"]
         p50 = summary["p50"]
         effective = row["effective_weight_mean"]
+        zero_pct = (
+            "—"
+            if row["zero_pct_available"] is None
+            else f"{row['zero_pct_available']:.1%}"
+        )
+        p50_text = "—" if p50 is None else f"{p50:.3f}"
+        effective_text = "—" if effective is None else f"{effective:.4f}"
         lines.append(
             f"| {row['metric']} | {row['weight']:.4f} | "
             f"{row['n_available']}/{row['n_rows']} | {row['missing_pct']:.1%} | "
-            f"{'—' if row['zero_pct_available'] is None else f'{row['zero_pct_available']:.1%}'} | "
-            f"{'—' if p50 is None else f'{p50:.3f}'} | "
-            f"{'—' if effective is None else f'{effective:.4f}'} |"
+            f"{zero_pct} | {p50_text} | {effective_text} |"
         )
 
     score = report["score_distribution"]
