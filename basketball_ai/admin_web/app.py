@@ -5,8 +5,11 @@ It serves a same-origin static UI plus authenticated JSON endpoints on port 8501
 """
 from __future__ import annotations
 
+import argparse
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
+import contextlib
+import io
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import json
@@ -48,6 +51,7 @@ from basketball_ai.data.training_snapshots import (
     load_training_snapshot,
 )
 from basketball_ai.models.production_training import _numeric_seasons
+from basketball_ai.admin_web.model_lifecycle import inspect_model, promote_model, rollback_model
 from basketball_ai.models.promote import (
     MAX_SEGMENT_REGRESSION_PCT,
     MIN_BACKTEST_SAMPLES,
@@ -89,6 +93,8 @@ class AdminState:
             "finished_at": None,
         }
     )
+    prediction_calibration: dict[str, Any] = field(default_factory=lambda: {"status": "idle", "stage": "Ready", "progress": 0, "message": "No Prediction 1-100 calibration run in progress.", "error": None, "started_at": None, "finished_at": None, "output": None})
+    prediction_calibration_executor: ThreadPoolExecutor = field(default_factory=lambda: ThreadPoolExecutor(max_workers=1, thread_name_prefix="ai-admin-prediction-calibration"))
     bb_rating: dict[str, Any] = field(
         default_factory=lambda: {
             "status": "idle",
@@ -656,14 +662,15 @@ def _future_performance_worker(active_profile: str | None, actor: str) -> None:
         )
 
         _set_future_performance(
-            stage="Saving production artifact",
+            stage="Saving candidate artifact",
             progress=88,
-            message="Scrittura artifact Future Performance separato dal Prediction Model…",
+            message="Scrittura candidate Future Performance; production resta invariato…",
             future_performance_version=metadata.get("future_performance_version"),
             feature_version=metadata.get("feature_version"),
         )
-        root = _future_performance_path()
-        root.mkdir(parents=True, exist_ok=True)
+        candidate_id = f"{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}-{uuid.uuid4().hex[:8]}"
+        root = MODEL_ROOT / "candidates" / "future-performance" / candidate_id
+        root.mkdir(parents=True, exist_ok=False)
         paths = model.save(root)
         details = {
             "future_performance_version": metadata.get("future_performance_version"),
@@ -683,7 +690,7 @@ def _future_performance_worker(active_profile: str | None, actor: str) -> None:
             status="complete",
             stage="Model ready",
             progress=100,
-            message="Future Performance model pronto. Prediction Model e BB-Rating non sono stati modificati.",
+            message="Future Performance candidate pronto e validabile. Production non è stata modificata.",
             error=None,
             finished_at=_utcnow(),
             future_performance_version=metadata.get("future_performance_version"),
@@ -747,7 +754,9 @@ def _bb_rating_worker(active_profile: str | None, actor: str) -> None:
             calibration_version=report.get("calibration_version"),
             bb_rating_version=report.get("bb_rating_version"),
         )
-        output_dir = MODEL_ROOT / "bb_rating_calibration"
+        candidate_id = f"{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}-{uuid.uuid4().hex[:8]}"
+        output_dir = MODEL_ROOT / "candidates" / "bb-rating" / candidate_id
+        output_dir.mkdir(parents=True, exist_ok=False)
         paths = write_calibration_report(report, str(output_dir))
         details = {
             "calibration_version": report.get("calibration_version"),
@@ -760,7 +769,7 @@ def _bb_rating_worker(active_profile: str | None, actor: str) -> None:
             status="complete",
             stage="Calibration ready",
             progress=100,
-            message="BB-Rating calibration and uncertainty artifact ready. Public BB-Rating is unchanged.",
+            message="BB-Rating calibration candidate pronto; production resta invariata fino alla promozione.",
             error=None,
             finished_at=_utcnow(),
             calibration_version=report.get("calibration_version"),
