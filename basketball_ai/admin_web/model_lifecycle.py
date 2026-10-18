@@ -198,7 +198,7 @@ def promote_model(root: str | Path, model: str, candidate_id: str | None = None)
             "production_path": str(target),
             "previous_path": str(old_production) if old_production else None,
             "restart_required": True,
-            "message": "Candidate validated and promoted. Restart the inference API to load the new artifact.",
+            "message": "Candidate validated and promoted. The Model Center will restart the inference API and verify readiness.",
         }
 
 
@@ -241,5 +241,5 @@ def rollback_model(root: str | Path, model: str) -> dict[str, Any]:
             "version": validation.get("version"),
             "production_path": str(target),
             "restart_required": True,
-            "message": "Previous release restored. Restart the inference API to load it.",
+            "message": "Previous release restored. The Model Center will restart the inference API and verify readiness.",
         }
