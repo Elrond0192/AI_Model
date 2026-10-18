@@ -240,7 +240,7 @@ async function renderBBRating(){
   if(apiBB.loaded===false)warnings.push(['API engine','BB-Rating engine non caricato nel servizio inference']);
   if(apiBB.uncertainty_loaded===false)warnings.push(['API uncertainty','Artifact uncertainty non caricato nel servizio inference']);
   if(data.calibration_version&&apiBB.runtime_calibration_version&&data.calibration_version!==apiBB.runtime_calibration_version)
-    warnings.push(['Serving version','Artifact calibration '+data.calibration_version+' presente; API runtime '+apiBB.runtime_calibration_version+'. Riavvia/redeploy l’API per caricare il nuovo artifact.']);
+    warnings.push(['Serving version','Artifact calibration '+data.calibration_version+' presente; API runtime '+apiBB.runtime_calibration_version+'. verifica il riavvio automatico e la readiness dell’API.']);
   $('#bb-rating-warnings').innerHTML=warnings.length?warnings.map(x=>'<div class="health-item"><div class="health-copy"><strong>'+esc(x[0])+'</strong><span>'+esc(x[1])+'</span></div><span class="status warning">△ Verifica</span></div>').join(''):'<div class="empty-state compact"><strong>Nessuna anomalia</strong><p>Artifact e serving risultano disponibili.</p></div>';
 
   const refresh=$('#bb-rating-refresh');
@@ -304,7 +304,7 @@ async function renderModelReleases(){
     ['Future Performance loaded',health.future_performance?.loaded?'Yes':'No'],
     ['BB-Rating runtime version',health.bb_rating?.runtime_calibration_version||'—'],
     ['Future Performance runtime version',health.future_performance?.version||'—'],
-    ['Restart required after promotion','Yes'],
+    ['Automatic API restart', 'Enabled (restart + readiness check)'],
   ];
   $('#model-release-serving').innerHTML=summaryRows(servingRows);
   $('#release-bb-rating').innerHTML=fmtRelease(models['bb-rating']||{});
@@ -327,9 +327,9 @@ async function renderModelReleases(){
     const item=model==='prediction-calibration'?release:(models[model]||{});
     button.disabled=!(item.candidate&&item.candidate.valid);
     button.onclick=async()=>{
-      if(!confirm('Promuovere il candidate '+model+'? L’API inference dovrà essere riavviata.'))return;
+      if(!confirm('Promuovere il candidate '+model+'? Il sistema riavvierà automaticamente l’API e verificherà la readiness.'))return;
       button.disabled=true;
-      try{const result=await api('/admin-api/model-releases/'+encodeURIComponent(model)+'/promote',{method:'POST',body:{confirm:true}});$('#model-release-result').textContent=(result.message||'Promozione completata')+' Versione: '+(result.version||'—');toast('Candidate promosso; riavvio API richiesto');await renderModelReleases();}
+      try{const result=await api('/admin-api/model-releases/'+encodeURIComponent(model)+'/promote',{method:'POST',body:{confirm:true}});const restart=result.api_restart||{};$('#model-release-result').textContent=(result.message||'Promozione completata')+' Versione: '+(result.version||'—')+(restart.ok?' · API riavviata e pronta.':' · ATTENZIONE: riavvio non confermato: '+(restart.error||'verifica necessaria'));toast(restart.ok?'Candidate promosso; API pronta':'Promozione eseguita ma API non confermata pronta',restart.ok?'success':'error');await renderModelReleases();}
       catch(e){toast(e.message,'error');button.disabled=false;}
     };
   });
@@ -338,9 +338,9 @@ async function renderModelReleases(){
     const item=model==='prediction-calibration'?release:(models[model]||{});
     button.disabled=!(item.previous&&item.previous.valid);
     button.onclick=async()=>{
-      if(!confirm('Ripristinare la release precedente di '+model+'? L’API inference dovrà essere riavviata.'))return;
+      if(!confirm('Ripristinare la release precedente di '+model+'? Il sistema riavvierà automaticamente l’API e verificherà la readiness.'))return;
       button.disabled=true;
-      try{const result=await api('/admin-api/model-releases/'+encodeURIComponent(model)+'/rollback',{method:'POST',body:{confirm:true}});$('#model-release-result').textContent=(result.message||'Rollback completato')+' Versione: '+(result.version||'—');toast('Rollback completato; riavvio API richiesto');await renderModelReleases();}
+      try{const result=await api('/admin-api/model-releases/'+encodeURIComponent(model)+'/rollback',{method:'POST',body:{confirm:true}});const restart=result.api_restart||{};$('#model-release-result').textContent=(result.message||'Rollback completato')+' Versione: '+(result.version||'—')+(restart.ok?' · API riavviata e pronta.':' · ATTENZIONE: riavvio non confermato: '+(restart.error||'verifica necessaria'));toast(restart.ok?'Rollback completato; API pronta':'Rollback eseguito ma API non confermata pronta',restart.ok?'success':'error');await renderModelReleases();}
       catch(e){toast(e.message,'error');button.disabled=false;}
     };
   });
