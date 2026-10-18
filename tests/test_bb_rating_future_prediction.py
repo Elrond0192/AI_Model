@@ -18,7 +18,7 @@ def _synthetic_data():
             "birth_date": f"{1988 + player_id % 12}-01-01",
             "position": positions[player_id % len(positions)],
         })
-        for season in range(2020, 2024):
+        for season in range(2020, 2025):
             v = float(player_id % 60)
             stats.append({
                 "player_id": player_id,
@@ -44,7 +44,7 @@ def _synthetic_data():
                 "hustle_index": 10 + player_id % 30,
                 "foul_drawing_rate": 0.1 + (player_id % 10) * 0.01,
             })
-    for season in range(2020, 2024):
+    for season in range(2020, 2025):
         for team_id in (1, 2):
             team_stats.append({
                 "team_id": team_id, "league_id": 1, "season": season,
