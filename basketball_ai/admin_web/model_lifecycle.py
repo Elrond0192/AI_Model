@@ -51,6 +51,8 @@ def validate_artifact(model: str, directory: str | Path) -> dict[str, Any]:
             return {"valid": False, "reason": "Prediction model version is missing"}
     elif model == "bb-rating":
         uncertainty_path = root / "bb_rating_uncertainty.json"
+        if not uncertainty_path.exists() and root.name == "bb_rating_calibration":
+            uncertainty_path = root.parent / "bb_rating_uncertainty.json"
         try:
             uncertainty = json.loads(uncertainty_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
@@ -145,6 +147,13 @@ def promote_model(root: str | Path, model: str, candidate_id: str | None = None)
         previous_pointer = releases / "previous.json"
         old_production = None
         if target.exists():
+            # Preserve legacy deployments whose uncertainty JSON was stored
+            # beside, rather than inside, the calibration directory.
+            if model == "bb-rating":
+                legacy_uncertainty = root / "bb_rating_uncertainty.json"
+                nested_uncertainty = target / "bb_rating_uncertainty.json"
+                if legacy_uncertainty.is_file() and not nested_uncertainty.exists():
+                    shutil.copy2(legacy_uncertainty, nested_uncertainty)
             old_production = releases / f"production-{_utc_stamp()}"
             os.replace(target, old_production)
         try:
