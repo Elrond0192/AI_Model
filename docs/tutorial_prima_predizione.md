@@ -1,66 +1,63 @@
 # Prima predizione con AI_Model
 
-Questa guida descrive il percorso di produzione corrente: PostgreSQL
-sull'host, AI_Model in Docker e Chat V3 via API.
+Questa guida avvia lo stack corrente: PostgreSQL sull'host, AI_Model in Docker e WordPress Chat V3 via API. Per l'elenco degli endpoint e i contratti completi vedere [API v2](API_V2.md) e [integrazione WordPress](API_INTEGRATION.md).
 
 ## 1. Prepara PostgreSQL
 
+Esegui gli script nell'ordine indicato:
+
 ```bash
 psql -d YOUR_DATABASE -f basketball_ai/data/ai_source_full.sql
+psql -d YOUR_DATABASE -f basketball_ai/data/ai_scenario_serving.sql
 psql -d YOUR_DATABASE -f basketball_ai/data/ai_schema.sql
 ```
 
-Verifica:
+Verifica le viste canoniche correnti:
 
 ```sql
 SELECT count(*) FROM "AI_Source"."Players";
 SELECT count(*) FROM "AI_Source"."Teams";
-SELECT min(season), max(season), count(*) FROM "AI_Source"."PlayerStats";
+SELECT min(season), max(season), count(*) FROM "AI_Source"."PlayerCompetitionStats";
+SELECT competition, count(*) FROM "AI_Source"."PlayerCompetitionStats"
+GROUP BY competition ORDER BY competition;
 ```
 
-## 2. Avvia la console
+Le statistiche sono separate per giocatore/squadra, lega, stagione e competizione. Non usare il vecchio nome `AI_Source.PlayerStats`: la vista canonica è `"AI_Source"."PlayerCompetitionStats"`.
+
+## 2. Configura e avvia la console
 
 ```bash
 cp .env.example .env
 mkdir -p runtime/config runtime/models runtime/auth runtime/audit
 docker compose up -d --build admin
+docker compose ps admin
+curl -fsS http://127.0.0.1:8501/healthz
 ```
 
-La GUI resta in ascolto solo su `127.0.0.1:8501`. In produzione pubblicala
-dietro Nginx su `https://admin-ai.bballstat.com`, con certificato TLS e HTTP
-basic authentication aggiuntiva; non aprire la porta 8501 nel firewall.
+La GUI è una console FastAPI + HTML/CSS/JS, non Streamlit. In produzione pubblicala dietro Nginx e TLS su `https://admin-ai.bballstat.com`, con HTTP Basic Authentication aggiuntiva; non esporre direttamente la porta 8501.
 
-Crea il profilo PostgreSQL con:
+Crea il profilo PostgreSQL con host `host.docker.internal`, porta `5432`, schema sorgente `AI_Source` e schema di output `AI`. Carica il profilo dalla sezione **Data Sources** e verifica che il controllo del contratto sia superato.
 
-```text
-host = host.docker.internal
-port = 5432
-source_schema = "AI_Source"
-output_schema = ai
-```
+## 3. Valida, allena e valuta
 
-Testa la connessione e carica i dati.
+In **Training Runs** esegui prima la validazione dei dati, poi crea uno snapshot immutabile e avvia training/backtest. Non assumere che il semplice numero di stagioni renda il modello idoneo: il training richiede coppie consecutive reali `t -> t+1` nello stesso giocatore, lega e competizione, oltre ai gate di qualità e di campionamento. Le competizioni senza coppie valide restano non supportate.
 
-## 3. Training e promozione
+Esamina i risultati OOT per stagione, lega e competizione prima di promuovere. Il training crea un candidato; non sostituisce automaticamente il modello in produzione.
 
-In **Training Runs** avvia il training. Il dataset deve avere almeno cinque
-stagioni. Controlla **Backtests**, quindi promuovi il candidato da
-**Model Registry**.
-
-## 4. Avvia FastAPI
+## 4. Avvia e verifica l'API
 
 ```bash
 docker compose up -d api
-curl http://127.0.0.1:8000/health/ready
+curl -fsS http://127.0.0.1:8000/health/live
+curl -fsS http://127.0.0.1:8000/health/ready
 ```
 
-La risposta deve indicare `data: true` e `model: true`.
+La readiness deve indicare che dati e modello richiesti per il servizio sono disponibili. L'API usa `X-API-Key` per le chiamate server-to-server; non esporre la chiave nel browser.
 
 ## 5. Prima predizione
 
 ```bash
-curl -X POST \
-  http://127.0.0.1:8000/api/v2/predictions/player-team \
+curl -X POST http://127.0.0.1:8000/api/v2/predictions/player-team \
   -H 'Content-Type: application/json' \
   -H "X-API-Key: $API_KEY" \
   -d '{
@@ -72,7 +69,8 @@ curl -X POST \
   }'
 ```
 
-`season=2025` significa usare lo stato disponibile nel 2025 per il forecast
-della stagione target 2026.
+`season` è la stagione sorgente: il target è `season + 1`. Il giocatore e la squadra devono avere il contesto esatto lega/stagione/competizione e il modello promosso deve supportare quella competizione.
 
-Per WordPress usa `docs/API_INTEGRATION.md`.
+## 6. Rilasci e restart
+
+La pagina **Model Releases** gestisce i candidati di calibrazione Prediction 1–100, BB-Rating e Future Performance; la registry nativa del Prediction Model è un ciclo di vita separato. Le promozioni/rollback effettuati dalla GUI richiedono il restart autenticato dell'API e attendono `/health/ready`. Le operazioni CLI che modificano artefatti serviti richiedono invece il restart manuale documentato in [RUNBOOK.md](../RUNBOOK.md).
