@@ -1799,10 +1799,6 @@ class ChatScenarioEngine:
             rows = self._player_rows(player_id, source_league, competition, season)
             latest = self._latest(rows)
             current_team_id = _to_int(latest.get("team_id"))
-            current_observed_year = int(latest.get("_year", season))
-            current_bb_rating = self._bb_rating_for_season(
-                global_id, source_league, current_observed_year, competition
-            )
             if current_team_id is not None and source_league is not None:
                 prediction, _ = self._direct_prediction(
                     player_id, current_team_id, source_league, season, competition
