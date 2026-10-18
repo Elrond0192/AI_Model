@@ -19,7 +19,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--mode",
         choices=(
-            "train", "backtest", "prediction-calibrate", "validate-data", "bb-rating-calibrate", "future-performance-train", "publish-batch",
+            "train", "backtest", "prediction-calibrate", "validate-data", "bb-rating-calibrate", "bb-rating-prediction-train", "future-performance-train", "publish-batch",
             "promote", "rollback", "prepare-snapshot", "refresh-serving", "api",
         ),
         required=True,
@@ -36,6 +36,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument("--output-dir", default="models_saved/bb_rating_calibration")
+    parser.add_argument("--bb-rating-prediction-output-dir", default="models_saved/bb_rating_future_prediction")
+    parser.add_argument("--bb-rating-prediction-min-oof-samples", type=int, default=500)
     parser.add_argument("--prediction-calibration-output-dir", default="models_saved/prediction_calibration")
     parser.add_argument("--future-performance-model-dir", default=None)
     parser.add_argument("--future-performance-max-target-season", type=int, default=None)
@@ -458,6 +460,27 @@ def mode_validate_data(args: argparse.Namespace) -> None:
         raise SystemExit(2)
 
 
+def mode_bb_rating_prediction_train(args: argparse.Namespace) -> None:
+    """Train a direct future BB-Rating model from official target-season labels."""
+    from basketball_ai.bb_rating.future_prediction import BBRatingFuturePredictionModel
+
+    data = _load_data(args)
+    model = BBRatingFuturePredictionModel(
+        min_oof_samples=args.bb_rating_prediction_min_oof_samples
+    )
+    metadata = model.fit(data)
+    metadata["database_profile"] = args.database_profile or os.getenv("DATABASE_PROFILE", "")
+    metadata["training_snapshot_id"] = data.get("training_snapshot_manifest", {}).get("snapshot_id")
+    model.metadata.update(metadata)
+    artifact = model.save(args.bb_rating_prediction_output_dir)
+    print(json.dumps({
+        "status": "candidate_created",
+        "model": artifact,
+        "artifact_dir": args.bb_rating_prediction_output_dir,
+        "promotion": "not_promoted",
+    }, indent=2, default=str))
+
+
 def mode_publish_batch(args: argparse.Namespace) -> None:
     if args.database_profile:
         os.environ["DATABASE_PROFILE"] = args.database_profile
@@ -508,6 +531,7 @@ def main(argv: list[str] | None = None) -> None:
         "prediction-calibrate": mode_prediction_calibrate,
         "validate-data": mode_validate_data,
         "bb-rating-calibrate": mode_bb_rating_calibrate,
+        "bb-rating-prediction-train": mode_bb_rating_prediction_train,
         "future-performance-train": mode_future_performance_train,
         "publish-batch": mode_publish_batch,
         "promote": mode_promote,
