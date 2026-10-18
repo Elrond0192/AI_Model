@@ -239,6 +239,8 @@
   <template id="page-model-releases">
     <section class="page">
       <div class="page-heading"><div><h1>Model Releases</h1><p>Candidate validation, promotion and rollback for calibration and auxiliary models. Promoting an artifact requires an inference API restart.</p></div><button id="model-releases-refresh" class="btn btn-secondary">Aggiorna</button></div>
+      <section class="panel"><div class="panel-heading"><h2>Native Prediction Model (0–10)</h2><button class="btn btn-secondary btn-small jump" data-page="registry">Apri registry</button></div><div id="native-prediction-registry"></div></section>
+      <section class="panel"><div class="panel-heading"><h2>Serving runtime</h2><button class="btn btn-secondary btn-small jump" data-page="health">Apri health checks</button></div><div id="model-release-serving"></div></section>
       <section class="panel"><div class="panel-heading"><div><h2>Prediction 1–100 calibration</h2><p class="microcopy">Maps the native Prediction Model output to a display scale. Does not retrain or modify the native model.</p></div><button id="prediction-calibration-start" class="btn btn-primary">Genera candidate</button></div><div id="prediction-calibration-job"></div><div id="prediction-calibration-release"></div></section>
       <div class="split-grid">
         <section class="panel"><div class="panel-heading"><h2>BB-Rating</h2></div><div id="release-bb-rating"></div><div class="button-row"><button class="btn btn-primary release-promote" data-model="bb-rating">Promuovi candidate</button><button class="btn btn-danger release-rollback" data-model="bb-rating">Rollback</button></div></section>
