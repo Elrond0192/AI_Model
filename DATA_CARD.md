@@ -50,7 +50,10 @@ Contains competition-specific pace, ORtg, DRtg, NetRtg, three-point rate, assist
 
 ```bash
 psql -d YOUR_DATABASE -f basketball_ai/data/ai_source_full.sql
+psql -d YOUR_DATABASE -f basketball_ai/data/ai_scenario_serving.sql
 psql -d YOUR_DATABASE -f basketball_ai/data/ai_schema.sql
+# If Metric Rating Engine is enabled:
+psql -d YOUR_DATABASE -f basketball_ai/data/ai_metric_schema.sql
 ```
 
 Re-run the adapters after adding a league, changing source schemas or introducing a newly ingested competition, then validate and retrain.
