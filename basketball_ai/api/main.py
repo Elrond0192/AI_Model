@@ -93,8 +93,10 @@ def _load_bb_rating_uncertainty(model_dir: str):
         [
             model_path / "bb_rating_uncertainty.json",
             model_path / "bb_rating_calibration" / "bb_rating_uncertainty.json",
-            model_path.parent / "bb_rating_uncertainty.json",
+            # Prefer the lifecycle-managed production release over a legacy
+            # sibling file that can be left behind by older deployments.
             model_path.parent / "bb_rating_calibration" / "bb_rating_uncertainty.json",
+            model_path.parent / "bb_rating_uncertainty.json",
         ]
     )
 
