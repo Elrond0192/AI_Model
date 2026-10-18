@@ -62,6 +62,44 @@ def test_inspection_reports_candidate_and_production_validity(tmp_path: Path):
     assert result["candidate"]["version"] == "1.1"
 
 
+
+
+def test_bb_rating_candidate_requires_matching_uncertainty_artifact(tmp_path: Path):
+    candidate = tmp_path / "candidates" / "bb-rating" / "candidate-1"
+    candidate.mkdir(parents=True)
+    (candidate / "bb_rating_calibration.json").write_text(
+        json.dumps({
+            "calibration_version": "1.17",
+            "bb_rating_version": "1.9",
+            "dataset": {"rows": 1200},
+        }),
+        encoding="utf-8",
+    )
+    (candidate / "bb_rating_uncertainty.json").write_text(
+        json.dumps({"status": "fitted", "bb_rating_version": "1.8"}),
+        encoding="utf-8",
+    )
+    result = validate_artifact("bb-rating", candidate)
+    assert result["valid"] is False
+    assert "versions do not match" in result["reason"]
+
+
+def test_future_performance_candidate_requires_all_declared_model_files(tmp_path: Path):
+    candidate = tmp_path / "candidates" / "future-performance" / "candidate-1"
+    candidate.mkdir(parents=True)
+    (candidate / "metadata.json").write_text(
+        json.dumps({
+            "status": "fitted",
+            "future_performance_version": "1.0",
+            "model_files": {"target": "missing.joblib"},
+        }),
+        encoding="utf-8",
+    )
+    result = validate_artifact("future-performance", candidate)
+    assert result["valid"] is False
+    assert "missing or unsafe" in result["reason"]
+
+
 def test_unsupported_model_is_rejected():
     with pytest.raises(ValueError, match="Unsupported model"):
         inspect_model(".", "../prediction-calibration")
