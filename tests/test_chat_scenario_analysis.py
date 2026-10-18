@@ -163,6 +163,58 @@ def test_prediction_model_uses_loaded_calibration_and_hides_native_rating():
     assert "base_rating" not in prediction
 
 
+def test_public_scenario_payload_suppresses_raw_rating_and_preserves_canonical_scores():
+    from basketball_ai.api.routes.scenarios_v2 import _sanitize_public_scenario_payload
+
+    payload = {
+        "result": {
+            "bb_rating": {"available": True, "score": 65},
+            "season_comparison": {
+                "previous_rating": 7.2,
+                "current_rating": 6.8,
+                "rating_delta": -0.4,
+                "previous_bb_rating": 71,
+                "current_bb_rating": 65,
+                "bb_rating_delta": -6,
+            },
+            "metric_explanation": {
+                "metrics": [
+                    {"metric": "rating", "value": 6.8},
+                    {"metric": "bb_rating", "value": 65, "scale": "1-100"},
+                ],
+            },
+            "prediction_model": {
+                "target_season": 2027,
+                "predicted_rating": 7.25,
+                "confidence_low": 6.8,
+                "confidence_high": 7.7,
+                "predicted_rating_100": 72.8,
+                "confidence_low_100": 68.3,
+                "confidence_high_100": 77.2,
+            },
+        },
+    }
+
+    clean = _sanitize_public_scenario_payload(payload)
+    encoded = str(clean)
+    assert clean["result"]["bb_rating"]["score"] == 65
+    comparison = clean["result"]["season_comparison"]
+    assert comparison["previous_bb_rating"] == 71
+    assert comparison["current_bb_rating"] == 65
+    assert comparison["bb_rating_delta"] == -6
+    assert [row["metric"] for row in clean["result"]["metric_explanation"]["metrics"]] == ["bb_rating"]
+    forecast = clean["result"]["prediction_model"]
+    assert forecast["predicted_rating_100"] == 72.8
+    assert forecast["confidence_low_100"] == 68.3
+    assert forecast["confidence_high_100"] == 77.2
+    assert "target_season" in forecast
+    for forbidden in (
+        "previous_rating", "current_rating", "rating_delta", "predicted_rating'",
+        "confidence_low'", "confidence_high'", "'metric': 'rating'",
+    ):
+        assert forbidden not in encoded
+
+
 def test_team_competition_compares_playoffs_to_regular_season():
     result = _engine().evaluate(
         {"scenario": "team_competition", "season": 2024, "competition": "PO", "comparison_competition": "RS"},
