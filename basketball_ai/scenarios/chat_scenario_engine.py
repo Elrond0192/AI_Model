@@ -1415,6 +1415,29 @@ class ChatScenarioEngine:
                 "limitations":["Box-score defensive metrics do not isolate individual causal defensive impact."]}
 
 
+    def _bb_rating_for_season(
+        self, global_id: str, league_id: int | None, season: int, competition: str
+    ) -> int | None:
+        """Return the canonical BB-Rating for an observed player-season, never source rating."""
+        if self.bb_rating_engine is None or not global_id or league_id is None:
+            return None
+        league_key = self._league_key(league_id)
+        if not league_key:
+            return None
+        try:
+            rated = self.bb_rating_engine.rate_player(
+                global_id,
+                league=league_key,
+                season=int(season),
+                phase=normalize_competition(competition),
+            )
+            score = getattr(rated, "score", None)
+            if score is None or not math.isfinite(float(score)):
+                return None
+            return int(round(float(score)))
+        except (ValueError, RuntimeError, KeyError, TypeError, AttributeError):
+            return None
+
     def _model_evidence(self, spec, players, teams, source_league, target_league):
         """Compose model evidence and make the prediction context explicit.
 
@@ -1742,6 +1765,8 @@ class ChatScenarioEngine:
     def _player_intelligence(self, spec, players, teams, source_league, target_league):
         if not players:
             raise ValueError("player is required")
+        player_meta = self.data.get("player_dict", {}).get(_to_int(players[0]), {})
+        player_global_id = str(player_meta.get("global_id", "")).strip() if isinstance(player_meta, dict) else ""
         parameters = spec.get("parameters", {}) or {}
         raw_keys = parameters.get("question_keys")
         if isinstance(raw_keys, (list, tuple)):
@@ -1780,6 +1805,11 @@ class ChatScenarioEngine:
             if scenarios is None:
                 raise ValueError(f"unsupported Player Intelligence question_key: {key}")
             selected_bundles.extend(scenarios)
+
+        # Every Player Intelligence answer gets the canonical 1–100 BB-Rating
+        # as common context. Never substitute the source-statistics "rating"
+        # field for the actual BB-Rating engine output.
+        selected_bundles.append("model_evidence")
         scenarios = tuple(dict.fromkeys(selected_bundles))
 
         # When no league was explicitly requested, a canonical player identity
@@ -1869,15 +1899,31 @@ class ChatScenarioEngine:
                             if current_team_id is not None
                             else None
                         )
+                        previous_year = decomposition_result.get("previous_season")
+                        current_year = decomposition_result.get("current_season")
+                        previous_bb_rating = (
+                            self._bb_rating_for_season(player_global_id, league_id, int(previous_year), competition)
+                            if previous_year is not None else None
+                        )
+                        current_bb_rating = (
+                            self._bb_rating_for_season(player_global_id, league_id, int(current_year), competition)
+                            if current_year is not None else None
+                        )
                         season_comparison = {
-                            "available": (
-                                decomposition_result.get("previous_season") is not None
-                                and decomposition_result.get("current_season") is not None
-                            ),
+                            "available": previous_year is not None and current_year is not None,
                             "league": self._league_name(league_id),
                             "league_key": self._league_key(league_id),
-                            "previous_season": decomposition_result.get("previous_season"),
-                            "current_season": decomposition_result.get("current_season"),
+                            "previous_season": previous_year,
+                            "current_season": current_year,
+                            # Public-facing comparisons use the same BB-Rating engine
+                            # as the current score; source-statistical ratings stay internal.
+                            "previous_bb_rating": previous_bb_rating,
+                            "current_bb_rating": current_bb_rating,
+                            "bb_rating_delta": (
+                                current_bb_rating - previous_bb_rating
+                                if previous_bb_rating is not None and current_bb_rating is not None
+                                else None
+                            ),
                             "previous_rating": round(previous_rating, 3) if math.isfinite(previous_rating) else None,
                             "current_rating": round(current_rating, 3) if math.isfinite(current_rating) else None,
                             "rating_delta": (
