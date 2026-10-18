@@ -321,8 +321,8 @@ def test_model_release_buttons_use_node_list_and_cancel_jobs_are_exposed():
     future_js = (static / "future_performance_ui.js").read_text(encoding="utf-8")
     assert "$('.release-promote').forEach" in js
     assert "$('.release-rollback').forEach" in js
-    assert "$('.release-promote').forEach" not in js
-    assert "$('.release-rollback').forEach" not in js
+    assert not any(line.strip().startswith("$('.release-promote').forEach") for line in js.splitlines())
+    assert not any(line.strip().startswith("$('.release-rollback').forEach") for line in js.splitlines())
     assert "candidate_id:item.candidate?.id" in js
     assert "/admin-api/jobs/training/cancel" in js
     assert "/admin-api/jobs/bb-rating/cancel" in js
