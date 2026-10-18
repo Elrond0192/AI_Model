@@ -1519,7 +1519,7 @@ def healthz() -> dict[str, str]:
 @app.get("/")
 def index() -> HTMLResponse:
     html = (STATIC_ROOT / "index.html").read_text(encoding="utf-8")
-    marker = '<script src="/assets/future_performance_ui.js" defer></script>'
+    marker = '<script src="/assets/future_performance_ui.js?v=2.5.1" defer></script>'
     if marker not in html:
         html = html.replace("</body>", marker + "\n</body>")
     return HTMLResponse(
