@@ -52,8 +52,6 @@ Contains competition-specific pace, ORtg, DRtg, NetRtg, three-point rate, assist
 psql -d YOUR_DATABASE -f basketball_ai/data/ai_source_full.sql
 psql -d YOUR_DATABASE -f basketball_ai/data/ai_scenario_serving.sql
 psql -d YOUR_DATABASE -f basketball_ai/data/ai_schema.sql
-# If Metric Rating Engine is enabled:
-psql -d YOUR_DATABASE -f basketball_ai/data/ai_metric_schema.sql
 ```
 
 Re-run the adapters after adding a league, changing source schemas or introducing a newly ingested competition, then validate and retrain.
@@ -139,3 +137,8 @@ an unavailable source field remain distinguishable.
 - `"AI_Source"`: read-only adapter views;
 - `ai`: model-owned outputs (`model_runs`, `player_forecasts`);
 - `Anagrafiche`, `Analisi`, `Boxscore`: source schemas, never written by AI_Model.
+
+
+## Metric Rating deployment caveat
+
+The Metric Rating runtime expects versioned tables in schema `"AI"` (`MetricDefinition`, `MetricDistribution`, `MetricRating`). The current repository references `basketball_ai/data/ai_metric_schema.sql` from its backfill workflow, but that file is absent from the tracked tree. A fresh database cannot be considered fully provisioned for Metric Rating until the DDL is restored and validated; do not assume `ai_schema.sql` creates these metric-rating tables.
