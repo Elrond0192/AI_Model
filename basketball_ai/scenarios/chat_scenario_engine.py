@@ -1469,9 +1469,13 @@ class ChatScenarioEngine:
         # A generic/current Player Intelligence request is descriptive only.
         # Future Performance and Prediction must never leak into the semantic
         # evidence unless the user explicitly asks for a forward-looking view.
+        parameters = spec.get("parameters", {}) or {}
+        raw_requested_keys = parameters.get("question_keys")
+        if not isinstance(raw_requested_keys, (list, tuple)):
+            raw_requested_keys = [parameters.get("question_key", "current_level")]
         requested_keys = [
             str(value).strip().lower()
-            for value in (spec.get("parameters", {}) or {}).get("question_keys", [])
+            for value in raw_requested_keys
             if str(value).strip()
         ]
         forward_requested = bool(
