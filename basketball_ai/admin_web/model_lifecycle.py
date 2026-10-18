@@ -93,7 +93,7 @@ def validate_artifact(model: str, directory: str | Path) -> dict[str, Any]:
         if int(artifact.get("oof_samples") or 0) < 500:
             return {"valid": False, "reason": "Direct BB-Rating model requires at least 500 walk-forward OOF rows"}
         if not artifact.get("promotion_gate_passed"):
-            return {"valid": False, "reason": "Walk-forward MAE did not beat the context-aware baseline"}
+            return {"valid": False, "reason": "Walk-forward baseline or supported-segment regression gate failed"}
         for filename in ("bb_rating_future_model.joblib", "calibration.json"):
             if not (root / filename).is_file():
                 return {"valid": False, "reason": f"Direct BB-Rating artifact missing: {filename}"}
