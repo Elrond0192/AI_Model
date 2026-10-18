@@ -244,7 +244,7 @@ has `ModelRuns`/`PlayerForecasts`). The storage contract lives in
   season, competition, distribution_version, rating_version) with value,
   percentile, zscore, tier, label, quality and provenance.
 
-Apply the DDL, then the backfill:
+Apply the DDL, then the backfill. **Repository audit finding:** the referenced `basketball_ai/data/ai_metric_schema.sql` file is not present in the current tracked tree, although this workflow and the backfill module reference it. Restore and validate that DDL before attempting a clean database installation; do not treat the metric storage setup as reproducible from this checkout until this is resolved.
 
 ```bash
 psql -d YOUR_DATABASE -f basketball_ai/data/ai_metric_schema.sql
