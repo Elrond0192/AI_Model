@@ -191,3 +191,25 @@ The response contains:
 
 WordPress / Chat consumes the result and does not implement the rating formula,
 percentile calculation or peer selection.
+
+
+## Future Performance
+
+`POST /api/v2/future-performance/player` returns a separate multivariate forecast of the player's next-season statistical profile. It is not the team/player impact Prediction Model and does not modify BB-Rating. The artifact is stored separately under `models_saved/future_performance/`. See [Player Future Performance](PLAYER_FUTURE_PERFORMANCE.md) for target definitions, validation gates and training command.
+
+## Player Intelligence capabilities
+
+`GET /api/v2/player-intelligence/capabilities` returns the current question/analysis capability registry, including whether a question is available, partial or missing. This endpoint is a capability description, not a player report.
+
+## Scenario evaluation
+
+`POST /api/v2/scenarios/evaluate` evaluates a typed basketball scenario. Supported scenario families and their evidence/limitations are documented in [Simulation Engine](SIMULATION_ENGINE.md) and [Scenario Engine](../SCENARIO_ENGINE.md). Scenario outputs must retain support counts and limitations; a scenario estimate is not automatically a causal claim.
+
+## Health and controlled restart
+
+- `GET /health/live`: process liveness.
+- `GET /health/ready`: readiness of required model/data dependencies; can return 503 when not ready.
+- `GET /health`: combined health/diagnostic payload.
+- `POST /internal/restart`: internal API-key-authenticated controlled restart used by the Model Center. It returns an accepted/scheduled response; the admin workflow then polls readiness. Do not expose this endpoint as a user-facing operation.
+
+The API requires server-to-server authentication using `X-API-Key` or the configured Bearer-token mechanism. Keep credentials out of browser code and keep PostgreSQL private.
