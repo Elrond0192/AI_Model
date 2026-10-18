@@ -34,7 +34,7 @@ _ID_COLUMNS = {
     "rating", "bb_rating", "target_rating", "prediction", "score",
 }
 _EXCLUDED_NUMERIC = _ID_COLUMNS | {
-    "age_band", "position_family", "competition_tier_label",
+    "age", "age_band", "position_family", "competition_tier_label",
     "competition_tier", "birth_date", "date_of_birth",
 }
 
@@ -153,6 +153,16 @@ class BBRatingFuturePredictionModel:
             raise ValueError("BB Prediction Model requires canonical player season statistics")
         engine = BBRatingEngine(stats, players, data.get("leagues"))
         frame = engine.frame.copy()
+        # Join date of birth only to derive source-season age. Never use the
+        # mutable current-age field as a temporal feature when birth date exists.
+        if players is not None and not players.empty and "id" in players.columns:
+            birth_columns = ["id"] + [
+                column for column in ("birth_date", "date_of_birth")
+                if column in players.columns and column not in frame.columns
+            ]
+            if len(birth_columns) > 1:
+                birth = players[birth_columns].drop_duplicates("id").rename(columns={"id": "player_id"})
+                frame = frame.merge(birth, on="player_id", how="left")
         frame["_year"] = _numeric_seasons(frame)
         frame = frame.dropna(subset=["_year", "player_global_id", "league_key", "competition"])
         frame["_year"] = frame["_year"].astype(int)
