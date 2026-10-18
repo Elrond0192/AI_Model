@@ -76,7 +76,12 @@ def validate_artifact(model: str, directory: str | Path) -> dict[str, Any]:
         "model": model,
         "artifact": filename,
         "version": artifact.get("calibration_version") or artifact.get("future_performance_version") or artifact.get("bb_rating_version"),
-        "rows": (artifact.get("dataset") or {}).get("rows"),
+        "prediction_model_version": artifact.get("prediction_model_version"),
+        "feature_version": artifact.get("feature_version"),
+        "data_cutoff": artifact.get("data_cutoff"),
+        "rows": (artifact.get("dataset") or {}).get("rows") or artifact.get("n_pairs"),
+        "seasons": (artifact.get("dataset") or {}).get("target_seasons") or artifact.get("training_target_seasons") or [],
+        "validation": artifact.get("validation") or artifact.get("backtest") or {},
         "generated_at": artifact.get("generated_at"),
     }
 
