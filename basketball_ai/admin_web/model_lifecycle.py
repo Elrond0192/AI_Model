@@ -76,8 +76,12 @@ def validate_artifact(model: str, directory: str | Path) -> dict[str, Any]:
             return {"valid": False, "reason": f"Missing or invalid bb_rating_uncertainty.json: {exc}"}
         if not artifact.get("calibration_version") or not artifact.get("bb_rating_version"):
             return {"valid": False, "reason": "BB-Rating version metadata is missing"}
-        if not isinstance(uncertainty, dict) or not uncertainty.get("status"):
-            return {"valid": False, "reason": "BB-Rating uncertainty artifact is incomplete"}
+        if int((artifact.get("dataset") or {}).get("rows") or 0) < 500:
+            return {"valid": False, "reason": "BB-Rating calibration requires at least 500 source rows"}
+        if not isinstance(uncertainty, dict) or uncertainty.get("status") not in {"fitted", "ready", "complete"}:
+            return {"valid": False, "reason": "BB-Rating uncertainty artifact is incomplete or not fitted"}
+        if uncertainty.get("bb_rating_version") and uncertainty.get("bb_rating_version") != artifact.get("bb_rating_version"):
+            return {"valid": False, "reason": "BB-Rating and uncertainty artifact versions do not match"}
     else:
         if artifact.get("status") != "fitted":
             return {"valid": False, "reason": "Future Performance metadata is not fitted"}
