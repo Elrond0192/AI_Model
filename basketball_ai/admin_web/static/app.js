@@ -292,6 +292,13 @@ async function renderModelReleases(){
   const servingRows=[
     ['Inference API live',health.live?.ok?'Online':'Offline'],
     ['Inference API ready',health.ready?.ok?'Ready':'Not ready'],
+    ['Native Prediction Model loaded',health.prediction_model?.loaded?'Yes':'No'],
+    ['Prediction run / version',(health.prediction_model?.run_id||'—')+' / '+(health.prediction_model?.version||'—')],
+    ['Prediction feature version',health.prediction_model?.feature_version||'—'],
+    ['Prediction data cutoff',health.prediction_model?.data_cutoff||'—'],
+    ['Performance artifact present',health.prediction_model?.production_model_files?.performance_model?'Yes':'No'],
+    ['Compatibility artifact present',health.prediction_model?.production_model_files?.compatibility_model?'Yes':'No'],
+    ['Metric distributions loaded',String(health.prediction_model?.metric_distributions_count??0)],
     ['BB-Rating loaded',health.bb_rating?.loaded?'Yes':'No'],
     ['BB-Rating uncertainty loaded',health.bb_rating?.uncertainty_loaded?'Yes':'No'],
     ['Future Performance loaded',health.future_performance?.loaded?'Yes':'No'],
