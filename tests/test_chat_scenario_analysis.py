@@ -247,7 +247,7 @@ def test_player_intelligence_orchestrates_question_layers():
         [1], [], 10, None,
     )
     assert result["result"]["question_key"] == "why_performing"
-    assert set(result["result"]["analyses"]) == {"performance_decomposition", "metric_explanation"}
+    assert set(result["result"]["analyses"]) == {"performance_decomposition", "metric_explanation", "model_evidence"}
     assert result["result"]["answer_mode"] == "evidence_composition"
 
 
@@ -264,6 +264,7 @@ def test_player_intelligence_composes_performance_attribution_bundle():
         "team_usage_analysis",
         "causal_team_effect",
         "metric_explanation",
+        "model_evidence",
     }
     assert analyses["performance_decomposition"]["result"]["previous_season"] == 2023
     assert analyses["team_usage_analysis"]["result"]["team"] == "Red"
@@ -284,6 +285,7 @@ def test_player_intelligence_composes_multiple_question_keys():
         "metric_explanation",
         "role_analysis",
         "performance_stability",
+        "model_evidence",
     }
 
 
@@ -305,7 +307,7 @@ def test_player_intelligence_composes_causal_team_effect_as_observational():
          "parameters": {"question_key": "causal_team_effect"}},
         [1], [], 10, None,
     )
-    assert set(result["result"]["analyses"]) == {"causal_team_effect"}
+    assert set(result["result"]["analyses"]) == {"causal_team_effect", "model_evidence"}
     analysis = result["result"]["analyses"]["causal_team_effect"]
     assert analysis["result"]["causal_identification"] == "unavailable"
     assert analysis["result"]["causal_effect"] is None
