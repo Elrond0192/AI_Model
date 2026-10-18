@@ -111,8 +111,11 @@ dashboard (vanilla HTML/CSS/JS, no framework) under
 lifecycle, training, backtests, Scenario Lab, model registry, health and
 audit pages. The **Model Releases** page also manages isolated calibration/model
 candidates for Prediction 1–100 calibration, BB-Rating and Future Performance,
-with validation, promotion, previous-release rollback and runtime-version
-diagnostics. The native Prediction Model registry remains a separate lifecycle.
+with artifact validation, candidate-specific promotion, previous-release rollback
+and runtime-version diagnostics. The native Prediction Model registry remains a
+separate lifecycle. Training and calibration jobs can be cancelled from their
+pages; cancellation is cooperative and takes effect at the next safe checkpoint,
+removing incomplete candidate artifacts and leaving production unchanged.
 Icons are Phosphor Icons, self-hosted under
 `static/assets/phosphor/` (regular + fill weights, woff2/woff only) —
 no external CDN calls, so the console keeps working fully offline/air-gapped.
