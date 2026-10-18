@@ -69,6 +69,20 @@ def _team_global_map(data: dict[str, Any]) -> dict[tuple[str, str, int], str]:
     return result
 
 
+def _target_league_tier(data: dict[str, Any], league_key: str) -> Any:
+    leagues = data.get("leagues", pd.DataFrame())
+    if leagues is not None and not leagues.empty and "tier" in leagues.columns:
+        wanted = str(league_key).strip().upper()
+        for row in leagues.to_dict("records"):
+            candidates = {
+                _clean(row.get("name")).upper(),
+                _clean(row.get("league_key")).upper(),
+            }
+            if wanted in candidates and row.get("tier") is not None:
+                return row.get("tier")
+    return competition_tier(league_key)
+
+
 def _team_identity(row: pd.Series, team_map: dict[tuple[str, str, int], str]) -> str | None:
     team = _clean(row.get("team_id"))
     league = _clean(row.get("league_id"))
@@ -531,7 +545,7 @@ class BBRatingFuturePredictionModel:
             row, source_year=int(source_season), target_league=target_league,
             target_competition=target_competition, source_team=source_team,
             target_team=target_team_global_id, numeric_columns=self.numeric_columns,
-            target_tier=competition_tier(target_league),
+            target_tier=_target_league_tier(data, target_league),
             source_bb_rating=source_bb_rating,
         )
         features["target_season"] = int(source_season) + 1
