@@ -144,7 +144,10 @@ async function renderTraining(){
   $('#training-config').innerHTML=Object.entries(d.configuration||{}).map(([a,b])=>`<div class="config-item"><span>${esc(a.replaceAll('_',' '))}</span><strong>${esc(Array.isArray(b)?b.join(', '):b)}</strong></div>`).join('');
   const job=$('#training-job');
   const idleMessage=!datasetLoaded&&j.status==='idle'?'Prima prepara e attiva uno snapshot nella pagina Dati e snapshot. Il training non carica dati automaticamente.':(j.error||j.message||'');
-  job.innerHTML=`<div class="job-head"><div><div class="job-status">${esc(j.stage||'Ready')}</div><div class="job-message">${esc(idleMessage)}</div></div><span class="registry-badge ${j.status==='running'?'candidate':''}">${esc(j.status||'idle')}</span></div><div class="progress-track"><div class="progress-bar" style="width:${Math.max(0,Math.min(100,Number(j.progress)||0))}%"></div></div>${j.run_id?`<div class="job-message">Run ID: ${esc(j.run_id)}</div>`:''}`;
+  const trainingActive=['running','queued'].includes(j.status);
+  job.innerHTML=`<div class="job-head"><div><div class="job-status">${esc(j.stage||'Ready')}</div><div class="job-message">${esc(idleMessage)}</div></div><span class="registry-badge ${trainingActive?'candidate':''}">${esc(j.status||'idle')}</span></div><div class="progress-track"><div class="progress-bar" style="width:${Math.max(0,Math.min(100,Number(j.progress)||0))}%"></div></div>${j.run_id?`<div class="job-message">Run ID: ${esc(j.run_id)}</div>`:''}${trainingActive?'<div class="button-row"><button id="training-cancel" class="btn btn-danger btn-small" '+(j.cancel_requested?'disabled':'')+'>'+(j.cancel_requested?'Interruzione richiesta…':'Interrompi training')+'</button></div>':''}`;
+  const cancelTraining=$('#training-cancel');
+  if(cancelTraining)cancelTraining.onclick=async()=>{cancelTraining.disabled=true;try{await api('/admin-api/jobs/training/cancel',{method:'POST',body:{}});toast('Interruzione training richiesta');await renderTraining();}catch(e){toast(e.message,'error');cancelTraining.disabled=false;}};
   const start=$('#start-training');
   start.disabled=!d.can_start;
   start.addEventListener('click',async()=>{
@@ -258,6 +261,11 @@ async function renderBBRating(){
   };
 
   $('#bb-rating-job').innerHTML=j.status&&j.status!=='idle'?'<div class="job-head"><div><div class="job-status">'+esc(j.stage||'Calibration')+'</div><div class="job-message">'+esc(j.error||j.message||'')+'</div></div><span class="registry-badge '+((j.status==='running'||j.status==='queued')?'candidate':'')+'">'+esc(j.status)+'</span></div><div class="progress-track"><div class="progress-bar" style="width:'+Math.max(0,Math.min(100,Number(j.progress)||0))+'%"></div></div>':'<div class="job-message">Nessuna calibrazione eseguita dal Control Center in questa sessione.</div>';
+  if(['running','queued'].includes(j.status)) {
+    $('#bb-rating-job').insertAdjacentHTML('beforeend','<div class="button-row"><button id="bb-rating-cancel" class="btn btn-danger btn-small" '+(j.cancel_requested?'disabled':'')+'>'+(j.cancel_requested?'Interruzione richiesta…':'Interrompi calibrazione')+'</button></div>');
+    const cancel=$('#bb-rating-cancel');
+    cancel.onclick=async()=>{cancel.disabled=true;try{await api('/admin-api/jobs/bb-rating/cancel',{method:'POST',body:{}});toast('Interruzione BB-Rating richiesta');await renderBBRating();}catch(e){toast(e.message,'error');cancel.disabled=false;}};
+  }
   if((j.status==='running'||j.status==='queued')&&App.page==='bb-rating')App.bbRatingTimer=setTimeout(()=>renderBBRating().catch(e=>toast(e.message,'error')),2200);
 }
 
@@ -313,6 +321,11 @@ async function renderModelReleases(){
   $('#prediction-calibration-job').innerHTML='<div class="job-head"><div><div class="job-status">'+esc(job.stage||'Ready')+'</div><div class="job-message">'+esc(job.error||job.message||'Nessuna calibrazione eseguita.')+'</div></div><span class="registry-badge '+(['running','queued'].includes(job.status)?'candidate':'')+'">'+esc(job.status||'idle')+'</span></div>'+
     (job.output?'<div class="summary-list">'+[['OOS rows',job.output.rows],['Target seasons',(job.output.target_seasons||[]).join(', ')],['OOS folds',job.output.n_folds],['Prediction version',job.output.prediction_model_version]].map(([a,b])=>'<div class="summary-row"><span>'+esc(a)+'</span><strong>'+esc(b??'—')+'</strong></div>').join('')+'</div>':'')+
     (job.progress!=null?'<div class="progress-track"><div class="progress-bar" style="width:'+Math.max(0,Math.min(100,Number(job.progress)||0))+'%"></div></div>':'');
+  if(['running','queued'].includes(job.status)) {
+    $('#prediction-calibration-job').insertAdjacentHTML('beforeend','<div class="button-row"><button id="prediction-calibration-cancel" class="btn btn-danger btn-small" '+(job.cancel_requested?'disabled':'')+'>'+(job.cancel_requested?'Interruzione richiesta…':'Interrompi calibrazione')+'</button></div>');
+    const cancel=$('#prediction-calibration-cancel');
+    cancel.onclick=async()=>{cancel.disabled=true;try{await api('/admin-api/jobs/prediction-calibration/cancel',{method:'POST',body:{}});toast('Interruzione calibrazione richiesta');await renderModelReleases();}catch(e){toast(e.message,'error');cancel.disabled=false;}};
+  }
   const start=$('#prediction-calibration-start');
   start.disabled=['running','queued'].includes(job.status);
   start.textContent=['running','queued'].includes(job.status)?'Calibrazione in corso…':'Genera candidate';
@@ -329,7 +342,7 @@ async function renderModelReleases(){
     button.onclick=async()=>{
       if(!confirm('Promuovere il candidate '+model+'? Il sistema riavvierà automaticamente l’API e verificherà la readiness.'))return;
       button.disabled=true;
-      try{const result=await api('/admin-api/model-releases/'+encodeURIComponent(model)+'/promote',{method:'POST',body:{confirm:true}});const restart=result.api_restart||{};$('#model-release-result').textContent=(result.message||'Promozione completata')+' Versione: '+(result.version||'—')+(restart.ok?' · API riavviata e pronta.':' · ATTENZIONE: riavvio non confermato: '+(restart.error||'verifica necessaria'));toast(restart.ok?'Candidate promosso; API pronta':'Promozione eseguita ma API non confermata pronta',restart.ok?'success':'error');await renderModelReleases();}
+      try{const result=await api('/admin-api/model-releases/'+encodeURIComponent(model)+'/promote',{method:'POST',body:{confirm:true,candidate_id:item.candidate?.id}});const restart=result.api_restart||{};$('#model-release-result').textContent=(result.message||'Promozione completata')+' Versione: '+(result.version||'—')+(restart.ok?' · API riavviata e pronta.':' · ATTENZIONE: riavvio non confermato: '+(restart.error||'verifica necessaria'));toast(restart.ok?'Candidate promosso; API pronta':'Promozione eseguita ma API non confermata pronta',restart.ok?'success':'error');await renderModelReleases();}
       catch(e){toast(e.message,'error');button.disabled=false;}
     };
   });
