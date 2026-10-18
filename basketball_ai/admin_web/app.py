@@ -2007,7 +2007,18 @@ def start_prediction_calibration(user: dict[str, str] = Depends(_csrf)) -> dict[
     if not active_profile:
         raise HTTPException(status_code=400, detail="Seleziona prima un profilo PostgreSQL")
     with STATE.lock:
-        STATE.prediction_calibration.update(status="queued", stage="Queued", progress=0, message="Prediction calibration queued.", error=None, cancel_requested=False, started_at=_utcnow(), finished_at=None)
+        STATE.prediction_calibration.update(
+            status="queued",
+            stage="Queued",
+            progress=0,
+            message="Prediction calibration queued.",
+            error=None,
+            cancel_requested=False,
+            candidate_id=None,
+            output=None,
+            started_at=_utcnow(),
+            finished_at=None,
+        )
     cancel_event = _new_cancel_event("prediction-calibration")
     STATE.prediction_calibration_executor.submit(_prediction_calibration_worker, active_profile, actor, cancel_event)
     with STATE.lock:
