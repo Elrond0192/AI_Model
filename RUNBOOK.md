@@ -123,10 +123,9 @@ docker compose run --rm admin \
   python main.py --mode prediction-calibrate \
   --database-profile production \
   --prediction-calibration-output-dir /app/models_saved/prediction_calibration
-
-docker compose restart api
-docker compose logs --since=5m api | grep -E 'Prediction 1-100 calibration|Prediction calibration'
 ```
+
+The CLI fallback writes an artifact directly and does not trigger the Model Center restart workflow; after using this fallback, restart the API manually and verify readiness.
 
 The command performs a temporal out-of-sample backtest and requires at least 500
 valid OOS records. Do not create a synthetic/default mapping when calibration
@@ -253,3 +252,25 @@ docker compose up -d
 `api` and `admin` use separate image tags (`basketball-ai-api:latest` and `basketball-ai-admin:latest`) to avoid concurrent export collisions when `docker compose build` builds both services.
 
 Never commit `.env`, DB profile JSON, model artifacts, registries/metadata, sessions, audit DBs or one-time credentials.
+
+## Model Center: calibration candidates and safe releases
+
+The admin console writes auxiliary model outputs to immutable candidate directories under `runtime/models/candidates/<model>/<run-id>/`. Calibration/training must not write directly to serving paths.
+
+Supported release IDs:
+- `prediction-calibration`: `prediction_rating_calibration.json` (at least 500 OOS rows and a valid monotonic mapping).
+- `bb-rating`: calibration report plus `bb_rating_uncertainty.json`.
+- `future-performance`: fitted `metadata.json` plus every model file declared in `model_files`.
+
+In **Model Releases**, inspect the production and candidate validation state before promoting. Promotion validates the candidate and atomically swaps the artifact directory, keeping the prior production directory under `runtime/models/releases/<model>/`. Rollback restores that previous directory. The operation is audited. Every promotion or rollback in Model Releases and the native Prediction Model registry requests an authenticated, controlled API-container restart automatically. The admin waits for `/health/ready` to succeed before reporting success. The API container uses Compose `restart: unless-stopped`; its internal restart endpoint accepts only the configured `API_KEY`. Candidate training/calibration does not restart production. If the API key is missing or readiness is not restored within 90 seconds, the operation result explicitly reports the restart failure and requires operator intervention.
+
+Prediction 1–100 calibration only fits the display mapping from OOS records; it does not retrain or replace the native Prediction Model. The minimum 500 OOS rows is an operational artifact gate, not a guarantee of statistical quality. Review the saved report's temporal folds and raw-versus-calibrated metrics before promotion.
+
+Example deployment after reviewing a release:
+```bash
+docker compose restart api
+docker compose ps
+docker compose logs --tail=150 api
+```
+
+Do not promote if validation fails or if the expected uncertainty/model files are absent. Keep the prior release until the restarted API passes its health and inference smoke tests.

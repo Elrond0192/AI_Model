@@ -188,6 +188,7 @@ def _reset_state():
         admin.STATE.active_profile = None
         admin.STATE.summary = {}
         admin.STATE.snapshot = None
+        admin.STATE.prediction_calibration = {"status": "idle", "stage": "Ready", "progress": 0, "message": "No Prediction 1-100 calibration run in progress.", "error": None, "started_at": None, "finished_at": None, "output": None}
         admin.STATE.bb_rating = {
             "status": "idle",
             "stage": "Ready",
@@ -256,6 +257,10 @@ def test_helpers_and_static_assets(monkeypatch, tmp_path):
     assert "Prepara storico modello" in html
     assert "Dati e snapshot" in html
     assert "Model Registry" in html
+    assert "Model Releases" in html
+    assert "prediction-calibration" in js
+    assert "renderModelReleases" in js
+    assert "/admin-api/model-releases" in js
     assert "BB-Rating" in html
     assert 'id="diag-team-search"' in html
     assert 'id="diag-team"' in html
@@ -362,6 +367,68 @@ def test_bb_rating_calibration_start(monkeypatch, tmp_path):
     assert result["job"]["status"] == "queued"
     assert executor.submitted
 
+
+
+
+
+
+
+def test_prediction_calibration_worker_writes_candidate_without_touching_production(monkeypatch, tmp_path):
+    _reset_state()
+    root = tmp_path / "models_saved"
+    monkeypatch.setattr(admin, "MODEL_ROOT", root)
+    monkeypatch.setattr(admin, "_utcnow", lambda: "now")
+    monkeypatch.setattr(admin, "_audit", lambda *args, **kwargs: None)
+
+    def fake_calibrate(args):
+        output = Path(args.prediction_calibration_output_dir)
+        (output / "prediction_rating_calibration.json").write_text(
+            json.dumps({
+                "calibration_version": "1.0",
+                "prediction_model_version": "2.6.0",
+                "dataset": {"rows": 600, "target_seasons": [2022, 2023, 2024]},
+                "fit": {"x_thresholds": [0.0, 10.0], "y_thresholds_native": [0.0, 10.0]},
+                "validation": {"status": "validated_oos", "n_folds": 2},
+            }),
+            encoding="utf-8",
+        )
+
+    import basketball_ai.cli as cli
+    monkeypatch.setattr(cli, "mode_prediction_calibrate", fake_calibrate)
+    admin._prediction_calibration_worker("production", "admin")
+
+    job = admin.STATE.prediction_calibration
+    assert job["status"] == "complete"
+    assert job["output"]["rows"] == 600
+    assert (root / "candidates" / "prediction-calibration" / job["candidate_id"]).is_dir()
+    assert not (root / "prediction_calibration").exists()
+
+
+def test_prediction_calibration_start_queues_candidate_job(monkeypatch, tmp_path):
+    _reset_state()
+    monkeypatch.setattr(admin, "MODEL_ROOT", tmp_path / "models_saved")
+    with admin.STATE.lock:
+        admin.STATE.active_profile = "production"
+
+    class Executor:
+        def __init__(self):
+            self.submitted = []
+
+        def submit(self, fn, *args):
+            self.submitted.append((fn, args))
+
+    executor = Executor()
+    monkeypatch.setattr(admin.STATE, "prediction_calibration_executor", executor)
+    monkeypatch.setattr(admin, "_utcnow", lambda: "now")
+    monkeypatch.setattr(admin, "_audit", lambda *args, **kwargs: None)
+    result = admin.start_prediction_calibration(
+        {"username": "admin", "role": "admin", "token": "x"}
+    )
+    assert result["ok"] is True
+    assert result["profile"] == "production"
+    assert result["job"]["status"] == "queued"
+    assert executor.submitted
+    assert executor.submitted[0][0] is admin._prediction_calibration_worker
 
 
 def test_diagnostic_request_builds_whitelisted_payloads():
@@ -978,12 +1045,51 @@ def test_scenario_entity_search_and_server_side_resolution():
     assert "team_selection_ids" not in resolved
 
 
+def test_automatic_api_restart_waits_for_readiness(monkeypatch):
+    monkeypatch.setenv("API_KEY", "test-api-key")
+    monkeypatch.setattr(admin.time, "sleep", lambda _: None)
+    monkeypatch.setattr(admin, "_probe", lambda path: {"ok": path == "/health/ready", "status": 200})
+
+    class Response:
+        status = 202
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            return False
+        def read(self):
+            return b'{"accepted": true}'
+
+    captured = {}
+    def fake_urlopen(request, timeout):
+        captured["url"] = request.full_url
+        captured["method"] = request.get_method()
+        captured["key"] = request.get_header("X-api-key")
+        return Response()
+
+    monkeypatch.setattr(admin, "urlopen", fake_urlopen)
+    result = admin._restart_inference_api(timeout_seconds=5)
+    assert result["ok"] is True
+    assert result["status"] == "ready"
+    assert captured["url"].endswith("/internal/restart")
+    assert captured["method"] == "POST"
+    assert captured["key"] == "test-api-key"
+
+
+def test_automatic_api_restart_fails_closed_without_api_key(monkeypatch):
+    monkeypatch.delenv("API_KEY", raising=False)
+    result = admin._restart_inference_api()
+    assert result["ok"] is False
+    assert "API_KEY" in result["error"]
+
+
 @pytest.mark.asyncio
 async def test_api_health(monkeypatch):
     monkeypatch.setattr(admin, "_probe", lambda path: {"ok": path.endswith("live"), "status": 200 if path.endswith("live") else 503})
     result = await admin.api_health({"username": "admin", "role": "admin", "token": "x"})
     assert result["live"]["ok"] is True
     assert result["ready"]["ok"] is False
+    assert "prediction_model" in result
+    assert "production_model_files" in result["prediction_model"]
     assert "/api/v2/scenarios/evaluate" in result["endpoints"][-1]
 
 

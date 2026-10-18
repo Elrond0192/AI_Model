@@ -6,10 +6,12 @@ unversioned prediction endpoints are not mounted.
 """
 from __future__ import annotations
 
+import asyncio
 import hmac
 import json as _json
 import logging
 import os
+import signal
 import time as _time
 import uuid as _uuid
 from contextlib import asynccontextmanager
@@ -479,7 +481,7 @@ def create_app() -> FastAPI:
 
     @app.middleware("http")
     async def auth_middleware(request: Request, call_next):
-        open_paths = {"/health", "/health/live", "/health/ready", "/docs", "/redoc", "/openapi.json"}
+        open_paths = {"/health", "/health/live", "/health/ready", "/docs", "/redoc", "/openapi.json", "/internal/restart"}
         if request.url.path in open_paths:
             return await call_next(request)
 
@@ -614,9 +616,22 @@ def create_app() -> FastAPI:
         bb_rating = getattr(request.app.state, "bb_rating_engine", None)
         uncertainty = getattr(request.app.state, "bb_rating_uncertainty", None)
         future_model = getattr(request.app.state, "future_performance_model", None)
+        prediction_engine = getattr(request.app.state, "engine", None)
+        model_metadata = getattr(request.app.state, "model_metadata", {}) or {}
+        model_root = Path(os.environ.get("MODEL_DIR", "models_saved"))
         return {
             "status": "ok",
             "data_loaded": bool(data.get("player_dict")),
+            "prediction_model_loaded": prediction_engine is not None,
+            "prediction_model_run_id": model_metadata.get("model_run_id"),
+            "prediction_model_version": model_metadata.get("model_version"),
+            "prediction_feature_version": model_metadata.get("feature_version"),
+            "prediction_data_cutoff": model_metadata.get("data_cutoff"),
+            "production_model_files": {
+                "performance_model": (model_root / "performance_model.joblib").is_file(),
+                "compatibility_model": (model_root / "compatibility_model.joblib").is_file(),
+            },
+            "metric_distributions_count": len(getattr(request.app.state, "metric_distributions", []) or []),
             "bb_rating_loaded": bb_rating is not None,
             "bb_rating_uncertainty_loaded": uncertainty is not None,
             "bb_rating_version": getattr(bb_rating, "VERSION", None) or getattr(bb_rating, "version", None) or "1.9",
@@ -626,6 +641,23 @@ def create_app() -> FastAPI:
             "future_performance_version": getattr(future_model, "metadata", {}).get("future_performance_version"),
             "future_performance_feature_version": getattr(future_model, "metadata", {}).get("feature_version"),
         }
+
+    @app.post("/internal/restart")
+    async def internal_restart(request: Request):
+        """Restart the API container after a successful, authenticated release promotion."""
+        expected = os.environ.get("API_KEY", "").strip()
+        supplied = request.headers.get("X-API-Key", "")
+        if not expected or not supplied or not hmac.compare_digest(supplied, expected):
+            return JSONResponse(status_code=401, content={"detail": "Invalid or missing X-API-Key header"})
+
+        async def restart_after_response() -> None:
+            # Let Starlette flush the 202 response before terminating PID 1.
+            await asyncio.sleep(1.5)
+            logger.warning("[API] Controlled restart requested by Model Center")
+            os.kill(os.getpid(), signal.SIGTERM)
+
+        asyncio.create_task(restart_after_response())
+        return JSONResponse(status_code=202, content={"accepted": True, "restart": "scheduled"})
 
     @app.get("/health/live")
     def health_live():
