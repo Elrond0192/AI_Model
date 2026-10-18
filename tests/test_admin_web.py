@@ -264,6 +264,57 @@ def _reset_state():
         }
 
 
+def test_model_release_promotion_passes_selected_candidate_id(monkeypatch, tmp_path):
+    selected = {}
+
+    def fake_promote(root, model, candidate_id=None):
+        selected.update(root=Path(root), model=model, candidate_id=candidate_id)
+        return {"promoted": True, "model": model, "version": "1.18"}
+
+    monkeypatch.setattr(admin, "MODEL_ROOT", tmp_path / "models")
+    monkeypatch.setattr(admin, "promote_model", fake_promote)
+    monkeypatch.setattr(admin, "_restart_inference_api", lambda: {"ok": True})
+    monkeypatch.setattr(admin, "_audit", lambda *args, **kwargs: None)
+
+    response = admin.promote_auxiliary_model(
+        "bb-rating",
+        admin.ConfirmPayload(confirm=True, candidate_id="candidate-1"),
+        {"username": "admin", "role": "admin", "token": "test"},
+    )
+
+    assert selected == {
+        "root": tmp_path / "models",
+        "model": "bb-rating",
+        "candidate_id": "candidate-1",
+    }
+    assert response["promoted"] is True
+    assert response["api_restart"]["ok"] is True
+
+
+def test_api_prefers_managed_bb_rating_release_over_legacy_sibling(monkeypatch, tmp_path):
+    from basketball_ai.api.main import _load_bb_rating_uncertainty
+    from basketball_ai.bb_rating.uncertainty import BBRatingUncertainty
+
+    monkeypatch.delenv("BB_RATING_UNCERTAINTY_PATH", raising=False)
+    production_model_dir = tmp_path / "production"
+    production_model_dir.mkdir()
+    managed = tmp_path / "bb_rating_calibration" / "bb_rating_uncertainty.json"
+    managed.parent.mkdir()
+    managed.write_text('{"source": "managed"}', encoding="utf-8")
+    legacy = tmp_path / "bb_rating_uncertainty.json"
+    legacy.write_text('{"source": "legacy"}', encoding="utf-8")
+
+    monkeypatch.setattr(
+        BBRatingUncertainty,
+        "from_file",
+        classmethod(lambda cls, path: {"loaded_path": Path(path)}),
+    )
+
+    loaded = _load_bb_rating_uncertainty(str(production_model_dir))
+
+    assert loaded["loaded_path"] == managed
+
+
 def test_model_release_buttons_use_node_list_and_cancel_jobs_are_exposed():
     static = Path(admin.STATIC_ROOT)
     js = (static / "app.js").read_text(encoding="utf-8")
