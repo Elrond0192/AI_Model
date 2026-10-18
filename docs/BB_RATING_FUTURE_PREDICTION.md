@@ -32,7 +32,7 @@ The walk-forward report includes MAE, RMSE, bias and calibration error overall a
 - source BB-Rating persistence when source and destination league/competition contexts match;
 - otherwise the destination league + competition historical mean from the training fold, falling back to destination league mean and then the fold-wide mean.
 
-The CLI does not save a candidate unless calibrated walk-forward MAE beats this baseline. This is a minimum gate, not proof that every scenario is reliable. Before promoting a release, inspect per-scenario/per-league sample sizes and metrics, especially combined transfers, new leagues, playoffs/cups and tier changes. Under-supported cohorts must remain clearly labelled and must not be treated as equally reliable.
+The CLI does not save a candidate unless calibrated walk-forward MAE beats this baseline overall and no supported scenario/destination cohort (at least 40 OOF rows) regresses by more than 10% plus 0.25 BB-Rating points. This is a minimum gate, not proof that every scenario is reliable. Before promoting a release, inspect per-scenario/per-league sample sizes and metrics, especially combined transfers, new leagues, playoffs/cups and tier changes. Under-supported cohorts must remain clearly labelled and must not be treated as equally reliable.
 
 ## Train a candidate
 
