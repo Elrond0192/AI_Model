@@ -111,6 +111,27 @@ def _candidate_root(root: Path, model: str) -> Path:
     return root / "candidates" / model
 
 
+def cleanup_incomplete_candidates(root: str | Path, model: str) -> list[str]:
+    """Remove candidate directories that never produced their required primary artifact.
+
+    Callers must ensure that the model's training job is not running before
+    invoking this cleanup. Candidates with a present but invalid artifact are
+    retained for diagnosis.
+    """
+    model = _model_name(model)
+    candidates_root = _candidate_root(Path(root), model)
+    filename = _MODEL_PATHS[model][1]
+    removed: list[str] = []
+    if not candidates_root.is_dir():
+        return removed
+    for path in candidates_root.iterdir():
+        if not path.is_dir() or (path / filename).is_file():
+            continue
+        shutil.rmtree(path)
+        removed.append(path.name)
+    return removed
+
+
 def _release_root(root: Path, model: str) -> Path:
     return root / "releases" / model
 
@@ -131,6 +152,8 @@ def inspect_model(root: str | Path, model: str) -> dict[str, Any]:
                 **validation,
             })
     production_validation = validate_artifact(model, production) if production.exists() else {"valid": False, "reason": "No production artifact"}
+    selected_candidate = next((candidate for candidate in candidates if candidate.get("valid")), None)
+    latest_invalid_candidate = next((candidate for candidate in candidates if not candidate.get("valid")), None)
     pointer = _release_root(root, model) / "previous.json"
     previous = None
     try:
@@ -144,7 +167,8 @@ def inspect_model(root: str | Path, model: str) -> dict[str, Any]:
         "model": model,
         "production_path": str(production),
         "production": production_validation,
-        "candidate": candidates[0] if candidates else None,
+        "candidate": selected_candidate,
+        "latest_invalid_candidate": latest_invalid_candidate,
         "candidates": candidates,
         "previous": previous,
     }
@@ -160,8 +184,15 @@ def promote_model(root: str | Path, model: str, candidate_id: str | None = None)
                 raise ValueError("Invalid candidate id")
             candidate = candidates_root / candidate_id
         else:
-            available = sorted((p for p in candidates_root.iterdir() if p.is_dir()), key=lambda p: p.stat().st_mtime, reverse=True) if candidates_root.is_dir() else []
-            candidate = available[0] if available else None
+            available = sorted(
+                (p for p in candidates_root.iterdir() if p.is_dir()),
+                key=lambda p: p.stat().st_mtime,
+                reverse=True,
+            ) if candidates_root.is_dir() else []
+            candidate = next(
+                (path for path in available if validate_artifact(model, path).get("valid")),
+                available[0] if available else None,
+            )
         if candidate is None or not candidate.is_dir():
             raise RuntimeError("No candidate available to promote")
         validation = validate_artifact(model, candidate)
