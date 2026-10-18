@@ -264,6 +264,7 @@ async function renderBBRating(){
 async function renderModelReleases(){
   const data=await api('/admin-api/model-releases');
   const calibration=await api('/admin-api/prediction-calibration');
+  const health=await api('/admin-api/api-health');
   const models=data.models||{};
   const job=calibration.job||{};
   const release=calibration.release||{};
@@ -278,6 +279,24 @@ async function renderModelReleases(){
       '<div class="summary-row"><span>Precedente disponibile</span><strong>'+esc(prev.valid?'Sì':'No')+'</strong></div>'+
       '</div>';
   };
+  const native=data.prediction_model_registry||{};
+  $('#native-prediction-registry').innerHTML='<div class="summary-list">'+
+    '<div class="summary-row"><span>Production run</span><strong>'+esc(native.production?.run_id||'—')+'</strong></div>'+
+    '<div class="summary-row"><span>Production version</span><strong>'+esc(native.production?.model_version||'—')+'</strong></div>'+
+    '<div class="summary-row"><span>Candidate run</span><strong>'+esc(native.candidate?.run_id||'—')+'</strong></div>'+
+    '<div class="summary-row"><span>Candidate OOT RMSE</span><strong>'+esc(fmt(native.candidate?.overall_rmse))+'</strong></div>'+
+    '</div>';
+  const servingRows=[
+    ['Inference API live',health.live?.ok?'Online':'Offline'],
+    ['Inference API ready',health.ready?.ok?'Ready':'Not ready'],
+    ['BB-Rating loaded',health.bb_rating?.loaded?'Yes':'No'],
+    ['BB-Rating uncertainty loaded',health.bb_rating?.uncertainty_loaded?'Yes':'No'],
+    ['Future Performance loaded',health.future_performance?.loaded?'Yes':'No'],
+    ['BB-Rating runtime version',health.bb_rating?.runtime_calibration_version||'—'],
+    ['Future Performance runtime version',health.future_performance?.version||'—'],
+    ['Restart required after promotion','Yes'],
+  ];
+  $('#model-release-serving').innerHTML=summaryRows(servingRows);
   $('#release-bb-rating').innerHTML=fmtRelease(models['bb-rating']||{});
   $('#release-future-performance').innerHTML=fmtRelease(models['future-performance']||{});
   $('#prediction-calibration-release').innerHTML=fmtRelease(release);
