@@ -1645,7 +1645,14 @@ class ChatScenarioEngine:
             if str(value).strip()
         ]
         forward_requested = bool(
-            {"potential", "regression_risk", "team_counterfactual"} & set(requested_keys)
+            {
+                "potential",
+                "regression_risk",
+                "team_counterfactual",
+                "prediction",
+                "prediction_model",
+                "future_performance",
+            } & set(requested_keys)
         )
 
         if self.bb_rating_engine is not None:
