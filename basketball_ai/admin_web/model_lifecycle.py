@@ -127,8 +127,14 @@ def cleanup_incomplete_candidates(root: str | Path, model: str) -> list[str]:
     for path in candidates_root.iterdir():
         if not path.is_dir() or (path / filename).is_file():
             continue
-        shutil.rmtree(path)
-        removed.append(path.name)
+        try:
+            shutil.rmtree(path)
+        except OSError:
+            # Failure to clean up must not turn a read-only release inspection
+            # into a 500; the invalid candidate will remain unselectable.
+            continue
+        if not path.exists():
+            removed.append(path.name)
     return removed
 
 
