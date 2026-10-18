@@ -87,6 +87,7 @@ def test_direct_bb_rating_model_trains_oof_predicts_and_roundtrips(tmp_path):
         target_league="ITA1", target_competition="RS",
         target_team_global_id="TEAM2",
     )
+    assert 1 <= prediction["source_bb_rating"] <= 100
     assert 1 <= prediction["predicted_bb_rating"] <= 100
     assert 1 <= prediction["confidence_low_100"] <= prediction["confidence_high_100"] <= 100
     assert prediction["target_scale"] == "BB-Rating 1-100"
