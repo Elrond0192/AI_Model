@@ -496,6 +496,14 @@ class BBRatingFuturePredictionModel:
         players = data.get("players", pd.DataFrame())
         engine = BBRatingEngine(stats, players, data.get("leagues"))
         frame = engine.frame.copy()
+        if players is not None and not players.empty and "id" in players.columns:
+            birth_columns = ["id"] + [
+                column for column in ("birth_date", "date_of_birth")
+                if column in players.columns and column not in frame.columns
+            ]
+            if len(birth_columns) > 1:
+                birth = players[birth_columns].drop_duplicates("id").rename(columns={"id": "player_id"})
+                frame = frame.merge(birth, on="player_id", how="left")
         frame["_year"] = _numeric_seasons(frame)
         frame["league_key"] = frame["league_key"].astype(str).str.strip().str.upper()
         frame["competition"] = frame["competition"].map(normalize_competition)
