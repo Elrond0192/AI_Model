@@ -310,7 +310,9 @@ The API loads `AI.MetricDistribution` at startup
 the rating endpoints (forecasts keep working) and return `503` with a clear
 message.
 
-## Open issues
+## Known limitations and status notes
+
+The phase labels below describe the historical implementation plan and POC sequence; they are not a statement that every phase is still pending. The production endpoints are listed in [API_V2.md](API_V2.md).
 
 1. **NULL → 0 coalescing**: `"AI_Source"."PlayerCompetitionStats"` applies
    `COALESCE(metric, 0)`, so a missing value is indistinguishable from a real
@@ -318,11 +320,11 @@ message.
    level, but the definitive fix belongs to the SQL contract (read the raw
    `CompetitionStatsRawInternal` view or expose a metric view that preserves
    `NULL`). Scheduled with storage/backfill (FASE F/G).
-2. `vorp` is not yet exposed in `_PLAYER_METRICS` for Chat — added at
-   integration time.
-3. Qualification thresholds must be calibrated on real data in the POC.
+2. Qualification thresholds and population quality still require ongoing
+   monitoring against current production distributions. Historical POC outputs
+   are diagnostic artifacts and must not be treated as the live distribution store.
 
-## FASE D — POC on real data
+## Historical FASE D — POC on real data (diagnostic workflow)
 
 1. **Dump the contract** (read-only, nothing is written). Run
    `basketball_ai/data/ai_metric_poc_dump.sql` — it creates the read-only
