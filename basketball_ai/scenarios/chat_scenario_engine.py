@@ -1485,23 +1485,78 @@ class ChatScenarioEngine:
         }
 
     def _potential_synthesis(self, spec, players, teams, source_league, target_league):
-        del target_league
+        del teams, target_league
         if not players:
             raise ValueError("player is required")
-        season=int(spec["season"]); rows=self._player_rows(players[0],source_league,spec["competition"],season)
-        if rows.empty: raise ValueError("No player history is available")
-        latest=self._latest(rows); ratings=pd.to_numeric(rows["rating"],errors="coerce").dropna().to_numpy(float)
-        slope=float(np.polyfit(np.arange(len(ratings)),ratings,1)[0]) if len(ratings)>1 else 0.0
-        p=self.data.get("player_dict",{}).get(_to_int(players[0]),{}); birth=p.get("birth_date",p.get("date_of_birth"))
-        try: age=season-int(str(birth)[:4])
-        except (TypeError,ValueError): age=int(_finite(p.get("age"),float("nan"))) if np.isfinite(_finite(p.get("age"),float("nan"))) else None
-        peak_age=26 if str(p.get("position","")).upper() in {"PG","SG"} else 28
-        age_signal="unknown" if age is None else "development_window" if age<peak_age-2 else "near_peak" if age<=peak_age+2 else "post_peak"
-        signal="upside" if age_signal=="development_window" and slope>=0 else "established" if age_signal!="development_window" and abs(slope)<.15 else "mixed"
-        return {"result":{"player":self._player_name(players[0]),"season":season,"current_rating":round(_finite(latest.get("rating")),3),"historical_peak":round(float(np.max(ratings)),3),"rating_trend_per_season":round(slope,4),"age":age,"age_signal":age_signal,"potential_signal":signal},
-                "evidence":[{"type":"rating_history","count":len(ratings)},{"type":"age_context","available":age is not None}],
-                "support":{"method":"rating_trend_plus_age_synthesis","samples":len(ratings),"confidence":_confidence(len(ratings)*6)},
-                "limitations":["This synthesis uses observed trajectory and age; it is not a replacement for season-ahead Prediction or Future Performance."]}
+        season = int(spec["season"])
+        competition = normalize_competition(spec["competition"])
+        rows = self._player_rows(players[0], source_league, competition, season)
+        if rows.empty:
+            raise ValueError("No player history is available")
+        player_meta = self.data.get("player_dict", {}).get(_to_int(players[0]), {})
+        global_id = str(player_meta.get("global_id", "")).strip() if isinstance(player_meta, dict) else ""
+        bb_scores = []
+        for raw_year in rows["_year"].tolist():
+            try:
+                year = int(raw_year)
+            except (TypeError, ValueError):
+                continue
+            score = self._bb_rating_for_season(global_id, source_league, year, competition)
+            if score is not None:
+                bb_scores.append((year, float(score)))
+        slope = (
+            float(np.polyfit(
+                np.asarray([item[0] for item in bb_scores], dtype=float),
+                np.asarray([item[1] for item in bb_scores], dtype=float),
+                1,
+            )[0])
+            if len(bb_scores) >= 2 and len({item[0] for item in bb_scores}) >= 2
+            else None
+        )
+        p = player_meta if isinstance(player_meta, dict) else {}
+        birth = p.get("birth_date", p.get("date_of_birth"))
+        try:
+            age = season - int(str(birth)[:4])
+        except (TypeError, ValueError):
+            candidate_age = _finite(p.get("age"), float("nan"))
+            age = int(candidate_age) if np.isfinite(candidate_age) else None
+        peak_age = 26 if str(p.get("position", "")).upper() in {"PG", "SG"} else 28
+        age_signal = (
+            "unknown" if age is None
+            else "development_window" if age < peak_age - 2
+            else "near_peak" if age <= peak_age + 2
+            else "post_peak"
+        )
+        signal = (
+            "unknown" if slope is None
+            else "upside" if age_signal == "development_window" and slope >= 0
+            else "established" if age_signal != "development_window" and abs(slope) < 1.5
+            else "mixed"
+        )
+        return {
+            "result": {
+                "player": self._player_name(players[0]),
+                "season": season,
+                "current_bb_rating": bb_scores[-1][1] if bb_scores else None,
+                "historical_peak_bb_rating": max((item[1] for item in bb_scores), default=None),
+                "bb_rating_trend_per_season": round(slope, 2) if slope is not None else None,
+                "age": age,
+                "age_signal": age_signal,
+                "potential_signal": signal,
+            },
+            "evidence": [
+                {"type": "bb_rating_history", "count": len(bb_scores)},
+                {"type": "age_context", "available": age is not None},
+            ],
+            "support": {
+                "method": "bb_rating_trend_plus_age_synthesis",
+                "samples": len(bb_scores),
+                "confidence": _confidence(len(bb_scores) * 6),
+            },
+            "limitations": [
+                "Questa sintesi usa la traiettoria BB-Rating osservata e l'età; non sostituisce la previsione per la stagione successiva."
+            ],
+        }
 
     def _shooting_decomposition(self, spec, players, teams, source_league, target_league):
         del teams, target_league
