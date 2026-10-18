@@ -259,7 +259,7 @@ lookup index per table) — reviewed against `docs/DB_INDEXES.md`.
 ## Performance (FASE 18)
 
 - Distributions are precomputed (batch) and refreshed after the ETL, following
-  the existing `"AI_Source"."RefreshContext"` pattern — never per request;
+  the existing `"AI_Source"."RefreshContextSeasonal"` pattern — never per request;
 - `rate()` against a stored `DistributionStats` is O(1) over the 10-point
   quantile table (no percentile recomputation, no table scan);
 - no N+1 queries; indexes are reviewed against `docs/DB_INDEXES.md` before
