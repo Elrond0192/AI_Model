@@ -182,7 +182,9 @@ class BBRatingFuturePredictionModel:
         self.metadata: dict[str, Any] = {}
         self.is_trained = False
 
-    def _build_records(self, data: dict[str, Any]) -> pd.DataFrame:
+    def _build_records(
+        self, data: dict[str, Any], *, include_latest_target_season: bool = False
+    ) -> pd.DataFrame:
         stats = data.get("player_stats", pd.DataFrame())
         players = data.get("players", pd.DataFrame())
         if stats is None or stats.empty:
@@ -204,6 +206,7 @@ class BBRatingFuturePredictionModel:
         frame["_year"] = frame["_year"].astype(int)
         frame["competition"] = frame["competition"].map(normalize_competition)
         frame["league_key"] = frame["league_key"].astype(str).str.strip().str.upper()
+        latest_observed_year = int(frame["_year"].max())
         # Match BBRatingEngine.rate_player identity semantics and avoid overweighting
         # provider-specific duplicate player IDs in the same canonical context.
         frame = frame.drop_duplicates(
@@ -236,7 +239,10 @@ class BBRatingFuturePredictionModel:
                 year = int(row["_year"])
                 by_year.setdefault(year, []).append(row)
             for source_year, origins in by_year.items():
-                destinations = by_year.get(source_year + 1, [])
+                target_year = source_year + 1
+                if not include_latest_target_season and target_year >= latest_observed_year:
+                    continue
+                destinations = by_year.get(target_year, [])
                 if not destinations:
                     continue
                 for source_raw in origins:
@@ -283,8 +289,12 @@ class BBRatingFuturePredictionModel:
             raise ValueError("No valid official BB-Rating labels in the 1-100 range")
         return result
 
-    def fit(self, data: dict[str, Any]) -> dict[str, Any]:
-        records = self._build_records(data)
+    def fit(
+        self, data: dict[str, Any], *, include_latest_target_season: bool = False
+    ) -> dict[str, Any]:
+        records = self._build_records(
+            data, include_latest_target_season=include_latest_target_season
+        )
         feature_frame = records.drop(columns=[
             "observed_bb_rating", "target_season", "player_global_id", "source_team", "target_team"
         ])
@@ -450,6 +460,7 @@ class BBRatingFuturePredictionModel:
             },
             "residual_interval_method": "empirical_oof_10_90_percentiles",
             "data_cutoff_season": int(records["target_season"].max()),
+            "latest_target_season_included": bool(include_latest_target_season),
         }
         self.is_trained = True
         return dict(self.metadata)
