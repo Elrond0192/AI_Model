@@ -14,6 +14,7 @@ _MODEL_PATHS = {
     "prediction-calibration": ("prediction_calibration", "prediction_rating_calibration.json"),
     "bb-rating": ("bb_rating_calibration", "bb_rating_calibration.json"),
     "future-performance": ("future_performance", "metadata.json"),
+    "bb-rating-prediction": ("bb_rating_future_prediction", "metadata.json"),
 }
 
 
@@ -82,6 +83,23 @@ def validate_artifact(model: str, directory: str | Path) -> dict[str, Any]:
             return {"valid": False, "reason": "BB-Rating uncertainty artifact is incomplete or not fitted"}
         if uncertainty.get("bb_rating_version") and uncertainty.get("bb_rating_version") != artifact.get("bb_rating_version"):
             return {"valid": False, "reason": "BB-Rating and uncertainty artifact versions do not match"}
+    elif model == "bb-rating-prediction":
+        if artifact.get("model") != "BBRatingFuturePredictionModel":
+            return {"valid": False, "reason": "Direct BB-Rating model metadata identifier is invalid"}
+        if artifact.get("target") != "official_bb_rating_t_plus_1" or artifact.get("target_scale") != [1, 100]:
+            return {"valid": False, "reason": "Direct BB-Rating model target contract must be official 1-100 BB-Rating"}
+        if artifact.get("bb_rating_version") is None or not artifact.get("feature_version"):
+            return {"valid": False, "reason": "BB-Rating engine or feature version metadata is missing"}
+        if int(artifact.get("oof_samples") or 0) < 500:
+            return {"valid": False, "reason": "Direct BB-Rating model requires at least 500 walk-forward OOF rows"}
+        if not artifact.get("promotion_gate_passed"):
+            return {"valid": False, "reason": "Walk-forward MAE did not beat the context-aware baseline"}
+        for filename in ("bb_rating_future_model.joblib", "calibration.json"):
+            if not (root / filename).is_file():
+                return {"valid": False, "reason": f"Direct BB-Rating artifact missing: {filename}"}
+        metrics = artifact.get("scenario_metrics") or {}
+        if not metrics:
+            return {"valid": False, "reason": "Per-scenario walk-forward metrics are missing"}
     else:
         if artifact.get("status") != "fitted":
             return {"valid": False, "reason": "Future Performance metadata is not fitted"}
@@ -96,7 +114,7 @@ def validate_artifact(model: str, directory: str | Path) -> dict[str, Any]:
         "valid": True,
         "model": model,
         "artifact": filename,
-        "version": artifact.get("calibration_version") or artifact.get("future_performance_version") or artifact.get("bb_rating_version"),
+        "version": artifact.get("model_version") or artifact.get("calibration_version") or artifact.get("future_performance_version") or artifact.get("bb_rating_version"),
         "prediction_model_version": artifact.get("prediction_model_version"),
         "feature_version": artifact.get("feature_version"),
         "data_cutoff": artifact.get("data_cutoff") or (artifact.get("dataset") or {}).get("data_cutoff") or (artifact.get("dataset") or {}).get("season_max"),
