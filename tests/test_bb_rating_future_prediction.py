@@ -1,7 +1,11 @@
 import pandas as pd
 import pytest
 
-from basketball_ai.bb_rating.future_prediction import BBRatingFuturePredictionModel
+from basketball_ai.bb_rating.future_prediction import (
+    BBRatingFuturePredictionModel,
+    _team_context_features,
+    _team_context_index,
+)
 from basketball_ai.bb_rating.prediction_scenarios import classify_transition
 
 
@@ -105,3 +109,13 @@ def test_direct_bb_rating_model_trains_oof_predicts_and_roundtrips(tmp_path):
     assert restored["predicted_bb_rating"] == pytest.approx(
         prediction["predicted_bb_rating"], abs=0.1
     )
+
+
+
+def test_destination_team_context_uses_only_information_as_of_source_season():
+    data = _synthetic_data()
+    context = _team_context_features(
+        _team_context_index(data), "TEAM2", "ITA1", source_year=2022
+    )
+    assert context["target_team__pace"] == pytest.approx(72.0)
+    assert context["target_team_context_seasons_ago"] == pytest.approx(0.0)
