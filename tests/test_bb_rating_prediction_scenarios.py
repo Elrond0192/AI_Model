@@ -84,3 +84,13 @@ def test_calibration_rejects_missing_columns_and_empty_valid_rows():
             "observed_bb_rating": [101],
             "scenario": ["common"],
         }))
+
+
+
+def test_tier_transition_is_part_of_league_change_scenario():
+    assert classify_transition("A", "B", "ITA1", "EL", "RS", "RS", 3, 1) == (
+        "team_and_league_change_tier_up"
+    )
+    assert classify_transition("A", "B", "EL", "ITA1", "RS", "RS", 1, 3) == (
+        "team_and_league_change_tier_down"
+    )
