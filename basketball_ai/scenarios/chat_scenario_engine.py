@@ -459,7 +459,20 @@ class ChatScenarioEngine:
         minutes_delta = deltas["volume"].get("minutes_per_game", 0.0)
         points_delta = deltas["volume"].get("points", 0.0)
         ts_delta = deltas["efficiency"].get("ts_pct", 0.0)
-        rating_delta = deltas["impact"].get("rating", 0.0)
+
+        player_meta = self.data.get("player_dict", {}).get(_to_int(players[0]), {})
+        global_id = str(player_meta.get("global_id", "")) if isinstance(player_meta, dict) else ""
+        previous_bb_rating = self._bb_rating_for_season(
+            global_id, source_league, previous_year, competition
+        )
+        current_bb_rating = self._bb_rating_for_season(
+            global_id, source_league, current_year, competition
+        )
+        bb_rating_delta = (
+            current_bb_rating - previous_bb_rating
+            if previous_bb_rating is not None and current_bb_rating is not None
+            else None
+        )
 
         if abs(minutes_delta) > 1.5 and abs(points_delta) > 0:
             volume_interpretation = "production_change is partly associated with a meaningful minutes change"
@@ -471,10 +484,13 @@ class ChatScenarioEngine:
         else:
             efficiency_interpretation = "efficiency was relatively stable"
 
-        if abs(rating_delta) >= 1.0:
-            impact_interpretation = "overall impact rating changed materially"
+        if bb_rating_delta is not None:
+            if abs(bb_rating_delta) >= 5:
+                impact_interpretation = "BB-Rating changed materially"
+            else:
+                impact_interpretation = "BB-Rating was relatively stable"
         else:
-            impact_interpretation = "overall impact rating was relatively stable"
+            impact_interpretation = "BB-Rating trend could not be compared reliably"
 
         return {
             "result": {
@@ -487,6 +503,9 @@ class ChatScenarioEngine:
                 "previous": _serialise(previous, _PLAYER_METRICS),
                 "current": _serialise(current, _PLAYER_METRICS),
                 "deltas": deltas,
+                "previous_bb_rating": previous_bb_rating,
+                "current_bb_rating": current_bb_rating,
+                "bb_rating_delta": bb_rating_delta,
                 "interpretation": {
                     "volume": volume_interpretation,
                     "efficiency": efficiency_interpretation,
