@@ -1310,7 +1310,26 @@ class ChatScenarioEngine:
         }
         context = self._player_rows_frame_context(source_league, competition, season)
         explanations = []
+        player_meta = self.data.get("player_dict", {}).get(_to_int(players[0]), {})
+        global_id = str(player_meta.get("global_id", "")).strip() if isinstance(player_meta, dict) else ""
         for metric in metrics[:12]:
+            if metric == "rating":
+                # The source-statistic rating is not a user-facing evaluation.
+                # Resolve the contextual BB-Rating instead, and omit the row if
+                # the official engine cannot produce it for this league-season.
+                bb_score = self._bb_rating_for_season(
+                    global_id, source_league, season, competition
+                )
+                if bb_score is not None:
+                    explanations.append({
+                        "metric": "bb_rating",
+                        "meaning": "BB-Rating contestualizzato su scala 1–100",
+                        "value": bb_score,
+                        "scale": "1-100",
+                        "context_percentile": None,
+                        "interpretation": "Valutazione complessiva già normalizzata rispetto al contesto.",
+                    })
+                continue
             if metric not in meanings or metric not in current.index or pd.isna(current.get(metric)):
                 continue
             meaning, lower_better = meanings[metric]
