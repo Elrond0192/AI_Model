@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 import json
 import os
 import re
+import shutil
 from pathlib import Path
 import secrets
 import threading
@@ -109,6 +110,7 @@ class AdminState:
         }
     )
     lock: threading.RLock = field(default_factory=threading.RLock)
+    cancel_events: dict[str, threading.Event] = field(default_factory=dict)
     executor: ThreadPoolExecutor = field(default_factory=lambda: ThreadPoolExecutor(max_workers=1, thread_name_prefix="ai-admin-training"))
     bb_rating_executor: ThreadPoolExecutor = field(default_factory=lambda: ThreadPoolExecutor(max_workers=1, thread_name_prefix="ai-admin-bb-rating"))
     future_performance: dict[str, Any] = field(
@@ -156,6 +158,7 @@ class ProfilePayload(BaseModel):
 
 class ConfirmPayload(BaseModel):
     confirm: bool = False
+    candidate_id: str | None = Field(default=None, min_length=1, max_length=128)
 
 
 class PasswordPayload(BaseModel):
@@ -445,6 +448,47 @@ def _set_future_performance(**updates: Any) -> None:
         STATE.future_performance.update(updates)
 
 
+class TrainingCancelled(RuntimeError):
+    """Raised when an operator requests cancellation at a safe checkpoint."""
+
+
+_JOB_STATE_ATTRIBUTES = {
+    "training": "training",
+    "bb-rating": "bb_rating",
+    "future-performance": "future_performance",
+    "prediction-calibration": "prediction_calibration",
+}
+
+
+def _new_cancel_event(job_name: str) -> threading.Event:
+    if job_name not in _JOB_STATE_ATTRIBUTES:
+        raise ValueError(f"Unsupported cancellable job: {job_name}")
+    event = threading.Event()
+    with STATE.lock:
+        STATE.cancel_events[job_name] = event
+    return event
+
+
+def _check_cancelled(event: threading.Event | None) -> None:
+    if event is not None and event.is_set():
+        raise TrainingCancelled("Cancellation requested by operator")
+
+
+def _mark_job_cancelled(job_name: str, event: threading.Event) -> None:
+    with STATE.lock:
+        job = getattr(STATE, _JOB_STATE_ATTRIBUTES[job_name])
+        job.update(
+            status="cancelled",
+            stage="Cancelled",
+            progress=100,
+            message="Training interrupted by operator; production was not changed.",
+            error=None,
+            cancel_requested=False,
+            finished_at=_utcnow(),
+        )
+    event.clear()
+
+
 def _future_performance_path() -> Path:
     return MODEL_ROOT / "future_performance"
 
@@ -594,10 +638,12 @@ def _future_performance_status() -> dict[str, Any]:
     }
 
 
-def _future_performance_worker(active_profile: str | None, actor: str) -> None:
+def _future_performance_worker(active_profile: str | None, actor: str, cancel_event: threading.Event | None = None) -> None:
     from basketball_ai.future_performance import PlayerFuturePerformanceModel
 
+    candidate_dir: Path | None = None
     try:
+        _check_cancelled(cancel_event)
         if not active_profile:
             raise RuntimeError("Seleziona prima un profilo PostgreSQL")
         profile = load_profiles().get(active_profile)
@@ -620,6 +666,7 @@ def _future_performance_worker(active_profile: str | None, actor: str) -> None:
             str(profile.get("source_schema", "AI_Source")),
             purpose="training",
         )
+        _check_cancelled(cancel_event)
         stats = data.get("player_stats")
         if not isinstance(stats, pd.DataFrame) or stats.empty:
             raise RuntimeError("Nessun dato player_stats disponibile per Future Performance")
@@ -653,12 +700,15 @@ def _future_performance_worker(active_profile: str | None, actor: str) -> None:
                 )
             ),
         )
+        _check_cancelled(cancel_event)
         model = PlayerFuturePerformanceModel()
         metadata = model.fit(
             data,
             target_seasons=training_target_seasons,
             backtest=True,
+            cancel_check=lambda: _check_cancelled(cancel_event),
         )
+        _check_cancelled(cancel_event)
 
         _set_future_performance(
             stage="Saving candidate artifact",
@@ -669,7 +719,9 @@ def _future_performance_worker(active_profile: str | None, actor: str) -> None:
         )
         candidate_id = f"{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}-{uuid.uuid4().hex[:8]}"
         root = MODEL_ROOT / "candidates" / "future-performance" / candidate_id
+        candidate_dir = root
         root.mkdir(parents=True, exist_ok=False)
+        _check_cancelled(cancel_event)
         paths = model.save(root)
         details = {
             "future_performance_version": metadata.get("future_performance_version"),
@@ -696,6 +748,14 @@ def _future_performance_worker(active_profile: str | None, actor: str) -> None:
             feature_version=metadata.get("feature_version"),
             output=paths,
         )
+    except TrainingCancelled:
+        if candidate_dir is not None:
+            shutil.rmtree(candidate_dir, ignore_errors=True)
+        _audit("future_performance_training_cancelled", actor, active_profile or "", "Cancelled by operator")
+        if cancel_event is not None:
+            _mark_job_cancelled("future-performance", cancel_event)
+        else:
+            _set_future_performance(status="cancelled", stage="Cancelled", progress=100, message="Training cancelled; production unchanged.", finished_at=_utcnow())
     except Exception as exc:  # pragma: no cover
         error = _safe_error(exc)
         _audit("future_performance_training_failed", actor, active_profile or "", error)
@@ -709,14 +769,16 @@ def _future_performance_worker(active_profile: str | None, actor: str) -> None:
         )
 
 
-def _bb_rating_worker(active_profile: str | None, actor: str) -> None:
+def _bb_rating_worker(active_profile: str | None, actor: str, cancel_event: threading.Event | None = None) -> None:
     from basketball_ai.bb_rating.calibration import (
         BBRatingCalibrationConfig,
         build_calibration_report,
         write_calibration_report,
     )
 
+    candidate_dir: Path | None = None
     try:
+        _check_cancelled(cancel_event)
         if not active_profile:
             raise RuntimeError("Seleziona prima un profilo PostgreSQL")
         profile = load_profiles().get(active_profile)
@@ -737,6 +799,7 @@ def _bb_rating_worker(active_profile: str | None, actor: str) -> None:
             str(profile.get("source_schema", "AI_Source")),
             purpose="analysis",
         )
+        _check_cancelled(cancel_event)
         stats = data.get("player_stats")
         if not isinstance(stats, pd.DataFrame) or stats.empty:
             raise RuntimeError("Nessun dato player_stats disponibile per la calibrazione BB-Rating")
@@ -745,7 +808,9 @@ def _bb_rating_worker(active_profile: str | None, actor: str) -> None:
             progress=42,
             message="Calcolo percentili, validazione OOS e struttura uncertainty…",
         )
+        _check_cancelled(cancel_event)
         report = build_calibration_report(data, config=BBRatingCalibrationConfig())
+        _check_cancelled(cancel_event)
         _set_bb_rating(
             stage="Writing serving artifact",
             progress=82,
@@ -755,7 +820,9 @@ def _bb_rating_worker(active_profile: str | None, actor: str) -> None:
         )
         candidate_id = f"{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}-{uuid.uuid4().hex[:8]}"
         output_dir = MODEL_ROOT / "candidates" / "bb-rating" / candidate_id
+        candidate_dir = output_dir
         output_dir.mkdir(parents=True, exist_ok=False)
+        _check_cancelled(cancel_event)
         paths = write_calibration_report(report, str(output_dir))
         details = {
             "calibration_version": report.get("calibration_version"),
@@ -775,6 +842,14 @@ def _bb_rating_worker(active_profile: str | None, actor: str) -> None:
             bb_rating_version=report.get("bb_rating_version"),
             output=paths,
         )
+    except TrainingCancelled:
+        if candidate_dir is not None:
+            shutil.rmtree(candidate_dir, ignore_errors=True)
+        _audit("bb_rating_calibration_cancelled", actor, active_profile or "", "Cancelled by operator")
+        if cancel_event is not None:
+            _mark_job_cancelled("bb-rating", cancel_event)
+        else:
+            _set_bb_rating(status="cancelled", stage="Cancelled", progress=100, message="Calibration cancelled; production unchanged.", finished_at=_utcnow())
     except Exception as exc:  # pragma: no cover
         error = _safe_error(exc)
         _audit("bb_rating_calibration_failed", actor, active_profile or "", error)
@@ -788,12 +863,13 @@ def _bb_rating_worker(active_profile: str | None, actor: str) -> None:
         )
 
 
-def _prediction_calibration_worker(active_profile: str | None, actor: str) -> None:
+def _prediction_calibration_worker(active_profile: str | None, actor: str, cancel_event: threading.Event | None = None) -> None:
     from basketball_ai.admin_web.model_lifecycle import validate_artifact
     from basketball_ai.cli import mode_prediction_calibrate
     candidate_id = f"{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}-{uuid.uuid4().hex[:8]}"
     output_dir = MODEL_ROOT / "candidates" / "prediction-calibration" / candidate_id
     try:
+        _check_cancelled(cancel_event)
         if not active_profile:
             raise RuntimeError("Seleziona prima un profilo PostgreSQL")
         os.environ["DATABASE_PROFILE"] = active_profile
@@ -804,8 +880,11 @@ def _prediction_calibration_worker(active_profile: str | None, actor: str) -> No
         args = argparse.Namespace(database_profile=active_profile, snapshot_id=None, snapshot_dir=None, prediction_calibration_output_dir=str(output_dir))
         with STATE.lock:
             STATE.prediction_calibration.update(stage="Walk-forward OOS calibration", progress=25, message="Esecuzione backtest expanding OOS e fitting della mappatura 1–100…")
+        _check_cancelled(cancel_event)
         mode_prediction_calibrate(args)
+        _check_cancelled(cancel_event)
         report = json.loads((output_dir / "prediction_rating_calibration.json").read_text(encoding="utf-8"))
+        _check_cancelled(cancel_event)
         validation = validate_artifact("prediction-calibration", output_dir)
         if not validation.get("valid"):
             raise RuntimeError(validation.get("reason", "Prediction calibration artifact validation failed"))
@@ -813,6 +892,14 @@ def _prediction_calibration_worker(active_profile: str | None, actor: str) -> No
         _audit("prediction_calibration_candidate_ready", actor, active_profile, json.dumps(details, ensure_ascii=False))
         with STATE.lock:
             STATE.prediction_calibration.update(status="complete", stage="Candidate validated", progress=100, message="Calibrazione validata come candidate. Il Prediction Model e la produzione non sono stati modificati.", error=None, finished_at=_utcnow(), candidate_id=candidate_id, output={**details, "path": str(output_dir), "validation": validation})
+    except TrainingCancelled:
+        shutil.rmtree(output_dir, ignore_errors=True)
+        _audit("prediction_calibration_cancelled", actor, active_profile or "", "Cancelled by operator")
+        if cancel_event is not None:
+            _mark_job_cancelled("prediction-calibration", cancel_event)
+        else:
+            with STATE.lock:
+                STATE.prediction_calibration.update(status="cancelled", stage="Cancelled", progress=100, message="Calibration cancelled; production unchanged.", error=None, finished_at=_utcnow())
     except Exception as exc:
         error = _safe_error(exc)
         _audit("prediction_calibration_failed", actor, active_profile or "", error)
@@ -824,14 +911,18 @@ def _training_worker(
     data: dict[str, Any],
     active_profile: str | None,
     snapshot: dict[str, Any] | None = None,
+    cancel_event: threading.Event | None = None,
 ) -> None:
     from basketball_ai.models.backtest import run_backtest
     from basketball_ai.models.promote import register_candidate
     from basketball_ai.models.strict_production import StrictProductionEnsembleModel
 
+    run_dir: Path | None = None
     try:
+        _check_cancelled(cancel_event)
         if snapshot and snapshot.get("snapshot_id"):
             snapshot_data = load_training_snapshot(str(snapshot["snapshot_id"]))
+            _check_cancelled(cancel_event)
             manifest = snapshot_data.get("training_snapshot_manifest", {})
             if manifest.get("sha256") != snapshot.get("sha256"):
                 raise RuntimeError("Training snapshot checksum/manifest mismatch")
@@ -868,6 +959,7 @@ def _training_worker(
         )
         model = StrictProductionEnsembleModel()
         metrics = model.train(data)
+        _check_cancelled(cancel_event)
 
         _set_training(stage="Walk-forward backtest", progress=58, message="Running leakage-safe out-of-time folds…")
         # Use every eligible OOT target season by default. An explicit
@@ -878,17 +970,20 @@ def _training_worker(
         except ValueError:
             configured_folds = default_folds
         n_backtest_folds = min(max(1, configured_folds), default_folds)
+        _check_cancelled(cancel_event)
         report = run_backtest(
             data,
             n_folds=n_backtest_folds,
             output_path=str(MODEL_ROOT / "backtest_report.json"),
         )
+        _check_cancelled(cancel_event)
         if not report.get("valid") or not report.get("folds"):
             raise RuntimeError("Backtest invalid; candidate cannot enter the registry")
 
         _set_training(stage="Saving immutable run", progress=88, message="Saving candidate artifacts and registry metadata…")
         run_id = f"{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}-{uuid.uuid4().hex[:8]}"
         run_dir = MODEL_ROOT / "runs" / run_id
+        _check_cancelled(cancel_event)
         metadata = {
             **(metrics or {}),
             "model_run_id": run_id,
@@ -905,6 +1000,7 @@ def _training_worker(
             "backtest": report,
         }
         model.save(str(run_dir), metadata)
+        _check_cancelled(cancel_event)
         register_candidate(str(MODEL_ROOT), run_id, run_dir, metadata)
         _set_training(
             status="complete",
@@ -915,6 +1011,14 @@ def _training_worker(
             error=None,
             finished_at=_utcnow(),
         )
+    except TrainingCancelled:
+        if run_dir is not None:
+            shutil.rmtree(run_dir, ignore_errors=True)
+        if cancel_event is not None:
+            _audit("prediction_training_cancelled", "system", active_profile or "", "Cancelled by operator")
+            _mark_job_cancelled("training", cancel_event)
+        else:
+            _set_training(status="cancelled", stage="Cancelled", progress=100, message="Training cancelled; production unchanged.", error=None, finished_at=_utcnow())
     except Exception as exc:  # pragma: no cover - exercised by production failures
         _set_training(
             status="failed",
@@ -1750,9 +1854,40 @@ def start_training(user: dict[str, str] = Depends(_csrf)) -> dict[str, Any]:
             "started_at": _utcnow(),
             "finished_at": None,
             "actor": user["username"],
+            "cancel_requested": False,
         }
-    STATE.executor.submit(_training_worker, data, active, snapshot)
+    cancel_event = _new_cancel_event("training")
+    STATE.executor.submit(_training_worker, data, active, snapshot, cancel_event)
     return {"ok": True, "job": dict(STATE.training)}
+
+
+@app.post("/admin-api/jobs/{job_name}/cancel")
+def cancel_training_job(
+    job_name: str,
+    user: dict[str, str] = Depends(_csrf),
+) -> dict[str, Any]:
+    del user
+    attribute = _JOB_STATE_ATTRIBUTES.get(job_name)
+    if attribute is None:
+        raise HTTPException(status_code=404, detail="Unknown training job")
+    with STATE.lock:
+        job = getattr(STATE, attribute)
+        if job.get("status") not in {"queued", "running"}:
+            raise HTTPException(status_code=409, detail="No active training job to cancel")
+        event = STATE.cancel_events.get(job_name)
+        if event is None:
+            raise HTTPException(status_code=409, detail="Cancellation is not available for this job instance")
+        event.set()
+        job.update(
+            cancel_requested=True,
+            message="Cancellation requested; waiting for the current computation to reach a safe checkpoint.",
+        )
+    return {
+        "ok": True,
+        "job": job_name,
+        "status": "cancellation_requested",
+        "message": "Interruzione richiesta; il job si fermerà al prossimo checkpoint sicuro.",
+    }
 
 
 @app.get("/admin-api/backtests")
@@ -1810,8 +1945,9 @@ def start_prediction_calibration(user: dict[str, str] = Depends(_csrf)) -> dict[
     if not active_profile:
         raise HTTPException(status_code=400, detail="Seleziona prima un profilo PostgreSQL")
     with STATE.lock:
-        STATE.prediction_calibration.update(status="queued", stage="Queued", progress=0, message="Prediction calibration queued.", error=None, started_at=_utcnow(), finished_at=None)
-    STATE.prediction_calibration_executor.submit(_prediction_calibration_worker, active_profile, actor)
+        STATE.prediction_calibration.update(status="queued", stage="Queued", progress=0, message="Prediction calibration queued.", error=None, cancel_requested=False, started_at=_utcnow(), finished_at=None)
+    cancel_event = _new_cancel_event("prediction-calibration")
+    STATE.prediction_calibration_executor.submit(_prediction_calibration_worker, active_profile, actor, cancel_event)
     with STATE.lock:
         current = dict(STATE.prediction_calibration)
     return {"ok": True, "profile": active_profile, "job": current}
@@ -1828,7 +1964,7 @@ def promote_auxiliary_model(model: str, payload: ConfirmPayload, user: dict[str,
     if not payload.confirm:
         raise HTTPException(status_code=400, detail="Conferma richiesta")
     try:
-        result = promote_model(MODEL_ROOT, model)
+        result = promote_model(MODEL_ROOT, model, payload.candidate_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except RuntimeError as exc:
@@ -1880,10 +2016,12 @@ def start_bb_rating_calibration(user: dict[str, str] = Depends(_csrf)) -> dict[s
             progress=0,
             message="BB-Rating calibration queued.",
             error=None,
+            cancel_requested=False,
             started_at=_utcnow(),
             finished_at=None,
         )
-    STATE.bb_rating_executor.submit(_bb_rating_worker, active_profile, actor)
+    cancel_event = _new_cancel_event("bb-rating")
+    STATE.bb_rating_executor.submit(_bb_rating_worker, active_profile, actor, cancel_event)
     with STATE.lock:
         current = dict(STATE.bb_rating)
     return {"ok": True, "profile": active_profile, "job": current}
@@ -1915,12 +2053,15 @@ def start_future_performance_training(
         error=None,
         started_at=_utcnow(),
         finished_at=None,
+        cancel_requested=False,
         actor=actor,
     )
+    cancel_event = _new_cancel_event("future-performance")
     STATE.future_performance_executor.submit(
         _future_performance_worker,
         active_profile,
         actor,
+        cancel_event,
     )
     with STATE.lock:
         current = dict(STATE.future_performance)
