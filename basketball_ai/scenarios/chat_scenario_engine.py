@@ -108,6 +108,7 @@ class ChatScenarioEngine:
         data: dict[str, Any],
         bb_rating_engine: Any | None = None,
         bb_rating_uncertainty: Any | None = None,
+        prediction_calibration: dict[str, Any] | None = None,
         future_performance_model: Any | None = None,
     ) -> None:
         self.ensemble = ensemble
@@ -115,6 +116,7 @@ class ChatScenarioEngine:
         self.advanced = AdvancedSimulationEngine(data)
         self.bb_rating_engine = bb_rating_engine
         self.bb_rating_uncertainty = bb_rating_uncertainty
+        self.prediction_calibration = prediction_calibration
         self.future_performance_model = future_performance_model
 
     def evaluate(
