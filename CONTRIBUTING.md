@@ -75,10 +75,10 @@ and verify:
 ```sql
 SELECT count(*) FROM "AI_Source"."Players";
 SELECT count(*) FROM "AI_Source"."Teams";
-SELECT min(season), max(season), count(*) FROM "AI_Source"."PlayerStats";
-SELECT player_id, season, count(*)
-FROM "AI_Source"."PlayerStats"
-GROUP BY player_id, season
+SELECT min(season), max(season), count(*) FROM "AI_Source"."PlayerCompetitionStats";
+SELECT player_id, league_id, season, competition, count(*)
+FROM "AI_Source"."PlayerCompetitionStats"
+GROUP BY player_id, league_id, season, competition
 HAVING count(*) > 1;
 ```
 
