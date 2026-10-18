@@ -508,6 +508,27 @@ class BBRatingFuturePredictionModel:
         mae_model = float(mean_absolute_error(actual, calibrated))
         mae_baseline = float(mean_absolute_error(actual, baseline))
 
+        segment_regressions = []
+        for dimension, metrics_by_group in (
+            ("scenario", by_scenario),
+            ("destination_league", by_destination),
+        ):
+            for group_name, metrics in metrics_by_group.items():
+                if int(metrics.get("n") or 0) < 40:
+                    continue
+                model_mae = metrics.get("mae")
+                baseline_mae_group = metrics.get("baseline_mae")
+                if model_mae is None or baseline_mae_group is None:
+                    continue
+                allowed_mae = float(baseline_mae_group) * 1.10 + 0.25
+                if float(model_mae) > allowed_mae:
+                    segment_regressions.append({
+                        "dimension": dimension, "group": str(group_name),
+                        "n": int(metrics["n"]), "mae": float(model_mae),
+                        "baseline_mae": float(baseline_mae_group),
+                    })
+        promotion_gate_passed = bool(mae_model < mae_baseline and not segment_regressions)
+
         self.model = HistGradientBoostingRegressor(
             max_iter=220, learning_rate=0.05, max_leaf_nodes=15,
             l2_regularization=2.0, random_state=self.random_state,
@@ -538,8 +559,9 @@ class BBRatingFuturePredictionModel:
             "oof_calibration_error": float(abs(np.mean(calibrated_oof) - np.mean(actual))),
             "oof_baseline_mae": mae_baseline,
             "oof_baseline_rmse": float(np.sqrt(mean_squared_error(actual, baseline))),
-            "promotion_gate_passed": bool(mae_model < mae_baseline),
-            "promotion_gate": "calibrated_walk_forward_mae_must_beat_context_persistence_or_destination_baseline",
+            "promotion_gate_passed": promotion_gate_passed,
+            "segment_regressions": segment_regressions,
+            "promotion_gate": "overall_mae_must_beat_baseline_and_supported_segments_must_not_regress_by_more_than_10_percent_plus_0.25_points",
             "scenario_metrics": by_scenario,
             "destination_league_metrics": by_destination,
             "scenario_counts": {
