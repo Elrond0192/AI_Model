@@ -200,3 +200,50 @@ def test_future_performance_candidate_can_be_promoted_with_model_files(tmp_path:
     assert inspected["production"]["version"] == "1.1"
     assert inspected["production"]["seasons"] == [2021, 2022, 2023, 2024, 2025]
     assert not candidate.exists()
+
+
+
+def _bb_rating_prediction_artifact(path: Path, version: str = "1.0.0") -> None:
+    path.mkdir(parents=True, exist_ok=True)
+    (path / "metadata.json").write_text(
+        json.dumps({
+            "model": "BBRatingFuturePredictionModel",
+            "model_version": version,
+            "feature_version": "bb-rating-direct-target-v1",
+            "target": "official_bb_rating_t_plus_1",
+            "target_scale": [1, 100],
+            "bb_rating_version": "1.9",
+            "oof_samples": 600,
+            "training_samples": 2000,
+            "promotion_gate_passed": True,
+            "scenario_metrics": {"same_team_same_league": {"n": 300, "mae": 5.0}},
+        }),
+        encoding="utf-8",
+    )
+    (path / "bb_rating_future_model.joblib").write_bytes(b"test-artifact")
+    (path / "calibration.json").write_text(json.dumps({"method": "test"}), encoding="utf-8")
+
+
+def test_bb_rating_prediction_candidate_requires_oof_gate_and_can_promote(tmp_path: Path):
+    candidate = tmp_path / "candidates" / "bb-rating-prediction" / "candidate-bbp"
+    _bb_rating_prediction_artifact(candidate)
+    result = validate_artifact("bb-rating-prediction", candidate)
+    assert result["valid"] is True
+    assert result["version"] == "1.0.0"
+
+    promoted = promote_model(tmp_path, "bb-rating-prediction", "candidate-bbp")
+    production = tmp_path / "bb_rating_future_prediction"
+    assert promoted["promoted"] is True
+    assert validate_artifact("bb-rating-prediction", production)["valid"] is True
+    assert not candidate.exists()
+
+
+def test_bb_rating_prediction_candidate_fails_without_baseline_gate(tmp_path: Path):
+    candidate = tmp_path / "candidates" / "bb-rating-prediction" / "candidate-bad"
+    _bb_rating_prediction_artifact(candidate)
+    metadata = json.loads((candidate / "metadata.json").read_text(encoding="utf-8"))
+    metadata["promotion_gate_passed"] = False
+    (candidate / "metadata.json").write_text(json.dumps(metadata), encoding="utf-8")
+    result = validate_artifact("bb-rating-prediction", candidate)
+    assert result["valid"] is False
+    assert "baseline" in result["reason"]
