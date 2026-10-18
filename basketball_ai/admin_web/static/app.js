@@ -249,8 +249,9 @@ async function renderBBRating(){
   const refresh=$('#bb-rating-refresh');
   refresh.onclick=()=>renderBBRating().catch(e=>toast(e.message,'error'));
   const calibrate=$('#bb-rating-calibrate');
-  calibrate.disabled=j.status==='running'||!data.active_profile;
-  calibrate.textContent=j.status==='running'?'Calibrazione in corso…':'Ricalibra BB-Rating';
+  const calibrationBusy=['running','queued'].includes(j.status);
+  calibrate.disabled=calibrationBusy||!data.active_profile;
+  calibrate.textContent=calibrationBusy?(j.status==='queued'?'Calibrazione in coda…':'Calibrazione in corso…'):'Ricalibra BB-Rating';
   calibrate.onclick=async()=>{
     calibrate.disabled=true;
     try{
