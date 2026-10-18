@@ -264,7 +264,8 @@ async function renderBBRating(){
 async function renderModelReleases(){
   const data=await api('/admin-api/model-releases');
   const calibration=await api('/admin-api/prediction-calibration');
-  const health=await api('/admin-api/api-health');
+  let health={};
+  try{health=await api('/admin-api/api-health');}catch(_){health={};}
   const models=data.models||{};
   const job=calibration.job||{};
   const release=calibration.release||{};
