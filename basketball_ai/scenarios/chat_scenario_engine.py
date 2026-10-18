@@ -484,13 +484,12 @@ class ChatScenarioEngine:
         else:
             efficiency_interpretation = "efficiency was relatively stable"
 
+        impact_interpretation = None
         if bb_rating_delta is not None:
             if abs(bb_rating_delta) >= 5:
                 impact_interpretation = "BB-Rating changed materially"
             else:
                 impact_interpretation = "BB-Rating was relatively stable"
-        else:
-            impact_interpretation = "BB-Rating trend could not be compared reliably"
 
         return {
             "result": {
