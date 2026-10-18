@@ -46,6 +46,44 @@ def _data(seasons=range(2021, 2026)):
     }
 
 
+@pytest.mark.parametrize(
+    ("job_name", "attribute"),
+    [
+        ("training", "training"),
+        ("bb-rating", "bb_rating"),
+        ("future-performance", "future_performance"),
+        ("prediction-calibration", "prediction_calibration"),
+    ],
+)
+def test_cancel_training_job_requests_cancellation_for_each_model(job_name, attribute):
+    _reset_state()
+    event = admin._new_cancel_event(job_name)
+    with admin.STATE.lock:
+        job = getattr(admin.STATE, attribute)
+        job.update(status="running", cancel_requested=False)
+
+    result = admin.cancel_training_job(
+        job_name,
+        {"username": "admin", "role": "admin", "token": "test"},
+    )
+
+    assert result["ok"] is True
+    assert result["status"] == "cancellation_requested"
+    assert event.is_set() is True
+    assert getattr(admin.STATE, attribute)["cancel_requested"] is True
+    _reset_state()
+
+
+def test_cancel_checkpoint_raises_only_when_requested():
+    import threading
+
+    event = threading.Event()
+    admin._check_cancelled(event)
+    event.set()
+    with pytest.raises(admin.TrainingCancelled):
+        admin._check_cancelled(event)
+
+
 def test_training_seasons_filters_in_progress_and_blocks_unknown(monkeypatch, tmp_path):
     _reset_state()
     data = _data(seasons=range(2021, 2027))
@@ -188,6 +226,19 @@ def _reset_state():
         admin.STATE.active_profile = None
         admin.STATE.summary = {}
         admin.STATE.snapshot = None
+        admin.STATE.cancel_events.clear()
+        admin.STATE.future_performance = {
+            "status": "idle",
+            "stage": "Ready",
+            "progress": 0,
+            "message": "No Future Performance training run in progress.",
+            "error": None,
+            "started_at": None,
+            "finished_at": None,
+            "future_performance_version": None,
+            "feature_version": None,
+            "output": None,
+        }
         admin.STATE.prediction_calibration = {"status": "idle", "stage": "Ready", "progress": 0, "message": "No Prediction 1-100 calibration run in progress.", "error": None, "started_at": None, "finished_at": None, "output": None}
         admin.STATE.bb_rating = {
             "status": "idle",
@@ -211,6 +262,20 @@ def _reset_state():
             "started_at": None,
             "finished_at": None,
         }
+
+
+def test_model_release_buttons_use_node_list_and_cancel_jobs_are_exposed():
+    static = Path(admin.STATIC_ROOT)
+    js = (static / "app.js").read_text(encoding="utf-8")
+    future_js = (static / "future_performance_ui.js").read_text(encoding="utf-8")
+    assert "$('.release-promote').forEach" in js
+    assert "$('.release-rollback').forEach" in js
+    assert "$('.release-promote').forEach" not in js
+    assert "$('.release-rollback').forEach" not in js
+    assert "/admin-api/jobs/training/cancel" in js
+    assert "/admin-api/jobs/bb-rating/cancel" in js
+    assert "/admin-api/jobs/prediction-calibration/cancel" in js
+    assert "/admin-api/jobs/future-performance/cancel" in future_js
 
 
 def test_helpers_and_static_assets(monkeypatch, tmp_path):
