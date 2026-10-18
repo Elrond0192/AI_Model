@@ -47,6 +47,7 @@
           <button class="nav-item" data-page="training"><span class="nav-icon"><i class="ph ph-trend-up"></i></span><span>Training</span></button>
           <button class="nav-item" data-page="backtests"><span class="nav-icon"><i class="ph ph-chart-line-up"></i></span><span>Backtests</span></button>
           <button class="nav-item" data-page="registry"><span class="nav-icon"><i class="ph ph-cube"></i></span><span>Model Registry</span></button>
+          <button class="nav-item" data-page="model-releases"><span class="nav-icon"><i class="ph ph-git-branch"></i></span><span>Model Releases</span></button>
         </div>
         <div class="nav-group"><div class="nav-group-label">LAB</div>
           <button class="nav-item" data-page="scenarios"><span class="nav-icon"><i class="ph ph-flask"></i></span><span>Scenario Lab</span></button>
@@ -232,6 +233,19 @@
         <div class="panel-heading"><h2>Runtime warnings</h2></div>
         <div id="bb-rating-warnings" class="health-list"></div>
       </section>
+    </section>
+  </template>
+
+  <template id="page-model-releases">
+    <section class="page">
+      <div class="page-heading"><div><h1>Model Releases</h1><p>Candidate validation, promotion and rollback for calibration and auxiliary models. Promoting an artifact requires an inference API restart.</p></div><button id="model-releases-refresh" class="btn btn-secondary">Aggiorna</button></div>
+      <section class="panel"><div class="panel-heading"><div><h2>Prediction 1–100 calibration</h2><p class="microcopy">Maps the native Prediction Model output to a display scale. Does not retrain or modify the native model.</p></div><button id="prediction-calibration-start" class="btn btn-primary">Genera candidate</button></div><div id="prediction-calibration-job"></div><div id="prediction-calibration-release"></div></section>
+      <div class="split-grid">
+        <section class="panel"><div class="panel-heading"><h2>BB-Rating</h2></div><div id="release-bb-rating"></div><div class="button-row"><button class="btn btn-primary release-promote" data-model="bb-rating">Promuovi candidate</button><button class="btn btn-danger release-rollback" data-model="bb-rating">Rollback</button></div></section>
+        <section class="panel"><div class="panel-heading"><h2>Future Performance</h2></div><div id="release-future-performance"></div><div class="button-row"><button class="btn btn-primary release-promote" data-model="future-performance">Promuovi candidate</button><button class="btn btn-danger release-rollback" data-model="future-performance">Rollback</button></div></section>
+      </div>
+      <section class="panel"><div class="panel-heading"><h2>Prediction calibration release</h2></div><div class="button-row"><button class="btn btn-primary release-promote" data-model="prediction-calibration">Promuovi candidate</button><button class="btn btn-danger release-rollback" data-model="prediction-calibration">Rollback</button></div><p class="microcopy">La promozione sostituisce solo l'artefatto di calibrazione 1–100. Il modello nativo resta invariato.</p></section>
+      <section class="panel"><div class="panel-heading"><h2>Release operation result</h2></div><div id="model-release-result" class="microcopy">Nessuna operazione eseguita.</div></section>
     </section>
   </template>
 
