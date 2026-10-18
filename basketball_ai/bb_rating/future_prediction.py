@@ -18,6 +18,7 @@ from sklearn.isotonic import IsotonicRegression
 from sklearn.metrics import mean_absolute_error, mean_squared_error
 
 from basketball_ai.bb_rating.engine import BBRatingEngine
+from basketball_ai.bb_rating.competition_tiers import competition_tier
 from basketball_ai.bb_rating.prediction_scenarios import (
     BBRatingScenarioCalibrator,
     SCENARIO_UNKNOWN,
@@ -96,6 +97,7 @@ def _row_features(
     source_team: str | None,
     target_team: str | None,
     numeric_columns: list[str],
+    target_tier: Any = None,
 ) -> dict[str, Any]:
     result: dict[str, Any] = {}
     for column in numeric_columns:
@@ -111,12 +113,28 @@ def _row_features(
     result["source_competition"] = normalize_competition(row.get("competition"))
     result["source_position"] = _clean(row.get("position"))
     result["source_role"] = _clean(row.get("ruolo_combinato"))
+    result["source_tier"] = _clean(row.get("competition_tier"))
+    resolved_target_tier = target_tier
+    if resolved_target_tier is None or pd.isna(resolved_target_tier):
+        resolved_target_tier = competition_tier(str(target_league).strip().upper())
+    result["target_tier"] = _clean(resolved_target_tier)
+    try:
+        source_tier_num, target_tier_num = int(float(row.get("competition_tier"))), int(float(resolved_target_tier))
+        result["tier_transition"] = (
+            "up_tier" if target_tier_num < source_tier_num
+            else "down_tier" if target_tier_num > source_tier_num
+            else "same_tier"
+        )
+    except (TypeError, ValueError):
+        result["tier_transition"] = "unknown_tier"
     result["target_league"] = str(target_league).strip().upper()
     result["target_competition"] = normalize_competition(target_competition)
     result["scenario"] = classify_transition(
         source_team, target_team,
         _clean(row.get("league_key")) or _clean(row.get("league_id")),
         str(target_league).strip().upper(),
+        normalize_competition(row.get("competition")),
+        normalize_competition(target_competition),
     )
     return result
 
@@ -140,7 +158,8 @@ class BBRatingFuturePredictionModel:
         self.numeric_columns: list[str] = []
         self.categorical_columns = [
             "source_league", "source_competition", "source_position", "source_role",
-            "target_league", "target_competition", "scenario",
+            "target_league", "target_competition", "scenario", "source_tier",
+            "target_tier", "tier_transition",
         ]
         self.residual_intervals: dict[str, dict[str, float | int]] = {}
         self.metadata: dict[str, Any] = {}
@@ -215,6 +234,7 @@ class BBRatingFuturePredictionModel:
                             target_league=target_league, target_competition=target_comp,
                             source_team=source_team, target_team=target_team,
                             numeric_columns=self.numeric_columns,
+                            target_tier=target.get("competition_tier"),
                         )
                         records.append({
                             **features,
@@ -388,6 +408,7 @@ class BBRatingFuturePredictionModel:
             row, source_year=int(source_season), target_league=target_league,
             target_competition=target_competition, source_team=source_team,
             target_team=target_team_global_id, numeric_columns=self.numeric_columns,
+            target_tier=competition_tier(target_league),
         )
         features["target_season"] = int(source_season) + 1
         return self._predict_features(features)
