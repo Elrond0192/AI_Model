@@ -223,23 +223,19 @@ docker compose run --rm admin \
   --model-dir /app/models_saved
 ```
 
-After each ETL context completes, refresh only its serving partition:
+After the canonical ETL has committed all contexts for a season, refresh the
+training-serving tables and scenario aggregates for that entire season with the
+single public entry point:
 
 ```sql
-CALL "AI_Source"."RefreshContext"('ITA1', 2025, 'RS');
+CALL "AI_Source"."RefreshContextSeasonal"(2026);
 ```
 
-To refresh **all leagues and every competition found for one season** (for
-example all 2026 contexts), use the one-argument overload:
-
-```sql
-CALL "AI_Source"."RefreshContext"(2026);
-```
-
-It discovers distinct contexts from both `PlayerCompetitionStats` and
-`TeamCompetitionStats`, then refreshes the training-serving tables, scenario
-aggregates and `ServingRefreshState` for each context. The existing three-
-argument call remains available for a single league/season/competition.
+`RefreshContextSeasonal(season)` discovers distinct league/season/competition
+contexts from both `PlayerCompetitionStats` and `TeamCompetitionStats`, then
+refreshes training-serving tables, scenario aggregates and `ServingRefreshState`
+for every context in that season. There is intentionally no public
+single-context `RefreshContext` procedure.
 
 This procedure refreshes serving from the **current canonical AI_Source tables**;
 it does not rebuild those canonical tables from `Analisi.AdvancedStats_*`.
@@ -247,17 +243,16 @@ When those source statistics have changed and are not yet reflected in
 `PlayerCompetitionStats` / `TeamCompetitionStats`, rebuild/apply
 `ai_source_full.sql` after ETL and then run the yearly refresh.
 
-The same single-context hook is available to n8n/systemd/cron without embedding SQL:
+The same seasonal hook is available to n8n/systemd/cron without embedding SQL:
 
 ```bash
-python main.py --mode refresh-serving --database-profile production \
-  --league-key ITA1 --season 2025 --competition RS
+python main.py --mode refresh-serving --database-profile production --season 2026
 ```
 
-Run it after HoopmetricsEngine/AdvanceStats commits each changed context. Entity
-views reflect Anagrafiche changes immediately; create a new immutable snapshot
-after the daily ETL completes, and reload/restart the API so newly added
-players, teams and competitions enter the in-memory identity dictionaries.
+Run it after HoopmetricsEngine/AdvanceStats has committed all changed contexts
+for that season. Entity views reflect Anagrafiche changes immediately; create a
+new immutable snapshot after the daily ETL completes, and reload/restart the API
+so newly added players, teams and competitions enter the in-memory identity dictionaries.
 
 After the initial serving backfill, `POSTGRES_TRAINING_SOURCE=auto` lets the
 training/admin path select physical serving tables when both contain data and
