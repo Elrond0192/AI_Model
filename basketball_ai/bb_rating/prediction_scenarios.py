@@ -20,21 +20,44 @@ SCENARIO_TEAM_AND_LEAGUE_CHANGE = "team_and_league_change"
 SCENARIO_UNKNOWN = "unknown"
 
 
-def classify_transition(source_team_id: Any, target_team_id: Any,
-                        source_league_id: Any, target_league_id: Any) -> str:
-    """Classify same-team, team-change, league-change and combined transitions."""
+def classify_transition(
+    source_team_id: Any,
+    target_team_id: Any,
+    source_league_id: Any,
+    target_league_id: Any,
+    source_competition: Any = None,
+    target_competition: Any = None,
+) -> str:
+    """Classify team, league and competition transitions.
+
+    Omitting competition preserves the original four-class contract. Explicit
+    competition values distinguish regular-season/playoff/cup transitions.
+    Unknown team identity fails closed rather than assuming a same-team move.
+    """
     values = (source_team_id, target_team_id, source_league_id, target_league_id)
-    if any(value is None or pd.isna(value) for value in values):
+    if any(value is None or pd.isna(value) or str(value).strip() == "" for value in values):
         return SCENARIO_UNKNOWN
     same_team = str(source_team_id) == str(target_team_id)
-    same_league = str(source_league_id) == str(target_league_id)
+    same_league = str(source_league_id).strip().upper() == str(target_league_id).strip().upper()
+    competition_known = source_competition is not None and target_competition is not None
+    if competition_known:
+        same_competition = (
+            str(source_competition).strip().upper()
+            == str(target_competition).strip().upper()
+        )
+    else:
+        same_competition = True
     if same_team and same_league:
-        return SCENARIO_SAME_TEAM
-    if same_league:
-        return SCENARIO_TEAM_CHANGE
-    if same_team:
-        return SCENARIO_LEAGUE_CHANGE
-    return SCENARIO_TEAM_AND_LEAGUE_CHANGE
+        return SCENARIO_SAME_TEAM if same_competition else "competition_change_same_team_same_league"
+    if not same_team and same_league:
+        return SCENARIO_TEAM_CHANGE if same_competition else "team_and_competition_change_same_league"
+    if same_team and not same_league:
+        return SCENARIO_LEAGUE_CHANGE if same_competition else "league_and_competition_change_same_team"
+    return (
+        SCENARIO_TEAM_AND_LEAGUE_CHANGE
+        if same_competition
+        else "team_league_and_competition_change"
+    )
 
 
 @dataclass
