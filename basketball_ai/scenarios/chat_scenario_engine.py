@@ -2011,13 +2011,6 @@ class ChatScenarioEngine:
                                 if previous_bb_rating is not None and current_bb_rating is not None
                                 else None
                             ),
-                            "previous_rating": round(previous_rating, 3) if math.isfinite(previous_rating) else None,
-                            "current_rating": round(current_rating, 3) if math.isfinite(current_rating) else None,
-                            "rating_delta": (
-                                round(current_rating - previous_rating, 3)
-                                if math.isfinite(previous_rating) and math.isfinite(current_rating)
-                                else None
-                            ),
                             "previous_stats": {
                                 key: round(_finite(previous.get(key)), 2)
                                 for key in ("points", "assists", "rebounds", "minutes_per_game")
