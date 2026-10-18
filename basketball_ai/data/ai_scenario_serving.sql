@@ -366,8 +366,6 @@ BEGIN
             EXECUTE format(
                 'GRANT EXECUTE ON PROCEDURE "AI_Source"."RefreshScenarioServing"(text, integer, text),
                                          "AI_Source"."RefreshTrainingServing"(text, integer, text),
-                                         "AI_Source"."RefreshContext"(text, integer, text),
-                                         "AI_Source"."RefreshContext"(integer),
                                          "AI_Source"."RefreshContextSeasonal"(integer)
                  TO %I',
                 read_role
