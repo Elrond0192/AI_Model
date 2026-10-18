@@ -417,6 +417,14 @@ class BBRatingFuturePredictionModel:
             "oof_rmse_after_calibration": float(np.sqrt(mean_squared_error(
                 oof["observed_bb_rating"], calibrated_oof
             ))),
+            "oof_bias_after_calibration": float(np.mean(calibrated_oof - actual)),
+            "oof_calibration_error": float(abs(np.mean(calibrated_oof) - np.mean(actual))),
+            "oof_baseline_mae": mae_baseline,
+            "oof_baseline_rmse": float(np.sqrt(mean_squared_error(actual, baseline))),
+            "promotion_gate_passed": bool(mae_model < mae_baseline),
+            "promotion_gate": "calibrated_walk_forward_mae_must_beat_context_persistence_or_destination_baseline",
+            "scenario_metrics": by_scenario,
+            "destination_league_metrics": by_destination,
             "scenario_counts": {
                 str(k): int(v) for k, v in records["scenario"].value_counts().items()
             },
