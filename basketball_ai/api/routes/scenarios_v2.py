@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 # calibrated forecasts, but must never leak the statistical 0–10 rating.
 _PUBLIC_RAW_RATING_KEYS = {
     "rating", "current_rating", "previous_rating", "rating_delta",
-    "rating_change", "peak_rating", "historical_peak",
+    "rating_change", "predicted_rating_delta", "peak_rating", "historical_peak",
     "rating_trend_per_season", "trend_slope_per_season", "rating_mean",
     "rating_median", "rating_std", "recent_rating", "peak_premium",
     "change_vs_previous_season", "first_rating", "second_rating",
@@ -44,6 +44,14 @@ def _sanitize_public_scenario_payload(value):
     if isinstance(value, dict):
         metric_name = str(value.get("metric", "")).strip().lower()
         if metric_name in _PUBLIC_RAW_METRIC_NAMES:
+            return _DROP_PUBLIC_FIELD
+        if str(value.get("label", "")).strip().lower() in {
+            "meaningful_positive_change",
+            "meaningful_negative_change",
+            "limited_change",
+        }:
+            # These labels are derived from native prediction-vs-source-rating
+            # deltas; do not expose them without a calibrated comparable score.
             return _DROP_PUBLIC_FIELD
         sanitized = {}
         for key, item in value.items():
