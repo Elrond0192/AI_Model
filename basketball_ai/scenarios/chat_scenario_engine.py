@@ -1368,20 +1368,61 @@ class ChatScenarioEngine:
         del teams, target_league
         if not players:
             raise ValueError("player is required")
-        rows = self._player_rows(players[0], source_league, spec["competition"], int(spec["season"]))
+        rows = self._player_rows(
+            players[0], source_league, spec["competition"], int(spec["season"])
+        )
         if len(rows) < 2:
             raise ValueError("At least two observed seasons are required")
-        valid = rows[["rating","_year"]].copy()
-        valid["rating"] = pd.to_numeric(valid["rating"], errors="coerce")
-        valid = valid.dropna()
-        ratings, years = valid["rating"].to_numpy(float), valid["_year"].to_numpy(float)
-        slope = float(np.polyfit(years, ratings, 1)[0]) if len(ratings) > 1 and len(set(years)) > 1 else 0.0
-        std, median, peak, recent = float(np.std(ratings)), float(np.median(ratings)), float(np.max(ratings)), float(ratings[-1])
-        stability = float(np.clip(np.exp(-std/1.25) * min(1.0, len(ratings)/4.0), 0.0, 1.0))
-        return {"result": {"player": self._player_name(players[0]), "seasons": len(ratings), "rating_mean": round(float(np.mean(ratings)),3), "rating_median": round(median,3), "rating_std": round(std,3), "peak_rating": round(peak,3), "recent_rating": round(recent,3), "trend_slope_per_season": round(slope,4), "peak_premium": round(peak-median,3), "stability_score": round(stability,3)},
-                "evidence": [{"type":"rating_history","count":len(ratings)}],
-                "support": {"method":"historical_dispersion_and_trend","samples":len(ratings),"confidence":_confidence(len(ratings)*6)},
-                "limitations":["The stability score is a descriptive index, not a probability of future consistency."]}
+        player_meta = self.data.get("player_dict", {}).get(_to_int(players[0]), {})
+        global_id = str(player_meta.get("global_id", "")).strip() if isinstance(player_meta, dict) else ""
+        years, scores = [], []
+        for raw_year in rows["_year"].tolist():
+            try:
+                year = int(raw_year)
+            except (TypeError, ValueError):
+                continue
+            score = self._bb_rating_for_season(
+                global_id, source_league, year, normalize_competition(spec["competition"])
+            )
+            if score is not None:
+                years.append(year)
+                scores.append(float(score))
+        if len(scores) < 2:
+            raise ValueError("Historical BB-Rating is unavailable for at least two seasons")
+        ratings = np.asarray(scores, dtype=float)
+        years_array = np.asarray(years, dtype=float)
+        slope = (
+            float(np.polyfit(years_array, ratings, 1)[0])
+            if len(ratings) > 1 and len(set(years)) > 1 else 0.0
+        )
+        std = float(np.std(ratings))
+        median = float(np.median(ratings))
+        peak = float(np.max(ratings))
+        recent = float(ratings[-1])
+        stability = float(np.clip(np.exp(-std / 25.0) * min(1.0, len(ratings) / 4.0), 0.0, 1.0))
+        return {
+            "result": {
+                "player": self._player_name(players[0]),
+                "seasons": len(ratings),
+                "bb_rating_mean": round(float(np.mean(ratings)), 1),
+                "bb_rating_median": round(median, 1),
+                "bb_rating_std": round(std, 2),
+                "peak_bb_rating": round(peak, 1),
+                "recent_bb_rating": round(recent, 1),
+                "bb_rating_trend_slope_per_season": round(slope, 2),
+                "peak_premium_bb_rating": round(peak - median, 1),
+                "stability_score": round(stability, 3),
+            },
+            "evidence": [{"type": "bb_rating_history", "count": len(ratings)}],
+            "support": {
+                "method": "historical_bb_rating_dispersion_and_trend",
+                "samples": len(ratings),
+                "confidence": _confidence(len(ratings) * 6),
+            },
+            "limitations": [
+                "La stabilità è un indice descrittivo della traiettoria BB-Rating, non una probabilità di rendimento futuro."
+            ],
+        }
 
     def _team_usage_analysis(self, spec, players, teams, source_league, target_league):
         del target_league
@@ -1404,13 +1445,44 @@ class ChatScenarioEngine:
 
     def _regression_risk(self, spec, players, teams, source_league, target_league):
         stability = self._performance_stability(spec, players, teams, source_league, target_league)
-        r = stability["result"]; deviation = r["recent_rating"]-r["rating_median"]; peak_gap = r["recent_rating"]-r["peak_rating"]
-        risk = float(np.clip(.40*max(0.0,deviation)/2.0 + .35*(1.0-r["stability_score"]) + .25*max(0.0,-peak_gap)/1.5,0,1))
+        r = stability["result"]
+        deviation = r["recent_bb_rating"] - r["bb_rating_median"]
+        peak_gap = r["recent_bb_rating"] - r["peak_bb_rating"]
+        risk = float(np.clip(
+            .40 * max(0.0, deviation) / 20.0
+            + .35 * (1.0 - r["stability_score"])
+            + .25 * max(0.0, -peak_gap) / 25.0,
+            0.0,
+            1.0,
+        ))
         level = "high" if risk >= .65 else "moderate" if risk >= .35 else "low"
-        drivers=[x for x in ["recent rating above historical baseline" if deviation>.5 else None, "historical dispersion" if r["rating_std"]>.75 else None, "recent level below historical peak" if peak_gap<-.5 else None] if x]
-        return {"result":{"player":r["player"],"risk_level":level,"risk_index":round(risk,3),"recent_vs_median":round(deviation,3),"recent_vs_peak":round(peak_gap,3),"stability_score":r["stability_score"],"drivers":drivers},
-                "evidence":stability["evidence"],"support":{"method":"descriptive_regression_risk_index","samples":stability["support"]["samples"],"confidence":stability["support"]["confidence"]},
-                "limitations":["This is not a calibrated probability of regression and does not replace Prediction Model."]}
+        drivers = [
+            item for item in [
+                "BB-Rating recente sopra la mediana storica" if deviation > 5 else None,
+                "dispersione storica del BB-Rating" if r["bb_rating_std"] > 10 else None,
+                "BB-Rating recente sotto il massimo storico" if peak_gap < -5 else None,
+            ] if item
+        ]
+        return {
+            "result": {
+                "player": r["player"],
+                "risk_level": level,
+                "risk_index": round(risk, 3),
+                "recent_vs_median_bb_rating": round(deviation, 1),
+                "recent_vs_peak_bb_rating": round(peak_gap, 1),
+                "stability_score": r["stability_score"],
+                "drivers": drivers,
+            },
+            "evidence": stability["evidence"],
+            "support": {
+                "method": "descriptive_bb_rating_regression_risk_index",
+                "samples": stability["support"]["samples"],
+                "confidence": stability["support"]["confidence"],
+            },
+            "limitations": [
+                "È un indice descrittivo basato sulla traiettoria BB-Rating, non una probabilità calibrata di regressione; non sostituisce il Prediction Model."
+            ],
+        }
 
     def _potential_synthesis(self, spec, players, teams, source_league, target_league):
         del target_league
