@@ -278,85 +278,20 @@ def _performance_vs_expectation(
     expected_low_100: Optional[float],
     expected_high_100: Optional[float],
 ) -> PerformanceVsExpectationV2:
-    if expected_rating_100 is None:
-        return PerformanceVsExpectationV2(
-            available=False,
-            target_season=int(target_season),
-            competition=competition,
-            explanation="Prediction display calibration is unavailable.",
-        )
-
-    rating_engine = getattr(request.app.state, "bb_rating_engine", None)
-    if rating_engine is None:
-        return PerformanceVsExpectationV2(
-            available=False,
-            target_season=int(target_season),
-            competition=competition,
-            expected_rating_100=float(expected_rating_100),
-            expected_low_100=expected_low_100,
-            expected_high_100=expected_high_100,
-            explanation="BB-Rating engine is unavailable for the target season.",
-        )
-
-    try:
-        actual = rating_engine.rate_player(
-            player_global_id,
-            league=league,
-            season=int(target_season),
-            phase=competition,
-        )
-    except (ValueError, RuntimeError):
-        return PerformanceVsExpectationV2(
-            available=False,
-            target_season=int(target_season),
-            competition=competition,
-            expected_rating_100=float(expected_rating_100),
-            expected_low_100=expected_low_100,
-            expected_high_100=expected_high_100,
-            explanation="No BB-Rating observation is available for the target season.",
-        )
-
-    actual_rating = float(actual.score)
-    delta = actual_rating - float(expected_rating_100)
-
-    if (
-        expected_high_100 is not None
-        and actual_rating > float(expected_high_100)
-    ):
-        assessment = "above_expectations"
-        explanation = (
-            "Actual BB-Rating is above the Prediction Model's expected range."
-        )
-    elif (
-        expected_low_100 is not None
-        and actual_rating < float(expected_low_100)
-    ):
-        assessment = "below_expectations"
-        explanation = (
-            "Actual BB-Rating is below the Prediction Model's expected range."
-        )
-    else:
-        assessment = "within_expectations"
-        explanation = (
-            "Actual BB-Rating falls inside the Prediction Model's expected range."
-        )
-
-    coverage = getattr(actual, "metric_coverage", None)
+    # Current Prediction calibration is fitted against the source-statistical
+    # rating target, while actual BB-Rating is a separate context-normalized
+    # engine output. Both may use a 1-100 display scale, but comparing them does
+    # not establish over/under-performance. Fail closed until a calibration
+    # release trained against observed BB-Rating provides a compatible target.
     return PerformanceVsExpectationV2(
-        available=True,
+        available=False,
         target_season=int(target_season),
         competition=competition,
-        expected_rating_100=float(expected_rating_100),
-        actual_rating_100=actual_rating,
-        delta_rating_points=float(delta),
-        expected_low_100=expected_low_100,
-        expected_high_100=expected_high_100,
-        assessment=assessment,
-        actual_quality=getattr(actual, "quality", None),
-        actual_metric_coverage=(
-            float(coverage) if coverage is not None else None
+        explanation=(
+            "Il punteggio previsto calibrato non è direttamente confrontabile "
+            "con il BB-Rating osservato. Il confronto rispetto alle attese sarà "
+            "disponibile quando la calibrazione userà lo stesso obiettivo BB-Rating."
         ),
-        explanation=explanation,
     )
 
 
@@ -484,10 +419,7 @@ async def player_team(body: PlayerTeamPredictionRequestV2, request: Request):
         season=body.season,
         competition=competition,
         target_season=body.season + 1,
-        predicted_rating=result.predicted_rating,
         predicted_rating_100=predicted_rating_100,
-        confidence_low=result.confidence_low,
-        confidence_high=result.confidence_high,
         confidence_low_100=confidence_low_100,
         confidence_high_100=confidence_high_100,
         prediction_calibration_version=calibration_version,
