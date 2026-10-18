@@ -6,6 +6,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ---
 
 ## [Unreleased]
+### Fixed
+- Fixed Model Releases promotion and rollback button binding: operate on the full
+  button collection, and submit the exact validated candidate ID shown in the UI.
+- Populate release cutoff/season metadata from the schema used by BB-Rating and
+  Future Performance artifacts.
+
+### Added
+- Model Center cancellation for Prediction training, BB-Rating calibration,
+  Future Performance training and Prediction 1–100 calibration. Cancellation
+  is cooperative at safe checkpoints; incomplete candidates are removed and
+  production artifacts remain unchanged.
+
 ### Documentation
 - Repository-wide Markdown audit: corrected the PostgreSQL installation order, replaced the obsolete `PlayerStats` references with the competition-preserving `PlayerCompetitionStats` contract, documented the current API route families and health/restart behavior, refreshed the first-prediction tutorial and architecture overview, and added the referenced WordPress/Chat V3 integration guide.
 ### Added
