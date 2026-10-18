@@ -1784,7 +1784,7 @@ def start_prediction_calibration(user: dict[str, str] = Depends(_csrf)) -> dict[
 @app.get("/admin-api/model-releases")
 def model_releases(user: dict[str, str] = Depends(_operator)) -> dict[str, Any]:
     del user
-    return {"models": {model: inspect_model(MODEL_ROOT, model) for model in ("prediction-calibration", "bb-rating", "future-performance")}, "note": "Promotions affect files on disk; restart the inference API before expecting in-memory serving to change."}
+    return {"models": {model: inspect_model(MODEL_ROOT, model) for model in ("prediction-calibration", "bb-rating", "future-performance")}, "prediction_model_registry": _registry(), "note": "Promotions affect files on disk; restart the inference API before expecting in-memory serving to change."}
 
 
 @app.post("/admin-api/model-releases/{model}/promote")
