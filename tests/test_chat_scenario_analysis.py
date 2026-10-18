@@ -248,7 +248,7 @@ def test_player_intelligence_orchestrates_question_layers():
     )
     assert result["result"]["question_key"] == "why_performing"
     assert set(result["result"]["analyses"]) == {"performance_decomposition", "metric_explanation", "model_evidence"}
-    assert result["result"]["answer_mode"] == "evidence_composition"
+    assert result["result"]["answer_mode"] == "contextual_synthesis"
 
 
 def test_player_intelligence_composes_performance_attribution_bundle():
