@@ -155,8 +155,11 @@ def test_prediction_model_uses_loaded_calibration_and_hides_native_rating():
     assert prediction["predicted_rating_100"] == pytest.approx(72.8)
     assert prediction["confidence_low_100"] == pytest.approx(68.3)
     assert prediction["confidence_high_100"] == pytest.approx(77.2)
-    assert prediction["current_bb_rating"] == 65
-    assert prediction["delta_vs_current_bb_rating"] == pytest.approx(7.8)
+    assert "punteggio previsionale calibrato" in prediction["interpretation"]
+    assert "non è il BB-Rating contestuale osservato" in prediction["interpretation"]
+    assert "current_bb_rating" not in prediction
+    assert "delta_vs_current_bb_rating" not in prediction
+    assert result["bb_rating"]["score"] == 65
     assert "predicted_rating" not in prediction
     assert "confidence_low" not in prediction
     assert "confidence_high" not in prediction
