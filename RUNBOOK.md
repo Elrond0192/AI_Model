@@ -16,6 +16,8 @@ The admin console is a custom FastAPI + HTML/CSS/JS application; Streamlit is no
 psql -d YOUR_DATABASE -f basketball_ai/data/ai_source_full.sql
 psql -d YOUR_DATABASE -f basketball_ai/data/ai_scenario_serving.sql
 psql -d YOUR_DATABASE -f basketball_ai/data/ai_schema.sql
+# Optional, required when Metric Rating is enabled:
+psql -d YOUR_DATABASE -f basketball_ai/data/ai_metric_schema.sql
 ```
 
 `ai_source_full.sql` builds the canonical entity/statistics source contract. `ai_scenario_serving.sql` installs the indexed training/scenario serving tables and refresh procedures. `ai_schema.sql` installs the model-owned prediction outputs. Apply them in that order; reapply the relevant contract after schema/code changes.
