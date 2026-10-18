@@ -208,11 +208,12 @@ def test_public_scenario_payload_suppresses_raw_rating_and_preserves_canonical_s
     assert forecast["confidence_low_100"] == 68.3
     assert forecast["confidence_high_100"] == 77.2
     assert "target_season" in forecast
-    for forbidden in (
-        "previous_rating", "current_rating", "rating_delta", "predicted_rating'",
-        "confidence_low'", "confidence_high'", "'metric': 'rating'",
+    for forbidden_key in (
+        "previous_rating", "current_rating", "rating_delta", "predicted_rating",
+        "confidence_low", "confidence_high",
     ):
-        assert forbidden not in encoded
+        assert f"'{forbidden_key}':" not in encoded
+    assert "'metric': 'rating'" not in encoded
 
 
 def test_team_competition_compares_playoffs_to_regular_season():
