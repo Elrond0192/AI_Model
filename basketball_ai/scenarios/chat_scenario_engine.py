@@ -1474,7 +1474,9 @@ class ChatScenarioEngine:
             for value in (spec.get("parameters", {}) or {}).get("question_keys", [])
             if str(value).strip()
         ]
-        current_level_only = "current_level" in requested_keys or not requested_keys
+        forward_requested = bool(
+            {"potential", "regression_risk", "team_counterfactual"} & set(requested_keys)
+        )
 
         if self.bb_rating_engine is not None:
             try:
@@ -1508,7 +1510,7 @@ class ChatScenarioEngine:
                 result["bb_rating"]["reason"] = str(exc)
                 result["bb_rating_uncertainty"]["reason"] = "bb_rating_unavailable"
 
-        if self.future_performance_model is not None and not current_level_only:
+        if self.future_performance_model is not None and forward_requested:
             try:
                 future = self.future_performance_model.predict_player(
                     self.data,
@@ -1605,7 +1607,7 @@ class ChatScenarioEngine:
 
         # Prediction Model is also forward-looking for Chat V3 purposes;
         # keep it out of a generic/current Player Intelligence answer.
-        if current_level_only:
+        if not forward_requested:
             return result
 
         # Prediction Model: observed current-team context, not a future-team counterfactual.
