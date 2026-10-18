@@ -82,6 +82,7 @@ async def evaluate_scenario(body: ScenarioRequestV2, request: Request):
             scenario_data,
             bb_rating_engine=getattr(request.app.state, "bb_rating_engine", None),
             bb_rating_uncertainty=getattr(request.app.state, "bb_rating_uncertainty", None),
+            prediction_calibration=getattr(request.app.state, "prediction_calibration", None),
             future_performance_model=getattr(request.app.state, "future_performance_model", None),
         )
         payload = engine.evaluate(
