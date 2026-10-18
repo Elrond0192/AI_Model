@@ -49,6 +49,8 @@ def _synthetic_data():
             team_stats.append({
                 "team_id": team_id, "league_id": 1, "season": season,
                 "competition": "RS", "global_id": f"TEAM{team_id}",
+                "pace": 70 + season - 2020, "offensive_rating": 105 + team_id,
+                "defensive_rating": 108 - team_id, "three_point_attempt_rate": 0.35,
             })
     return {
         "players": pd.DataFrame(players),
@@ -80,6 +82,7 @@ def test_direct_bb_rating_model_trains_oof_predicts_and_roundtrips(tmp_path):
     assert metadata["target"] == "official_bb_rating_t_plus_1"
     assert metadata["target_scale"] == [1, 100]
     assert metadata["oof_samples"] >= 20
+    assert "target_team__pace" in model.feature_columns
     assert metadata["oof_mae_after_calibration"] >= 0
 
     prediction = model.predict_from_data(
