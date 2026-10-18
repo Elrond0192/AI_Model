@@ -488,6 +488,8 @@ class BBRatingFuturePredictionModel:
             "calibration_samples": int(calibrated["calibration_samples"]),
             "interval_samples": int(interval["n"]),
             "scenario": scenario,
+            "source_bb_rating": round(float(features["source_bb_rating"]), 1) if pd.notna(features.get("source_bb_rating")) else None,
+            "bb_rating_version": BB_RATING_VERSION,
             "source_league": features.get("source_league"),
             "source_competition": features.get("source_competition"),
             "target_league": league,
