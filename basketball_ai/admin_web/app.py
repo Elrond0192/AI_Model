@@ -2005,7 +2005,7 @@ def start_bb_rating_calibration(user: dict[str, str] = Depends(_csrf)) -> dict[s
     with STATE.lock:
         job = dict(STATE.bb_rating)
         active_profile = STATE.active_profile
-    if job.get("status") == "running":
+    if job.get("status") in {"running", "queued"}:
         raise HTTPException(status_code=409, detail="BB-Rating calibration already running")
     if not active_profile:
         raise HTTPException(status_code=400, detail="Seleziona prima un profilo PostgreSQL")
