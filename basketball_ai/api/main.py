@@ -361,6 +361,7 @@ async def lifespan(app: FastAPI):
     app.state.metric_distributions = app_state.get("metric_distributions", [])
     app.state.bb_rating_engine = app_state.get("bb_rating_engine")
     app.state.bb_rating_uncertainty = app_state.get("bb_rating_uncertainty")
+    app.state.prediction_calibration = app_state.get("prediction_calibration")
     app.state.future_performance_model = app_state.get("future_performance_model")
     app.state.model_metadata = _model_metadata(os.environ.get("MODEL_DIR", "models_saved"))
 
