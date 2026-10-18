@@ -1236,12 +1236,15 @@ def _markdown(report: dict[str, Any]) -> str:
         "|---|---:|---:|---:|---:|---:|",
     ]
     for model in uncertainty["models"]:
+        coverage = model["coverage"]
+        p50_coverage = "—" if coverage["p50"] is None else f"{coverage['p50']:.1%}"
+        p75_coverage = "—" if coverage["p75"] is None else f"{coverage['p75']:.1%}"
+        p90_coverage = "—" if coverage["p90"] is None else f"{coverage['p90']:.1%}"
+        width = model["mean_interval_width_p90"]
+        width_text = "—" if width is None else f"{width:.2f}"
         lines.append(
             f"| {model['model']} | {model['n_oos']} | "
-            f"{'—' if model['coverage']['p50'] is None else f'{model['coverage']['p50']:.1%}'} | "
-            f"{'—' if model['coverage']['p75'] is None else f'{model['coverage']['p75']:.1%}'} | "
-            f"{'—' if model['coverage']['p90'] is None else f'{model['coverage']['p90']:.1%}'} | "
-            f"{'—' if model['mean_interval_width_p90'] is None else f'{model['mean_interval_width_p90']:.2f}'} |"
+            f"{p50_coverage} | {p75_coverage} | {p90_coverage} | {width_text} |"
         )
 
     selected = uncertainty["selected_structure"]
