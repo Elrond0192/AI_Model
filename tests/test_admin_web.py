@@ -372,7 +372,8 @@ def test_helpers_and_static_assets(monkeypatch, tmp_path):
     html = (admin.STATIC_ROOT / "index.html").read_text(encoding="utf-8")
     css = (admin.STATIC_ROOT / "app.css").read_text(encoding="utf-8")
     js = (admin.STATIC_ROOT / "app.js").read_text(encoding="utf-8")
-    assert "Operational readiness" in html
+    assert "Attività modello" in html
+    assert "Salute del sistema" in html
     assert "Come funziona" in html
     assert "Prepara storico modello" in html
     assert "Dati e snapshot" in html
@@ -383,6 +384,11 @@ def test_helpers_and_static_assets(monkeypatch, tmp_path):
     assert "Model Releases" in html
     assert "bb-rating-prediction" in js
     assert "Prediction 1–100 calibration" not in html
+    # DOM iteration must use $ (querySelectorAll), not $ (querySelector).
+    assert "$('.admin-only',root).forEach" in js
+    assert "$('.jump',root).forEach" in js
+    assert "$('.admin-only',root).forEach" not in js
+    assert "$('.jump',root).forEach" not in js
     assert "Native Prediction Model (0–10)" not in html
     assert "data-model=\"prediction\"" not in html
     assert "renderModelReleases" in js
