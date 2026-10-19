@@ -373,7 +373,10 @@ def test_helpers_and_static_assets(monkeypatch, tmp_path):
     assert "Come funziona" in html
     assert "Prepara storico modello" in html
     assert "Dati e snapshot" in html
-    assert "Model Registry" in html
+    assert "Model Registry" not in html
+    assert 'id="page-training"' not in html
+    assert 'id="page-backtests"' not in html
+    assert 'id="page-registry"' not in html
     assert "Model Releases" in html
     assert "bb-rating-prediction" in js
     assert "Prediction 1–100 calibration" not in html
