@@ -2198,8 +2198,8 @@ async def api_health(user: dict[str, str] = Depends(_operator)) -> dict[str, Any
         asyncio.to_thread(_probe, "/health"),
     )
     bb_body = bb.get("body") if isinstance(bb.get("body"), dict) else {}
-    status = _bb_rating_status()
-    future_status = _future_performance_status()
+    status = _bb_rating_status() or {}
+    future_status = _future_performance_status() or {}
     return {
         "base_url": API_BASE_URL,
         "live": live,
@@ -2230,7 +2230,6 @@ async def api_health(user: dict[str, str] = Depends(_operator)) -> dict[str, Any
             "GET /health/ready",
             "GET /health",
             "POST /api/v2/bb-rating/player",
-            "POST /api/v2/bb-rating-prediction/player",
             "POST /api/v2/bb-rating-prediction/player",
             "POST /api/v2/future-performance/player",
             "POST /api/v2/scenarios/evaluate",
