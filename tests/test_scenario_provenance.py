@@ -63,3 +63,60 @@ def test_observed_analysis_does_not_claim_validation_for_sample_count_alone():
     assert provenance["context_season"] == 2024
     assert provenance["validation_status"] == "not_applicable"
     assert provenance["sample_count"] == 3
+
+
+def test_unvalidated_method_name_never_becomes_a_validation_pass():
+    provenance = build_scenario_provenance(
+        "team_add_player",
+        {
+            "scenario": "team_add_player",
+            "season": 2025,
+            "parameters": {"player_season": 2024, "team_context_season": 2025, "target_season": 2026},
+        },
+        {
+            "result": {
+                "source_season": 2024,
+                "team_context_season": 2025,
+                "target_season": 2026,
+                "acquisition_impact_status": "uncalibrated",
+                "applied_player_context": {
+                    "minutes_per_game": 28.0,
+                    "usg_pct": 0.24,
+                    "role": "starter",
+                    "unapproved_internal": "must not pass",
+                },
+            },
+            "evidence": [{"type": "historical_roster_transitions", "count": 12}],
+            "support": {
+                "method": "acquisition_impact_not_validated",
+                "samples": 12,
+                "confidence": "low",
+            },
+            "limitations": [],
+        },
+    )
+
+    assert provenance["validation_status"] == "uncalibrated"
+    assert provenance["confidence_is_probability"] is False
+    assert provenance["applied_inputs"] == {
+        "minutes_per_game": 28.0,
+        "usg_pct": 0.24,
+        "role": "starter",
+    }
+    assert "unapproved_internal" not in provenance["applied_inputs"]
+
+
+def test_validation_status_is_not_inferred_from_ambiguous_method_names():
+    provenance = build_scenario_provenance(
+        "player_team",
+        {"scenario": "player_team", "season": 2024, "parameters": {}},
+        {
+            "result": {"source_season": 2023, "target_season": 2025},
+            "evidence": [{"type": "historical_counterfactual"}],
+            "support": {"method": "strict_supervised_historical_counterfactual", "samples": 6, "confidence": "medium"},
+            "limitations": [],
+        },
+    )
+
+    assert provenance["validation_status"] == "not_reported"
+    assert provenance["confidence_is_probability"] is False
