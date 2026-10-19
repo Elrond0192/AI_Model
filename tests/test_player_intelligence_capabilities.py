@@ -38,4 +38,4 @@ def test_registry_is_metadata_only():
     assert capability.status == "available"
     assert "player_team" in capability.analyses
     assert "league_transfer" in capability.analyses
-    assert capability.limitation and "non un effet causale" in capability.limitation
+    assert capability.limitation and "non un effetto causale" in capability.limitation
