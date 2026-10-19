@@ -359,7 +359,11 @@ def fit_acquisition_impact_model(
 
     validation: dict[str, Any] = {
         "samples": len(out_of_time),
-        "seasons": len({int(row["season"]) for row in out_of_time}),
+        "seasons": len(all_oof_seasons),
+        "supported_target_seasons": supported_oof_seasons,
+        "under_supported_target_seasons": under_supported_oof_seasons,
+        "minimum_samples_per_target_season": MIN_WALK_FORWARD_SAMPLES_PER_SEASON,
+        "minimum_supported_target_seasons": MIN_WALK_FORWARD_SEASONS,
     }
     cohort_regressions: list[int] = []
     if out_of_time:
