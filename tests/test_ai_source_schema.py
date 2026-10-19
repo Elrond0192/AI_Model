@@ -102,7 +102,7 @@ def test_ai_source_onoff_matches_native_player_team_id():
     assert "pg_temp.ai_id_key(%15$s)" in sql
     assert "                comp_expr,\n                team_local_expr\n            );" in sql
     assert "onoff_team_source_expr" not in sql
-    assert "array['player', 'id', 'playerid', 'idplayer']" in sql
+    assert "array['player','id','playerid','idplayer']" in "".join(sql.split())
     assert "array['gamesstarted', 'games_started', 'starts']" in sql
     assert "array['games', 'gamesplayed']" in sql
     assert "least(1.0, greatest(0.0, coalesce(%2$s, 0) / %1$s))" in sql
