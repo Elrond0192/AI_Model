@@ -113,10 +113,8 @@ async function renderOverview(){
   const bbJob=bbStatus.job||{};
   const futureJob=futureStatus.job||{};
   const readyCount=[!!bb.ready,!!fp.ready,!!modelPrediction.loaded].filter(Boolean).length;
-  const allReady=!!(o.api?.online&&o.data_loaded&&bb.ready&&modelPrediction.loaded);
-  const dot=$('#overview-system-dot');
+  const allReady=!!(o.api?.online&&o.data_loaded&&bb.ready&&modelPrediction.loaded&&fp.ready);
   const status=$('#overview-system-status');
-  if(dot)dot.className='hero-status-dot '+(allReady?'online':'warning');
   if(status)status.textContent=allReady?'TUTTI I SISTEMI OPERATIVI':'ATTENZIONE: VERIFICA RICHIESTA';
   const detail=$('#overview-system-detail');
   if(detail)detail.textContent=allReady
