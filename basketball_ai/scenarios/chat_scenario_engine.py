@@ -2749,7 +2749,13 @@ class ChatScenarioEngine:
         replaced = min(top, key=lambda item: item[1])
         after_values = [rating for pid, rating in top if pid != replaced[0]] + [incoming]
         after = float(np.mean(after_values))
-        roster_size = self._team_roster_size(teams[0], target_league, competition, season) or int(len({pid for pid, _ in rotation}))
+        observed_roster_size = self._team_roster_size(teams[0], target_league, competition, season)
+        roster_size = observed_roster_size or int(len({pid for pid, _ in rotation}))
+        roster_size_source = (
+            "team_player_relations"
+            if observed_roster_size > 0
+            else "observed_rotation_stats_fallback"
+        )
         forecast = self._team_acquisition_forecast(
             teams[0], target_league, competition, season,
             rotation_quality_delta=after - before, roster_size=roster_size,
@@ -2809,6 +2815,17 @@ class ChatScenarioEngine:
                         projection["analysis"]["result"].get("applied_player_context", {})
                     ),
                     "injuries_contracts_salary_inferred": False,
+                },
+                "roster_modeling": {
+                    "roster_size": int(roster_size),
+                    "roster_size_source": roster_size_source,
+                    "observed_rotation_players": int(len(rotation)),
+                    "modeled_core_rotation_players": int(len(top)),
+                    "core_rotation_rule": "top_eight_observed_rotation_players",
+                    "injuries_or_availability": "not_modeled",
+                    "contracts_and_salary": "not_modeled",
+                    "coach_rotation_and_guaranteed_minutes": "not_modeled",
+                    "lineup_complementarity": "not_modeled",
                 },
             },
             "evidence": [
@@ -2905,6 +2922,7 @@ class ChatScenarioEngine:
                 & (relation_year == season)
             ]
             roster_size = int(selected["player_id"].map(_to_int).dropna().nunique())
+        roster_size_source = "team_player_relations" if roster_size > 0 else "observed_rotation_stats_fallback"
         if roster_size == 0:
             roster_size = int(len({pid for pid, _ in rotation}))
         forecast = self._team_acquisition_forecast(
@@ -2962,6 +2980,17 @@ class ChatScenarioEngine:
                         projection["analysis"]["result"].get("applied_player_context", {})
                     ),
                     "injuries_contracts_salary_inferred": False,
+                },
+                "roster_modeling": {
+                    "roster_size": int(roster_size),
+                    "roster_size_source": roster_size_source,
+                    "observed_rotation_players": int(len(rotation)),
+                    "modeled_core_rotation_players": int(len(top)),
+                    "core_rotation_rule": "top_eight_observed_rotation_players",
+                    "injuries_or_availability": "not_modeled",
+                    "contracts_and_salary": "not_modeled",
+                    "coach_rotation_and_guaranteed_minutes": "not_modeled",
+                    "lineup_complementarity": "not_modeled",
                 },
             },
             "evidence": [
