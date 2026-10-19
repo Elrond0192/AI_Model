@@ -126,3 +126,69 @@ def test_destination_team_context_uses_only_information_as_of_source_season():
     )
     assert context["target_team__pace"] == pytest.approx(72.0)
     assert context["target_team_context_seasons_ago"] == pytest.approx(0.0)
+
+
+def test_bad_transfer_segment_uses_context_baseline_fallback():
+    import numpy as np
+
+    class _ConstantModel:
+        def predict(self, _encoded):
+            return np.asarray([80.0])
+
+    class _ConstantCalibrator:
+        def predict(self, _score, *, scenario, target_league_id):
+            return {
+                "predicted_bb_rating": 75.0,
+                "calibration_level": "destination_league+scenario",
+                "calibration_samples": 500,
+                "scenario": scenario,
+                "target_league_id": target_league_id,
+            }
+
+    model = BBRatingFuturePredictionModel()
+    model.is_trained = True
+    model.model = _ConstantModel()
+    model.calibrator = _ConstantCalibrator()
+    model.feature_columns = []
+    model.residual_intervals = {
+        "global": {"n": 100, "low": -10.0, "high": 10.0},
+        "LIT1::team_league_and_competition_change_same_tier": {
+            "n": 100, "low": -12.0, "high": 12.0,
+        },
+    }
+    model.baseline_means = {
+        "by_league_competition": {"LIT1::RS": 51.0},
+        "by_league": {"LIT1": 52.0},
+        "global": 50.0,
+    }
+    model.scenario_fallback_policy = {
+        "minimum_samples": 40,
+        "group_dimensions": {
+            "source_destination_scenario": {
+                "EC=>LIT1::team_league_and_competition_change_same_tier": {
+                    "n": 418, "mae": 23.1, "baseline_mae": 14.9,
+                    "allowed_mae": 16.6, "use_model": False,
+                },
+            },
+            "destination_league_scenario": {},
+            "scenario": {},
+            "source_league": {},
+            "destination_league": {},
+        },
+        "unknown_scenario_always_fallback": True,
+        "unvalidated_cross_context_fallback": True,
+    }
+
+    prediction = model._predict_features({
+        "source_league": "EC",
+        "source_competition": "RS",
+        "target_league": "LIT1",
+        "target_competition": "RS",
+        "scenario": "team_league_and_competition_change_same_tier",
+        "source_bb_rating": 74.0,
+    })
+
+    assert prediction["predicted_bb_rating"] == pytest.approx(51.0)
+    assert prediction["baseline_bb_rating"] == pytest.approx(51.0)
+    assert prediction["prediction_method"] == "context_baseline_fallback"
+    assert prediction["fallback_reason"] == "validation_gate_failed:source_destination_scenario"

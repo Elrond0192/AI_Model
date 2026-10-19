@@ -26,7 +26,7 @@ from basketball_ai.bb_rating.prediction_scenarios import (
 from basketball_ai.models.competition_training import normalize_competition
 from basketball_ai.models.production_training import _numeric_seasons
 
-MODEL_VERSION = "1.0.0"
+MODEL_VERSION = "1.1.0"
 FEATURE_VERSION = "bb-rating-direct-target-v2"
 _TEAM_NUMERIC_COLUMNS = (
     "pace", "offensive_rating", "defensive_rating", "net_rating",
@@ -235,6 +235,182 @@ def _encode(frame: pd.DataFrame, categorical: list[str], columns: list[str] | No
     return encoded.fillna(0.0).astype(float)
 
 
+_POLICY_DIMENSIONS: dict[str, tuple[str, ...]] = {
+    "source_destination_scenario": ("source_league", "target_league", "scenario"),
+    "destination_league_scenario": ("target_league", "scenario"),
+    "scenario": ("scenario",),
+    "source_league": ("source_league",),
+    "destination_league": ("target_league",),
+}
+_POLICY_DIMENSION_ORDER = (
+    "source_destination_scenario",
+    "destination_league_scenario",
+    "scenario",
+    "source_league",
+    "destination_league",
+)
+
+
+def _row_policy_keys(row: Any) -> dict[str, str]:
+    source = _clean(row.get("source_league")).upper()
+    destination = _clean(row.get("target_league")).upper()
+    scenario = _clean(row.get("scenario")) or SCENARIO_UNKNOWN
+    return {
+        "source_destination_scenario": f"{source}=>{destination}::{scenario}",
+        "destination_league_scenario": f"{destination}::{scenario}",
+        "scenario": scenario,
+        "source_league": source,
+        "destination_league": destination,
+    }
+
+
+def _build_scenario_policy_maps(
+    frame: pd.DataFrame,
+    predictions: np.ndarray,
+    *,
+    min_samples: int = 40,
+) -> dict[str, dict[str, dict[str, float | int | bool]]]:
+    """Measure whether the calibrated model is safe to use within OOF cohorts."""
+    maps: dict[str, dict[str, dict[str, float | int | bool]]] = {
+        dimension: {} for dimension in _POLICY_DIMENSION_ORDER
+    }
+    if frame.empty:
+        return maps
+    work = frame.copy()
+    work["_policy_prediction"] = np.asarray(predictions, dtype=float)
+    work["_policy_actual"] = pd.to_numeric(work["observed_bb_rating"], errors="coerce")
+    work["_policy_baseline"] = pd.to_numeric(work["baseline_bb_rating"], errors="coerce")
+    key_columns: dict[str, tuple[str, ...]] = {
+        "source_destination_scenario": ("source_league", "target_league", "scenario"),
+        "destination_league_scenario": ("target_league", "scenario"),
+        "scenario": ("scenario",),
+        "source_league": ("source_league",),
+        "destination_league": ("target_league",),
+    }
+    for dimension in _POLICY_DIMENSION_ORDER:
+        columns = key_columns[dimension]
+        for values, group in work.groupby(list(columns), dropna=False, sort=True):
+            if not isinstance(values, tuple):
+                values = (values,)
+            n = int(len(group))
+            if n < min_samples:
+                continue
+            if dimension == "source_destination_scenario":
+                key = f"{_clean(values[0]).upper()}=>{_clean(values[1]).upper()}::{_clean(values[2]) or SCENARIO_UNKNOWN}"
+            elif dimension == "destination_league_scenario":
+                key = f"{_clean(values[0]).upper()}::{_clean(values[1]) or SCENARIO_UNKNOWN}"
+            elif dimension == "source_league":
+                key = _clean(values[0]).upper()
+            elif dimension == "destination_league":
+                key = _clean(values[0]).upper()
+            else:
+                key = _clean(values[0]) or SCENARIO_UNKNOWN
+
+            actual = group["_policy_actual"].to_numpy(dtype=float)
+            model_prediction = group["_policy_prediction"].to_numpy(dtype=float)
+            baseline_prediction = group["_policy_baseline"].to_numpy(dtype=float)
+            model_mae = float(mean_absolute_error(actual, model_prediction))
+            baseline_mae = float(mean_absolute_error(actual, baseline_prediction))
+            allowed_mae = baseline_mae * 1.10 + 0.25
+            maps[dimension][key] = {
+                "n": n,
+                "mae": model_mae,
+                "baseline_mae": baseline_mae,
+                "allowed_mae": float(allowed_mae),
+                "use_model": bool(model_mae <= allowed_mae),
+            }
+    return maps
+
+
+def _choose_scenario_prediction(
+    row: Any,
+    model_prediction: float,
+    baseline_prediction: float,
+    policy_maps: dict[str, dict[str, dict[str, float | int | bool]]],
+) -> tuple[float, str]:
+    """Apply only cohort decisions that could have been learned before this row."""
+    scenario = _clean(row.get("scenario")) or SCENARIO_UNKNOWN
+    if scenario == SCENARIO_UNKNOWN:
+        return float(baseline_prediction), "unknown_scenario"
+
+    keys = _row_policy_keys(row)
+    matching_policies = [
+        (dimension, policy_maps.get(dimension, {}).get(keys[dimension]))
+        for dimension in _POLICY_DIMENSION_ORDER
+    ]
+    matching_policies = [
+        (dimension, policy) for dimension, policy in matching_policies
+        if policy is not None
+    ]
+    failed = next(
+        ((dimension, policy) for dimension, policy in matching_policies
+         if not bool(policy.get("use_model"))),
+        None,
+    )
+    if failed is not None:
+        return float(baseline_prediction), f"validation_gate_failed:{failed[0]}"
+
+    if matching_policies:
+        return float(model_prediction), "validated_model"
+
+    source_league = _clean(row.get("source_league")).upper()
+    target_league = _clean(row.get("target_league")).upper()
+    source_competition = normalize_competition(row.get("source_competition"))
+    target_competition = normalize_competition(row.get("target_competition"))
+    same_context = (
+        source_league == target_league
+        and source_competition == target_competition
+    )
+    if not same_context:
+        return float(baseline_prediction), "cross_context_not_yet_validated"
+    return float(model_prediction), "same_context_no_failing_gate"
+
+
+def _build_baseline_means(records: pd.DataFrame) -> dict[str, Any]:
+    target = pd.to_numeric(records["observed_bb_rating"], errors="coerce")
+    valid = records.loc[target.notna()].copy()
+    valid["_observed_target"] = target[target.notna()].astype(float)
+    by_league_competition = {
+        f"{_clean(league).upper()}::{normalize_competition(competition)}": float(group["_observed_target"].mean())
+        for (league, competition), group in valid.groupby(["target_league", "target_competition"], dropna=False)
+    }
+    by_league = {
+        _clean(league).upper(): float(group["_observed_target"].mean())
+        for league, group in valid.groupby("target_league", dropna=False)
+    }
+    return {
+        "by_league_competition": by_league_competition,
+        "by_league": by_league,
+        "global": float(valid["_observed_target"].mean()),
+    }
+
+
+def _context_baseline(features: dict[str, Any], means: dict[str, Any]) -> float | None:
+    source_league = _clean(features.get("source_league")).upper()
+    target_league = _clean(features.get("target_league")).upper()
+    source_competition = normalize_competition(features.get("source_competition"))
+    target_competition = normalize_competition(features.get("target_competition"))
+    source_rating = pd.to_numeric(pd.Series([features.get("source_bb_rating")]), errors="coerce").iloc[0]
+    if (
+        source_league == target_league
+        and source_competition == target_competition
+        and pd.notna(source_rating)
+        and np.isfinite(source_rating)
+    ):
+        return float(np.clip(source_rating, 1, 100))
+    key = f"{target_league}::{target_competition}"
+    value = means.get("by_league_competition", {}).get(key)
+    if value is None:
+        value = means.get("by_league", {}).get(target_league)
+    if value is None:
+        value = means.get("global")
+    try:
+        value = float(value)
+    except (TypeError, ValueError):
+        return None
+    return float(np.clip(value, 1, 100)) if np.isfinite(value) else None
+
+
 class BBRatingFuturePredictionModel:
     """Predict official BB-Rating(t+1) directly on its 1-100 scale."""
 
@@ -252,6 +428,8 @@ class BBRatingFuturePredictionModel:
             "target_team_context_league",
         ]
         self.residual_intervals: dict[str, dict[str, float | int]] = {}
+        self.baseline_means: dict[str, Any] = {}
+        self.scenario_fallback_policy: dict[str, Any] = {}
         self.metadata: dict[str, Any] = {}
         self.is_trained = False
 
@@ -429,11 +607,13 @@ class BBRatingFuturePredictionModel:
             )
 
         # Evaluate calibration itself without fitting it on the row being scored:
-        # each target-season cohort uses calibration rows from earlier OOF seasons only.
+        # each target-season fold uses only OOF calibration rows from earlier years.
         nested_calibrated = oof["predicted_bb_rating"].to_numpy(float).copy()
+        target_seasons = oof["target_season"].to_numpy(dtype=int)
         for target_year in sorted(oof["target_season"].unique()):
-            test_positions = np.flatnonzero(oof["target_season"].to_numpy() == target_year)
-            prior = oof[oof["target_season"] < target_year].copy()
+            test_positions = np.flatnonzero(target_seasons == target_year)
+            prior_positions = np.flatnonzero(target_seasons < target_year)
+            prior = oof.iloc[prior_positions].copy()
             if len(prior) < 40:
                 continue
             prior["target_league_id"] = prior["target_league"].astype(str)
@@ -448,15 +628,51 @@ class BBRatingFuturePredictionModel:
                         target_league_id=str(row["target_league"]),
                     )["predicted_bb_rating"]
             except (ValueError, RuntimeError):
-                # Insufficient diversity in earlier OOF predictions: preserve
-                # the uncalibrated model result rather than fabricate a mapping.
+                # Without prior calibration support, keep the raw OOF prediction.
                 continue
 
-        oof["calibrated_bb_rating"] = np.clip(nested_calibrated, 1, 100)
+        # Validate the *serving policy* as a temporal forecast. A previously
+        # failing or unvalidated context falls back to the exact same baseline
+        # used by the walk-forward gate, rather than shipping a known regression.
+        nested_policy_predictions = nested_calibrated.copy()
+        fallback_reasons: dict[str, int] = {}
+        for target_year in sorted(oof["target_season"].unique()):
+            test_positions = np.flatnonzero(target_seasons == target_year)
+            prior_positions = np.flatnonzero(target_seasons < target_year)
+            prior = oof.iloc[prior_positions].copy()
+            prior_policies = _build_scenario_policy_maps(
+                prior, nested_calibrated[prior_positions], min_samples=40
+            )
+            for position in test_positions:
+                row = oof.iloc[position]
+                selected, reason = _choose_scenario_prediction(
+                    row,
+                    float(nested_calibrated[position]),
+                    float(row["baseline_bb_rating"]),
+                    prior_policies,
+                )
+                nested_policy_predictions[position] = selected
+                fallback_reasons[reason] = fallback_reasons.get(reason, 0) + 1
+
+        # The final serving policy is learned from historical OOF evidence only.
+        # The reported gate metrics above are still based on temporally nested
+        # decisions, not on this full-history policy.
+        self.scenario_fallback_policy = {
+            "minimum_samples": 40,
+            "group_dimensions": _build_scenario_policy_maps(
+                oof, nested_calibrated, min_samples=40
+            ),
+            "unknown_scenario_always_fallback": True,
+            "unvalidated_cross_context_fallback": True,
+        }
+        self.baseline_means = _build_baseline_means(records)
+
+        oof["model_calibrated_bb_rating"] = np.clip(nested_calibrated, 1, 100)
+        oof["calibrated_bb_rating"] = np.clip(nested_policy_predictions, 1, 100)
         self.calibrator = BBRatingScenarioCalibrator(min_samples=40)
         oof["target_league_id"] = oof["target_league"].astype(str)
         self.calibrator.fit(oof)
-        residual = oof["observed_bb_rating"].to_numpy(float) - nested_calibrated
+        residual = oof["observed_bb_rating"].to_numpy(float) - nested_policy_predictions
         self.residual_intervals = {"global": {
             "n": int(len(residual)),
             "low": float(np.quantile(residual, 0.10)),
@@ -577,16 +793,25 @@ class BBRatingFuturePredictionModel:
             "target": "official_bb_rating_t_plus_1",
             "target_scale": [1, 100],
             "bb_rating_version": BB_RATING_VERSION,
-            "calibration_method": "walk_forward_oof_isotonic_by_destination_league_and_scenario",
+            "calibration_method": "walk_forward_oof_isotonic_with_baseline_safe_scenario_fallback",
             "training_samples": int(len(records)),
             "oof_samples": int(len(oof)),
             "target_seasons": sorted(int(v) for v in set(years)),
             "oof_mae_before_calibration": float(mean_absolute_error(
                 oof["observed_bb_rating"], oof["predicted_bb_rating"]
             )),
+            "oof_mae_calibrated_model": float(mean_absolute_error(
+                oof["observed_bb_rating"], nested_calibrated
+            )),
             "oof_mae_after_calibration": float(mean_absolute_error(
                 oof["observed_bb_rating"], calibrated_oof
             )),
+            "oof_mae_after_scenario_fallback": float(mean_absolute_error(
+                oof["observed_bb_rating"], calibrated_oof
+            )),
+            "oof_rmse_calibrated_model": float(np.sqrt(mean_squared_error(
+                oof["observed_bb_rating"], nested_calibrated
+            ))),
             "oof_rmse_after_calibration": float(np.sqrt(mean_squared_error(
                 oof["observed_bb_rating"], calibrated_oof
             ))),
@@ -597,11 +822,14 @@ class BBRatingFuturePredictionModel:
             "promotion_gate_passed": promotion_gate_passed,
             "segment_regressions": segment_regressions,
             "under_supported_segments": under_supported_segments,
+            "scenario_fallback_policy": self.scenario_fallback_policy,
+            "baseline_context_means": self.baseline_means,
+            "oof_prediction_policy_counts": fallback_reasons,
             "walk_forward_target_seasons": walk_forward_target_seasons,
             "walk_forward_fold_count": int(len(walk_forward_target_seasons)),
             "minimum_walk_forward_target_seasons": 3,
             "minimum_supported_segment_samples": 40,
-            "promotion_gate": "overall_mae_must_beat_baseline; at_least_3_oof_target_seasons; and source-league, destination-league, transition-scenario, and destination-league-scenario cohorts with n>=40 must not regress by more than 10 percent plus 0.25 points",
+            "promotion_gate": "the temporally nested serving policy must beat baseline overall, have at least 3 OOF target seasons, and keep supported source-league, destination-league, transition-scenario, destination-league-scenario and source-destination-scenario cohorts within 10 percent plus 0.25 points of baseline; unvalidated or regressing contexts use the contextual baseline",
             "scenario_metrics": by_scenario,
             "source_league_metrics": by_source,
             "destination_league_metrics": by_destination,
@@ -630,13 +858,68 @@ class BBRatingFuturePredictionModel:
         interval = self.residual_intervals.get(
             f"{league}::{scenario}", self.residual_intervals["global"]
         )
-        score = float(calibrated["predicted_bb_rating"])
+        model_score = float(calibrated["predicted_bb_rating"])
+        score = model_score
+        prediction_method = "scenario_calibrated_model"
+        fallback_reason = None
+        policy = getattr(self, "scenario_fallback_policy", {}) or {}
+        means = getattr(self, "baseline_means", {}) or {}
+        if policy.get("group_dimensions") and means:
+            baseline = _context_baseline(features, means)
+            if baseline is not None:
+                row = {
+                    "source_league": features.get("source_league"),
+                    "target_league": features.get("target_league"),
+                    "scenario": scenario,
+                    "source_competition": features.get("source_competition"),
+                    "target_competition": features.get("target_competition"),
+                }
+                # A supported historical regression at any applicable level
+                # is enough to trigger fallback; unsupported cross-context
+                # combinations also fall back rather than extrapolate blindly.
+                keys = _row_policy_keys(row)
+                maps = policy.get("group_dimensions", {})
+                matching = [
+                    (dimension, maps.get(dimension, {}).get(keys[dimension]))
+                    for dimension in _POLICY_DIMENSION_ORDER
+                ]
+                matching = [
+                    (dimension, item) for dimension, item in matching if item is not None
+                ]
+                failed = next(
+                    ((dimension, item) for dimension, item in matching
+                     if not bool(item.get("use_model"))),
+                    None,
+                )
+                if scenario == SCENARIO_UNKNOWN:
+                    fallback_reason = "unknown_scenario"
+                elif failed is not None:
+                    fallback_reason = f"validation_gate_failed:{failed[0]}"
+                elif not matching and (
+                    _clean(features.get("source_league")).upper() != league
+                    or normalize_competition(features.get("source_competition"))
+                    != normalize_competition(features.get("target_competition"))
+                ):
+                    fallback_reason = "cross_context_not_yet_validated"
+                if fallback_reason:
+                    score = baseline
+                    prediction_method = "context_baseline_fallback"
+        if prediction_method == "context_baseline_fallback":
+            calibrated_level = "context_baseline_fallback"
+            calibration_samples = 0
+        else:
+            calibrated_level = calibrated["calibration_level"]
+            calibration_samples = int(calibrated["calibration_samples"])
         return {
-            "predicted_bb_rating": round(score, 1),
+            "predicted_bb_rating": round(float(np.clip(score, 1, 100)), 1),
+            "baseline_bb_rating": round(float(np.clip(_context_baseline(features, means) or score, 1, 100)), 1)
+                if means else None,
+            "prediction_method": prediction_method,
+            "fallback_reason": fallback_reason,
             "confidence_low_100": round(float(np.clip(score + interval["low"], 1, 100)), 1),
             "confidence_high_100": round(float(np.clip(score + interval["high"], 1, 100)), 1),
-            "calibration_level": calibrated["calibration_level"],
-            "calibration_samples": int(calibrated["calibration_samples"]),
+            "calibration_level": calibrated_level,
+            "calibration_samples": calibration_samples,
             "interval_samples": int(interval["n"]),
             "scenario": scenario,
             "source_bb_rating": round(float(features["source_bb_rating"]), 1) if pd.notna(features.get("source_bb_rating")) else None,
