@@ -33,7 +33,9 @@ def _data(seasons=range(2021, 2026)):
             [
                 {
                     "team_id": 2,
+                    "global_id": "t1",
                     "league_id": 10,
+                    "league_key": "ITA1",
                     "season": season,
                     "competition": "RS",
                     "pace": 72.0,
