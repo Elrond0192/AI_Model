@@ -36,7 +36,9 @@ _PUBLIC_RAW_RATING_KEYS = {
     "actual_rating", "forecast_rating",
     # These acquisition fields are native player-rating comparisons, not
     # BB-Rating or team Net Rating. Never leak them through the public scenario API.
-    "projected_player_rating", "incoming_rating", "outgoing_rating",
+    "projected_player_rating", "projected_rating", "incoming_rating", "outgoing_rating",
+    "empirical_transfer_delta", "league_prior_delta", "team_fit_delta",
+    "predicted_rating_delta", "observed_rating_delta",
     "rotation_rating_before", "rotation_rating_after", "rotation_delta",
     "replacement_level_rating", "rotation_quality_delta",
 }
