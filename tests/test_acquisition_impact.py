@@ -7,6 +7,7 @@ import numpy as np
 import pandas as pd
 
 from basketball_ai.scenarios.chat_scenario_engine import ChatScenarioEngine
+from basketball_ai.scenarios.provenance import build_scenario_provenance
 from basketball_ai.scenarios.acquisition_impact import (
     build_team_transition_samples,
     fit_acquisition_impact_model,
@@ -331,3 +332,50 @@ def test_team_add_player_exposes_validation_metrics_when_impact_model_is_validat
     assert result["result"]["predicted_team_net_rating_change_with_acquisition"] == 0.22
     assert result["support"]["method"] == "walk_forward_validated_acquisition_impact"
     assert any("non identifica l'effetto causale" in item for item in result["limitations"])
+
+
+def test_scenario_provenance_preserves_explicit_transfer_assumptions_and_limits():
+    provenance = build_scenario_provenance(
+        "team_add_player",
+        {
+            "season": 2023,
+            "source_league": "EL",
+            "target_league": "EL",
+            "competition": "RS",
+            "target_competition": "RS",
+            "player_overrides": {
+                "minutes_per_game": 28,
+                "usg_pct": 0.24,
+                "role": "secondary_playmaker",
+            },
+            "parameters": {"player_season": 2023, "target_season": 2024},
+        },
+        {
+            "result": {
+                "source_season": 2023,
+                "target_season": 2024,
+                "acquisition_impact_status": "validated",
+                "impact_model": {
+                    "validation_scope": {
+                        "league_id": 10,
+                        "competition": "RS",
+                        "target_seasons": [2019, 2020, 2021, 2022],
+                    }
+                },
+            },
+            "evidence": [{"type": "historical_roster_transitions", "count": 120}],
+            "support": {"method": "walk_forward_validated_acquisition_impact", "samples": 120, "confidence": "high"},
+            "limitations": ["Observational association, not causal impact."],
+        },
+    )
+
+    assert provenance["answer_type"] == "hypothetical"
+    assert provenance["source_season"] == 2023
+    assert provenance["target_season"] == 2024
+    assert provenance["explicit_inputs"]["player_overrides"]["minutes_per_game"] == 28
+    assert provenance["explicit_inputs"]["player_overrides"]["role"] == "secondary_playmaker"
+    assert provenance["confidence_is_probability"] is False
+    assert provenance["validation_status"] == "validated"
+    assert provenance["validation_scope"]["competition"] == "RS"
+    assert any("injuries" in item.lower() for item in provenance["not_modeled"])
+    assert any("contracts" in item.lower() for item in provenance["not_modeled"])
