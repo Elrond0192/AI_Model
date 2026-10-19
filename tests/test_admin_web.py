@@ -1000,6 +1000,7 @@ async def test_overview(monkeypatch):
         "bb_rating_future_prediction_version": "1.0",
     }})
     monkeypatch.setattr(admin, "_bb_rating_status", lambda: {"ready": True, "status": "ready"})
+    monkeypatch.setattr(admin, "_future_performance_status", lambda: {"ready": True, "status": "ready"})
     result = await admin.overview({"username": "admin", "role": "admin", "token": "x"})
     assert result["database"] == "production"
     assert result["api"]["online"] is True
