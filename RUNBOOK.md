@@ -119,7 +119,7 @@ curl -fsS http://127.0.0.1:8000/health/ready
 The display calibration is a separate persisted artifact; it does not retrain or
 change the native Prediction Model. Run it after deploying the code and whenever
 a new, validated calibration is required. The API reads the shared artifact from
-`/app/models_saved/prediction_calibration/prediction_rating_calibration.json`.
+`/app/models_saved/bb_rating_future_prediction/metadata.json` for the promoted direct BB Prediction Model release.
 
 ```bash
 docker compose run --rm admin \
@@ -133,7 +133,7 @@ The command performs a temporal out-of-sample backtest and requires at least 500
 valid OOS records. Do not create a synthetic/default mapping when calibration
 data is insufficient; fix the data/training window instead. A successful run
 prints the JSON and Markdown artifact paths. Confirm startup reports
-`Loaded Prediction 1-100 calibration from /app/models_saved/prediction_calibration/prediction_rating_calibration.json`.
+`Loaded direct BB Prediction Model from /app/models_saved/bb_rating_future_prediction`.
 
 ## Rollback
 
