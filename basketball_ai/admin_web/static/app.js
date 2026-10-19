@@ -97,7 +97,7 @@ async function renderOverview(){
 
   $('#readiness-body').innerHTML=(o.readiness||[]).map(r=>{
     const page=r.action==='data'?'data':r.action;
-    const labels={registry:'Open registry',training:'Open training','bb-rating':'Open BB-Rating','future-performance':'Open Future Performance',data:'Open data'};
+    const labels={'model-releases':'Open BB Prediction Model','bb-rating':'Open BB-Rating','future-performance':'Open Future Performance',data:'Open data'};
     return `<tr><td><strong>${esc(r.component)}</strong></td><td><span class="status ${r.status}"><span class="status-dot">${r.status==='ok'?'✓':r.status==='danger'?'×':'△'}</span>${esc(r.label)}</span></td><td>${esc(r.detail)}</td><td class="right"><button class="btn btn-small btn-secondary readiness-action" data-page="${esc(page)}">${esc(labels[page]||'Open')}</button></td></tr>`;
   }).join('');
   $$('.readiness-action').forEach(b=>b.addEventListener('click',()=>navigate(b.dataset.page)));
@@ -106,11 +106,11 @@ async function renderOverview(){
     ['Production',prod.run_id?shortId(prod.run_id):'—'],
     ['Candidate',cand.run_id?shortId(cand.run_id):'—'],
     ['Candidate RMSE',cand.overall_rmse!==undefined?fmt(cand.overall_rmse):'—']
-  ]):empty('⬡','No model registered','Run training to generate the first candidate.','Open training','training');
+  ]):empty('⬡','BB Prediction Model','Generate and validate its candidate in Model Releases.','Open BB Prediction Model','model-releases');
 
   $('#overview-backtest').innerHTML=q.rmse!==null&&q.rmse!==undefined?summaryRows([
     ['RMSE',fmt(q.rmse)],['MAE',fmt(q.mae)],['Coverage',pct(q.coverage)],['OOS folds',String(q.seasons||0)]
-  ]):empty('▤','No backtest available','Run training to generate a candidate and its walk-forward report.','Open training','training');
+  ]):empty('▤','No Future Performance data','Open Future Performance to inspect the separate statistical forecast.','Open Future Performance','future-performance');
 
   const quality=[['RMSE',fmt(q.rmse)],['MAE',fmt(q.mae)],['R²',fmt(q.r2)],['Coverage',pct(q.coverage)],['Seasons',q.seasons??'—'],['Competitions',q.competitions??'—']];
   $('#candidate-quality').innerHTML=quality.map(([a,b])=>`<div class="quality-card"><span>${esc(a)}</span><strong>${esc(b)}</strong></div>`).join('');
