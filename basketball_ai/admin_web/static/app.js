@@ -72,7 +72,7 @@ async function renderOverview(){
   const o=await api('/admin-api/overview');
   try{o.bb_rating_prediction=(await api('/admin-api/api-health')).bb_rating_prediction||{};}catch(_){o.bb_rating_prediction={};}
   App.overview=o;updateTop(o);
-  const s=o.summary||{},bb=o.bb_rating||{},prod=o.production||{},cand=o.candidate||{},q=o.candidate_quality||{};
+  const bb=o.bb_rating||{};
   const allReady=(o.api?.online&&o.data_loaded&&bb.ready&&!!o.bb_rating_prediction?.loaded);
   const dot=$('#overview-system-dot');const status=$('#overview-system-status');
   if(dot)dot.className='hero-status-dot '+(allReady?'online':'warning');
