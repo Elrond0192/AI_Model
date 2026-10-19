@@ -225,6 +225,7 @@ def _production_ablation_diagnostics(
         and row.get("pre_shrinkage_unclipped_prediction") is not None
         and row.get("pre_shrinkage_prediction") is not None
         and row.get("persistence_shrinkage_alpha") is not None
+        and row.get("prediction") is not None
     ]
     if len(rows) < 2:
         return {"n": len(rows), "valid": False}
