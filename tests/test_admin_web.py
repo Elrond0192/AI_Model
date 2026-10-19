@@ -673,8 +673,13 @@ def test_diagnostic_assertions_validate_model_response():
     )
     assert all(check["ok"] for check in future)
     prediction = admin._diagnostic_assertions(
-        "prediction",
-        {"ok": True, "body": {"predicted_rating": 7.2, "confidence_low": 6.1, "confidence_high": 8.0}},
+        "bb_rating_prediction",
+        {"ok": True, "body": {"prediction": {
+            "predicted_bb_rating": 78.0,
+            "confidence_low_100": 68.0,
+            "confidence_high_100": 88.0,
+            "scenario": "same_context",
+        }}},
     )
     assert all(check["ok"] for check in prediction)
 
