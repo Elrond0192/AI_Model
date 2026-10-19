@@ -20,6 +20,7 @@ def _data(seasons=range(2021, 2026)):
                 "league_id": 10,
                 "season": season,
                 "competition": "RS",
+                "league_key": "RS",
                 "games_played": 10,
                 "rating": 7.0,
             }
