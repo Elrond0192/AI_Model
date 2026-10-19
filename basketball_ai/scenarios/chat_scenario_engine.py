@@ -312,7 +312,16 @@ class ChatScenarioEngine:
         )
         if league_id is not None:
             mask &= frame["league_id"].map(_to_int) == _to_int(league_id)
-        return frame[mask].sort_values("_year").reset_index(drop=True)
+        selected = frame[mask].sort_values("_year", kind="stable").copy()
+        # A canonical identity can resolve to duplicate source rows for the same
+        # season/context (e.g. a legacy internal ID plus the canonical record).
+        # History/decomposition needs one point per league-season-phase; preserve
+        # the last source row rather than inventing a blended native rating.
+        dedupe_keys = ["_year", "competition"]
+        if "league_id" in selected.columns:
+            dedupe_keys.insert(1, "league_id")
+        selected = selected.drop_duplicates(subset=dedupe_keys, keep="last")
+        return selected.reset_index(drop=True)
 
     def _team_rows(
         self,
