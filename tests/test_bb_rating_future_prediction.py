@@ -182,8 +182,15 @@ def test_bad_transfer_segment_uses_context_baseline_fallback():
     prediction = model._predict_features({
         "source_league": "EC",
         "source_competition": "RS",
+        "source_position": "G",
+        "source_role": "Guard",
+        "source_tier": "1",
         "target_league": "LIT1",
         "target_competition": "RS",
+        "target_tier": "2",
+        "tier_transition": "same_tier",
+        "target_team_context_known": "no",
+        "target_team_context_league": "",
         "scenario": "team_league_and_competition_change_same_tier",
         "source_bb_rating": 74.0,
     })
