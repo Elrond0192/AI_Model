@@ -71,7 +71,7 @@ def build_scenario_provenance(
 
     source_season = result.get("source_season", parameters.get("player_season"))
     target_season = result.get("target_season", result.get("scenario_season", parameters.get("target_season")))
-    context_season = result.get("latest_season", spec.get("season"))
+    context_season = result.get("team_context_season", result.get("latest_season", spec.get("season")))
     if source_season is not None:
         try:
             source_season = int(source_season)
