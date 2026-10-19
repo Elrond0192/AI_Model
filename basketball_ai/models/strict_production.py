@@ -19,6 +19,7 @@ import joblib
 import numpy as np
 import pandas as pd
 
+from basketball_ai.constants import _peak_age
 from basketball_ai.data.loader import _to_int
 from basketball_ai.models.competition_training import (
     CompetitionSeasonAheadPerformanceModel,
