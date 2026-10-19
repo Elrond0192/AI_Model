@@ -984,6 +984,7 @@ async def test_overview(monkeypatch):
         admin.STATE.data = data
         admin.STATE.active_profile = "production"
         admin.STATE.summary = admin._summary(data)
+        admin.STATE.summary["team_rows"] = max(1, admin.STATE.summary.get("team_rows", 0))
     monkeypatch.setattr(
         admin,
         "_registry",
