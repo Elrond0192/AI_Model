@@ -239,15 +239,12 @@
   <template id="page-model-releases">
     <section class="page">
       <div class="page-heading"><div><h1>Model Releases</h1><p>Candidate validation, promotion and rollback for calibration and auxiliary models. Promoting an artifact requires an inference API restart.</p></div><button id="model-releases-refresh" class="btn btn-secondary">Aggiorna</button></div>
-      <section class="panel"><div class="panel-heading"><h2>Native Prediction Model (0–10)</h2><button class="btn btn-secondary btn-small jump" data-page="registry">Apri registry</button></div><div id="native-prediction-registry"></div></section>
       <section class="panel"><div class="panel-heading"><h2>Serving runtime</h2><button class="btn btn-secondary btn-small jump" data-page="health">Apri health checks</button></div><div id="model-release-serving"></div></section>
-      <section class="panel"><div class="panel-heading"><div><h2>Prediction 1–100 calibration</h2><p class="microcopy">Maps the native Prediction Model output to a display scale. Does not retrain or modify the native model.</p></div><button id="prediction-calibration-start" class="btn btn-primary">Genera candidate</button></div><div id="prediction-calibration-job"></div><div id="prediction-calibration-release"></div></section>
+      <section class="panel"><div class="panel-heading"><div><h2>BB Prediction Model (1–100)</h2><p class="microcopy">Previsione diretta del BB-Rating ufficiale futuro. Il target viene ricalcolato dal BB-Rating engine nel contesto di destinazione; non è una conversione del rating statistico 0–10.</p></div><button id="prediction-calibration-start" class="btn btn-primary">Allena candidate</button></div><div id="prediction-calibration-job"></div><div id="prediction-calibration-release"></div><div class="button-row"><button class="btn btn-primary release-promote" data-model="bb-rating-prediction">Promuovi candidate</button><button class="btn btn-danger release-rollback" data-model="bb-rating-prediction">Rollback</button></div></section>
       <div class="split-grid">
         <section class="panel"><div class="panel-heading"><h2>BB-Rating</h2></div><div id="release-bb-rating"></div><div class="button-row"><button class="btn btn-primary release-promote" data-model="bb-rating">Promuovi candidate</button><button class="btn btn-danger release-rollback" data-model="bb-rating">Rollback</button></div></section>
         <section class="panel"><div class="panel-heading"><h2>Future Performance</h2></div><div id="release-future-performance"></div><div class="button-row"><button class="btn btn-primary release-promote" data-model="future-performance">Promuovi candidate</button><button class="btn btn-danger release-rollback" data-model="future-performance">Rollback</button></div></section>
-        <section class="panel"><div class="panel-heading"><h2>BB Prediction Model (1–100)</h2></div><div id="release-bb-rating-prediction"></div><div class="button-row"><button class="btn btn-primary release-promote" data-model="bb-rating-prediction">Promuovi candidate</button><button class="btn btn-danger release-rollback" data-model="bb-rating-prediction">Rollback</button></div><p class="microcopy">Previsione diretta del BB-Rating futuro, separata dal Prediction Model statistico 0–10.</p></section>
       </div>
-      <section class="panel"><div class="panel-heading"><h2>Prediction calibration release</h2></div><div class="button-row"><button class="btn btn-primary release-promote" data-model="prediction-calibration">Promuovi candidate</button><button class="btn btn-danger release-rollback" data-model="prediction-calibration">Rollback</button></div><p class="microcopy">La promozione sostituisce solo l'artefatto di calibrazione 1–100. Il modello nativo resta invariato.</p></section>
       <section class="panel"><div class="panel-heading"><h2>Release operation result</h2></div><div id="model-release-result" class="microcopy">Nessuna operazione eseguita.</div></section>
     </section>
   </template>
@@ -314,7 +311,7 @@
         <label>Metriche Metric Rating <input id="diag-metrics" class="input" value="RAPTOR,LEBRON,VORP"></label>
       </div>
       <div class="button-row diagnostics-buttons">
-        <button class="btn btn-secondary diag-run" data-model="prediction">Prediction</button>
+        <button class="btn btn-secondary diag-run" data-model="bb_rating_prediction">BB Prediction 1–100</button>
         <button class="btn btn-secondary diag-run" data-model="bb_rating">BB-Rating</button>
         <button class="btn btn-secondary diag-run" data-model="future_performance">Future Performance</button>
         <button class="btn btn-secondary diag-run" data-model="metric_rating">Metric Rating</button>
