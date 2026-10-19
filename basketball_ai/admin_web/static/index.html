@@ -104,7 +104,7 @@
         <section class="panel"><div class="panel-heading"><div><div class="eyebrow">BB PREDICTION</div><h2>Future BB-Rating forecast</h2></div><button class="btn btn-small btn-secondary jump" data-page="model-releases">Apri</button></div><div id="overview-registry"></div></section>
         <section class="panel"><div class="panel-heading"><div><div class="eyebrow">FUTURE PERFORMANCE</div><h2>Forecast statistico</h2></div><button class="btn btn-small btn-secondary jump" data-page="future-performance">Apri</button></div><div id="overview-backtest"></div></section>
       </div>
-      <section class="panel candidate-panel"><div class="panel-heading"><div><div class="eyebrow">QUALITY</div><h2>Candidate quality <span class="muted-inline">(ultimo run)</span></h2></div></div><div id="candidate-quality" class="quality-grid"></div></section>
+      <section class="panel candidate-panel"><div class="panel-heading"><div><div class="eyebrow">QUALITY</div><h2>BB Prediction release gates</h2></div></div><div id="candidate-quality" class="quality-grid"></div></section>
     </section>
   </template>
 
@@ -176,7 +176,7 @@
       <div class="page-heading action-heading">
         <div>
           <h1>Player Future Performance</h1>
-          <p>Modello predittivo multivariato season-ahead. Prevede le performance del giocatore nella stagione successiva, separato dal BB Prediction Model e dal BB-Rating descrittivo.</p>
+          <p>Modello predittivo multivariato season-ahead. Prevede le statistiche del giocatore nella stagione successiva; è distinto dal BB Prediction Model che prevede il BB-Rating 1–100.</p>
         </div>
         <div class="button-row">
           <button id="future-performance-refresh" class="btn btn-secondary btn-small">Aggiorna</button>
@@ -235,7 +235,7 @@
 
   <template id="page-model-releases">
     <section class="page">
-      <div class="page-heading"><div><h1>Model Releases</h1><p>Candidate validation, promotion and rollback for calibration and auxiliary models. Promoting an artifact requires an inference API restart.</p></div><button id="model-releases-refresh" class="btn btn-secondary">Aggiorna</button></div>
+      <div class="page-heading"><div><h1>Model Releases</h1><p>Candidate validation, promotion and rollback for BB Prediction Model, BB-Rating and Future Performance. Promoting an artifact requires an inference API restart.</p></div><button id="model-releases-refresh" class="btn btn-secondary">Aggiorna</button></div>
       <section class="panel"><div class="panel-heading"><h2>Serving runtime</h2><button class="btn btn-secondary btn-small jump" data-page="health">Apri health checks</button></div><div id="model-release-serving"></div></section>
       <section class="panel"><div class="panel-heading"><div><h2>BB Prediction Model (1–100)</h2><p class="microcopy">Previsione diretta del BB-Rating ufficiale futuro. Il target viene ricalcolato dal BB-Rating engine nel contesto di destinazione; non è una conversione del rating statistico 0–10.</p></div><button id="prediction-calibration-start" class="btn btn-primary">Allena candidate</button></div><div id="prediction-calibration-job"></div><div id="prediction-calibration-release"></div><div class="button-row"><button class="btn btn-primary release-promote" data-model="bb-rating-prediction">Promuovi candidate</button><button class="btn btn-danger release-rollback" data-model="bb-rating-prediction">Rollback</button></div></section>
       <div class="split-grid">
