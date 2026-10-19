@@ -129,35 +129,6 @@ def _load_bb_rating_uncertainty(model_dir: str):
     return None
 
 
-def _load_prediction_calibration(model_dir: str):
-    from basketball_ai.prediction_calibration import load_prediction_calibration
-
-    configured = os.environ.get("PREDICTION_CALIBRATION_PATH", "").strip()
-    model_path = Path(model_dir)
-    candidates = []
-    if configured:
-        candidates.append(Path(configured))
-    candidates.extend([
-        model_path / "prediction_calibration" / "prediction_rating_calibration.json",
-        model_path.parent / "prediction_calibration" / "prediction_rating_calibration.json",
-        model_path / "prediction_rating_calibration.json",
-    ])
-    seen = set()
-    for path in candidates:
-        key = str(path)
-        if key in seen:
-            continue
-        seen.add(key)
-        if not path.exists():
-            continue
-        artifact = load_prediction_calibration(path)
-        if artifact:
-            logger.info("[API] Loaded Prediction 1-100 calibration from %s", path)
-            return artifact
-        logger.warning("[API] Prediction calibration artifact invalid at %s", path)
-        return None
-    logger.warning("[API] Prediction 1-100 calibration artifact not found")
-    return None
 
 def _load_bb_rating_future_prediction_model(model_dir: str):
     from basketball_ai.bb_rating.future_prediction import BBRatingFuturePredictionModel
@@ -265,7 +236,6 @@ def _load_app_state() -> None:
         app_state["engine"] = None
         app_state["bb_rating_engine"] = None
         app_state["bb_rating_uncertainty"] = None
-        app_state["prediction_calibration"] = None
         app_state["future_performance_model"] = None
         app_state["bb_rating_future_prediction_model"] = None
         return
@@ -292,13 +262,6 @@ def _load_app_state() -> None:
     except Exception as exc:
         logger.warning("[API] BB-Rating uncertainty unavailable: %s", exc)
         app_state["bb_rating_uncertainty"] = None
-
-    try:
-        app_state["prediction_calibration"] = _load_prediction_calibration(model_dir)
-    except Exception as exc:
-        logger.warning("[API] Prediction 1-100 calibration unavailable: %s", exc)
-        app_state["prediction_calibration"] = None
-
 
     try:
         app_state["bb_rating_future_prediction_model"] = _load_bb_rating_future_prediction_model(model_dir)
@@ -402,7 +365,6 @@ async def lifespan(app: FastAPI):
     app.state.metric_distributions = app_state.get("metric_distributions", [])
     app.state.bb_rating_engine = app_state.get("bb_rating_engine")
     app.state.bb_rating_uncertainty = app_state.get("bb_rating_uncertainty")
-    app.state.prediction_calibration = app_state.get("prediction_calibration")
     app.state.future_performance_model = app_state.get("future_performance_model")
     app.state.bb_rating_future_prediction_model = app_state.get("bb_rating_future_prediction_model")
     app.state.model_metadata = _model_metadata(os.environ.get("MODEL_DIR", "models_saved"))
@@ -662,18 +624,11 @@ def create_app() -> FastAPI:
         uncertainty = getattr(request.app.state, "bb_rating_uncertainty", None)
         future_model = getattr(request.app.state, "future_performance_model", None)
         bb_rating_future_model = getattr(request.app.state, "bb_rating_future_prediction_model", None)
-        prediction_engine = getattr(request.app.state, "engine", None)
         model_metadata = getattr(request.app.state, "model_metadata", {}) or {}
         model_root = Path(os.environ.get("MODEL_DIR", "models_saved"))
         return {
             "status": "ok",
             "data_loaded": bool(data.get("player_dict")),
-                "prediction_data_cutoff": model_metadata.get("data_cutoff"),
-            "production_model_files": {
-                "performance_model": (model_root / "performance_model.joblib").is_file(),
-                "compatibility_model": (model_root / "compatibility_model.joblib").is_file(),
-            },
-            "metric_distributions_count": len(getattr(request.app.state, "metric_distributions", []) or []),
             "bb_rating_loaded": bb_rating is not None,
             "bb_rating_uncertainty_loaded": uncertainty is not None,
             "bb_rating_version": getattr(bb_rating, "VERSION", None) or getattr(bb_rating, "version", None) or "1.9",
@@ -710,9 +665,11 @@ def create_app() -> FastAPI:
     @app.get("/health/ready")
     def health_ready(request: Request):
         data = getattr(request.app.state, "data", {})
-        engine = getattr(request.app.state, "engine", None)
+        bb_rating = getattr(request.app.state, "bb_rating_engine", None)
+        bb_prediction = getattr(request.app.state, "bb_rating_future_prediction_model", None)
+        future_performance = getattr(request.app.state, "future_performance_model", None)
         data_loaded = bool(data.get("player_dict"))
-        model_loaded = engine is not None
+        model_loaded = any(model is not None for model in (bb_rating, bb_prediction, future_performance))
         if data_loaded and model_loaded:
             return {"status": "ready", "data": True, "model": True}
         return JSONResponse(
