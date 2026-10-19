@@ -1591,6 +1591,13 @@ def logout(request: Request, user: dict[str, str] = Depends(_user_from_request))
     return response
 
 
+def _api_bb_prediction_ready() -> bool:
+    """Check only the direct BB Prediction release, never the retired 0-10 model."""
+    response = _probe("/health")
+    body = response.get("body") if isinstance(response.get("body"), dict) else {}
+    return bool(response.get("ok") and body.get("bb_rating_future_prediction_loaded"))
+
+
 @app.get("/admin-api/overview")
 async def overview(user: dict[str, str] = Depends(_operator)) -> dict[str, Any]:
     del user
@@ -1601,8 +1608,6 @@ async def overview(user: dict[str, str] = Depends(_operator)) -> dict[str, Any]:
         active_profile = STATE.active_profile
     seasons = summary.get("seasons", [])
     training_seasons, excluded_in_progress, blocking = _training_seasons(seasons)
-    production = registry.get("production") or {}
-    candidate = registry.get("candidate") or {}
     api_live = await asyncio.to_thread(_probe, "/health/live")
     readiness = [
         {
@@ -1620,22 +1625,11 @@ async def overview(user: dict[str, str] = Depends(_operator)) -> dict[str, Any]:
             "action": "data",
         },
         {
-            "component": "Training dataset",
-            "status": "ok" if len(training_seasons) >= 5 and not blocking else "warning",
-            "label": "OK" if len(training_seasons) >= 5 and not blocking else "Warning",
-            "detail": (
-                f"{len(training_seasons)} stagioni Complete per il training"
-                + (f"; {len(excluded_in_progress)} In corso escluse" if excluded_in_progress else "")
-                + (f"; bloccanti: {', '.join(map(str, blocking))}" if blocking else "")
-            ),
-            "action": "training",
-        },
-        {
-            "component": "Production model",
-            "status": "ok" if production else "danger",
-            "label": "Production" if production else "Not promoted",
-            "detail": production.get("run_id") or "Nessun modello in produzione",
-            "action": "registry",
+            "component": "BB Prediction Model",
+            "status": "ok" if _api_bb_prediction_ready() else "warning",
+            "label": "Ready" if _api_bb_prediction_ready() else "Candidate da validare/promuovere",
+            "detail": "Previsione diretta del BB-Rating ufficiale 1–100",
+            "action": "model-releases",
         },
         {
             "component": "Player Future Performance",
@@ -1663,9 +1657,6 @@ async def overview(user: dict[str, str] = Depends(_operator)) -> dict[str, Any]:
         "database": active_profile or "Not selected",
         "data_loaded": data_loaded,
         "summary": summary,
-        "production": production,
-        "candidate": candidate,
-        "candidate_quality": _candidate_quality(candidate),
         "bb_rating": _bb_rating_status(),
         "future_performance": _future_performance_status(),
         "readiness": readiness,
