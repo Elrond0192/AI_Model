@@ -1346,19 +1346,27 @@ def _scenario_entity_rows(entity: str, query: str, limit: int = 12) -> list[dict
 
     records: list[dict[str, Any]] = []
     loaded_entity_by_id: dict[str, dict[str, Any]] = {}
+    loaded_entity_by_global_id: dict[str, dict[str, Any]] = {}
     if isinstance(loaded, dict):
         entity_frame = loaded.get("players" if entity == "player" else "teams")
         if isinstance(entity_frame, pd.DataFrame) and "id" in entity_frame.columns:
+            loaded_records = entity_frame.to_dict("records")
             loaded_entity_by_id = {
                 value_text(item, "id"): item
-                for item in entity_frame.to_dict("records")
+                for item in loaded_records
                 if value_text(item, "id")
             }
+            loaded_entity_by_global_id = {
+                value_text(item, "global_id"): item
+                for item in loaded_records
+                if value_text(item, "global_id")
+            }
     for row in rows:
-        # Canonical DB values remain authoritative, while fields absent from
-        # the stable Players/Teams contract may be enriched from the loaded
-        # snapshot for autocomplete presentation.
-        row = {**loaded_entity_by_id.get(value_text(row, "id"), {}), **row}
+        # Canonical GlobalId survives source-local ID remapping. Use internal ID
+        # first, then the canonical identity when enriching with current metadata.
+        by_internal_id = loaded_entity_by_id.get(value_text(row, "id"), {})
+        by_global_id = loaded_entity_by_global_id.get(value_text(row, "global_id"), {})
+        row = {**(by_internal_id or by_global_id), **row}
         internal_id = value_text(row, "id")
         if not internal_id:
             continue
