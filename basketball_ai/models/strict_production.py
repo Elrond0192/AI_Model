@@ -13,8 +13,6 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 import weakref
 
-logger = logging.getLogger(__name__)
-
 import joblib
 import numpy as np
 import pandas as pd
@@ -37,6 +35,8 @@ from basketball_ai.models.production_training import (
     metric_summary,
     season_year,
 )
+
+logger = logging.getLogger(__name__)
 
 _VALID_POSITIONS = {
     "PG", "SG", "SF", "PF", "C",
@@ -662,8 +662,18 @@ class StrictProductionEnsembleModel(ProductionEnsembleModel):
         denominator = float(np.sum(delta * delta))
         alpha = float(np.clip(np.sum(delta * residual) / denominator, 0.0, 1.0)) if denominator > 0.0 else 0.0
         blended = persistence + alpha * delta
-        rmse = lambda values: float(np.sqrt(np.mean((values - actual) ** 2)))
-        return {"valid": True, "alpha": alpha, "n": len(rows), "persistence_rmse": rmse(persistence), "model_rmse": rmse(prediction), "blended_rmse": rmse(blended), "gain_vs_persistence": rmse(persistence) - rmse(blended)}
+        def rmse(values: np.ndarray) -> float:
+            return float(np.sqrt(np.mean((values - actual) ** 2)))
+
+        return {
+            "valid": True,
+            "alpha": alpha,
+            "n": len(rows),
+            "persistence_rmse": rmse(persistence),
+            "model_rmse": rmse(prediction),
+            "blended_rmse": rmse(blended),
+            "gain_vs_persistence": rmse(persistence) - rmse(blended),
+        }
 
     def _restore_style_bounds(self) -> None:
         if not self._style_bounds_state:
@@ -1198,7 +1208,6 @@ def evaluate_target_season(
                 # Minimal stage diagnostics for the residual-model investigation.
                 "raw_xgb_prediction": diagnostic_stages.get("raw_xgb_prediction"),
                 "base_before_age": diagnostic_stages.get("base_before_age"),
-                "base_prediction": float(result.base_rating),
                 "persistence_prediction": diagnostic_stages.get("persistence_prediction"),
                 "pre_shrinkage_prediction": diagnostic_stages.get("pre_shrinkage_prediction"),
                 "pre_shrinkage_unclipped_prediction": diagnostic_stages.get("pre_shrinkage_unclipped_prediction"),
@@ -1332,4 +1341,3 @@ class StrictWhatIfEngine(_WhatIfEngine):
                 )
             )
         return points
-
