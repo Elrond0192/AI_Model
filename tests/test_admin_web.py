@@ -528,7 +528,8 @@ def test_bb_rating_prediction_worker_writes_candidate_without_touching_productio
     import basketball_ai.data.postgres_loader as loader
     monkeypatch.setattr(model_module, "BBRatingFuturePredictionModel", FakeModel)
     monkeypatch.setattr(loader, "load_all_data", lambda **kwargs: {"source_contract": "canonical"})
-    monkeypatch.setattr(admin, "validate_artifact", lambda *args: {"valid": True})
+    import basketball_ai.admin_web.model_lifecycle as lifecycle
+    monkeypatch.setattr(lifecycle, "validate_artifact", lambda *args: {"valid": True})
 
     admin._bb_rating_prediction_job_worker("production", "admin")
 
@@ -582,16 +583,16 @@ def test_model_release_read_cleans_stale_candidate_only_when_idle(monkeypatch, t
     monkeypatch.setattr(admin, "_audit", lambda *args, **kwargs: None)
 
     removed = admin._cleanup_idle_incomplete_model_candidates()
-    assert removed["prediction-calibration"] == ["20261018T175520Z-d99e8891"]
+    assert removed["bb-rating-prediction"] == ["20261018T175520Z-d99e8891"]
     assert not stale.exists()
 
-    active = root / "candidates" / "prediction-calibration" / "active-job"
+    active = root / "candidates" / "bb-rating-prediction" / "active-job"
     active.mkdir(parents=True)
     with admin.STATE.lock:
-        admin.STATE.prediction_calibration["status"] = "running"
+        admin.STATE.bb_rating_prediction_job["status"] = "running"
 
     removed = admin._cleanup_idle_incomplete_model_candidates()
-    assert "prediction-calibration" not in removed
+    assert "bb-rating-prediction" not in removed
     assert active.exists()
     _reset_state()
 
@@ -1280,8 +1281,9 @@ async def test_api_health(monkeypatch):
     result = await admin.api_health({"username": "admin", "role": "admin", "token": "x"})
     assert result["live"]["ok"] is True
     assert result["ready"]["ok"] is False
-    assert "prediction_model" in result
-    assert "production_model_files" in result["prediction_model"]
+    assert "bb_rating_prediction" in result
+    assert result["bb_rating_prediction"]["target_scale"] == "1-100"
+    assert "prediction_model" not in result
     assert "/api/v2/scenarios/evaluate" in result["endpoints"][-1]
 
 
