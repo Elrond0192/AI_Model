@@ -1486,8 +1486,39 @@ def _resolve_scenario_selections(payload: dict[str, Any]) -> dict[str, Any]:
     resolved = dict(payload)
     with STATE.lock:
         profile_name = STATE.active_profile
+        loaded = STATE.data
     if not profile_name:
-        raise RuntimeError("Seleziona e carica prima un profilo database")
+        if not isinstance(loaded, dict):
+            raise RuntimeError("Seleziona e carica prima un profilo database")
+        # Resolve selections against the already-loaded canonical snapshot.
+        # This is a controlled fallback, not fuzzy matching: only exact internal
+        # IDs with non-empty GlobalIds are accepted.
+        for entity, selection_key, global_key, table_key in (
+            ("player", "player_selection_ids", "player_global_ids", "players"),
+            ("team", "team_selection_ids", "team_global_ids", "teams"),
+        ):
+            selections = [
+                str(value).strip()
+                for value in resolved.pop(selection_key, [])
+                if str(value).strip()
+            ]
+            if not selections:
+                continue
+            frame = loaded.get(table_key)
+            if not isinstance(frame, pd.DataFrame) or not {"id", "global_id"}.issubset(frame.columns):
+                raise RuntimeError(f"Dataset {entity} non disponibile per risolvere la selezione")
+            lookup = {
+                str(row["id"]).strip(): str(row["global_id"]).strip()
+                for row in frame.to_dict("records")
+                if row.get("id") is not None and str(row.get("global_id") or "").strip()
+            }
+            missing = [value for value in selections if value not in lookup]
+            if missing:
+                raise RuntimeError(
+                    f"{entity} selezionato non ha un GlobalId riconciliato: {missing[0]}"
+                )
+            resolved[global_key] = [lookup[value] for value in selections]
+        return resolved
     profile = load_profiles().get(profile_name)
     if not profile:
         raise RuntimeError("Profilo database attivo non disponibile")
