@@ -6,7 +6,7 @@ The player timeline has one consistent scale:
 - past and present: observed BB-Rating from the pinned `BBRatingEngine`;
 - future: predicted observed BB-Rating for target season `t+1`, on the same 1-100 scale.
 
-The native statistical rating (0-10) and its existing 1-100 display calibration are not BB-Rating labels and are never the target of this model. The legacy native Prediction Model 2.6.0 and its display calibration are no longer exposed as a user-facing prediction feature; this model predicts BB-Rating directly.
+The native statistical rating (0-10) is not a BB-Rating label and is never the target of this model. The legacy native Prediction Model endpoint and its 1–100 display calibration are no longer exposed as user-facing prediction features; this model predicts BB-Rating directly.
 
 ## Model and labels
 
