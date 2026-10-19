@@ -173,6 +173,13 @@ def test_public_scenario_payload_suppresses_raw_rating_and_preserves_canonical_s
     payload = {
         "result": {
             "bb_rating": {"available": True, "score": 65},
+            "what_if": {
+                "projected_rating": 6.9,
+                "empirical_transfer_delta": -0.4,
+                "league_prior_delta": -0.2,
+                "team_fit_delta": 0.1,
+                "team_fit": {"compatibility": 0.92},
+            },
             "season_comparison": {
                 "previous_rating": 7.2,
                 "current_rating": 6.8,
@@ -204,6 +211,8 @@ def test_public_scenario_payload_suppresses_raw_rating_and_preserves_canonical_s
     clean = _sanitize_public_scenario_payload(payload)
     encoded = str(clean)
     assert clean["result"]["bb_rating"]["score"] == 65
+    for forbidden_key in ("projected_rating", "empirical_transfer_delta", "league_prior_delta", "team_fit_delta"):
+        assert forbidden_key not in clean["result"]["what_if"]
     comparison = clean["result"]["season_comparison"]
     assert comparison["previous_bb_rating"] == 71
     assert comparison["current_bb_rating"] == 65
