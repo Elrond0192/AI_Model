@@ -910,10 +910,13 @@ class BBRatingFuturePredictionModel:
         else:
             calibrated_level = calibrated["calibration_level"]
             calibration_samples = int(calibrated["calibration_samples"])
+        baseline_score = _context_baseline(features, means) if means else None
         return {
             "predicted_bb_rating": round(float(np.clip(score, 1, 100)), 1),
-            "baseline_bb_rating": round(float(np.clip(_context_baseline(features, means) or score, 1, 100)), 1)
-                if means else None,
+            "baseline_bb_rating": (
+                round(float(np.clip(baseline_score, 1, 100)), 1)
+                if baseline_score is not None else None
+            ),
             "prediction_method": prediction_method,
             "fallback_reason": fallback_reason,
             "confidence_low_100": round(float(np.clip(score + interval["low"], 1, 100)), 1),
