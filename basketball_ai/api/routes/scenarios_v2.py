@@ -166,4 +166,5 @@ async def evaluate_scenario(body: ScenarioRequestV2, request: Request):
         evidence=payload.get("evidence", []),
         support=payload.get("support", {}),
         limitations=payload.get("limitations", []),
+        provenance=payload.get("provenance", {}),
     )
