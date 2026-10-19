@@ -430,7 +430,11 @@ def fit_acquisition_impact_model(
         "league_id": int(league_id),
         "competition": normalize_competition(competition),
         "through_season": int(through_season),
-        "target_seasons": sorted({int(row["season"]) for row in out_of_time}),
+        "target_seasons": all_oof_seasons,
+        "supported_target_seasons": supported_oof_seasons,
+        "under_supported_target_seasons": under_supported_oof_seasons,
+        "minimum_samples_per_target_season": MIN_WALK_FORWARD_SAMPLES_PER_SEASON,
+        "minimum_supported_target_seasons": MIN_WALK_FORWARD_SEASONS,
         "design": "expanding_window_walk_forward",
         "causal_effect_established": False,
     }
