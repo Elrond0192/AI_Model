@@ -239,7 +239,7 @@ def _reset_state():
             "feature_version": None,
             "output": None,
         }
-        admin.STATE.bb_rating_prediction_job = {"status": "idle", "stage": "Ready", "progress": 0, "message": "No Prediction 1-100 calibration run in progress.", "error": None, "started_at": None, "finished_at": None, "output": None}
+        admin.STATE.bb_rating_prediction_job = {"status": "idle", "stage": "Ready", "progress": 0, "message": "No BB Prediction Model training run in progress.", "error": None, "started_at": None, "finished_at": None, "output": None}
         admin.STATE.bb_rating = {
             "status": "idle",
             "stage": "Ready",
