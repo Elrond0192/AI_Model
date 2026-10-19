@@ -459,3 +459,24 @@ def test_team_add_player_rejects_target_season_inconsistent_with_team_forecast_h
         assert "one-season team forecast" in str(exc)
     else:
         raise AssertionError("Inconsistent team forecast target season should fail closed")
+
+
+def test_transfer_rotation_membership_uses_canonical_player_identity():
+    players = pd.DataFrame([
+        {"id": 101, "global_id": "canonical-player-1"},
+        {"id": 201, "global_id": "canonical-player-1"},
+        {"id": 301, "global_id": "canonical-player-2"},
+    ])
+    engine = ChatScenarioEngine.__new__(ChatScenarioEngine)
+    engine.data = {
+        "players": players,
+        "player_dict": {
+            101: {"id": 101, "global_id": "canonical-player-1"},
+            201: {"id": 201, "global_id": "canonical-player-1"},
+            301: {"id": 301, "global_id": "canonical-player-2"},
+        },
+    }
+
+    assert engine._same_player_identity(101, 201) is True
+    assert engine._same_player_identity(101, 301) is False
+    assert engine._same_player_identity(101, 101) is True
