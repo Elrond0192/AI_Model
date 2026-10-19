@@ -397,6 +397,41 @@ def test_cross_league_transfer_is_learned_from_real_transitions():
     assert result["result"]["projected_rating"] < result["result"]["source_rating"]
 
 
+def test_cross_league_transfer_records_but_does_not_falsely_quantify_role_minutes_usage():
+    engine = ChatScenarioEngine(SimpleNamespace(), _data())
+    result = engine.evaluate(
+        {
+            "scenario": "league_transfer",
+            "season": 2024,
+            "competition": "RS",
+            "target_competition": "RS",
+            "player_overrides": {
+                "role": "SECONDARY_CREATOR",
+                "minutes_per_game": 30,
+                "usg_pct": 0.24,
+            },
+            "parameters": {
+                "player_season": 2024,
+                "team_context_season": 2024,
+                "target_season": 2025,
+            },
+        },
+        [1], [201], 10, 20,
+    )
+    assumptions = result["result"]["what_if"]["assumptions"]
+    assert assumptions["user_supplied_player_context"] == {
+        "role": "SECONDARY_CREATOR",
+        "minutes_per_game": 30.0,
+        "usg_pct": 0.24,
+    }
+    assert assumptions["quantification_status"] == "not_calibrated_for_cross_league_role_minutes_usage_effects"
+    assert result["result"]["source_season"] == 2024
+    assert result["result"]["target_season"] == 2025
+    assert result["result"]["context"]["status"] == "unvalidated_roster_complementarity"
+    assert result["result"]["team_fit_delta"] == 0.0
+    assert any("non è calibrata per quantificare" in item for item in result["limitations"])
+
+
 def test_pair_fit_penalises_usage_overlap_and_reports_components():
     engine = ChatScenarioEngine(SimpleNamespace(), _data())
     result = engine.evaluate(
