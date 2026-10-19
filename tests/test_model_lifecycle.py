@@ -116,7 +116,7 @@ def _bb_rating_prediction_artifact(path: Path, version: str = "1.0.0") -> None:
         json.dumps({
             "model": "BBRatingFuturePredictionModel",
             "model_version": version,
-            "feature_version": "bb-rating-direct-target-v1",
+            "feature_version": "bb-rating-direct-target-v2",
             "target": "official_bb_rating_t_plus_1",
             "target_scale": [1, 100],
             "bb_rating_version": "1.9",
