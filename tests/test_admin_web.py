@@ -378,7 +378,8 @@ def test_helpers_and_static_assets(monkeypatch, tmp_path):
     future_page_end = html.index("</template>", future_page_start)
     future_page = html[future_page_start:future_page_end]
     assert 'class="page-title-with-icon"' in future_page
-    assert 'class="ph ph-crystal-ball"' in future_page
+    assert '<svg class="future-performance-icon-svg"' in future_page
+    assert 'viewBox="0 0 24 24"' in future_page
     assert ".page-title-icon" in css
     # Phosphor files live under STATIC_ROOT/assets/phosphor, while STATIC_ROOT is mounted at /assets.
     assert 'href="/assets/assets/phosphor/regular/style.css"' in html
