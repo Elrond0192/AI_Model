@@ -13,7 +13,6 @@ import numpy as np
 import pandas as pd
 
 from basketball_ai.models.strict_production import (
-    AsOfPositionPerformanceModel,
     StrictProductionEnsembleModel,
     build_historical_snapshot,
     evaluate_target_season,
