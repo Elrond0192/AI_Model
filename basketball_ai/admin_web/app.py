@@ -1122,12 +1122,13 @@ def _diagnostic_assertions(model: str, result: dict[str, Any]) -> list[dict[str,
             {"label": "Versione modello presente", "ok": bool(body.get("future_performance_version"))},
         ]
     elif model == "bb_rating_prediction":
-        score = body.get("predicted_bb_rating")
-        interval = body.get("confidence_interval") or body.get("interval") or {}
+        prediction = body.get("prediction") if isinstance(body.get("prediction"), dict) else {}
+        score = prediction.get("predicted_bb_rating")
+        interval = prediction.get("confidence_interval") or prediction.get("interval") or prediction.get("confidence") or {}
         checks += [
             {"label": "BB-Rating previsto 1–100", "ok": isinstance(score, (int, float)) and 1 <= float(score) <= 100},
             {"label": "Intervallo di incertezza", "ok": isinstance(interval, dict) and bool(interval)},
-            {"label": "Scenario dichiarato", "ok": bool(body.get("scenario"))},
+            {"label": "Scenario dichiarato", "ok": bool(prediction.get("scenario"))},
         ]
     else:
         checks.append({"label": "Snapshot metriche presente", "ok": isinstance(body.get("metrics"), (dict, list)) or isinstance(body.get("ratings"), (dict, list))})
