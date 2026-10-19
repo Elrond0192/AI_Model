@@ -532,13 +532,17 @@ def _bb_rating_status() -> dict[str, Any]:
     uncertainty_path = paths["uncertainty"]
     report = _read_json(report_path) if report_path.exists() else None
     uncertainty = _read_json(uncertainty_path) if uncertainty_path.exists() else None
-    fitted = (report or {}).get("uncertainty_calibration") or {}
-    dataset = (report or {}).get("dataset") or {}
-    validation = (report or {}).get("validation_signals") or {}
+    # A missing or malformed optional uncertainty artifact must not crash
+    # health/status endpoints; report the release as incomplete instead.
+    report = report if isinstance(report, dict) else {}
+    uncertainty = uncertainty if isinstance(uncertainty, dict) else {}
+    fitted = report.get("uncertainty_calibration") or {}
+    dataset = report.get("dataset") or {}
+    validation = report.get("validation_signals") or {}
     support = fitted.get("support") or {}
     ready = bool(
-        report
-        and uncertainty
+        bool(report)
+        and bool(uncertainty)
         and report.get("calibration_version")
         and report.get("bb_rating_version")
         and uncertainty.get("status")
