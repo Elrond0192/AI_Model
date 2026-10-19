@@ -445,7 +445,7 @@ class BBRatingEngine:
 
     @staticmethod
     def _percentile(values: pd.Series, value: float, direction: str = "higher") -> Optional[float]:
-        clean = pd.to_numeric(values, errors="coerce").replace([np.inf, -np.inf], np.nan).dropna().to_numpy(dtype=float, copy=True)
+        clean = pd.to_numeric(pd.Series(values, copy=True), errors="coerce").replace([np.inf, -np.inf], np.nan).dropna().to_numpy(dtype=float, copy=True)
         if clean.size == 0 or not np.isfinite(value):
             return None
         clean.sort()
