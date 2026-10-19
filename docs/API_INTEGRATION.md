@@ -13,11 +13,11 @@ AI_Model is a server-to-server analytics service. WordPress owns conversation or
 
 | Purpose | Method and path | Contract |
 |---|---|---|
-| Season-ahead player/team forecast | `POST /api/v2/predictions/player-team` | Source season and exact league/competition; target is source season + 1 |
+| BB Prediction Model | `POST /api/v2/bb-rating-prediction/player` | Direct future BB-Rating 1–100 with source/target league and competition context |
 | BB-Rating | `POST /api/v2/bb-rating/player` | Contextual descriptive rating from 1–100; not a forecast |
 | Metric Rating | `POST /api/v2/metric-rating/rate` | Rates one metric value against a stored distribution |
 | Player metric snapshot | `POST /api/v2/metric-rating/player-snapshot` | Returns requested metric ratings for a player/context |
-| Player Future Performance | `POST /api/v2/future-performance/player` | Separate multivariate next-season player-stat forecast |
+| BB Prediction Model | `POST /api/v2/bb-rating-prediction/player` | Direct future contextual BB-Rating forecast on 1–100 |\n| Player Future Performance | `POST /api/v2/future-performance/player` | Separate multivariate next-season player-stat forecast |
 | Player Intelligence capabilities | `GET /api/v2/player-intelligence/capabilities` | Lists available/partial/missing analysis capabilities |
 | Scenario evaluation | `POST /api/v2/scenarios/evaluate` | Typed scenario analysis; preserve support and limitation metadata |
 

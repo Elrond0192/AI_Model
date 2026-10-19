@@ -226,10 +226,11 @@ class MetricEvidence:
                 METRIC_SEMANTICS[self.metric],
                 self.value,
                 self.percentile,
-            ) if self.metric in METRIC_SEMANTICS
-              and self.value is not None
-              and self.percentile is not None
-            else None,
+            ) if (
+                self.metric in METRIC_SEMANTICS
+                and self.value is not None
+                and self.percentile is not None
+            ) else None,
         }
 
 
@@ -443,8 +444,9 @@ class BBRatingEngine:
 
         return context, "limited_context"
 
-    def _percentile(self, values: pd.Series, value: float, direction: str) -> Optional[float]:
-        clean = pd.to_numeric(values, errors="coerce").replace([np.inf, -np.inf], np.nan).dropna().to_numpy(dtype=float, copy=True)
+    @staticmethod
+    def _percentile(values: pd.Series, value: float, direction: str = "higher") -> Optional[float]:
+        clean = pd.to_numeric(pd.Series(values, copy=True), errors="coerce").replace([np.inf, -np.inf], np.nan).dropna().to_numpy(dtype=float, copy=True)
         if clean.size == 0 or not np.isfinite(value):
             return None
         clean.sort()

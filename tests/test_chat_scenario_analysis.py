@@ -40,7 +40,7 @@ def _analysis_data() -> dict:
                 "player_id": pid, "team_id": team_id, "league_id": 10,
                 "season": year, "competition": "RS", "rating": rating,
                 "games_played": 28, "minutes_per_game": 26 + pid,
-                "points": 10 + pid, "rebounds": 3 + pid, "assists": ast,
+                "points": 10 + pid + (year - 2023), "rebounds": 3 + pid, "assists": ast,
                 "steals": 1.0, "blocks": .4, "ts_pct": ts, "usg_pct": usg,
                 "bpm": bpm, "obpm": bpm - .5, "dbpm": dbpm, "net_rtg": 2 + pid,
                 "ortg": 110 + pid, "drtg": 108 - pid * .2,
@@ -103,7 +103,7 @@ def _engine() -> ChatScenarioEngine:
     )
 
 
-def test_prediction_model_uses_loaded_calibration_and_hides_native_rating():
+def test_bb_prediction_model_uses_direct_official_rating_and_hides_native_rating():
     data = _analysis_data()
     data["player_dict"][1]["global_id"] = "PLAYER-ALPHA"
 
@@ -113,28 +113,29 @@ def test_prediction_model_uses_loaded_calibration_and_hides_native_rating():
             assert league == "A"
             return SimpleNamespace(score={2023: 61, 2024: 65}[season])
 
-    calibration = {
-        "calibration_version": "1.0",
-        "fit": {
-            "x_thresholds": [0.0, 10.0],
-            "y_thresholds_native": [0.0, 10.0],
-        },
-    }
+    class DirectBBPrediction:
+        def predict_from_data(self, source_data, **kwargs):
+            assert kwargs["player_global_id"] == "PLAYER-ALPHA"
+            assert kwargs["source_season"] == 2024
+            assert kwargs["target_league"] == "A"
+            assert kwargs["target_competition"] == "RS"
+            return {
+                "source_bb_rating": 65.0,
+                "predicted_bb_rating": 72.8,
+                "confidence_low_100": 68.3,
+                "confidence_high_100": 77.2,
+                "target_season": 2025,
+                "scenario": "same_context",
+                "calibration_level": "scenario",
+                "calibration_samples": 120,
+            }
+
     engine = ChatScenarioEngine(
         SimpleNamespace(),
         data,
         bb_rating_engine=HistoricalBBRating(),
-        prediction_calibration=calibration,
+        bb_rating_prediction_model=DirectBBPrediction(),
     )
-    engine._direct_prediction = lambda player_id, team_id, league_id, season, competition: (
-        SimpleNamespace(
-            predicted_rating=7.25,
-            confidence_low=6.8,
-            confidence_high=7.7,
-        ),
-        {},
-    )
-
     result = engine.evaluate(
         {
             "scenario": "model_evidence",
@@ -148,15 +149,14 @@ def test_prediction_model_uses_loaded_calibration_and_hides_native_rating():
         None,
     )
 
-    prediction = result["prediction_model"]
+    prediction = result["bb_rating_prediction"]
     assert prediction["available"] is True
     assert prediction["target_season"] == 2025
-    assert prediction["prediction_calibration_version"] == "1.0"
-    assert prediction["predicted_rating_100"] == pytest.approx(72.8)
+    assert prediction["predicted_bb_rating"] == pytest.approx(72.8)
+    assert prediction["source_bb_rating"] == pytest.approx(65.0)
     assert prediction["confidence_low_100"] == pytest.approx(68.3)
     assert prediction["confidence_high_100"] == pytest.approx(77.2)
-    assert "punteggio previsionale calibrato" in prediction["interpretation"].lower()
-    assert "BB-Rating contestuale osservato" in prediction["interpretation"]
+    assert "BB-Rating contestuale" in prediction["interpretation"]
     assert "current_bb_rating" not in prediction
     assert "delta_vs_current_bb_rating" not in prediction
     assert result["bb_rating"]["score"] == 65
@@ -166,12 +166,20 @@ def test_prediction_model_uses_loaded_calibration_and_hides_native_rating():
     assert "base_rating" not in prediction
 
 
+
 def test_public_scenario_payload_suppresses_raw_rating_and_preserves_canonical_scores():
     from basketball_ai.api.routes.scenarios_v2 import _sanitize_public_scenario_payload
 
     payload = {
         "result": {
             "bb_rating": {"available": True, "score": 65},
+            "what_if": {
+                "projected_rating": 6.9,
+                "empirical_transfer_delta": -0.4,
+                "league_prior_delta": -0.2,
+                "team_fit_delta": 0.1,
+                "team_fit": {"compatibility": 0.92},
+            },
             "season_comparison": {
                 "previous_rating": 7.2,
                 "current_rating": 6.8,
@@ -186,14 +194,14 @@ def test_public_scenario_payload_suppresses_raw_rating_and_preserves_canonical_s
                     {"metric": "bb_rating", "value": 65, "scale": "1-100"},
                 ],
             },
-            "prediction_model": {
+            "bb_rating_prediction": {
                 "target_season": 2027,
                 "predicted_rating_delta": 0.8,
                 "outcome": {"label": "meaningful_positive_change"},
                 "predicted_rating": 7.25,
                 "confidence_low": 6.8,
                 "confidence_high": 7.7,
-                "predicted_rating_100": 72.8,
+                "predicted_bb_rating": 72.8,
                 "confidence_low_100": 68.3,
                 "confidence_high_100": 77.2,
             },
@@ -203,15 +211,17 @@ def test_public_scenario_payload_suppresses_raw_rating_and_preserves_canonical_s
     clean = _sanitize_public_scenario_payload(payload)
     encoded = str(clean)
     assert clean["result"]["bb_rating"]["score"] == 65
+    for forbidden_key in ("projected_rating", "empirical_transfer_delta", "league_prior_delta", "team_fit_delta"):
+        assert forbidden_key not in clean["result"]["what_if"]
     comparison = clean["result"]["season_comparison"]
     assert comparison["previous_bb_rating"] == 71
     assert comparison["current_bb_rating"] == 65
     assert comparison["bb_rating_delta"] == -6
     assert [row["metric"] for row in clean["result"]["metric_explanation"]["metrics"]] == ["bb_rating"]
-    forecast = clean["result"]["prediction_model"]
+    forecast = clean["result"]["bb_rating_prediction"]
     assert "predicted_rating_delta" not in forecast
     assert "outcome" not in forecast
-    assert forecast["predicted_rating_100"] == 72.8
+    assert forecast["predicted_bb_rating"] == 72.8
     assert forecast["confidence_low_100"] == 68.3
     assert forecast["confidence_high_100"] == 77.2
     assert "target_season" in forecast
@@ -452,7 +462,24 @@ def test_player_intelligence_composes_multiple_question_keys():
 
 
 def test_causal_team_effect_returns_observational_association_without_causal_claim():
-    result = _engine().evaluate(
+    data = _analysis_data()
+    data["player_stats"] = pd.concat([
+        data["player_stats"],
+        pd.DataFrame([{
+            "player_id": 1, "team_id": 101, "league_id": 10, "season": 2022,
+            "competition": "RS", "rating": 6.8, "games_played": 25,
+            "minutes_per_game": 25, "points": 11, "assists": 4,
+            "ts_pct": .56, "usg_pct": .22, "bpm": 2.0, "dbpm": .3,
+        }]),
+    ], ignore_index=True)
+    data["team_season_stats"] = pd.concat([
+        data["team_season_stats"],
+        pd.DataFrame([
+            {"team_id": 101, "league_id": 10, "season": 2022, "competition": "RS", "pace": 70.0, "offensive_rating": 108.0, "defensive_rating": 111.0, "net_rtg": -1.0, "three_point_attempt_rate": .32, "assists_per_game": 19.0},
+            {"team_id": 102, "league_id": 10, "season": 2022, "competition": "RS", "pace": 73.0, "offensive_rating": 112.0, "defensive_rating": 110.0, "net_rtg": 2.0, "three_point_attempt_rate": .38, "assists_per_game": 21.0},
+        ]),
+    ], ignore_index=True)
+    result = ChatScenarioEngine(SimpleNamespace(), data).evaluate(
         {"scenario": "causal_team_effect", "season": 2024, "competition": "RS"},
         [1], [], 10, None,
     )
@@ -460,7 +487,7 @@ def test_causal_team_effect_returns_observational_association_without_causal_cla
     assert result["result"]["causal_effect"] is None
     assert result["result"]["association"]["rating_vs_team_context_correlation"] is not None
     assert result["support"]["method"] == "within_player_observational_team_context"
-    assert any("non un effet causale" in item for item in result["limitations"])
+    assert any("non un effetto causale" in item for item in result["limitations"])
 
 
 def test_player_intelligence_composes_causal_team_effect_as_observational():

@@ -29,6 +29,7 @@ MIN_FINAL_SAMPLES = 40
 MIN_WALK_FORWARD_SAMPLES = 20
 MIN_TRAIN_SAMPLES_PER_FOLD = 20
 MIN_WALK_FORWARD_SEASONS = 3
+MIN_WALK_FORWARD_SAMPLES_PER_SEASON = 8
 RIDGE_ALPHA = 0.5
 
 
@@ -274,7 +275,22 @@ def fit_acquisition_impact_model(
             "status": "roster_history_unavailable",
             "reason": "Non sono disponibili transizioni stagionali complete di roster e Net Rating.",
             "training_samples": 0,
-            "validation": {"samples": 0, "seasons": 0},
+            "validation": {"samples": 0, "seasons": 0, "by_target_season": [], "scope": {
+                "league_id": int(league_id),
+                "competition": normalize_competition(competition),
+                "through_season": int(through_season),
+                "target_seasons": [],
+                "design": "expanding_window_walk_forward",
+                "causal_effect_established": False,
+            }},
+            "validation_scope": {
+                "league_id": int(league_id),
+                "competition": normalize_competition(competition),
+                "through_season": int(through_season),
+                "target_seasons": [],
+                "design": "expanding_window_walk_forward",
+                "causal_effect_established": False,
+            },
         }
 
     years = sorted({int(row["season"]) for row in rows})
@@ -298,23 +314,39 @@ def fit_acquisition_impact_model(
                 "residual": observed - prediction,
             })
 
+    all_oof_seasons = sorted({int(row["season"]) for row in out_of_time})
+    oof_samples_by_season = {
+        year: sum(int(row["season"]) == year for row in out_of_time)
+        for year in all_oof_seasons
+    }
+    supported_oof_seasons = [
+        year for year, count in oof_samples_by_season.items()
+        if count >= MIN_WALK_FORWARD_SAMPLES_PER_SEASON
+    ]
+    under_supported_oof_seasons = [
+        year for year, count in oof_samples_by_season.items()
+        if count < MIN_WALK_FORWARD_SAMPLES_PER_SEASON
+    ]
     if len(rows) < MIN_FINAL_SAMPLES:
         status = "insufficient_historical_transitions"
         reason = f"Servono almeno {MIN_FINAL_SAMPLES} transizioni storiche complete; disponibili {len(rows)}."
     elif (
         len(out_of_time) < MIN_WALK_FORWARD_SAMPLES
-        or len({int(row["season"]) for row in out_of_time}) < MIN_WALK_FORWARD_SEASONS
+        or len(supported_oof_seasons) < MIN_WALK_FORWARD_SEASONS
     ):
         status = "insufficient_walk_forward_validation"
-        reason = "Il backtest walk-forward non ha abbastanza previsioni fuori campione distribuite su almeno tre stagioni."
+        reason = (
+            "Il backtest walk-forward richiede almeno "
+            f"{MIN_WALK_FORWARD_SEASONS} stagioni target con almeno "
+            f"{MIN_WALK_FORWARD_SAMPLES_PER_SEASON} predizioni fuori campione ciascuna; "
+            f"stagioni supportate: {len(supported_oof_seasons)}."
+        )
     else:
         observed = np.asarray([float(row["observed"]) for row in out_of_time])
         predicted = np.asarray([float(row["prediction"]) for row in out_of_time])
         residuals = observed - predicted
         rmse = float(np.sqrt(np.mean(np.square(residuals))))
         baseline_rmse = float(np.sqrt(np.mean(np.square(observed))))
-        mae = float(np.mean(np.abs(residuals)))
-        baseline_mae = float(np.mean(np.abs(observed)))
         bias = float(np.mean(residuals))
         if rmse < baseline_rmse and abs(bias) < max(0.01, baseline_rmse * 0.5):
             status = "validated"
@@ -325,8 +357,13 @@ def fit_acquisition_impact_model(
 
     validation: dict[str, Any] = {
         "samples": len(out_of_time),
-        "seasons": len({int(row["season"]) for row in out_of_time}),
+        "seasons": len(all_oof_seasons),
+        "supported_target_seasons": supported_oof_seasons,
+        "under_supported_target_seasons": under_supported_oof_seasons,
+        "minimum_samples_per_target_season": MIN_WALK_FORWARD_SAMPLES_PER_SEASON,
+        "minimum_supported_target_seasons": MIN_WALK_FORWARD_SEASONS,
     }
+    cohort_regressions: list[int] = []
     if out_of_time:
         observed = np.asarray([float(row["observed"]) for row in out_of_time])
         predicted = np.asarray([float(row["prediction"]) for row in out_of_time])
@@ -347,6 +384,60 @@ def fit_acquisition_impact_model(
             },
         })
 
+        # A league/competition-level aggregate can hide a bad held-out season.
+        # Publish season cohorts explicitly and fail closed on material regression
+        # only when a cohort has enough out-of-time examples to be informative.
+        by_target_season: list[dict[str, Any]] = []
+        for held_out_year in sorted({int(row["season"]) for row in out_of_time}):
+            cohort = [row for row in out_of_time if int(row["season"]) == held_out_year]
+            cohort_observed = np.asarray([float(row["observed"]) for row in cohort])
+            cohort_predicted = np.asarray([float(row["prediction"]) for row in cohort])
+            cohort_residuals = cohort_observed - cohort_predicted
+            cohort_rmse = float(np.sqrt(np.mean(np.square(cohort_residuals))))
+            cohort_baseline_rmse = float(np.sqrt(np.mean(np.square(cohort_observed))))
+            supported = len(cohort) >= 8
+            cohort_status = "under_supported" if not supported else (
+                "validated" if cohort_rmse < cohort_baseline_rmse else "baseline_not_beaten"
+            )
+            if supported and cohort_baseline_rmse > 1e-9 and cohort_rmse > cohort_baseline_rmse * 1.5:
+                cohort_regressions.append(held_out_year)
+                cohort_status = "material_regression"
+            by_target_season.append({
+                "target_season": held_out_year,
+                "samples": len(cohort),
+                "status": cohort_status,
+                "rmse": round(cohort_rmse, 4),
+                "baseline_rmse": round(cohort_baseline_rmse, 4),
+                "mae": round(float(np.mean(np.abs(cohort_residuals))), 4),
+                "bias": round(float(np.mean(cohort_residuals)), 4),
+                "beats_zero_change_baseline": bool(cohort_rmse < cohort_baseline_rmse),
+            })
+        validation["by_target_season"] = by_target_season
+        validation["cohort_min_samples"] = 8
+
+        if status == "validated" and cohort_regressions:
+            status = "cohort_regression"
+            reason = (
+                "Il risultato aggregato supera il baseline, ma almeno una stagione target "
+                "con supporto sufficiente mostra una regressione rilevante: "
+                + ", ".join(str(year) for year in cohort_regressions)
+                + "."
+            )
+
+    validation_scope = {
+        "league_id": int(league_id),
+        "competition": normalize_competition(competition),
+        "through_season": int(through_season),
+        "target_seasons": all_oof_seasons,
+        "supported_target_seasons": supported_oof_seasons,
+        "under_supported_target_seasons": under_supported_oof_seasons,
+        "minimum_samples_per_target_season": MIN_WALK_FORWARD_SAMPLES_PER_SEASON,
+        "minimum_supported_target_seasons": MIN_WALK_FORWARD_SEASONS,
+        "design": "expanding_window_walk_forward",
+        "causal_effect_established": False,
+    }
+    validation["scope"] = validation_scope
+
     final_fit = _fit_ridge(rows)
     if final_fit is None:
         status = "model_fit_failed"
@@ -359,6 +450,7 @@ def fit_acquisition_impact_model(
         "training_samples": len(rows),
         "training_seasons": len(years),
         "validation": validation,
+        "validation_scope": validation_scope,
         "feature_names": list(FEATURES),
         "reference_roster_turnover": float(np.median([float(row["roster_turnover"]) for row in rows])),
         "residual_interval_80": (
@@ -397,6 +489,7 @@ def predict_acquisition_impact(
             "available": False,
             "reason": str(model.get("reason") or "Il modello non ha superato la validazione fuori campione."),
             "validation": model.get("validation", {}),
+            "validation_scope": model.get("validation_scope", {}),
             "training_samples": int(model.get("training_samples", 0)),
         }
 

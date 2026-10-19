@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="color-scheme" content="dark"><meta name="theme-color" content="#07131f">
   <title>AI Model Control Center</title>
-  <link rel="stylesheet" href="/assets/app.css?v=2.5.0">
+  <link rel="stylesheet" href="/assets/app.css?v=2.5.1">
   <link rel="stylesheet" href="/assets/phosphor/regular/style.css">
   <link rel="stylesheet" href="/assets/phosphor/fill/style.css">
 </head>
@@ -44,9 +44,6 @@
           <button class="nav-item" data-page="future-performance"><span class="nav-icon"><i class="ph ph-crystal-ball"></i></span><span>Future Performance</span></button>
         </div>
         <div class="nav-group"><div class="nav-group-label">VALIDATION</div>
-          <button class="nav-item" data-page="training"><span class="nav-icon"><i class="ph ph-trend-up"></i></span><span>Training</span></button>
-          <button class="nav-item" data-page="backtests"><span class="nav-icon"><i class="ph ph-chart-line-up"></i></span><span>Backtests</span></button>
-          <button class="nav-item" data-page="registry"><span class="nav-icon"><i class="ph ph-cube"></i></span><span>Model Registry</span></button>
           <button class="nav-item" data-page="model-releases"><span class="nav-icon"><i class="ph ph-git-branch"></i></span><span>Model Releases</span></button>
         </div>
         <div class="nav-group"><div class="nav-group-label">LAB</div>
@@ -95,7 +92,7 @@
         <div class="hero-status"><span class="hero-status-dot" id="overview-system-dot"></span><div><strong id="overview-system-status">SYSTEM OPERATIONAL</strong><span>Production environment</span></div></div>
       </div>
       <section class="overview-model-strip">
-        <div class="overview-model-head"><div><div class="eyebrow">PRODUCTION MODELS</div><h2>Active intelligence stack</h2></div><button class="btn btn-small btn-secondary jump" data-page="registry">Model Registry</button></div>
+        <div class="overview-model-head"><div><div class="eyebrow">PRODUCTION MODELS</div><h2>Active intelligence stack</h2></div><button class="btn btn-small btn-secondary jump" data-page="model-releases">Model Releases</button></div>
         <div id="overview-models" class="model-strip-grid"></div>
       </section>
       <div id="overview-kpis" class="kpi-grid six overview-kpis"></div>
@@ -104,22 +101,22 @@
         <div class="table-shell"><table><thead><tr><th>Componente</th><th>Stato</th><th>Dettagli</th><th class="right">Azione</th></tr></thead><tbody id="readiness-body"></tbody></table></div>
       </section>
       <div class="split-grid">
-        <section class="panel"><div class="panel-heading"><div><div class="eyebrow">REGISTRY</div><h2>Production &amp; candidate</h2></div><button class="btn btn-small btn-secondary jump" data-page="registry">Apri</button></div><div id="overview-registry"></div></section>
-        <section class="panel"><div class="panel-heading"><div><div class="eyebrow">VALIDATION</div><h2>Latest backtest</h2></div><button class="btn btn-small btn-secondary jump" data-page="backtests">Apri</button></div><div id="overview-backtest"></div></section>
+        <section class="panel"><div class="panel-heading"><div><div class="eyebrow">BB PREDICTION</div><h2>Future BB-Rating forecast</h2></div><button class="btn btn-small btn-secondary jump" data-page="model-releases">Apri</button></div><div id="overview-registry"></div></section>
+        <section class="panel"><div class="panel-heading"><div><div class="eyebrow">FUTURE PERFORMANCE</div><h2>Forecast statistico</h2></div><button class="btn btn-small btn-secondary jump" data-page="future-performance">Apri</button></div><div id="overview-backtest"></div></section>
       </div>
-      <section class="panel candidate-panel"><div class="panel-heading"><div><div class="eyebrow">QUALITY</div><h2>Candidate quality <span class="muted-inline">(ultimo run)</span></h2></div></div><div id="candidate-quality" class="quality-grid"></div></section>
+      <section class="panel candidate-panel"><div class="panel-heading"><div><div class="eyebrow">QUALITY</div><h2>BB Prediction release gates</h2></div></div><div id="candidate-quality" class="quality-grid"><div class="quality-card"><span>Validation</span><strong>Walk-forward per scenario</strong></div><div class="quality-card"><span>Promotion</span><strong>Only if better than baseline</strong></div><div class="quality-card"><span>Scale</span><strong>Official BB-Rating 1–100</strong></div></div></section>
     </section>
   </template>
 
   <template id="page-data">
     <section class="page">
-      <div class="page-heading"><div><h1>Dati e snapshot</h1><p>Configura PostgreSQL, prepara lo storico immutabile e porta i dati al training senza passare dal terminale.</p></div></div>
+      <div class="page-heading"><div><h1>Dati e snapshot</h1><p>Configura PostgreSQL e prepara lo storico immutabile per BB Prediction Model e Future Performance.</p></div></div>
       <section class="panel lifecycle-panel">
         <div class="panel-heading"><h2>Come funziona</h2><span class="registry-badge">Nessun terminale per l’operatività ordinaria</span></div>
         <div class="quality-grid lifecycle-grid">
           <div class="quality-card"><span>1 · Database</span><strong>Testa il profilo</strong><small>Verifica connessione e contratto AI.</small></div>
           <div class="quality-card"><span>2 · Storico modello</span><strong>Prepara storico modello</strong><small>Legge solo Anagrafiche e AdvancedStats: non carica PBP.</small></div>
-          <div class="quality-card"><span>3 · Training</span><strong>Usa lo snapshot</strong><small>Genera un candidate; production resta invariato.</small></div>
+          <div class="quality-card"><span>3 · BB Prediction</span><strong>Allena e valida il candidate</strong><small>Usa Model Releases; la produzione resta invariata fino alla promozione.</small></div>
           <div class="quality-card"><span>4 · Scenari avanzati</span><strong>On demand</strong><small>PBP e lineup sono separati dal training.</small></div>
         </div>
         <p class="microcopy">La migrazione iniziale degli schemi PostgreSQL resta un’operazione tecnica una tantum. Dopo l’installazione, usa questa pagina per il normale ciclo dati.</p>
@@ -146,40 +143,12 @@
     </section>
   </template>
 
-  <template id="page-training">
-    <section class="page">
-      <div class="page-heading action-heading"><div><h1>Training</h1><p>Usa esclusivamente uno snapshot già preparato: niente caricamenti automatici o letture PBP.</p></div><button id="start-training" class="btn btn-primary">Avvia training</button></div>
-      <div id="training-kpis" class="kpi-grid four"></div>
-      <section id="training-job" class="panel job-panel"></section>
-      <section class="panel"><div class="panel-heading"><h2>Leakage-safe training contract</h2></div><div class="table-shell"><table><thead><tr><th>Stage</th><th>Seasons</th><th>Purpose</th></tr></thead><tbody id="training-contract"></tbody></table></div></section>
-      <section class="panel"><div class="panel-heading"><h2>Immutable run configuration</h2></div><div id="training-config" class="config-grid"></div></section>
-    </section>
-  </template>
-
-  <template id="page-backtests">
-    <section class="page">
-      <div class="page-heading"><div><h1>Backtests</h1><p>Walk-forward out-of-time dell'ensemble esatto di produzione</p></div></div>
-      <div id="backtest-kpis" class="kpi-grid four"></div>
-      <div class="split-grid"><section class="panel"><div class="panel-heading"><h2>RMSE by target season</h2></div><div id="backtest-chart" class="chart-box"></div></section><section class="panel"><div class="panel-heading"><h2>Candidate summary</h2></div><div id="backtest-summary"></div></section></div>
-      <section class="panel"><div class="panel-heading"><h2>By competition</h2></div><div class="table-shell"><table><thead><tr><th>Competition</th><th>N</th><th>RMSE</th><th>MAE</th><th>Bias</th><th>Coverage</th></tr></thead><tbody id="competition-body"></tbody></table></div></section>
-    </section>
-  </template>
-
-  <template id="page-registry">
-    <section class="page">
-      <div class="page-heading"><div><h1>Model Registry</h1><p>Candidate immutabili, promotion gates e rollback controllato</p></div></div>
-      <div id="registry-cards" class="split-grid"></div>
-      <section class="panel"><div class="panel-heading"><h2>Promotion controls</h2></div><div class="control-row"><label class="confirm"><input id="registry-confirm" type="checkbox"><span>Ho verificato il walk-forward report e i promotion gates</span></label><div class="button-row"><button id="promote-btn" class="btn btn-primary" disabled>Promuovi candidate</button><button id="rollback-btn" class="btn btn-danger" disabled>Rollback previous</button></div></div></section>
-      <section class="panel"><div class="panel-heading"><h2>Registry history</h2></div><div class="table-shell"><table><thead><tr><th>UTC</th><th>Event</th><th>Run ID</th></tr></thead><tbody id="registry-history"></tbody></table></div></section>
-    </section>
-  </template>
-
   <template id="page-future-performance">
     <section class="page">
       <div class="page-heading action-heading">
         <div>
           <h1>Player Future Performance</h1>
-          <p>Modello predittivo multivariato season-ahead. Prevede le performance del giocatore nella stagione successiva, separato da Prediction Model e BB-Rating.</p>
+          <p>Modello predittivo multivariato season-ahead. Prevede le statistiche del giocatore nella stagione successiva; è distinto dal BB Prediction Model che prevede il BB-Rating 1–100.</p>
         </div>
         <div class="button-row">
           <button id="future-performance-refresh" class="btn btn-secondary btn-small">Aggiorna</button>
@@ -201,7 +170,7 @@
   <template id="page-bb-rating">
     <section class="page">
       <div class="page-heading action-heading">
-        <div><h1>BB-Rating</h1><p>Layer descrittivo del rendimento: rating 1–100, calibrazione empirica e uncertainty serving. Separato dal Prediction Model.</p></div>
+        <div><h1>BB-Rating</h1><p>Layer descrittivo del rendimento: rating 1–100, calibrazione empirica e uncertainty serving. Include il BB Prediction Model come previsione futura distinta dal rating descrittivo.</p></div>
         <div class="button-row"><button id="bb-rating-refresh" class="btn btn-secondary" type="button">Aggiorna</button><button id="bb-rating-calibrate" class="btn btn-primary" type="button">Ricalibra BB-Rating</button></div>
       </div>
       <div id="bb-rating-kpis" class="kpi-grid four"></div>
@@ -221,7 +190,7 @@
         <section class="panel">
           <div class="panel-heading"><h2>Uncertainty layer</h2></div>
           <div id="bb-rating-uncertainty" class="summary-list"></div>
-          <p class="microcopy">L'incertezza descrive la variabilità storica tra stagioni consecutive. Non corregge il BB-Rating corrente e non modifica il Prediction Model.</p>
+          <p class="microcopy">L'incertezza descrive la variabilità storica tra stagioni consecutive. Non corregge il BB-Rating corrente e non modifica il BB Prediction Model.</p>
         </section>
         <section class="panel">
           <div class="panel-heading"><h2>Artifacts</h2></div>
@@ -238,15 +207,13 @@
 
   <template id="page-model-releases">
     <section class="page">
-      <div class="page-heading"><div><h1>Model Releases</h1><p>Candidate validation, promotion and rollback for calibration and auxiliary models. Promoting an artifact requires an inference API restart.</p></div><button id="model-releases-refresh" class="btn btn-secondary">Aggiorna</button></div>
-      <section class="panel"><div class="panel-heading"><h2>Native Prediction Model (0–10)</h2><button class="btn btn-secondary btn-small jump" data-page="registry">Apri registry</button></div><div id="native-prediction-registry"></div></section>
+      <div class="page-heading"><div><h1>Model Releases</h1><p>Candidate validation, promotion and rollback for BB Prediction Model, BB-Rating and Future Performance. Promoting an artifact requires an inference API restart.</p></div><button id="model-releases-refresh" class="btn btn-secondary">Aggiorna</button></div>
       <section class="panel"><div class="panel-heading"><h2>Serving runtime</h2><button class="btn btn-secondary btn-small jump" data-page="health">Apri health checks</button></div><div id="model-release-serving"></div></section>
-      <section class="panel"><div class="panel-heading"><div><h2>Prediction 1–100 calibration</h2><p class="microcopy">Maps the native Prediction Model output to a display scale. Does not retrain or modify the native model.</p></div><button id="prediction-calibration-start" class="btn btn-primary">Genera candidate</button></div><div id="prediction-calibration-job"></div><div id="prediction-calibration-release"></div></section>
+      <section class="panel"><div class="panel-heading"><div><h2>BB Prediction Model (1–100)</h2><p class="microcopy">Previsione diretta del BB-Rating ufficiale futuro. Il target viene ricalcolato dal BB-Rating engine nel contesto di destinazione; non è una conversione del rating statistico 0–10.</p></div><button id="bb-rating-prediction-start" class="btn btn-primary">Allena candidate</button></div><div id="bb-rating-prediction-job"></div><div id="bb-rating-prediction-release"></div><div class="button-row"><button class="btn btn-primary release-promote" data-model="bb-rating-prediction">Promuovi candidate</button><button class="btn btn-danger release-rollback" data-model="bb-rating-prediction">Rollback</button></div></section>
       <div class="split-grid">
         <section class="panel"><div class="panel-heading"><h2>BB-Rating</h2></div><div id="release-bb-rating"></div><div class="button-row"><button class="btn btn-primary release-promote" data-model="bb-rating">Promuovi candidate</button><button class="btn btn-danger release-rollback" data-model="bb-rating">Rollback</button></div></section>
         <section class="panel"><div class="panel-heading"><h2>Future Performance</h2></div><div id="release-future-performance"></div><div class="button-row"><button class="btn btn-primary release-promote" data-model="future-performance">Promuovi candidate</button><button class="btn btn-danger release-rollback" data-model="future-performance">Rollback</button></div></section>
       </div>
-      <section class="panel"><div class="panel-heading"><h2>Prediction calibration release</h2></div><div class="button-row"><button class="btn btn-primary release-promote" data-model="prediction-calibration">Promuovi candidate</button><button class="btn btn-danger release-rollback" data-model="prediction-calibration">Rollback</button></div><p class="microcopy">La promozione sostituisce solo l'artefatto di calibrazione 1–100. Il modello nativo resta invariato.</p></section>
       <section class="panel"><div class="panel-heading"><h2>Release operation result</h2></div><div id="model-release-result" class="microcopy">Nessuna operazione eseguita.</div></section>
     </section>
   </template>
@@ -313,7 +280,7 @@
         <label>Metriche Metric Rating <input id="diag-metrics" class="input" value="RAPTOR,LEBRON,VORP"></label>
       </div>
       <div class="button-row diagnostics-buttons">
-        <button class="btn btn-secondary diag-run" data-model="prediction">Prediction</button>
+        <button class="btn btn-secondary diag-run" data-model="bb_rating_prediction">BB Prediction 1–100</button>
         <button class="btn btn-secondary diag-run" data-model="bb_rating">BB-Rating</button>
         <button class="btn btn-secondary diag-run" data-model="future_performance">Future Performance</button>
         <button class="btn btn-secondary diag-run" data-model="metric_rating">Metric Rating</button>
@@ -385,7 +352,7 @@
     </section>
   </template>
 
-  <script src="/assets/app.js?v=2.5.1" defer></script>
+  <script src="/assets/app.js?v=2.5.3" defer></script>
 </body>
 </html>
 

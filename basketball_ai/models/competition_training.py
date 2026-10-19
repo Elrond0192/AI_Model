@@ -594,10 +594,15 @@ class CompetitionTemporalCompatibilityModel(TemporalCompatibilityModel):
         base_predictions: Optional[Dict[Tuple[int, int, str, int], float]] = None,
     ) -> None:
         history = data.get("team_season_stats")
-        if history is None or history.empty:
-            raise RuntimeError(
-                "team competition history is required for compatibility training"
-            )
+        if history is None or not isinstance(history, pd.DataFrame) or history.empty:
+            # Compatibility is an optional adjustment. Without historical team
+            # context we must not fabricate a fit or fail the independent player
+            # model: the well-defined fallback is a neutral score of 0.5.
+            history = pd.DataFrame(columns=[
+                "team_id", "league_id", "season", "competition",
+                "pace", "offensive_rating", "defensive_rating", "net_rtg",
+                "three_point_attempt_rate", "assists_per_game", "star_player_usage",
+            ])
 
         stats = data["player_stats"].copy()
         stats["_season_year"] = _numeric_seasons(stats)

@@ -20,6 +20,7 @@ def _data(seasons=range(2021, 2026)):
                 "league_id": 10,
                 "season": season,
                 "competition": "RS",
+                "league_key": "RS",
                 "games_played": 10,
                 "rating": 7.0,
             }
@@ -32,7 +33,9 @@ def _data(seasons=range(2021, 2026)):
             [
                 {
                     "team_id": 2,
+                    "global_id": "t1",
                     "league_id": 10,
+                    "league_key": "ITA1",
                     "season": season,
                     "competition": "RS",
                     "pace": 72.0,
@@ -52,7 +55,7 @@ def _data(seasons=range(2021, 2026)):
         ("training", "training"),
         ("bb-rating", "bb_rating"),
         ("future-performance", "future_performance"),
-        ("prediction-calibration", "prediction_calibration"),
+        ("bb-rating-prediction", "bb_rating_prediction_job"),
     ],
 )
 def test_cancel_training_job_requests_cancellation_for_each_model(job_name, attribute):
@@ -239,7 +242,7 @@ def _reset_state():
             "feature_version": None,
             "output": None,
         }
-        admin.STATE.prediction_calibration = {"status": "idle", "stage": "Ready", "progress": 0, "message": "No Prediction 1-100 calibration run in progress.", "error": None, "started_at": None, "finished_at": None, "output": None}
+        admin.STATE.bb_rating_prediction_job = {"status": "idle", "stage": "Ready", "progress": 0, "message": "No BB Prediction Model training run in progress.", "error": None, "started_at": None, "finished_at": None, "output": None}
         admin.STATE.bb_rating = {
             "status": "idle",
             "stage": "Ready",
@@ -326,7 +329,7 @@ def test_model_release_buttons_use_node_list_and_cancel_jobs_are_exposed():
     assert "candidate_id:item.candidate?.id" in js
     assert "/admin-api/jobs/training/cancel" in js
     assert "/admin-api/jobs/bb-rating/cancel" in js
-    assert "/admin-api/jobs/prediction-calibration/cancel" in js
+    assert "/admin-api/jobs/bb-rating-prediction/cancel" in js
     assert "/admin-api/jobs/future-performance/cancel" in future_js
 
 
@@ -373,9 +376,15 @@ def test_helpers_and_static_assets(monkeypatch, tmp_path):
     assert "Come funziona" in html
     assert "Prepara storico modello" in html
     assert "Dati e snapshot" in html
-    assert "Model Registry" in html
+    assert "Model Registry" not in html
+    assert 'id="page-training"' not in html
+    assert 'id="page-backtests"' not in html
+    assert 'id="page-registry"' not in html
     assert "Model Releases" in html
-    assert "prediction-calibration" in js
+    assert "bb-rating-prediction" in js
+    assert "Prediction 1–100 calibration" not in html
+    assert "Native Prediction Model (0–10)" not in html
+    assert "data-model=\"prediction\"" not in html
     assert "renderModelReleases" in js
     assert "/admin-api/model-releases" in js
     assert "BB-Rating" in html
@@ -396,7 +405,9 @@ def test_helpers_and_static_assets(monkeypatch, tmp_path):
     assert "const setHtml" in future_js
     assert "streamlit" not in (html + css + js).lower()
     assert admin.healthz() == {"status": "ok"}
-    assert Path(admin.index().path).name == "index.html"
+    response = admin.index()
+    assert response.status_code == 200
+    assert b"Model Releases" in response.body
 
 
 
@@ -490,85 +501,111 @@ def test_bb_rating_calibration_start(monkeypatch, tmp_path):
 
 
 
-def test_prediction_calibration_worker_writes_candidate_without_touching_production(monkeypatch, tmp_path):
+def test_bb_rating_prediction_worker_writes_candidate_without_touching_production(monkeypatch, tmp_path):
     _reset_state()
     root = tmp_path / "models_saved"
     monkeypatch.setattr(admin, "MODEL_ROOT", root)
     monkeypatch.setattr(admin, "_utcnow", lambda: "now")
     monkeypatch.setattr(admin, "_audit", lambda *args, **kwargs: None)
 
-    def fake_calibrate(args):
-        output = Path(args.prediction_calibration_output_dir)
-        (output / "prediction_rating_calibration.json").write_text(
-            json.dumps({
-                "calibration_version": "1.0",
-                "prediction_model_version": "2.6.0",
-                "dataset": {"rows": 600, "target_seasons": [2022, 2023, 2024]},
-                "fit": {"x_thresholds": [0.0, 10.0], "y_thresholds_native": [0.0, 10.0]},
-                "validation": {"status": "validated_oos", "n_folds": 2},
-            }),
-            encoding="utf-8",
-        )
+    metadata = {
+        "promotion_gate_passed": True,
+        "oof_samples": 620,
+        "overall_metrics": {"mae": 6.1, "rmse": 8.4},
+        "scenario_metrics": [{"scenario": "same_context", "n": 400}],
+        "target_seasons": [2022, 2023, 2024],
+    }
 
-    import basketball_ai.cli as cli
-    monkeypatch.setattr(cli, "mode_prediction_calibrate", fake_calibrate)
-    admin._prediction_calibration_worker("production", "admin")
+    class FakeModel:
+        def __init__(self, min_oof_samples):
+            assert min_oof_samples == 500
+            self.metadata = {}
 
-    job = admin.STATE.prediction_calibration
+        def fit(self, data, include_latest_target_season=False):
+            assert data["source_contract"] == "canonical"
+            assert include_latest_target_season is False
+            return metadata
+
+        def save(self, output_dir):
+            output_dir.mkdir(parents=True, exist_ok=False)
+            (output_dir / "bb_rating_future_model.joblib").write_bytes(b"model")
+            (output_dir / "metadata.json").write_text(json.dumps(metadata), encoding="utf-8")
+            return {"model_version": "1.0"}
+
+    import basketball_ai.bb_rating.future_prediction as model_module
+    import basketball_ai.data.postgres_loader as loader
+    monkeypatch.setattr(model_module, "BBRatingFuturePredictionModel", FakeModel)
+    monkeypatch.setattr(loader, "load_all_data", lambda **kwargs: {"source_contract": "canonical"})
+    import basketball_ai.admin_web.model_lifecycle as lifecycle
+    monkeypatch.setattr(lifecycle, "validate_artifact", lambda *args: {"valid": True})
+
+    admin._bb_rating_prediction_job_worker("production", "admin")
+
+    job = admin.STATE.bb_rating_prediction_job
     assert job["status"] == "complete"
-    assert job["output"]["rows"] == 600
-    assert (root / "candidates" / "prediction-calibration" / job["candidate_id"]).is_dir()
-    assert not (root / "prediction_calibration").exists()
+    assert job["output"]["oof_samples"] == 620
+    assert job["output"]["mae"] == 6.1
+    assert (root / "candidates" / "bb-rating-prediction" / job["candidate_id"] / "bb_rating_future_model.joblib").is_file()
+    assert not (root / "bb_rating_future_prediction").exists()
+    _reset_state()
 
 
-def test_prediction_calibration_worker_removes_candidate_when_cli_fails(monkeypatch, tmp_path):
+def test_bb_rating_prediction_worker_removes_candidate_when_training_fails(monkeypatch, tmp_path):
     _reset_state()
     root = tmp_path / "models_saved"
     monkeypatch.setattr(admin, "MODEL_ROOT", root)
     monkeypatch.setattr(admin, "_utcnow", lambda: "now")
     monkeypatch.setattr(admin, "_audit", lambda *args, **kwargs: None)
 
-    def fail_calibrate(args):
-        raise RuntimeError("walk-forward backtest failed before artifact write")
+    class FailingModel:
+        def __init__(self, min_oof_samples):
+            pass
 
-    import basketball_ai.cli as cli
-    monkeypatch.setattr(cli, "mode_prediction_calibrate", fail_calibrate)
+        def fit(self, *args, **kwargs):
+            raise RuntimeError("walk-forward failed before artifact write")
 
-    admin._prediction_calibration_worker("production", "admin")
+    import basketball_ai.bb_rating.future_prediction as model_module
+    import basketball_ai.data.postgres_loader as loader
+    monkeypatch.setattr(model_module, "BBRatingFuturePredictionModel", FailingModel)
+    monkeypatch.setattr(loader, "load_all_data", lambda **kwargs: {"source_contract": "canonical"})
 
-    job = admin.STATE.prediction_calibration
+    admin._bb_rating_prediction_job_worker("production", "admin")
+
+    job = admin.STATE.bb_rating_prediction_job
     assert job["status"] == "failed"
-    assert "walk-forward backtest failed before artifact write" in job["error"]
-    candidate_root = root / "candidates" / "prediction-calibration"
+    assert "walk-forward failed before artifact write" in job["error"]
+    candidate_root = root / "candidates" / "bb-rating-prediction"
     assert not candidate_root.exists() or not list(candidate_root.iterdir())
     assert job["candidate_id"] is None
     assert job["output"] is None
+    _reset_state()
+
 
 
 def test_model_release_read_cleans_stale_candidate_only_when_idle(monkeypatch, tmp_path):
     _reset_state()
     root = tmp_path / "models_saved"
-    stale = root / "candidates" / "prediction-calibration" / "20261018T175520Z-d99e8891"
+    stale = root / "candidates" / "bb-rating-prediction" / "20261018T175520Z-d99e8891"
     stale.mkdir(parents=True)
     monkeypatch.setattr(admin, "MODEL_ROOT", root)
     monkeypatch.setattr(admin, "_audit", lambda *args, **kwargs: None)
 
     removed = admin._cleanup_idle_incomplete_model_candidates()
-    assert removed["prediction-calibration"] == ["20261018T175520Z-d99e8891"]
+    assert removed["bb-rating-prediction"] == ["20261018T175520Z-d99e8891"]
     assert not stale.exists()
 
-    active = root / "candidates" / "prediction-calibration" / "active-job"
+    active = root / "candidates" / "bb-rating-prediction" / "active-job"
     active.mkdir(parents=True)
     with admin.STATE.lock:
-        admin.STATE.prediction_calibration["status"] = "running"
+        admin.STATE.bb_rating_prediction_job["status"] = "running"
 
     removed = admin._cleanup_idle_incomplete_model_candidates()
-    assert "prediction-calibration" not in removed
+    assert "bb-rating-prediction" not in removed
     assert active.exists()
     _reset_state()
 
 
-def test_prediction_calibration_start_queues_candidate_job(monkeypatch, tmp_path):
+def test_bb_rating_prediction_start_queues_candidate_job(monkeypatch, tmp_path):
     _reset_state()
     monkeypatch.setattr(admin, "MODEL_ROOT", tmp_path / "models_saved")
     with admin.STATE.lock:
@@ -582,38 +619,38 @@ def test_prediction_calibration_start_queues_candidate_job(monkeypatch, tmp_path
             self.submitted.append((fn, args))
 
     executor = Executor()
-    monkeypatch.setattr(admin.STATE, "prediction_calibration_executor", executor)
+    monkeypatch.setattr(admin.STATE, "bb_rating_prediction_job_executor", executor)
     monkeypatch.setattr(admin, "_utcnow", lambda: "now")
     monkeypatch.setattr(admin, "_audit", lambda *args, **kwargs: None)
-    result = admin.start_prediction_calibration(
+    result = admin.start_bb_rating_prediction(
         {"username": "admin", "role": "admin", "token": "x"}
     )
     assert result["ok"] is True
     assert result["profile"] == "production"
     assert result["job"]["status"] == "queued"
     assert executor.submitted
-    assert executor.submitted[0][0] is admin._prediction_calibration_worker
+    assert executor.submitted[0][0] is admin._bb_rating_prediction_job_worker
 
 
 def test_diagnostic_request_builds_whitelisted_payloads():
     prediction = admin._diagnostic_request(
         admin.DiagnosticPayload(
-            model="prediction",
+            model="bb_rating_prediction",
             player_global_id="p1",
-            team_global_id="t1",
             league="ita1",
             season=2025,
             competition="po",
         )
     )
     assert prediction == (
-        "/api/v2/predictions/player-team",
+        "/api/v2/bb-rating-prediction/player",
         {
             "player_global_id": "p1",
-            "team_global_id": "t1",
-            "league": "ITA1",
-            "season": 2025,
-            "competition": "PO",
+            "source_season": 2025,
+            "source_league": "ITA1",
+            "source_competition": "PO",
+            "target_league": "ITA1",
+            "target_competition": "PO",
         },
     )
     bb = admin._diagnostic_request(
@@ -644,8 +681,13 @@ def test_diagnostic_assertions_validate_model_response():
     )
     assert all(check["ok"] for check in future)
     prediction = admin._diagnostic_assertions(
-        "prediction",
-        {"ok": True, "body": {"predicted_rating": 7.2, "confidence_low": 6.1, "confidence_high": 8.0}},
+        "bb_rating_prediction",
+        {"ok": True, "body": {"prediction": {
+            "predicted_bb_rating": 78.0,
+            "confidence_low_100": 68.0,
+            "confidence_high_100": 88.0,
+            "scenario": "same_context",
+        }}},
     )
     assert all(check["ok"] for check in prediction)
 
@@ -945,6 +987,7 @@ async def test_overview(monkeypatch):
         admin.STATE.data = data
         admin.STATE.active_profile = "production"
         admin.STATE.summary = admin._summary(data)
+        admin.STATE.summary["team_rows"] = max(1, admin.STATE.summary.get("team_rows", 0))
     monkeypatch.setattr(
         admin,
         "_registry",
@@ -955,7 +998,13 @@ async def test_overview(monkeypatch):
             "history": [],
         },
     )
-    monkeypatch.setattr(admin, "_probe", lambda path: {"ok": True, "status": 200, "body": {"status": "ok"}})
+    monkeypatch.setattr(admin, "_probe", lambda path: {"ok": True, "status": 200, "body": {
+        "status": "ok",
+        "bb_rating_future_prediction_loaded": True,
+        "bb_rating_future_prediction_version": "1.0",
+    }})
+    monkeypatch.setattr(admin, "_bb_rating_status", lambda: {"ready": True, "status": "ready"})
+    monkeypatch.setattr(admin, "_future_performance_status", lambda: {"ready": True, "status": "ready"})
     result = await admin.overview({"username": "admin", "role": "admin", "token": "x"})
     assert result["database"] == "production"
     assert result["api"]["online"] is True
@@ -1252,8 +1301,9 @@ async def test_api_health(monkeypatch):
     result = await admin.api_health({"username": "admin", "role": "admin", "token": "x"})
     assert result["live"]["ok"] is True
     assert result["ready"]["ok"] is False
-    assert "prediction_model" in result
-    assert "production_model_files" in result["prediction_model"]
+    assert "bb_rating_prediction" in result
+    assert result["bb_rating_prediction"]["target_scale"] == "1-100"
+    assert "prediction_model" not in result
     assert "/api/v2/scenarios/evaluate" in result["endpoints"][-1]
 
 

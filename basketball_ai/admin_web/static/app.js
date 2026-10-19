@@ -1,4 +1,4 @@
-const App={user:null,page:'overview',overview:null,trainingTimer:null,bbRatingTimer:null,futurePerformanceTimer:null,predictionCalibrationTimer:null,controllers:new Set()};
+const App={user:null,page:'overview',overview:null,trainingTimer:null,bbRatingTimer:null,futurePerformanceTimer:null,bbRatingPredictionTimer:null,controllers:new Set()};
 const $=(s,r=document)=>r.querySelector(s);const $$=(s,r=document)=>[...r.querySelectorAll(s)];
 const root=$('#page-root');
 
@@ -7,6 +7,27 @@ function cookie(name){const p=document.cookie.split('; ').find(x=>x.startsWith(n
 function fmt(v,d=3){if(v===null||v===undefined||v===''||Number.isNaN(Number(v)))return '—';return Number(v).toFixed(d);}
 function fmtInt(v){if(v===null||v===undefined)return '—';return new Intl.NumberFormat('it-IT',{notation:Number(v)>=1000000?'compact':'standard',maximumFractionDigits:1}).format(Number(v));}
 function pct(v){if(v===null||v===undefined||Number.isNaN(Number(v)))return '—';return `${(Number(v)*100).toFixed(1)}%`;}
+
+function progressMarkup(job){
+  const status=String(job?.status||'idle').toLowerCase();
+  if(!status||status==='idle')return '';
+  const raw=job?.progress;
+  const numeric=raw===null||raw===undefined||raw===''?NaN:Number(raw);
+  const progress=Number.isFinite(numeric)?Math.round(Math.max(0,Math.min(100,numeric))):null;
+  const active=status==='running'||status==='queued';
+  const indeterminate=active&&(status==='queued'||progress===null||progress===0);
+  const label=status==='queued'?'In coda':status==='running'?'Avanzamento':status==='complete'?'Completato':status==='failed'?'Esecuzione terminata con errore':status==='cancelled'?'Annullato':'Stato avanzamento';
+  const displayed=progress===null?'—':`${progress}%`;
+  const width=indeterminate?38:(progress??0);
+  const valueAttribute=progress===null?'':` aria-valuenow="${progress}"`;
+  const valueText=status==='queued'?' aria-valuetext="In coda"':'';
+  return `<div class="job-progress ${active?'is-active':''} ${status==='queued'?'is-queued':''}">
+    <div class="job-progress-meta"><span>${esc(label)}</span><strong>${displayed}</strong></div>
+    <div class="progress-track" role="progressbar" aria-label="Avanzamento del job" aria-valuemin="0" aria-valuemax="100"${valueAttribute}${valueText}>
+      <div class="progress-bar ${indeterminate?'is-indeterminate':''}" style="width:${width}%"></div>
+    </div>
+  </div>`;
+}
 function shortId(v){const s=String(v||'');return s.length>18?`${s.slice(0,12)}…${s.slice(-5)}`:(s||'Not promoted');}
 function toast(message,type='success'){const el=$('#toast');el.textContent=message;el.className=`toast show ${type}`;clearTimeout(el._timer);el._timer=setTimeout(()=>el.className='toast',3600);}
 function loading(){root.innerHTML='<div class="loading"><div><div class="spinner"></div>Caricamento…</div></div>';}
@@ -40,24 +61,23 @@ setInterval(updateClock,1000);updateClock();
 function activateNav(page){$$('.nav-item').forEach(b=>b.classList.toggle('active',b.dataset.page===page));}
 function mountTemplate(page){const t=$(`#page-${page}`);if(!t){root.innerHTML='<div class="loading">Pagina non disponibile</div>';return;}root.replaceChildren(t.content.cloneNode(true));$$('.jump',root).forEach(b=>b.addEventListener('click',()=>navigate(b.dataset.page)));}
 async function navigate(page){
+  if(['training','backtests','registry'].includes(page))page='model-releases';
+  if(!document.getElementById('page-'+page))page='overview';
   App.controllers.forEach(controller=>controller.abort());
   App.controllers.clear();
   clearTimeout(App.trainingTimer);
   clearTimeout(App.bbRatingTimer);
   clearTimeout(App.futurePerformanceTimer);
-  clearTimeout(App.predictionCalibrationTimer);
+  clearTimeout(App.bbRatingPredictionTimer);
   App.page=page;
   activateNav(page);
   mountTemplate(page);
   try{
     if(page==='overview')await renderOverview();
     if(page==='data')await renderData();
-    if(page==='training')await renderTraining();
-    if(page==='backtests')await renderBacktests();
     if(page==='bb-rating')await renderBBRating();
     if(page==='future-performance')await renderFuturePerformancePage();
     if(page==='scenarios')await renderScenarios();
-    if(page==='registry')await renderRegistry();
     if(page==='model-releases')await renderModelReleases();
     if(page==='health')await renderHealth();
     if(page==='diagnostics')await renderDiagnostics();
@@ -66,12 +86,14 @@ async function navigate(page){
   }catch(e){if(e?.name!=='AbortError')toast(e.message,'error');}
 }
 function kpi(icon,label,value,sub='',tone=''){return `<div class="kpi-card"><div class="kpi-icon ${tone}">${icon}</div><div class="kpi-label">${esc(label)}</div><div class="kpi-value ${tone==='green'?'online':''}">${esc(value)}</div><div class="kpi-sub">${sub}</div></div>`;}
-function updateTop(o){$('#top-db').textContent=o.database||'not selected';$('#top-model').textContent=shortId(o.production?.run_id);const bb=o.bb_rating||{};$('#top-bb-rating').textContent=bb.bb_rating_version?'v'+esc(bb.bb_rating_version):'—';$('#top-api').textContent=o.api?.online?'● V2':'● OFFLINE';$('#top-api').className=o.api?.online?'meta-ok':'';}
+function updateTop(o){$('#top-db').textContent=o.database||'not selected';$('#top-model').textContent=o.bb_rating_prediction?.loaded?shortId(o.bb_rating_prediction?.version||'BB Prediction'): 'BB Prediction pending';const bb=o.bb_rating||{};$('#top-bb-rating').textContent=bb.bb_rating_version?'v'+esc(bb.bb_rating_version):'—';$('#top-api').textContent=o.api?.online?'● V2':'● OFFLINE';$('#top-api').className=o.api?.online?'meta-ok':'';}
 
 async function renderOverview(){
-  const o=await api('/admin-api/overview');App.overview=o;updateTop(o);
-  const s=o.summary||{},bb=o.bb_rating||{},prod=o.production||{},cand=o.candidate||{},q=o.candidate_quality||{};
-  const allReady=(o.api?.online&&o.data_loaded&&bb.ready&&!!prod.run_id);
+  const o=await api('/admin-api/overview');
+  try{o.bb_rating_prediction=(await api('/admin-api/api-health')).bb_rating_prediction||{};}catch(_){o.bb_rating_prediction={};}
+  App.overview=o;updateTop(o);
+  const bb=o.bb_rating||{};
+  const allReady=(o.api?.online&&o.data_loaded&&bb.ready&&!!o.bb_rating_prediction?.loaded);
   const dot=$('#overview-system-dot');const status=$('#overview-system-status');
   if(dot)dot.className='hero-status-dot '+(allReady?'online':'warning');
   if(status)status.textContent=allReady?'SYSTEM OPERATIONAL':'ACTION REQUIRED';
@@ -80,40 +102,42 @@ async function renderOverview(){
   if(systemLabel)systemLabel.textContent=allReady?'SYSTEM OPERATIONAL':'SYSTEM ATTENTION';
 
   $('#overview-models').innerHTML=[
-    ['Prediction Model',prod.run_id?'Production':'Not promoted',prod.run_id?shortId(prod.run_id):'No active candidate','registry','blue'],
+    ['BB Prediction Model','Dedicated release','Future BB-Rating 1–100','model-releases','blue'],
     ['BB-Rating',bb.ready?'Serving ready':'Needs verification',bb.bb_rating_version?'v'+bb.bb_rating_version:'—','bb-rating','violet'],
     ['Future Performance','Independent model','Season-ahead forecasts','future-performance','cyan'],
     ['Metric Rating','Analytical layer','Metric-level strengths','diagnostics','green']
   ].map(([name,state,meta,page,tone])=>`<button class="model-strip-card ${tone} jump" data-page="${page}"><span class="model-strip-icon"></span><span class="model-strip-copy"><strong>${esc(name)}</strong><small>${esc(state)}</small><em>${esc(meta)}</em></span><i class="ph ph-arrow-up-right"></i></button>`).join('');
 
+  const s=o.summary||{};
   $('#overview-kpis').innerHTML=[
     kpi('▤','Database',o.database||'Not selected',`<span class="dot ${o.data_loaded?'green':'yellow'}"></span>${o.data_loaded?'Connected and loaded':'Needs setup'}`),
     kpi('▥','Player observations',fmtInt(s.player_rows),'<span>player / competition rows</span>','green'),
     kpi('◉','Competitions',String((s.competitions||[]).length||'—'),'<span>loaded</span>','violet'),
-    kpi('⬡','Production',prod.run_id?'Active':'Not promoted',prod.run_id?`<span class="dot green"></span>${esc(shortId(prod.run_id))}`:'<span class="dot red"></span>Promotion required','orange'),
+    kpi('⬡','BB Prediction Model',o.bb_rating_prediction?.loaded?'Loaded':'Not promoted',o.bb_rating_prediction?.loaded?'<span class="dot green"></span>Direct 1–100 forecast':'<span class="dot yellow"></span>Release required','orange'),
     kpi('◆','BB-Rating',bb.bb_rating_version?'v'+bb.bb_rating_version:'—',bb.ready?'<span class="dot green"></span>Serving ready':'<span class="dot yellow"></span>Verify artifact','violet'),
     kpi('⌘','API',o.api?.online?'Online':'Offline',`<span class="dot ${o.api?.online?'green':'red'}"></span>V2 inference`,'green')
   ].join('');
 
   $('#readiness-body').innerHTML=(o.readiness||[]).map(r=>{
     const page=r.action==='data'?'data':r.action;
-    const labels={registry:'Open registry',training:'Open training','bb-rating':'Open BB-Rating','future-performance':'Open Future Performance',data:'Open data'};
+    const labels={'model-releases':'Open BB Prediction Model','bb-rating':'Open BB-Rating','future-performance':'Open Future Performance',data:'Open data'};
     return `<tr><td><strong>${esc(r.component)}</strong></td><td><span class="status ${r.status}"><span class="status-dot">${r.status==='ok'?'✓':r.status==='danger'?'×':'△'}</span>${esc(r.label)}</span></td><td>${esc(r.detail)}</td><td class="right"><button class="btn btn-small btn-secondary readiness-action" data-page="${esc(page)}">${esc(labels[page]||'Open')}</button></td></tr>`;
   }).join('');
   $$('.readiness-action').forEach(b=>b.addEventListener('click',()=>navigate(b.dataset.page)));
 
-  $('#overview-registry').innerHTML=(prod.run_id||cand.run_id)?summaryRows([
-    ['Production',prod.run_id?shortId(prod.run_id):'—'],
-    ['Candidate',cand.run_id?shortId(cand.run_id):'—'],
-    ['Candidate RMSE',cand.overall_rmse!==undefined?fmt(cand.overall_rmse):'—']
-  ]):empty('⬡','No model registered','Run training to generate the first candidate.','Open training','training');
+  $('#overview-registry').innerHTML=summaryRows([
+    ['Modello','BB Prediction Model'],
+    ['Scala target','BB-Rating ufficiale 1–100'],
+    ['Runtime',o.bb_rating_prediction?.loaded?'Caricato':'Release da promuovere']
+  ]);
 
-  $('#overview-backtest').innerHTML=q.rmse!==null&&q.rmse!==undefined?summaryRows([
-    ['RMSE',fmt(q.rmse)],['MAE',fmt(q.mae)],['Coverage',pct(q.coverage)],['OOS folds',String(q.seasons||0)]
-  ]):empty('▤','No backtest available','Run training to generate a candidate and its walk-forward report.','Open training','training');
+  $('#overview-backtest').innerHTML=summaryRows([
+    ['Modello','Future Performance'],
+    ['Obiettivo','Statistiche della stagione successiva'],
+    ['Stato',o.future_performance?.ready?'Disponibile':'Da verificare']
+  ]);
 
-  const quality=[['RMSE',fmt(q.rmse)],['MAE',fmt(q.mae)],['R²',fmt(q.r2)],['Coverage',pct(q.coverage)],['Seasons',q.seasons??'—'],['Competitions',q.competitions??'—']];
-  $('#candidate-quality').innerHTML=quality.map(([a,b])=>`<div class="quality-card"><span>${esc(a)}</span><strong>${esc(b)}</strong></div>`).join('');
+  $('#candidate-quality').innerHTML='<div class="quality-card"><span>Validazione</span><strong>Walk-forward per scenario</strong></div><div class="quality-card"><span>Promozione</span><strong>Solo se batte il baseline</strong></div><div class="quality-card"><span>Scala</span><strong>BB-Rating 1–100</strong></div>';
   $$('.jump',root).forEach(b=>b.addEventListener('click',()=>navigate(b.dataset.page)));
 }
 async function renderData(){
@@ -145,7 +169,7 @@ async function renderTraining(){
   const job=$('#training-job');
   const idleMessage=!datasetLoaded&&j.status==='idle'?'Prima prepara e attiva uno snapshot nella pagina Dati e snapshot. Il training non carica dati automaticamente.':(j.error||j.message||'');
   const trainingActive=['running','queued'].includes(j.status);
-  job.innerHTML=`<div class="job-head"><div><div class="job-status">${esc(j.stage||'Ready')}</div><div class="job-message">${esc(idleMessage)}</div></div><span class="registry-badge ${trainingActive?'candidate':''}">${esc(j.status||'idle')}</span></div><div class="progress-track"><div class="progress-bar" style="width:${Math.max(0,Math.min(100,Number(j.progress)||0))}%"></div></div>${j.run_id?`<div class="job-message">Run ID: ${esc(j.run_id)}</div>`:''}${trainingActive?'<div class="button-row"><button id="training-cancel" class="btn btn-danger btn-small" '+(j.cancel_requested?'disabled':'')+'>'+(j.cancel_requested?'Interruzione richiesta…':'Interrompi training')+'</button></div>':''}`;
+  job.innerHTML=`<div class="job-head"><div><div class="job-status">${esc(j.stage||'Ready')}</div><div class="job-message">${esc(idleMessage)}</div></div><span class="registry-badge ${trainingActive?'candidate':''}">${esc(j.status||'idle')}</span></div>${progressMarkup(j)}${j.run_id?`<div class="job-message">Run ID: ${esc(j.run_id)}</div>`:''}${trainingActive?'<div class="button-row"><button id="training-cancel" class="btn btn-danger btn-small" '+(j.cancel_requested?'disabled':'')+'>'+(j.cancel_requested?'Interruzione richiesta…':'Interrompi training')+'</button></div>':''}`;
   const cancelTraining=$('#training-cancel');
   if(cancelTraining)cancelTraining.onclick=async()=>{cancelTraining.disabled=true;try{await api('/admin-api/jobs/training/cancel',{method:'POST',body:{}});toast('Interruzione training richiesta');await renderTraining();}catch(e){toast(e.message,'error');cancelTraining.disabled=false;}};
   const start=$('#start-training');
@@ -261,7 +285,7 @@ async function renderBBRating(){
     }catch(e){toast(e.message,'error');calibrate.disabled=false;}
   };
 
-  $('#bb-rating-job').innerHTML=j.status&&j.status!=='idle'?'<div class="job-head"><div><div class="job-status">'+esc(j.stage||'Calibration')+'</div><div class="job-message">'+esc(j.error||j.message||'')+'</div></div><span class="registry-badge '+((j.status==='running'||j.status==='queued')?'candidate':'')+'">'+esc(j.status)+'</span></div><div class="progress-track"><div class="progress-bar" style="width:'+Math.max(0,Math.min(100,Number(j.progress)||0))+'%"></div></div>':'<div class="job-message">Nessuna calibrazione eseguita dal Control Center in questa sessione.</div>';
+  $('#bb-rating-job').innerHTML=j.status&&j.status!=='idle'?'<div class="job-head"><div><div class="job-status">'+esc(j.stage||'Calibration')+'</div><div class="job-message">'+esc(j.error||j.message||'')+'</div></div><span class="registry-badge '+((j.status==='running'||j.status==='queued')?'candidate':'')+'">'+esc(j.status)+'</span></div>'+progressMarkup(j):'<div class="job-message">Nessuna calibrazione eseguita dal Control Center in questa sessione.</div>';
   if(['running','queued'].includes(j.status)) {
     $('#bb-rating-job').insertAdjacentHTML('beforeend','<div class="button-row"><button id="bb-rating-cancel" class="btn btn-danger btn-small" '+(j.cancel_requested?'disabled':'')+'>'+(j.cancel_requested?'Interruzione richiesta…':'Interrompi calibrazione')+'</button></div>');
     const cancel=$('#bb-rating-cancel');
@@ -272,12 +296,12 @@ async function renderBBRating(){
 
 async function renderModelReleases(){
   const data=await api('/admin-api/model-releases');
-  const calibration=await api('/admin-api/prediction-calibration');
+  const prediction=await api('/admin-api/bb-rating-prediction');
   let health={};
   try{health=await api('/admin-api/api-health');}catch(_){health={};}
   const models=data.models||{};
-  const job=calibration.job||{};
-  const release=calibration.release||{};
+  const job=prediction.job||{};
+  const release=prediction.release||{};
   const fmtRelease=(m)=>{
     const prod=m.production||{},cand=m.candidate||{},prev=m.previous||{};
     return '<div class="summary-list">'+
@@ -286,59 +310,45 @@ async function renderModelReleases(){
       '<div class="summary-row"><span>Candidate</span><strong>'+esc(cand.id||'Nessuna')+'</strong></div>'+
       '<div class="summary-row"><span>Validazione candidate</span><strong>'+esc(cand.valid?'OK':(cand.reason||'Non disponibile'))+'</strong></div>'+
       '<div class="summary-row"><span>Versione candidate</span><strong>'+esc(cand.version||'—')+'</strong></div>'+
-      '<div class="summary-row"><span>Data cutoff</span><strong>'+esc(cand.data_cutoff||'—')+'</strong></div>'+
-      '<div class="summary-row"><span>Stagioni validate</span><strong>'+esc((cand.seasons||[]).join(', ')||'—')+'</strong></div>'+
+      '<div class="summary-row"><span>OOF samples</span><strong>'+esc(cand.oof_samples??'—')+'</strong></div>'+
+      '<div class="summary-row"><span>MAE walk-forward</span><strong>'+esc(fmt(cand.oof_mae_after_calibration??cand.validation?.oof_mae_after_calibration??cand.mae))+'</strong></div>'+
       '<div class="summary-row"><span>Precedente disponibile</span><strong>'+esc(prev.valid?'Sì':'No')+'</strong></div>'+
       '</div>';
   };
-  const native=data.prediction_model_registry||{};
-  $('#native-prediction-registry').innerHTML='<div class="summary-list">'+
-    '<div class="summary-row"><span>Production run</span><strong>'+esc(native.production?.run_id||'—')+'</strong></div>'+
-    '<div class="summary-row"><span>Production version</span><strong>'+esc(native.production?.model_version||'—')+'</strong></div>'+
-    '<div class="summary-row"><span>Candidate run</span><strong>'+esc(native.candidate?.run_id||'—')+'</strong></div>'+
-    '<div class="summary-row"><span>Candidate OOT RMSE</span><strong>'+esc(fmt(native.candidate?.overall_rmse))+'</strong></div>'+
-    '</div>';
   const servingRows=[
     ['Inference API live',health.live?.ok?'Online':'Offline'],
     ['Inference API ready',health.ready?.ok?'Ready':'Not ready'],
-    ['Native Prediction Model loaded',health.prediction_model?.loaded?'Yes':'No'],
-    ['Prediction run / version',(health.prediction_model?.run_id||'—')+' / '+(health.prediction_model?.version||'—')],
-    ['Prediction feature version',health.prediction_model?.feature_version||'—'],
-    ['Prediction data cutoff',health.prediction_model?.data_cutoff||'—'],
-    ['Performance artifact present',health.prediction_model?.production_model_files?.performance_model?'Yes':'No'],
-    ['Compatibility artifact present',health.prediction_model?.production_model_files?.compatibility_model?'Yes':'No'],
-    ['Metric distributions loaded',String(health.prediction_model?.metric_distributions_count??0)],
     ['BB-Rating loaded',health.bb_rating?.loaded?'Yes':'No'],
     ['BB-Rating uncertainty loaded',health.bb_rating?.uncertainty_loaded?'Yes':'No'],
+    ['BB Prediction Model loaded',health.bb_rating_prediction?.loaded?'Yes':'No'],
+    ['BB Prediction Model version',health.bb_rating_prediction?.version||'—'],
     ['Future Performance loaded',health.future_performance?.loaded?'Yes':'No'],
-    ['BB-Rating runtime version',health.bb_rating?.runtime_calibration_version||'—'],
-    ['Future Performance runtime version',health.future_performance?.version||'—'],
     ['Automatic API restart',data.automatic_api_restart_configured?'Configured (restart + readiness check)':'Not configured (API_KEY missing)'],
   ];
   $('#model-release-serving').innerHTML=summaryRows(servingRows);
   $('#release-bb-rating').innerHTML=fmtRelease(models['bb-rating']||{});
   $('#release-future-performance').innerHTML=fmtRelease(models['future-performance']||{});
-  $('#prediction-calibration-release').innerHTML=fmtRelease(release);
-  $('#prediction-calibration-job').innerHTML='<div class="job-head"><div><div class="job-status">'+esc(job.stage||'Ready')+'</div><div class="job-message">'+esc(job.error||job.message||'Nessuna calibrazione eseguita.')+'</div></div><span class="registry-badge '+(['running','queued'].includes(job.status)?'candidate':'')+'">'+esc(job.status||'idle')+'</span></div>'+
-    (job.output?'<div class="summary-list">'+[['OOS rows',job.output.rows],['Target seasons',(job.output.target_seasons||[]).join(', ')],['OOS folds',job.output.n_folds],['Prediction version',job.output.prediction_model_version]].map(([a,b])=>'<div class="summary-row"><span>'+esc(a)+'</span><strong>'+esc(b??'—')+'</strong></div>').join('')+'</div>':'')+
-    (job.progress!=null?'<div class="progress-track"><div class="progress-bar" style="width:'+Math.max(0,Math.min(100,Number(job.progress)||0))+'%"></div></div>':'');
+  $('#bb-rating-prediction-release').innerHTML=fmtRelease(release);
+  $('#bb-rating-prediction-job').innerHTML='<div class="job-head"><div><div class="job-status">'+esc(job.stage||'Ready')+'</div><div class="job-message">'+esc(job.error||job.message||'Nessun training eseguito.')+'</div></div><span class="registry-badge '+(['running','queued'].includes(job.status)?'candidate':'')+'">'+esc(job.status||'idle')+'</span></div>'+
+    (job.output?'<div class="summary-list">'+[['OOF samples',job.output.oof_samples],['MAE',job.output.mae],['RMSE',job.output.rmse],['Scenari valutati',Object.keys(job.output.scenario_metrics||{}).length]].map(([a,b])=>'<div class="summary-row"><span>'+esc(a)+'</span><strong>'+esc(b??'—')+'</strong></div>').join('')+'</div>':'')+
+    progressMarkup(job);
   if(['running','queued'].includes(job.status)) {
-    $('#prediction-calibration-job').insertAdjacentHTML('beforeend','<div class="button-row"><button id="prediction-calibration-cancel" class="btn btn-danger btn-small" '+(job.cancel_requested?'disabled':'')+'>'+(job.cancel_requested?'Interruzione richiesta…':'Interrompi calibrazione')+'</button></div>');
-    const cancel=$('#prediction-calibration-cancel');
-    cancel.onclick=async()=>{cancel.disabled=true;try{await api('/admin-api/jobs/prediction-calibration/cancel',{method:'POST',body:{}});toast('Interruzione calibrazione richiesta');await renderModelReleases();}catch(e){toast(e.message,'error');cancel.disabled=false;}};
+    $('#bb-rating-prediction-job').insertAdjacentHTML('beforeend','<div class="button-row"><button id="bb-rating-prediction-cancel" class="btn btn-danger btn-small" '+(job.cancel_requested?'disabled':'')+'>'+(job.cancel_requested?'Interruzione richiesta…':'Interrompi training')+'</button></div>');
+    const cancel=$('#bb-rating-prediction-cancel');
+    cancel.onclick=async()=>{cancel.disabled=true;try{await api('/admin-api/jobs/bb-rating-prediction/cancel',{method:'POST',body:{}});toast('Interruzione training richiesta');await renderModelReleases();}catch(e){toast(e.message,'error');cancel.disabled=false;}};
   }
-  const start=$('#prediction-calibration-start');
+  const start=$('#bb-rating-prediction-start');
   start.disabled=['running','queued'].includes(job.status);
-  start.textContent=['running','queued'].includes(job.status)?'Calibrazione in corso…':'Genera candidate';
+  start.textContent=['running','queued'].includes(job.status)?'Training in corso…':'Allena candidate';
   start.onclick=async()=>{
     start.disabled=true;
-    try{await api('/admin-api/prediction-calibration/calibrate',{method:'POST',body:{}});toast('Prediction calibration avviata');await renderModelReleases();}
+    try{await api('/admin-api/bb-rating-prediction/train',{method:'POST',body:{}});toast('Training BB Prediction Model avviato');await renderModelReleases();}
     catch(e){toast(e.message,'error');start.disabled=false;}
   };
   $('#model-releases-refresh').onclick=()=>renderModelReleases().catch(e=>toast(e.message,'error'));
   $$('.release-promote').forEach(button=>{
     const model=button.dataset.model;
-    const item=model==='prediction-calibration'?release:(models[model]||{});
+    const item=models[model]||{};
     button.disabled=!(item.candidate&&item.candidate.valid);
     button.onclick=async()=>{
       if(!confirm('Promuovere il candidate '+model+'? Il sistema riavvierà automaticamente l’API e verificherà la readiness.'))return;
@@ -349,7 +359,7 @@ async function renderModelReleases(){
   });
   $$('.release-rollback').forEach(button=>{
     const model=button.dataset.model;
-    const item=model==='prediction-calibration'?release:(models[model]||{});
+    const item=models[model]||{};
     button.disabled=!(item.previous&&item.previous.valid);
     button.onclick=async()=>{
       if(!confirm('Ripristinare la release precedente di '+model+'? Il sistema riavvierà automaticamente l’API e verificherà la readiness.'))return;
@@ -358,7 +368,7 @@ async function renderModelReleases(){
       catch(e){toast(e.message,'error');button.disabled=false;}
     };
   });
-  if(['running','queued'].includes(job.status)&&App.page==='model-releases')App.predictionCalibrationTimer=setTimeout(()=>renderModelReleases().catch(e=>toast(e.message,'error')),2500);
+  if(['running','queued'].includes(job.status)&&App.page==='model-releases')App.bbRatingPredictionTimer=setTimeout(()=>renderModelReleases().catch(e=>toast(e.message,'error')),2500);
 }
 
 function chartSvg(points){if(!points||points.length<1)return empty('⌁','Dati non disponibili','I fold walk-forward appariranno dopo il training.');const vals=points.map(p=>Number(p.rmse)).filter(Number.isFinite);if(!vals.length)return '';const min=Math.min(...vals),max=Math.max(...vals),range=Math.max(max-min,.001),w=640,h=210,pad=34;const coords=points.map((p,i)=>{const x=pad+(i*(w-pad*2)/Math.max(1,points.length-1));const y=h-pad-((Number(p.rmse)-min)/range)*(h-pad*2);return{x,y,p};});return `<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none"><line class="chart-grid-line" x1="${pad}" y1="${h-pad}" x2="${w-pad}" y2="${h-pad}"/><line class="chart-grid-line" x1="${pad}" y1="${pad}" x2="${w-pad}" y2="${pad}"/><polyline class="chart-line" points="${coords.map(c=>`${c.x},${c.y}`).join(' ')}"/>${coords.map(c=>`<circle class="chart-dot" cx="${c.x}" cy="${c.y}" r="5"/><text class="chart-label" x="${c.x}" y="${h-9}" text-anchor="middle">${esc(c.p.target_season??'')}</text>`).join('')}</svg>`;}

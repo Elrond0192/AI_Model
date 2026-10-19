@@ -34,6 +34,13 @@ _PUBLIC_RAW_RATING_KEYS = {
     "delta_vs_observed", "baseline_rating", "scenario_rating",
     "rating_with_pair_context", "observed_rating", "expected_rating",
     "actual_rating", "forecast_rating",
+    # These acquisition fields are native player-rating comparisons, not
+    # BB-Rating or team Net Rating. Never leak them through the public scenario API.
+    "projected_player_rating", "projected_rating", "incoming_rating", "outgoing_rating",
+    "empirical_transfer_delta", "league_transfer_delta", "league_prior_delta", "team_fit_delta",
+    "predicted_rating_delta", "observed_rating_delta",
+    "rotation_rating_before", "rotation_rating_after", "rotation_delta",
+    "replacement_level_rating", "rotation_quality_delta",
 }
 _PUBLIC_RAW_METRIC_NAMES = {"rating", "source_rating", "statistical_rating"}
 _DROP_PUBLIC_FIELD = object()
@@ -134,7 +141,7 @@ async def evaluate_scenario(body: ScenarioRequestV2, request: Request):
             scenario_data,
             bb_rating_engine=getattr(request.app.state, "bb_rating_engine", None),
             bb_rating_uncertainty=getattr(request.app.state, "bb_rating_uncertainty", None),
-            prediction_calibration=getattr(request.app.state, "prediction_calibration", None),
+            bb_rating_prediction_model=getattr(request.app.state, "bb_rating_future_prediction_model", None),
             future_performance_model=getattr(request.app.state, "future_performance_model", None),
         )
         payload = engine.evaluate(
@@ -166,4 +173,5 @@ async def evaluate_scenario(body: ScenarioRequestV2, request: Request):
         evidence=payload.get("evidence", []),
         support=payload.get("support", {}),
         limitations=payload.get("limitations", []),
+        provenance=payload.get("provenance", {}),
     )

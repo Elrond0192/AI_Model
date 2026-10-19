@@ -11,9 +11,9 @@ from typing import Any
 
 _LOCK = threading.RLock()
 _MODEL_PATHS = {
-    "prediction-calibration": ("prediction_calibration", "prediction_rating_calibration.json"),
     "bb-rating": ("bb_rating_calibration", "bb_rating_calibration.json"),
     "future-performance": ("future_performance", "metadata.json"),
+    "bb-rating-prediction": ("bb_rating_future_prediction", "metadata.json"),
 }
 
 
@@ -39,34 +39,7 @@ def validate_artifact(model: str, directory: str | Path) -> dict[str, Any]:
     if not isinstance(artifact, dict):
         return {"valid": False, "reason": f"{filename} must contain a JSON object"}
 
-    if model == "prediction-calibration":
-        dataset = artifact.get("dataset") or {}
-        fit = artifact.get("fit") or {}
-        mapping = fit
-        if int(dataset.get("rows") or 0) < 500:
-            return {"valid": False, "reason": "Prediction calibration requires at least 500 OOS rows"}
-        x_values = mapping.get("x_thresholds") or []
-        y_values = mapping.get("y_thresholds_native") or []
-        if len(x_values) < 2 or len(y_values) < 2 or len(x_values) != len(y_values):
-            return {"valid": False, "reason": "Prediction calibration mapping requires equally sized threshold arrays with at least two values"}
-        try:
-            x_numbers = [float(value) for value in x_values]
-            y_numbers = [float(value) for value in y_values]
-        except (TypeError, ValueError):
-            return {"valid": False, "reason": "Prediction calibration thresholds must be numeric"}
-        import math
-        if not all(math.isfinite(value) for value in x_numbers + y_numbers):
-            return {"valid": False, "reason": "Prediction calibration thresholds must be finite"}
-        if any(left >= right for left, right in zip(x_numbers, x_numbers[1:])):
-            return {"valid": False, "reason": "Prediction calibration x thresholds must be strictly increasing"}
-        if any(left > right for left, right in zip(y_numbers, y_numbers[1:])):
-            return {"valid": False, "reason": "Prediction calibration mapping must be monotonic"}
-        validation = artifact.get("validation") or {}
-        if validation.get("status") != "validated_oos" or int(validation.get("n_folds") or 0) < 1:
-            return {"valid": False, "reason": "Prediction calibration requires at least one valid temporal OOS fold"}
-        if not artifact.get("prediction_model_version"):
-            return {"valid": False, "reason": "Prediction model version is missing"}
-    elif model == "bb-rating":
+    if model == "bb-rating":
         uncertainty_path = root / "bb_rating_uncertainty.json"
         if not uncertainty_path.exists() and root.name == "bb_rating_calibration":
             uncertainty_path = root.parent / "bb_rating_uncertainty.json"
@@ -82,6 +55,23 @@ def validate_artifact(model: str, directory: str | Path) -> dict[str, Any]:
             return {"valid": False, "reason": "BB-Rating uncertainty artifact is incomplete or not fitted"}
         if uncertainty.get("bb_rating_version") and uncertainty.get("bb_rating_version") != artifact.get("bb_rating_version"):
             return {"valid": False, "reason": "BB-Rating and uncertainty artifact versions do not match"}
+    elif model == "bb-rating-prediction":
+        if artifact.get("model") != "BBRatingFuturePredictionModel":
+            return {"valid": False, "reason": "Direct BB-Rating model metadata identifier is invalid"}
+        if artifact.get("target") != "official_bb_rating_t_plus_1" or artifact.get("target_scale") != [1, 100]:
+            return {"valid": False, "reason": "Direct BB-Rating model target contract must be official 1-100 BB-Rating"}
+        if artifact.get("bb_rating_version") is None or not artifact.get("feature_version"):
+            return {"valid": False, "reason": "BB-Rating engine or feature version metadata is missing"}
+        if int(artifact.get("oof_samples") or 0) < 500:
+            return {"valid": False, "reason": "Direct BB-Rating model requires at least 500 walk-forward OOF rows"}
+        if not artifact.get("promotion_gate_passed"):
+            return {"valid": False, "reason": "Walk-forward baseline or supported-segment regression gate failed"}
+        for required_file in ("bb_rating_future_model.joblib", "calibration.json"):
+            if not (root / required_file).is_file():
+                return {"valid": False, "reason": f"Direct BB-Rating artifact missing: {required_file}"}
+        metrics = artifact.get("scenario_metrics") or {}
+        if not metrics:
+            return {"valid": False, "reason": "Per-scenario walk-forward metrics are missing"}
     else:
         if artifact.get("status") != "fitted":
             return {"valid": False, "reason": "Future Performance metadata is not fitted"}
@@ -96,13 +86,18 @@ def validate_artifact(model: str, directory: str | Path) -> dict[str, Any]:
         "valid": True,
         "model": model,
         "artifact": filename,
-        "version": artifact.get("calibration_version") or artifact.get("future_performance_version") or artifact.get("bb_rating_version"),
-        "prediction_model_version": artifact.get("prediction_model_version"),
+        "version": artifact.get("model_version") or artifact.get("calibration_version") or artifact.get("future_performance_version") or artifact.get("bb_rating_version"),
         "feature_version": artifact.get("feature_version"),
-        "data_cutoff": artifact.get("data_cutoff") or (artifact.get("dataset") or {}).get("data_cutoff") or (artifact.get("dataset") or {}).get("season_max"),
-        "rows": (artifact.get("dataset") or {}).get("rows") or artifact.get("n_pairs"),
-        "seasons": (artifact.get("dataset") or {}).get("target_seasons") or (artifact.get("dataset") or {}).get("seasons") or artifact.get("training_target_seasons") or artifact.get("seasons") or [],
-        "validation": artifact.get("validation") or artifact.get("backtest") or {},
+        "data_cutoff": artifact.get("data_cutoff") or artifact.get("data_cutoff_season") or (artifact.get("dataset") or {}).get("data_cutoff") or (artifact.get("dataset") or {}).get("season_max"),
+        "rows": (artifact.get("dataset") or {}).get("rows") or artifact.get("n_pairs") or artifact.get("oof_samples") or artifact.get("training_samples"),
+        "seasons": (artifact.get("dataset") or {}).get("target_seasons") or (artifact.get("dataset") or {}).get("seasons") or artifact.get("training_target_seasons") or artifact.get("target_seasons") or artifact.get("seasons") or [],
+        "validation": artifact.get("validation") or artifact.get("backtest") or ({"oof_mae_after_calibration": artifact.get("oof_mae_after_calibration"), "oof_rmse_after_calibration": artifact.get("oof_rmse_after_calibration"), "oof_baseline_mae": artifact.get("oof_baseline_mae"), "scenario_metrics": artifact.get("scenario_metrics"), "destination_league_metrics": artifact.get("destination_league_metrics"), "destination_league_scenario_metrics": artifact.get("destination_league_scenario_metrics")} if model == "bb-rating-prediction" else {}),
+        "oof_samples": artifact.get("oof_samples") if model == "bb-rating-prediction" else None,
+        "oof_mae_after_calibration": artifact.get("oof_mae_after_calibration") if model == "bb-rating-prediction" else None,
+        "oof_rmse_after_calibration": artifact.get("oof_rmse_after_calibration") if model == "bb-rating-prediction" else None,
+        "oof_baseline_mae": artifact.get("oof_baseline_mae") if model == "bb-rating-prediction" else None,
+        "scenario_metrics": artifact.get("scenario_metrics") if model == "bb-rating-prediction" else None,
+        "promotion_gate_passed": artifact.get("promotion_gate_passed") if model == "bb-rating-prediction" else None,
         "generated_at": artifact.get("generated_at"),
     }
 

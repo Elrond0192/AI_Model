@@ -122,7 +122,8 @@ async def test_future_performance_api_resolves_global_player_and_canonical_leagu
 
     fake_model = SimpleNamespace()
 
-    def predict_player(**kwargs):
+    def predict_player(data_arg, **kwargs):
+        assert data_arg is data
         assert kwargs["league_key"] == "ITA1"
         return {
             "future_performance_version": "1.0",

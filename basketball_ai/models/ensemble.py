@@ -533,7 +533,6 @@ class EnsembleModel:
         # 4. Compatibility remains a contextual signal for diagnostics, scenarios
         # and the future BB Rating. It is not a correction to the delta prediction.
         cf = float(np.clip(self.compat_model.score(player_id, team_id, data), 0.0, 1.0))
-        compat_adjustment = 0.0
         after_compatibility = base_after_age
 
         team_row = data["team_dict"].get(_normalize_id(team_id), {})

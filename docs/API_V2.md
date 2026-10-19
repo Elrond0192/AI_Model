@@ -1,6 +1,6 @@
 # AI_Model prediction contract v2
 
-`AI_Model` is an inference service, not a chatbot. WordPress resolves player/team entities and calls `POST /api/v2/predictions/player-team` with server-side global IDs.
+`AI_Model` is an inference service, not a chatbot. WordPress resolves player/team entities and calls `POST /api/v2/bb-rating-prediction/player` with server-side global IDs.
 
 ## Request
 
@@ -193,9 +193,9 @@ WordPress / Chat consumes the result and does not implement the rating formula,
 percentile calculation or peer selection.
 
 
-## Future Performance
+## BB Prediction Model\n\n`POST /api/v2/bb-rating-prediction/player` predicts the official contextual BB-Rating directly on the 1–100 scale. It does not convert a native 0–10 rating. The model uses target-season BB-Rating labels, scenario-aware calibration and walk-forward validation. See [Direct future BB-Rating prediction](BB_RATING_FUTURE_PREDICTION.md).\n\n## Future Performance
 
-`POST /api/v2/future-performance/player` returns a separate multivariate forecast of the player's next-season statistical profile. It is not the team/player impact Prediction Model and does not modify BB-Rating. The artifact is stored separately under `models_saved/future_performance/`. See [Player Future Performance](PLAYER_FUTURE_PERFORMANCE.md) for target definitions, validation gates and training command.
+`POST /api/v2/future-performance/player` returns a separate multivariate forecast of the player's next-season statistical profile. It is separate from the BB Prediction Model, which forecasts future BB-Rating on the 1–100 scale, and does not modify the observed BB-Rating. The artifact is stored separately under `models_saved/future_performance/`. See [Player Future Performance](PLAYER_FUTURE_PERFORMANCE.md) for target definitions, validation gates and training command.
 
 ## Player Intelligence capabilities
 

@@ -466,7 +466,7 @@ def test_production_inference_uses_dataframe_builder_when_dataclass_fields_are_m
     # In particular, the old path returned form_score=5.0 and omitted age.
     assert model._last_prediction_features["form_score"] == 7.1
     assert model._last_prediction_features["age"] == 27.0
-    assert model._last_prediction_features["pts_per_36"] == 23.14
+    assert model._last_prediction_features["pts_per_36"] == pytest.approx(18.0 / 28.0 * 36.0)
 
 
 

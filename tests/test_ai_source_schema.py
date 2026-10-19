@@ -99,18 +99,20 @@ def test_ai_source_onoff_matches_native_player_team_id():
     assert "source_team_id" in sql
     assert "array['teamid', 'idteam']" in sql
     assert "pg_temp.ai_id_key(oo_exact.source_team_id)" in sql
-    assert "pg_temp.ai_id_key(%16$s)" in sql
+    assert "pg_temp.ai_id_key(%15$s)" in sql
     assert "                comp_expr,\n                team_local_expr\n            );" in sql
     assert "onoff_team_source_expr" not in sql
-    assert "array['player', 'id', 'playerid', 'idplayer']" in sql
+    assert "array['player','id','playerid','idplayer']" in "".join(sql.split())
     assert "array['gamesstarted', 'games_started', 'starts']" in sql
     assert "array['games', 'gamesplayed']" in sql
     assert "least(1.0, greatest(0.0, coalesce(%2$s, 0) / %1$s))" in sql
     assert "LEFT JOIN LATERAL" not in sql
     assert "oo_exact" in sql
     assert "oo_fallback" in sql
-    assert "q.source_team_id IS NULL" in sql
-    assert "ORDER BY" in sql
+    # The current set-based fallback filters null-team rows before the alias is assigned.
+    assert "and %3$s is null" in sql
+    assert ") q" in sql
+    assert "order by" in sql
     # AdvancedStatsOnOffCourt is authoritative for On/Off-specific metrics;
     # direct player-table columns are only fallback when the On/Off row is absent.
     assert "on_net_expr := '(coalesce(oo_exact.on_net_rtg, " in sql
@@ -246,7 +248,7 @@ def test_stable_id_keeps_null_relations_null():
     sql = SOURCE_SQL.read_text(encoding="utf-8").lower()
     assert "pg_temp.ai_stable_id" in sql
     assert "or btrim(%1$s::text) = ''" in sql
-    assert "hashtextextended(%2$L || ':' || btrim(%1$s::text), 0)" in sql
+    assert "hashtextextended(%2$l || ':' || btrim(%1$s::text), 0)" in sql
 
 
 def _valid_frames():

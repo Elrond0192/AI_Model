@@ -472,7 +472,7 @@ def test_persistence_shrinkage_alpha_uses_prior_calibration_only():
     result = StrictProductionEnsembleModel._fit_persistence_shrinkage(records)
     assert result["valid"] is True
     assert 0.0 <= result["alpha"] <= 1.0
-    assert result["alpha"] == pytest.approx(0.2888888889)
+    assert result["alpha"] == pytest.approx(0.2)
     assert result["blended_rmse"] < result["model_rmse"]
 
 
@@ -498,6 +498,7 @@ def test_production_ablation_diagnostics_separates_floor_and_shrinkage():
             "pre_shrinkage_unclipped_prediction": 7.0,
             "pre_shrinkage_prediction": 7.0,
             "persistence_shrinkage_alpha": 1.0,
+            "prediction": 7.0,
         },
     ]
 

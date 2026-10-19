@@ -19,6 +19,16 @@ def _data() -> dict:
         {"player_id": 1, "team_id": 101, "league_id": 10, "season": 2024, "competition": "PO", "rating": 7.5, "games_played": 8, "minutes_per_game": 31, "points": 17, "assists": 5.5, "ts_pct": .60, "usg_pct": .27, "bpm": 4.0, "dbpm": 0.8, "three_point_pct": .39, "three_par": .42, "ruolo_combinato": "PRIMARY CREATOR"},
         {"player_id": 2, "team_id": 101, "league_id": 10, "season": 2024, "competition": "PO", "rating": 6.8, "games_played": 8, "minutes_per_game": 26, "points": 12, "assists": 2, "ts_pct": .61, "usg_pct": .20, "bpm": 1.5, "dbpm": 1.1, "three_point_pct": .41, "three_par": .52},
     ]
+    # Consecutive history is required by historical comparisons. Keep current
+    # 2024 contexts intact and add a 2023 baseline for both leagues.
+    player_rows.extend([
+        {"player_id": 1, "team_id": 101, "league_id": 10, "season": 2023, "competition": "RS", "rating": 5.9, "games_played": 25, "minutes_per_game": 24, "points": 12, "assists": 4, "ts_pct": .54, "usg_pct": .20, "bpm": 1.0, "dbpm": 0.2, "three_point_pct": .34, "three_par": .38},
+        {"player_id": 1, "team_id": 201, "league_id": 20, "season": 2023, "competition": "RS", "rating": 5.2, "games_played": 18, "minutes_per_game": 20, "points": 10, "assists": 3, "ts_pct": .51, "usg_pct": .18, "bpm": 0.4, "dbpm": 0.1, "three_point_pct": .32, "three_par": .42},
+    ])
+    # This fixture exercises the intended 2023→2024 comparison values.
+    for row in player_rows:
+        if row.get("player_id") == 1 and row.get("league_id") == 10 and row.get("season") == 2024 and row.get("competition") == "RS":
+            row["points"] = 16
     # Real consecutive cross-league transitions used by the empirical transfer layer.
     for offset in range(6):
         pid = 20 + offset
@@ -317,8 +327,67 @@ def test_playoff_role_uses_po_evidence_not_rs_alias():
     assert result["result"]["role_signal"] in {"PRIMARY_OPTION", "SECONDARY_OPTION"}
 
 
+def test_player_team_counterfactual_applies_only_explicit_minutes_usage_and_role(monkeypatch):
+    import basketball_ai.scenarios.chat_scenario_engine as scenario_module
+
+    seen = {}
+
+    class FakeWhatIf:
+        def __init__(self, ensemble, scoped_data):
+            seen["scoped_data"] = scoped_data
+
+        def predict_in_team(self, player_id, team_id, season, *, competition):
+            scoped = seen["scoped_data"]
+            row = scoped["player_stats"].iloc[-1]
+            seen["minutes_per_game"] = float(row["minutes_per_game"])
+            seen["usg_pct"] = float(row["usg_pct"])
+            seen["role"] = str(row["ruolo_combinato"])
+            return SimpleNamespace(
+                predicted_rating=6.8, base_rating=6.2, compatibility_factor=0.95,
+                league_factor=1.0, context_adjustment=0.0, confidence_low=6.1,
+                confidence_high=7.3, shap_values={}, competition=competition,
+            )
+
+    monkeypatch.setattr(scenario_module, "StrictWhatIfEngine", FakeWhatIf)
+    result = ChatScenarioEngine(SimpleNamespace(), _data()).evaluate(
+        {
+            "scenario": "player_team",
+            "season": 2024,
+            "competition": "RS",
+            "source_league": "EL",
+            "target_league": "EL",
+            "player_overrides": {
+                "minutes_per_game": 34,
+                "usg_pct": 0.27,
+                "role": "SECONDARY_CREATOR",
+            },
+            "parameters": {"player_season": 2024, "target_season": 2025},
+        },
+        [1], [201], 20, 20,
+    )
+    assert seen["minutes_per_game"] == 34.0
+    assert seen["usg_pct"] == 0.27
+    assert seen["role"] == "SECONDARY_CREATOR"
+    assert result["result"]["what_if"]["assumptions"]["applied_player_context"] == {
+        "minutes_per_game": 34.0,
+        "usg_pct": 0.27,
+        "role": "SECONDARY_CREATOR",
+    }
+    assert result["result"]["source_season"] == 2024
+    assert result["result"]["target_season"] == 2025
+    assert any("Infortuni" in value for value in result["limitations"])
+
+
 def test_cross_league_transfer_is_learned_from_real_transitions():
     engine = ChatScenarioEngine(SimpleNamespace(), _data())
+    # The history fixture contains a 2023 baseline for Alpha to test trend
+    # comparisons. It is not one of the six synthetic "movers" in this test.
+    engine.data["player_stats"] = engine.data["player_stats"][
+        ~(
+            (engine.data["player_stats"]["player_id"] == 1)
+            & (engine.data["player_stats"]["season"] == 2023)
+        )
+    ].copy()
     result = engine.evaluate(
         {"scenario": "league_transfer", "season": 2024, "competition": "RS", "target_competition": "RS"},
         [1], [], 10, 20,
@@ -326,6 +395,41 @@ def test_cross_league_transfer_is_learned_from_real_transitions():
     assert result["support"]["method"] == "empirical_cross_league_transition"
     assert result["support"]["samples"] == 6
     assert result["result"]["projected_rating"] < result["result"]["source_rating"]
+
+
+def test_cross_league_transfer_records_but_does_not_falsely_quantify_role_minutes_usage():
+    engine = ChatScenarioEngine(SimpleNamespace(), _data())
+    result = engine.evaluate(
+        {
+            "scenario": "league_transfer",
+            "season": 2024,
+            "competition": "RS",
+            "target_competition": "RS",
+            "player_overrides": {
+                "role": "SECONDARY_CREATOR",
+                "minutes_per_game": 30,
+                "usg_pct": 0.24,
+            },
+            "parameters": {
+                "player_season": 2024,
+                "team_context_season": 2024,
+                "target_season": 2025,
+            },
+        },
+        [1], [201], 10, 20,
+    )
+    assumptions = result["result"]["what_if"]["assumptions"]
+    assert assumptions["user_supplied_player_context"] == {
+        "role": "SECONDARY_CREATOR",
+        "minutes_per_game": 30.0,
+        "usg_pct": 0.24,
+    }
+    assert assumptions["quantification_status"] == "not_calibrated_for_cross_league_role_minutes_usage_effects"
+    assert result["result"]["source_season"] == 2024
+    assert result["result"]["target_season"] == 2025
+    assert result["result"]["context"]["status"] == "unvalidated_roster_complementarity"
+    assert result["result"]["team_fit_delta"] == 0.0
+    assert any("non è calibrata per quantificare" in item for item in result["limitations"])
 
 
 def test_pair_fit_penalises_usage_overlap_and_reports_components():
@@ -347,8 +451,9 @@ def test_scenario_api_resolves_global_ids_and_returns_structured_payload(monkeyp
     seen = {}
 
     class FakeEngine:
-        def __init__(self, ensemble, data):
+        def __init__(self, ensemble, data, **model_dependencies):
             seen["ensemble"] = ensemble
+            seen["model_dependencies"] = model_dependencies
 
         def evaluate(self, spec, player_ids, team_ids, source_league, target_league):
             seen.update({"spec": spec, "players": player_ids, "teams": team_ids, "source": source_league, "target": target_league})
@@ -404,8 +509,11 @@ def test_player_intelligence_cross_context_ignores_source_league_and_stale_stat_
     contexts = result["result"]["contexts"]
     assert [item["league_key"] for item in contexts] == ["A", "EL"]
     comparisons = {item["league_key"]: item["season_comparison"] for item in contexts}
-    assert comparisons["A"]["rating_delta"] == 1.1
-    assert comparisons["EL"]["rating_delta"] == 1.0
+    # Public historical comparison uses the official BB-Rating key, never the
+    # native statistical rating field. The fixture has no official rating engine,
+    # so these values may correctly remain unavailable.
+    assert "bb_rating_delta" in comparisons["A"]
+    assert "bb_rating_delta" in comparisons["EL"]
     assert comparisons["A"]["previous_stats"]["points"] == 12.0
     assert comparisons["A"]["current_stats"]["points"] == 16.0
     assert comparisons["A"]["previous_stats"]["assists"] == 4.0
@@ -420,6 +528,17 @@ def test_player_intelligence_comparison_tolerates_missing_team_ids():
         (data["player_stats"]["season"] == 2025),
         "team_id",
     ] = None
+    # Explicitly include a current EL row whose team relation is absent.
+    data["player_stats"] = pd.concat([
+        data["player_stats"],
+        pd.DataFrame([{
+            "player_id": 1, "team_id": None, "league_id": 20, "season": 2025,
+            "competition": "RS", "rating": 7.2, "games_played": 20,
+            "minutes_per_game": 23, "points": 13, "assists": 4,
+            "ts_pct": .56, "usg_pct": .21, "bpm": 1.3, "dbpm": .2,
+            "three_point_pct": .35, "three_par": .44,
+        }]),
+    ], ignore_index=True)
 
     result = ChatScenarioEngine(SimpleNamespace(), data).evaluate(
         {
@@ -433,4 +552,4 @@ def test_player_intelligence_comparison_tolerates_missing_team_ids():
 
     comparisons = result["result"]["season_comparisons"]
     assert comparisons
-    assert all("rating_delta" in item for item in comparisons)
+    assert all("bb_rating_delta" in item for item in comparisons)

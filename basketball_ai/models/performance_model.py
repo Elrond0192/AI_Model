@@ -728,6 +728,36 @@ class PerformanceModel:
             "two_way_score":        two_way_score,
         }
 
+        # Persistence features must share the same train/inference contract.
+        # The precomputed training path already contains the exact prefix values;
+        # direct inference rebuilds the same signals from the as-of history frame.
+        persistence_columns = (
+            "last_rating",
+            "rating_delta_1",
+            "rating_delta_2",
+            "recent_rating_mean",
+            "recent_rating_std",
+        )
+        if precomputed_history is not None:
+            for column in persistence_columns:
+                row[column] = float(precomputed_history.get(column, 0.0))
+        else:
+            ratings = pd.to_numeric(
+                player_stats_history.get("rating", pd.Series(dtype=float)),
+                errors="coerce",
+            )
+            ratings = ratings.ffill().fillna(6.5).to_numpy(dtype=float)
+            if ratings.size == 0:
+                ratings = np.asarray([
+                    float(_canonical_source_value("rating", stat_row.get("rating", 6.5)))
+                ], dtype=float)
+            row["last_rating"] = float(ratings[-1])
+            row["rating_delta_1"] = float(ratings[-1] - ratings[-2]) if ratings.size >= 2 else 0.0
+            row["rating_delta_2"] = float(ratings[-1] - ratings[-3]) if ratings.size >= 3 else 0.0
+            recent = ratings[-3:]
+            row["recent_rating_mean"] = float(np.mean(recent))
+            row["recent_rating_std"] = float(np.std(recent))
+
         # PO vs RS delta and PO games played from historical data
         if precomputed_history is not None:
             row["po_vs_rs_delta"] = precomputed_history["po_vs_rs_delta"]
@@ -1319,7 +1349,7 @@ class PerformanceModel:
             "train_rmse": train_rmse,
             "val_rmse":   val_rmse,
             "val_mae":    val_mae,
-            "val_r2":     val_r2, 
+            "val_r2":     val_r2,
             "target_diagnostics": target_diagnostics,
         }
 
@@ -1412,6 +1442,7 @@ class PerformanceModel:
         if getattr(self, "target_mode", "rating") == "delta_vs_prior":
             return raw_prediction
         return float(np.clip(raw_prediction, 3.5, 10.0))
+
     def get_shap_values(self, feature_dict: Dict[str, float]) -> Dict[str, float]:
         if not self.is_trained or not _SHAP_AVAILABLE:
             return {}
