@@ -421,6 +421,7 @@ def test_team_add_player_keeps_player_source_team_context_and_target_seasons_sep
     )
 
     assert captured["spec"]["parameters"]["player_season"] == 2022
+    assert captured["spec"]["parameters"]["team_context_season"] == 2023
     assert captured["spec"]["parameters"]["target_season"] == 2024
     assert result["result"]["source_season"] == 2022
     assert result["result"]["team_context_season"] == 2023
