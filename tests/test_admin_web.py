@@ -377,6 +377,8 @@ def test_helpers_and_static_assets(monkeypatch, tmp_path):
     assert "Model Releases" in html
     assert "bb-rating-prediction" in js
     assert "Prediction 1–100 calibration" not in html
+    assert "Native Prediction Model (0–10)" not in html
+    assert "data-model=\"prediction\"" not in html
     assert "renderModelReleases" in js
     assert "/admin-api/model-releases" in js
     assert "BB-Rating" in html
