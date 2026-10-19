@@ -18,7 +18,6 @@ from basketball_ai.bb_rating.competition_tiers import (
 )
 from basketball_ai.bb_rating.engine import (
     AGE_BANDS,
-    BAND_LABELS,
     BB_RATING_METRICS,
     BB_RATING_VERSION,
     BBRatingEngine,
