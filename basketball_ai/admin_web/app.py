@@ -176,7 +176,7 @@ class SeasonLifecyclePayload(BaseModel):
     status: str = Field(pattern="^(in_progress|complete|locked)$")
 
 class DiagnosticPayload(BaseModel):
-    model: str = Field(pattern="^(prediction|bb_rating|future_performance|metric_rating)$")
+    model: str = Field(pattern="^(bb_rating_prediction|bb_rating|future_performance|metric_rating)$")
     player_global_id: str = Field(min_length=1, max_length=128)
     team_global_id: str = Field(default="", max_length=128)
     league: str = Field(default="ITA1", min_length=1, max_length=64)
