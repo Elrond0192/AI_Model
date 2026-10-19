@@ -274,7 +274,22 @@ def fit_acquisition_impact_model(
             "status": "roster_history_unavailable",
             "reason": "Non sono disponibili transizioni stagionali complete di roster e Net Rating.",
             "training_samples": 0,
-            "validation": {"samples": 0, "seasons": 0},
+            "validation": {"samples": 0, "seasons": 0, "by_target_season": [], "scope": {
+                "league_id": int(league_id),
+                "competition": normalize_competition(competition),
+                "through_season": int(through_season),
+                "target_seasons": [],
+                "design": "expanding_window_walk_forward",
+                "causal_effect_established": False,
+            }},
+            "validation_scope": {
+                "league_id": int(league_id),
+                "competition": normalize_competition(competition),
+                "through_season": int(through_season),
+                "target_seasons": [],
+                "design": "expanding_window_walk_forward",
+                "causal_effect_established": False,
+            },
         }
 
     years = sorted({int(row["season"]) for row in rows})
@@ -449,6 +464,7 @@ def predict_acquisition_impact(
             "available": False,
             "reason": str(model.get("reason") or "Il modello non ha superato la validazione fuori campione."),
             "validation": model.get("validation", {}),
+            "validation_scope": model.get("validation_scope", {}),
             "training_samples": int(model.get("training_samples", 0)),
         }
 
