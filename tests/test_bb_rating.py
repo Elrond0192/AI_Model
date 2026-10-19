@@ -426,9 +426,9 @@ def test_oos_uncertainty_validation_is_temporal_and_exposure_aware():
     assert uncertainty["status"] == "validated_oos"
     assert uncertainty["method"] == "expanding_walk_forward_empirical_quantiles"
     assert uncertainty["first_possible_test_season"] == 2021
-    assert uncertainty["test_seasons"] == [2020, 2021, 2022, 2023, 2024]
+    assert uncertainty["test_seasons"] == [2021, 2022, 2023, 2024]
     assert uncertainty["excluded_target_seasons"] == [2025]
-    assert len(uncertainty["folds"]) == 5
+    assert len(uncertainty["folds"]) == 4
     assert all(
         fold["training_target_seasons"]
         for fold in uncertainty["folds"]
