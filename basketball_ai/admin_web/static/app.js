@@ -54,7 +54,19 @@ async function api(path,options={}){
 }
 
 function showLogin(){App.controllers.forEach(controller=>controller.abort());App.controllers.clear();App.user=null;$('#app-shell').classList.add('hidden');$('#login-screen').classList.remove('hidden');}
-function showApp(user){App.user=user;$('#login-screen').classList.add('hidden');$('#app-shell').classList.remove('hidden');$('#user-name').textContent=user.username;$('#user-role').textContent=user.role==='admin'?'Administrator':user.role;$('#user-avatar').textContent=(user.username||'A')[0].toUpperCase();$$('.admin-only').forEach(el=>el.classList.toggle('hidden',user.role!=='admin'));}
+function showApp(user){App.user=user;$('#login-screen').classList.add('hidden');$('#app-shell').classList.remove('hidden');$('#user-name').textContent=user.username;$('#user-role').textContent=user.role==='admin'?'Administrator':user.role;$('#user-avatar').textContent=(user.username||'A')[0].toUpperCase();$('.admin-only').forEach(el=>el.classList.toggle('hidden',user.role!=='admin'));}
+
+async function enterBackOffice(user){
+  showApp(user);
+  root.innerHTML='<div class="loading"><div><div class="spinner"></div>Connessione al database e caricamento automatico dei dati…</div></div>';
+  let result=null,error=null;
+  try{result=await api('/admin-api/auto-load',{method:'POST',body:{}});}
+  catch(e){error=e.message;}
+  await navigate('overview');
+  if(result?.loaded)toast(`Dati aggiornati da ${result.profile}: ${fmtInt(result.summary?.player_rows)} righe giocatore`);
+  else if(result?.message)toast(result.message,'error');
+  else if(error)toast('Caricamento automatico dal DB non riuscito: '+error,'error');
+}
 function updateClock(){const d=new Date();$('#top-utc').textContent=d.toISOString().replace('T',' ').slice(0,19);}
 setInterval(updateClock,1000);updateClock();
 
@@ -645,8 +657,8 @@ async function renderAudit(){async function refresh(){const d=await api('/admin-
 
 async function renderSettings(){const d=await api('/admin-api/settings');$('#runtime-settings').innerHTML=Object.entries(d.runtime||{}).map(([k,v])=>`<div class="settings-row"><span>${esc(k.replaceAll('_',' '))}</span><strong>${esc(v??'—')}</strong></div>`).join('');$('#promotion-settings').innerHTML=Object.entries(d.promotion_gates||{}).map(([k,v])=>`<div class="settings-row"><span>${esc(k.replaceAll('_',' '))}</span><strong>${esc(v)}</strong></div>`).join('');$('#password-form').addEventListener('submit',async ev=>{ev.preventDefault();const body=Object.fromEntries(new FormData(ev.currentTarget).entries());const btn=$('button',ev.currentTarget);btn.disabled=true;try{await api('/admin-api/settings/password',{method:'POST',body});toast('Password aggiornata. Effettua nuovamente il login.');showLogin();}catch(e){toast(e.message,'error');btn.disabled=false;}});}
 
-$('#login-form').addEventListener('submit',async ev=>{ev.preventDefault();const error=$('#login-error'),button=$('button',ev.currentTarget);error.textContent='';button.disabled=true;try{const d=await api('/admin-api/login',{method:'POST',body:{username:$('#login-username').value,password:$('#login-password').value}});showApp(d.user);await navigate('overview');}catch(e){error.textContent=e.message;}finally{button.disabled=false;}});
+$('#login-form').addEventListener('submit',async ev=>{ev.preventDefault();const error=$('#login-error'),button=$('button',ev.currentTarget);error.textContent='';button.disabled=true;try{const d=await api('/admin-api/login',{method:'POST',body:{username:$('#login-username').value,password:$('#login-password').value}});await enterBackOffice(d.user);}catch(e){error.textContent=e.message;}finally{button.disabled=false;}});
 $('#logout-btn').addEventListener('click',async()=>{try{await api('/admin-api/logout',{method:'POST',body:{}});}catch(_){}showLogin();});
 $$('.nav-item').forEach(b=>b.addEventListener('click',()=>navigate(b.dataset.page)));
 
-(async function boot(){try{const s=await api('/admin-api/session');showApp(s.user);await navigate('overview');}catch(_){showLogin();}})();
+(async function boot(){try{const s=await api('/admin-api/session');await enterBackOffice(s.user);}catch(_){showLogin();}})();
