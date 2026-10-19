@@ -157,3 +157,4 @@ class ScenarioResponseV2(BaseModel):
     evidence: list[dict[str, Any]] = Field(default_factory=list)
     support: dict[str, Any] = Field(default_factory=dict)
     limitations: list[str] = Field(default_factory=list)
+    provenance: dict[str, Any] = Field(default_factory=dict)
