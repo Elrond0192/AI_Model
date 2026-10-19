@@ -1849,6 +1849,37 @@ async def load_database_profile(name: str, user: dict[str, str] = Depends(_csrf)
     return {"ok": True, "profile": name, "summary": summary, "snapshot": snapshot}
 
 
+@app.post("/admin-api/auto-load")
+async def auto_load_database(user: dict[str, str] = Depends(_csrf)) -> dict[str, Any]:
+    """Refresh core data and prepare a reproducible snapshot when the BO is opened."""
+    profiles_map = load_profiles()
+    with STATE.lock:
+        active = STATE.active_profile
+
+    configured = os.getenv("DATABASE_PROFILE", "").strip()
+    if active not in profiles_map:
+        active = configured if configured in profiles_map else None
+    if active is None and len(profiles_map) == 1:
+        active = next(iter(profiles_map))
+
+    if active is None:
+        if not profiles_map:
+            message = "Nessun profilo PostgreSQL configurato. Crea un profilo in Dati e snapshot."
+        else:
+            message = (
+                "Sono presenti più profili PostgreSQL e nessuno è selezionato. "
+                "Imposta DATABASE_PROFILE oppure seleziona un profilo univoco."
+            )
+        return {"ok": False, "loaded": False, "message": message, "profiles_available": sorted(profiles_map)}
+
+    result = await load_database_profile(active, user)
+    return {
+        **result,
+        "loaded": True,
+        "message": f"Dati aggiornati automaticamente dal database PostgreSQL '{active}'.",
+    }
+
+
 @app.get("/admin-api/snapshots")
 def snapshots(user: dict[str, str] = Depends(_operator)) -> dict[str, Any]:
     del user
