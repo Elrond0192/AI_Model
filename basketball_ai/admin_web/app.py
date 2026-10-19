@@ -908,9 +908,10 @@ def _bb_rating_prediction_job_worker(active_profile: str | None, actor: str, can
         details = {
             "candidate_id": candidate_id,
             "oof_samples": metadata.get("oof_samples"),
-            "mae": metrics.get("mae"),
-            "rmse": metrics.get("rmse"),
-            "scenario_metrics": metadata.get("scenario_metrics") or [],
+            "mae": metadata.get("oof_mae_after_calibration", metrics.get("mae")),
+            "rmse": metadata.get("oof_rmse_after_calibration", metrics.get("rmse")),
+            "baseline_mae": metadata.get("oof_baseline_mae", metrics.get("baseline_mae")),
+            "scenario_metrics": metadata.get("scenario_metrics") or {},
             "target_seasons": metadata.get("target_seasons") or [],
         }
         _audit("bb_rating_prediction_candidate_ready", actor, active_profile, json.dumps(details, ensure_ascii=False, default=str))
@@ -1124,10 +1125,12 @@ def _diagnostic_assertions(model: str, result: dict[str, Any]) -> list[dict[str,
     elif model == "bb_rating_prediction":
         prediction = body.get("prediction") if isinstance(body.get("prediction"), dict) else {}
         score = prediction.get("predicted_bb_rating")
-        interval = prediction.get("confidence_interval") or prediction.get("interval") or prediction.get("confidence") or {}
+        low = prediction.get("confidence_low_100")
+        high = prediction.get("confidence_high_100")
+        interval_ok = isinstance(low, (int, float)) and isinstance(high, (int, float)) and 1 <= float(low) <= float(high) <= 100
         checks += [
             {"label": "BB-Rating previsto 1–100", "ok": isinstance(score, (int, float)) and 1 <= float(score) <= 100},
-            {"label": "Intervallo di incertezza", "ok": isinstance(interval, dict) and bool(interval)},
+            {"label": "Intervallo di incertezza 1–100", "ok": interval_ok},
             {"label": "Scenario dichiarato", "ok": bool(prediction.get("scenario"))},
         ]
     else:
