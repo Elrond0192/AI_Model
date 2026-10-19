@@ -502,9 +502,22 @@ class BBRatingFuturePredictionModel:
         by_scenario = {}
         for scenario in sorted(oof["scenario"].astype(str).unique()):
             by_scenario[scenario] = metric_pack(oof["scenario"].astype(str).to_numpy() == scenario)
+        by_source = {}
+        for league in sorted(oof["source_league"].astype(str).unique()):
+            by_source[league] = metric_pack(oof["source_league"].astype(str).to_numpy() == league)
         by_destination = {}
         for league in sorted(oof["target_league"].astype(str).unique()):
             by_destination[league] = metric_pack(oof["target_league"].astype(str).to_numpy() == league)
+        by_source_destination_scenario = {}
+        for (source_league, target_league, scenario), group in oof.groupby(
+            ["source_league", "target_league", "scenario"], sort=True
+        ):
+            key = f"{source_league}=>{target_league}::{scenario}"
+            by_source_destination_scenario[key] = metric_pack(
+                (oof["source_league"].astype(str).to_numpy() == str(source_league))
+                & (oof["target_league"].astype(str).to_numpy() == str(target_league))
+                & (oof["scenario"].astype(str).to_numpy() == str(scenario))
+            )
         by_destination_scenario = {}
         for (league, scenario), group in oof.groupby(["target_league", "scenario"], sort=True):
             key = f"{league}::{scenario}"
@@ -516,13 +529,22 @@ class BBRatingFuturePredictionModel:
         mae_baseline = float(mean_absolute_error(actual, baseline))
 
         segment_regressions = []
+        under_supported_segments = []
         for dimension, metrics_by_group in (
             ("scenario", by_scenario),
+            ("source_league", by_source),
             ("destination_league", by_destination),
             ("destination_league_scenario", by_destination_scenario),
+            ("source_destination_scenario", by_source_destination_scenario),
         ):
             for group_name, metrics in metrics_by_group.items():
                 if int(metrics.get("n") or 0) < 40:
+                    under_supported_segments.append({
+                        "dimension": dimension,
+                        "group": str(group_name),
+                        "n": int(metrics.get("n") or 0),
+                        "status": "insufficient_samples_for_segment_gate",
+                    })
                     continue
                 model_mae = metrics.get("mae")
                 baseline_mae_group = metrics.get("baseline_mae")
@@ -535,7 +557,14 @@ class BBRatingFuturePredictionModel:
                         "n": int(metrics["n"]), "mae": float(model_mae),
                         "baseline_mae": float(baseline_mae_group),
                     })
-        promotion_gate_passed = bool(mae_model < mae_baseline and not segment_regressions)
+        walk_forward_target_seasons = sorted(int(value) for value in oof["target_season"].unique())
+        # OOF predictions from a single held-out season are not sufficient to
+        # establish temporal generalisation, even when their row count is large.
+        promotion_gate_passed = bool(
+            len(walk_forward_target_seasons) >= 3
+            and mae_model < mae_baseline
+            and not segment_regressions
+        )
 
         self.model = HistGradientBoostingRegressor(
             max_iter=220, learning_rate=0.05, max_leaf_nodes=15,
@@ -569,9 +598,16 @@ class BBRatingFuturePredictionModel:
             "oof_baseline_rmse": float(np.sqrt(mean_squared_error(actual, baseline))),
             "promotion_gate_passed": promotion_gate_passed,
             "segment_regressions": segment_regressions,
-            "promotion_gate": "overall_mae_must_beat_baseline_and_supported_segments_must_not_regress_by_more_than_10_percent_plus_0.25_points",
+            "under_supported_segments": under_supported_segments,
+            "walk_forward_target_seasons": walk_forward_target_seasons,
+            "walk_forward_fold_count": int(len(walk_forward_target_seasons)),
+            "minimum_walk_forward_target_seasons": 3,
+            "minimum_supported_segment_samples": 40,
+            "promotion_gate": "overall_mae_must_beat_baseline; at_least_3_oof_target_seasons; and source-league, destination-league, transition-scenario, and destination-league-scenario cohorts with n>=40 must not regress by more than 10 percent plus 0.25 points",
             "scenario_metrics": by_scenario,
+            "source_league_metrics": by_source,
             "destination_league_metrics": by_destination,
+            "source_destination_scenario_metrics": by_source_destination_scenario,
             "destination_league_scenario_metrics": by_destination_scenario,
             "scenario_counts": {
                 str(k): int(v) for k, v in records["scenario"].value_counts().items()
