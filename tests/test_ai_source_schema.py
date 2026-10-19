@@ -99,7 +99,7 @@ def test_ai_source_onoff_matches_native_player_team_id():
     assert "source_team_id" in sql
     assert "array['teamid', 'idteam']" in sql
     assert "pg_temp.ai_id_key(oo_exact.source_team_id)" in sql
-    assert "pg_temp.ai_id_key(%16$s)" in sql
+    assert "pg_temp.ai_id_key(%15$s)" in sql
     assert "                comp_expr,\n                team_local_expr\n            );" in sql
     assert "onoff_team_source_expr" not in sql
     assert "array['player', 'id', 'playerid', 'idplayer']" in sql
@@ -246,7 +246,7 @@ def test_stable_id_keeps_null_relations_null():
     sql = SOURCE_SQL.read_text(encoding="utf-8").lower()
     assert "pg_temp.ai_stable_id" in sql
     assert "or btrim(%1$s::text) = ''" in sql
-    assert "hashtextextended(%2$L || ':' || btrim(%1$s::text), 0)" in sql
+    assert "hashtextextended(%2$l || ':' || btrim(%1$s::text), 0)" in sql
 
 
 def _valid_frames():
