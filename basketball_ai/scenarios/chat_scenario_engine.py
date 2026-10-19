@@ -38,6 +38,7 @@ from basketball_ai.models.strict_production import (
     build_historical_snapshot,
 )
 from basketball_ai.scenarios.advanced_simulation_engine import AdvancedSimulationEngine
+from basketball_ai.scenarios.provenance import build_scenario_provenance
 
 _PLAYER_METRICS = (
     "rating", "games_played", "minutes_per_game", "points", "rebounds", "assists",
@@ -176,9 +177,17 @@ class ChatScenarioEngine:
         }
         if scenario not in dispatch:
             raise ValueError(f"Unsupported scenario {scenario!r}")
-        return dispatch[scenario](
+        payload = dispatch[scenario](
             spec, player_ids, team_ids, source_league_id, target_league_id
         )
+        if not isinstance(payload, dict):
+            payload = {"result": {"value": payload}, "evidence": [], "support": {}, "limitations": []}
+        payload.setdefault("result", {})
+        payload.setdefault("evidence", [])
+        payload.setdefault("support", {})
+        payload.setdefault("limitations", [])
+        payload["provenance"] = build_scenario_provenance(scenario, spec, payload)
+        return payload
 
     # ------------------------------------------------------------------
     # Identity/context helpers
