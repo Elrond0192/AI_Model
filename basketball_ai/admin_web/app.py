@@ -901,7 +901,72 @@ def _bb_rating_prediction_job_worker(active_profile: str | None, actor: str, can
         model.metadata.update(metadata)
         _check_cancelled(cancel_event)
         if not metadata.get("promotion_gate_passed", False):
-            raise RuntimeError("Il walk-forward non supera il baseline o i gate degli scenari supportati; nessun candidate salvato.")
+            mae = metadata.get("oof_mae_after_calibration")
+            baseline_mae = metadata.get("oof_baseline_mae")
+            target_seasons = metadata.get("walk_forward_target_seasons") or []
+            fold_count = int(metadata.get("walk_forward_fold_count") or len(target_seasons))
+            regressions = metadata.get("segment_regressions") or []
+            gate_failures: list[str] = []
+            if fold_count < int(metadata.get("minimum_walk_forward_target_seasons") or 3):
+                gate_failures.append(
+                    f"Solo {fold_count} stagioni OOF; ne servono almeno "
+                    f"{int(metadata.get('minimum_walk_forward_target_seasons') or 3)}"
+                )
+            if mae is None or baseline_mae is None:
+                gate_failures.append("Metriche MAE modello/baseline non disponibili")
+            elif float(mae) >= float(baseline_mae):
+                gate_failures.append(
+                    f"MAE modello {float(mae):.3f} non migliore del baseline "
+                    f"{float(baseline_mae):.3f}"
+                )
+            if regressions:
+                gate_failures.append(
+                    f"{len(regressions)} gruppi supportati oltre la soglia di regressione"
+                )
+            if not gate_failures:
+                gate_failures.append("Gate di promozione non superato; verificare il report completo")
+
+            top_regressions = sorted(
+                regressions,
+                key=lambda row: float(row.get("mae") or 0) - float(row.get("baseline_mae") or 0),
+                reverse=True,
+            )[:10]
+            failure_message = "Candidate non salvato. " + "; ".join(gate_failures) + "."
+            diagnostics = {
+                "candidate_id": candidate_id,
+                "promotion_gate_passed": False,
+                "gate_failures": gate_failures,
+                "oof_samples": metadata.get("oof_samples"),
+                "mae": mae,
+                "baseline_mae": baseline_mae,
+                "rmse": metadata.get("oof_rmse_after_calibration"),
+                "target_seasons": metadata.get("target_seasons") or [],
+                "walk_forward_target_seasons": target_seasons,
+                "walk_forward_fold_count": fold_count,
+                "segment_regression_count": len(regressions),
+                "segment_regressions": top_regressions,
+                "under_supported_segment_count": len(metadata.get("under_supported_segments") or []),
+                "scenario_metrics": metadata.get("scenario_metrics") or {},
+            }
+            _audit(
+                "bb_rating_prediction_gate_failed",
+                actor,
+                active_profile,
+                json.dumps(diagnostics, ensure_ascii=False, default=str),
+            )
+            with STATE.lock:
+                STATE.bb_rating_prediction_job.update(
+                    status="failed",
+                    stage="Validation gates failed",
+                    progress=100,
+                    message="Walk-forward completato, ma i gate di qualità non sono stati superati.",
+                    error=failure_message,
+                    candidate_id=None,
+                    output=diagnostics,
+                    cancel_requested=False,
+                    finished_at=_utcnow(),
+                )
+            return
         output_dir.parent.mkdir(parents=True, exist_ok=True)
         artifact = model.save(output_dir)
         _check_cancelled(cancel_event)
