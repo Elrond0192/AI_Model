@@ -498,6 +498,7 @@ def test_production_ablation_diagnostics_separates_floor_and_shrinkage():
             "pre_shrinkage_unclipped_prediction": 7.0,
             "pre_shrinkage_prediction": 7.0,
             "persistence_shrinkage_alpha": 1.0,
+            "prediction": 7.0,
         },
     ]
 
