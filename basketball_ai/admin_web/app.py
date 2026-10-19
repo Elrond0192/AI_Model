@@ -2231,6 +2231,7 @@ async def api_health(user: dict[str, str] = Depends(_operator)) -> dict[str, Any
             "GET /health",
             "POST /api/v2/bb-rating/player",
             "POST /api/v2/bb-rating-prediction/player",
+            "POST /api/v2/bb-rating-prediction/player",
             "POST /api/v2/future-performance/player",
             "POST /api/v2/scenarios/evaluate",
         ],
