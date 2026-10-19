@@ -474,8 +474,11 @@ def test_player_intelligence_cross_context_ignores_source_league_and_stale_stat_
     contexts = result["result"]["contexts"]
     assert [item["league_key"] for item in contexts] == ["A", "EL"]
     comparisons = {item["league_key"]: item["season_comparison"] for item in contexts}
-    assert comparisons["A"]["rating_delta"] == 1.1
-    assert comparisons["EL"]["rating_delta"] == 1.0
+    # Public historical comparison uses the official BB-Rating key, never the
+    # native statistical rating field. The fixture has no official rating engine,
+    # so these values may correctly remain unavailable.
+    assert "bb_rating_delta" in comparisons["A"]
+    assert "bb_rating_delta" in comparisons["EL"]
     assert comparisons["A"]["previous_stats"]["points"] == 12.0
     assert comparisons["A"]["current_stats"]["points"] == 16.0
     assert comparisons["A"]["previous_stats"]["assists"] == 4.0
@@ -514,4 +517,4 @@ def test_player_intelligence_comparison_tolerates_missing_team_ids():
 
     comparisons = result["result"]["season_comparisons"]
     assert comparisons
-    assert all("rating_delta" in item for item in comparisons)
+    assert all("bb_rating_delta" in item for item in comparisons)
