@@ -291,7 +291,7 @@ async function renderModelReleases(){
       '<div class="summary-row"><span>Validazione candidate</span><strong>'+esc(cand.valid?'OK':(cand.reason||'Non disponibile'))+'</strong></div>'+
       '<div class="summary-row"><span>Versione candidate</span><strong>'+esc(cand.version||'—')+'</strong></div>'+
       '<div class="summary-row"><span>OOF samples</span><strong>'+esc(cand.oof_samples??'—')+'</strong></div>'+
-      '<div class="summary-row"><span>MAE walk-forward</span><strong>'+esc(fmt(cand.mae))+'</strong></div>'+
+      '<div class="summary-row"><span>MAE walk-forward</span><strong>'+esc(fmt(cand.oof_mae_after_calibration??cand.mae))+'</strong></div>'+
       '<div class="summary-row"><span>Precedente disponibile</span><strong>'+esc(prev.valid?'Sì':'No')+'</strong></div>'+
       '</div>';
   };
@@ -310,7 +310,7 @@ async function renderModelReleases(){
   $('#release-future-performance').innerHTML=fmtRelease(models['future-performance']||{});
   $('#bb-rating-prediction-release').innerHTML=fmtRelease(release);
   $('#bb-rating-prediction-job').innerHTML='<div class="job-head"><div><div class="job-status">'+esc(job.stage||'Ready')+'</div><div class="job-message">'+esc(job.error||job.message||'Nessun training eseguito.')+'</div></div><span class="registry-badge '+(['running','queued'].includes(job.status)?'candidate':'')+'">'+esc(job.status||'idle')+'</span></div>'+
-    (job.output?'<div class="summary-list">'+[['OOF samples',job.output.oof_samples],['MAE',job.output.mae],['RMSE',job.output.rmse],['Scenari valutati',(job.output.scenario_metrics||[]).length]].map(([a,b])=>'<div class="summary-row"><span>'+esc(a)+'</span><strong>'+esc(b??'—')+'</strong></div>').join('')+'</div>':'')+
+    (job.output?'<div class="summary-list">'+[['OOF samples',job.output.oof_samples],['MAE',job.output.mae],['RMSE',job.output.rmse],['Scenari valutati',Object.keys(job.output.scenario_metrics||{}).length]].map(([a,b])=>'<div class="summary-row"><span>'+esc(a)+'</span><strong>'+esc(b??'—')+'</strong></div>').join('')+'</div>':'')+
     (job.progress!=null?'<div class="progress-track"><div class="progress-bar" style="width:'+Math.max(0,Math.min(100,Number(job.progress)||0))+'%"></div></div>':'');
   if(['running','queued'].includes(job.status)) {
     $('#bb-rating-prediction-job').insertAdjacentHTML('beforeend','<div class="button-row"><button id="bb-rating-prediction-cancel" class="btn btn-danger btn-small" '+(job.cancel_requested?'disabled':'')+'>'+(job.cancel_requested?'Interruzione richiesta…':'Interrompi training')+'</button></div>');
