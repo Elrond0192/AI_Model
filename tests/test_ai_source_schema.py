@@ -109,7 +109,9 @@ def test_ai_source_onoff_matches_native_player_team_id():
     assert "LEFT JOIN LATERAL" not in sql
     assert "oo_exact" in sql
     assert "oo_fallback" in sql
-    assert "q.source_team_id IS NULL" in sql
+    # The current set-based fallback filters null-team rows before the alias is assigned.
+    assert "AND %3$s IS NULL" in sql
+    assert ") q" in sql
     assert "ORDER BY" in sql
     # AdvancedStatsOnOffCourt is authoritative for On/Off-specific metrics;
     # direct player-table columns are only fallback when the On/Off row is absent.
