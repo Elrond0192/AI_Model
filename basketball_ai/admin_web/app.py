@@ -1336,8 +1336,9 @@ def _scenario_entity_rows(entity: str, query: str, limit: int = 12) -> list[dict
         teams_frame = loaded.get("teams")
         if isinstance(teams_frame, pd.DataFrame) and {"id", "global_id"}.issubset(teams_frame.columns):
             for team_row in teams_frame.to_dict("records"):
-                numeric_team_id = _to_int(team_row.get("id"))
-                team_id = str(numeric_team_id) if numeric_team_id is not None else value_text(team_row, "id")
+                raw_team_id = value_text(team_row, "id")
+                numeric_team_id = _to_int(team_row.get("id")) if raw_team_id else None
+                team_id = str(numeric_team_id) if numeric_team_id is not None else raw_team_id
                 global_value = value_text(team_row, "global_id")
                 name_value = value_text(team_row, "name")
                 if team_id and global_value:
@@ -1478,11 +1479,12 @@ def _scenario_entity_rows(entity: str, query: str, limit: int = 12) -> list[dict
             # historical competition stats may not include the current season's
             # team relation (or may not carry team_id at all).
             metadata_league_key = value_text(row, "current_league_key").upper()
-            numeric_metadata_team_id = _to_int(row.get("current_team_id"))
+            raw_metadata_team_id = value_text(row, "current_team_id")
+            numeric_metadata_team_id = _to_int(row.get("current_team_id")) if raw_metadata_team_id else None
             metadata_team_id = (
                 str(numeric_metadata_team_id)
                 if numeric_metadata_team_id is not None
-                else value_text(row, "current_team_id")
+                else raw_metadata_team_id
             )
             if contexts:
                 latest_context = max(
