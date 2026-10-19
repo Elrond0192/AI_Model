@@ -662,6 +662,7 @@ class StrictProductionEnsembleModel(ProductionEnsembleModel):
         denominator = float(np.sum(delta * delta))
         alpha = float(np.clip(np.sum(delta * residual) / denominator, 0.0, 1.0)) if denominator > 0.0 else 0.0
         blended = persistence + alpha * delta
+
         def rmse(values: np.ndarray) -> float:
             return float(np.sqrt(np.mean((values - actual) ** 2)))
 
