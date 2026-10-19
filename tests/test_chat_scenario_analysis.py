@@ -103,7 +103,7 @@ def _engine() -> ChatScenarioEngine:
     )
 
 
-def test_prediction_model_uses_loaded_calibration_and_hides_native_rating():
+def test_bb_prediction_model_uses_direct_official_rating_and_hides_native_rating():
     data = _analysis_data()
     data["player_dict"][1]["global_id"] = "PLAYER-ALPHA"
 
@@ -113,28 +113,29 @@ def test_prediction_model_uses_loaded_calibration_and_hides_native_rating():
             assert league == "A"
             return SimpleNamespace(score={2023: 61, 2024: 65}[season])
 
-    calibration = {
-        "calibration_version": "1.0",
-        "fit": {
-            "x_thresholds": [0.0, 10.0],
-            "y_thresholds_native": [0.0, 10.0],
-        },
-    }
+    class DirectBBPrediction:
+        def predict_from_data(self, source_data, **kwargs):
+            assert kwargs["player_global_id"] == "PLAYER-ALPHA"
+            assert kwargs["source_season"] == 2024
+            assert kwargs["target_league"] == "A"
+            assert kwargs["target_competition"] == "RS"
+            return {
+                "source_bb_rating": 65.0,
+                "predicted_bb_rating": 72.8,
+                "confidence_low_100": 68.3,
+                "confidence_high_100": 77.2,
+                "target_season": 2025,
+                "scenario": "same_context",
+                "calibration_level": "scenario",
+                "calibration_samples": 120,
+            }
+
     engine = ChatScenarioEngine(
         SimpleNamespace(),
         data,
         bb_rating_engine=HistoricalBBRating(),
-        prediction_calibration=calibration,
+        bb_rating_prediction_model=DirectBBPrediction(),
     )
-    engine._direct_prediction = lambda player_id, team_id, league_id, season, competition: (
-        SimpleNamespace(
-            predicted_rating=7.25,
-            confidence_low=6.8,
-            confidence_high=7.7,
-        ),
-        {},
-    )
-
     result = engine.evaluate(
         {
             "scenario": "model_evidence",
@@ -148,15 +149,14 @@ def test_prediction_model_uses_loaded_calibration_and_hides_native_rating():
         None,
     )
 
-    prediction = result["prediction_model"]
+    prediction = result["bb_rating_prediction"]
     assert prediction["available"] is True
     assert prediction["target_season"] == 2025
-    assert prediction["prediction_calibration_version"] == "1.0"
-    assert prediction["predicted_rating_100"] == pytest.approx(72.8)
+    assert prediction["predicted_bb_rating"] == pytest.approx(72.8)
+    assert prediction["source_bb_rating"] == pytest.approx(65.0)
     assert prediction["confidence_low_100"] == pytest.approx(68.3)
     assert prediction["confidence_high_100"] == pytest.approx(77.2)
-    assert "punteggio previsionale calibrato" in prediction["interpretation"].lower()
-    assert "BB-Rating contestuale osservato" in prediction["interpretation"]
+    assert "BB-Rating contestuale" in prediction["interpretation"]
     assert "current_bb_rating" not in prediction
     assert "delta_vs_current_bb_rating" not in prediction
     assert result["bb_rating"]["score"] == 65
@@ -164,6 +164,7 @@ def test_prediction_model_uses_loaded_calibration_and_hides_native_rating():
     assert "confidence_low" not in prediction
     assert "confidence_high" not in prediction
     assert "base_rating" not in prediction
+
 
 
 def test_public_scenario_payload_suppresses_raw_rating_and_preserves_canonical_scores():
