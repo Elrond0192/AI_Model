@@ -112,7 +112,7 @@ def test_ai_source_onoff_matches_native_player_team_id():
     # The current set-based fallback filters null-team rows before the alias is assigned.
     assert "and %3$s is null" in sql
     assert ") q" in sql
-    assert "ORDER BY" in sql
+    assert "order by" in sql
     # AdvancedStatsOnOffCourt is authoritative for On/Off-specific metrics;
     # direct player-table columns are only fallback when the On/Off row is absent.
     assert "on_net_expr := '(coalesce(oo_exact.on_net_rtg, " in sql
