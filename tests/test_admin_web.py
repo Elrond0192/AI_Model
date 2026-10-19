@@ -597,7 +597,7 @@ def test_model_release_read_cleans_stale_candidate_only_when_idle(monkeypatch, t
     _reset_state()
 
 
-def test_prediction_calibration_start_queues_candidate_job(monkeypatch, tmp_path):
+def test_bb_rating_prediction_start_queues_candidate_job(monkeypatch, tmp_path):
     _reset_state()
     monkeypatch.setattr(admin, "MODEL_ROOT", tmp_path / "models_saved")
     with admin.STATE.lock:
