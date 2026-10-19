@@ -44,9 +44,6 @@
           <button class="nav-item" data-page="future-performance"><span class="nav-icon"><i class="ph ph-crystal-ball"></i></span><span>Future Performance</span></button>
         </div>
         <div class="nav-group"><div class="nav-group-label">VALIDATION</div>
-          <button class="nav-item" data-page="training"><span class="nav-icon"><i class="ph ph-trend-up"></i></span><span>Training</span></button>
-          <button class="nav-item" data-page="backtests"><span class="nav-icon"><i class="ph ph-chart-line-up"></i></span><span>Backtests</span></button>
-          <button class="nav-item" data-page="registry"><span class="nav-icon"><i class="ph ph-cube"></i></span><span>Model Registry</span></button>
           <button class="nav-item" data-page="model-releases"><span class="nav-icon"><i class="ph ph-git-branch"></i></span><span>Model Releases</span></button>
         </div>
         <div class="nav-group"><div class="nav-group-label">LAB</div>
@@ -95,7 +92,7 @@
         <div class="hero-status"><span class="hero-status-dot" id="overview-system-dot"></span><div><strong id="overview-system-status">SYSTEM OPERATIONAL</strong><span>Production environment</span></div></div>
       </div>
       <section class="overview-model-strip">
-        <div class="overview-model-head"><div><div class="eyebrow">PRODUCTION MODELS</div><h2>Active intelligence stack</h2></div><button class="btn btn-small btn-secondary jump" data-page="registry">Model Registry</button></div>
+        <div class="overview-model-head"><div><div class="eyebrow">PRODUCTION MODELS</div><h2>Active intelligence stack</h2></div><button class="btn btn-small btn-secondary jump" data-page="model-releases">Model Releases</button></div>
         <div id="overview-models" class="model-strip-grid"></div>
       </section>
       <div id="overview-kpis" class="kpi-grid six overview-kpis"></div>
@@ -104,8 +101,8 @@
         <div class="table-shell"><table><thead><tr><th>Componente</th><th>Stato</th><th>Dettagli</th><th class="right">Azione</th></tr></thead><tbody id="readiness-body"></tbody></table></div>
       </section>
       <div class="split-grid">
-        <section class="panel"><div class="panel-heading"><div><div class="eyebrow">REGISTRY</div><h2>Production &amp; candidate</h2></div><button class="btn btn-small btn-secondary jump" data-page="registry">Apri</button></div><div id="overview-registry"></div></section>
-        <section class="panel"><div class="panel-heading"><div><div class="eyebrow">VALIDATION</div><h2>Latest backtest</h2></div><button class="btn btn-small btn-secondary jump" data-page="backtests">Apri</button></div><div id="overview-backtest"></div></section>
+        <section class="panel"><div class="panel-heading"><div><div class="eyebrow">BB PREDICTION</div><h2>Future BB-Rating forecast</h2></div><button class="btn btn-small btn-secondary jump" data-page="model-releases">Apri</button></div><div id="overview-registry"></div></section>
+        <section class="panel"><div class="panel-heading"><div><div class="eyebrow">FUTURE PERFORMANCE</div><h2>Forecast statistico</h2></div><button class="btn btn-small btn-secondary jump" data-page="future-performance">Apri</button></div><div id="overview-backtest"></div></section>
       </div>
       <section class="panel candidate-panel"><div class="panel-heading"><div><div class="eyebrow">QUALITY</div><h2>Candidate quality <span class="muted-inline">(ultimo run)</span></h2></div></div><div id="candidate-quality" class="quality-grid"></div></section>
     </section>
@@ -221,7 +218,7 @@
         <section class="panel">
           <div class="panel-heading"><h2>Uncertainty layer</h2></div>
           <div id="bb-rating-uncertainty" class="summary-list"></div>
-          <p class="microcopy">L'incertezza descrive la variabilità storica tra stagioni consecutive. Non corregge il BB-Rating corrente e non modifica il Prediction Model.</p>
+          <p class="microcopy">L'incertezza descrive la variabilità storica tra stagioni consecutive. Non corregge il BB-Rating corrente e non modifica il BB Prediction Model.</p>
         </section>
         <section class="panel">
           <div class="panel-heading"><h2>Artifacts</h2></div>
