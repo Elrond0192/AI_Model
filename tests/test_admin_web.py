@@ -326,7 +326,7 @@ def test_model_release_buttons_use_node_list_and_cancel_jobs_are_exposed():
     assert "candidate_id:item.candidate?.id" in js
     assert "/admin-api/jobs/training/cancel" in js
     assert "/admin-api/jobs/bb-rating/cancel" in js
-    assert "/admin-api/jobs/prediction-calibration/cancel" in js
+    assert "/admin-api/jobs/bb-rating-prediction/cancel" in js
     assert "/admin-api/jobs/future-performance/cancel" in future_js
 
 
@@ -375,7 +375,8 @@ def test_helpers_and_static_assets(monkeypatch, tmp_path):
     assert "Dati e snapshot" in html
     assert "Model Registry" in html
     assert "Model Releases" in html
-    assert "prediction-calibration" in js
+    assert "bb-rating-prediction" in js
+    assert "Prediction 1–100 calibration" not in html
     assert "renderModelReleases" in js
     assert "/admin-api/model-releases" in js
     assert "BB-Rating" in html
