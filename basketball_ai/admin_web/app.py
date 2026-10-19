@@ -872,7 +872,9 @@ def _bb_rating_worker(active_profile: str | None, actor: str, cancel_event: thre
 
 def _bb_rating_prediction_job_worker(active_profile: str | None, actor: str, cancel_event: threading.Event | None = None) -> None:
     from basketball_ai.admin_web.model_lifecycle import validate_artifact
-    from basketball_ai.cli import mode_prediction_calibrate
+    from basketball_ai.bb_rating.future_prediction import BBRatingFuturePredictionModel
+    from basketball_ai.data.postgres_loader import load_all_data
+
     candidate_id = f"{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}-{uuid.uuid4().hex[:8]}"
     output_dir = MODEL_ROOT / "candidates" / "bb-rating-prediction" / candidate_id
     try:
@@ -881,68 +883,56 @@ def _bb_rating_prediction_job_worker(active_profile: str | None, actor: str, can
             raise RuntimeError("Seleziona prima un profilo PostgreSQL")
         os.environ["DATABASE_PROFILE"] = active_profile
         with STATE.lock:
-            STATE.bb_rating_prediction_job.update(status="running", stage="Loading canonical history", progress=8, message="Caricamento dello storico completo per la calibrazione OOS…", error=None, started_at=_utcnow(), finished_at=None)
-        _audit("bb_rating_prediction_job_started", actor, active_profile)
-        output_dir.mkdir(parents=True, exist_ok=False)
-        args = argparse.Namespace(database_profile=active_profile, snapshot_id=None, snapshot_dir=None, bb_rating_prediction_job_output_dir=str(output_dir))
+            STATE.bb_rating_prediction_job.update(status="running", stage="Loading canonical history", progress=8, message="Caricamento dello storico canonico completo per il BB Prediction Model…", error=None, started_at=_utcnow(), finished_at=None, output=None)
+        _audit("bb_rating_prediction_training_started", actor, active_profile)
+        data = load_all_data(purpose="analysis")
+        _check_cancelled(cancel_event)
         with STATE.lock:
-            STATE.bb_rating_prediction_job.update(stage="Walk-forward OOS calibration", progress=25, message="Esecuzione backtest expanding OOS e fitting della mappatura 1–100…")
+            STATE.bb_rating_prediction_job.update(stage="Walk-forward BB-Rating prediction", progress=25, message="Calcolo dei target BB-Rating ufficiali, degli scenari e della validazione walk-forward temporale…")
+        model = BBRatingFuturePredictionModel(min_oof_samples=500)
+        metadata = model.fit(data, include_latest_target_season=False)
+        metadata["database_profile"] = active_profile
+        metadata["training_snapshot_id"] = data.get("training_snapshot_manifest", {}).get("snapshot_id")
+        model.metadata.update(metadata)
         _check_cancelled(cancel_event)
-        mode_prediction_calibrate(args)
-        _check_cancelled(cancel_event)
-        artifact_path = output_dir / "prediction_rating_calibration.json"
-        if not artifact_path.is_file():
-            raise RuntimeError(
-                "Prediction calibration finished without writing its expected artifact "
-                f"to {artifact_path}"
-            )
-        report = json.loads(artifact_path.read_text(encoding="utf-8"))
+        if not metadata.get("promotion_gate_passed", False):
+            raise RuntimeError("Il walk-forward non supera il baseline o i gate degli scenari supportati; nessun candidate salvato.")
+        output_dir.parent.mkdir(parents=True, exist_ok=True)
+        artifact = model.save(output_dir)
         _check_cancelled(cancel_event)
         validation = validate_artifact("bb-rating-prediction", output_dir)
         _check_cancelled(cancel_event)
         if not validation.get("valid"):
-            raise RuntimeError(validation.get("reason", "Prediction calibration artifact validation failed"))
-        details = {"candidate_id": candidate_id, "rows": (report.get("dataset") or {}).get("rows"), "target_seasons": (report.get("dataset") or {}).get("target_seasons") or [], "n_folds": (report.get("validation") or {}).get("n_folds"), "prediction_model_version": report.get("prediction_model_version")}
-        _audit("bb_rating_prediction_job_candidate_ready", actor, active_profile, json.dumps(details, ensure_ascii=False))
+            raise RuntimeError(validation.get("reason", "BB Prediction Model artifact validation failed"))
+        metrics = metadata.get("overall_metrics") or metadata.get("metrics") or {}
+        details = {
+            "candidate_id": candidate_id,
+            "oof_samples": metadata.get("oof_samples"),
+            "mae": metrics.get("mae"),
+            "rmse": metrics.get("rmse"),
+            "scenario_metrics": metadata.get("scenario_metrics") or [],
+            "target_seasons": metadata.get("target_seasons") or [],
+        }
+        _audit("bb_rating_prediction_candidate_ready", actor, active_profile, json.dumps(details, ensure_ascii=False, default=str))
         with STATE.lock:
-            STATE.bb_rating_prediction_job.update(status="complete", stage="Candidate validated", progress=100, message="Calibrazione validata come candidate. Il Prediction Model e la produzione non sono stati modificati.", error=None, finished_at=_utcnow(), candidate_id=candidate_id, output={**details, "path": str(output_dir), "validation": validation})
+            STATE.bb_rating_prediction_job.update(status="complete", stage="Candidate validated", progress=100, message="BB Prediction Model validato come candidate. La produzione non è stata modificata.", error=None, finished_at=_utcnow(), candidate_id=candidate_id, output={**details, "path": str(output_dir), "validation": validation, "artifact": artifact})
     except TrainingCancelled:
         shutil.rmtree(output_dir, ignore_errors=True)
-        _audit("bb_rating_prediction_job_cancelled", actor, active_profile or "", "Cancelled by operator")
+        _audit("bb_rating_prediction_training_cancelled", actor, active_profile or "", "Cancelled by operator")
         if cancel_event is not None:
             _mark_job_cancelled("bb-rating-prediction", cancel_event)
         else:
             with STATE.lock:
-                STATE.bb_rating_prediction_job.update(status="cancelled", stage="Cancelled", progress=100, message="Calibration cancelled; production unchanged.", error=None, finished_at=_utcnow())
+                STATE.bb_rating_prediction_job.update(status="cancelled", stage="Cancelled", progress=100, message="Training annullato; produzione invariata.", error=None, finished_at=_utcnow())
     except Exception as exc:
         error = _safe_error(exc)
-        expected_artifact = output_dir / "prediction_rating_calibration.json"
-        candidate_cleanup = "not_needed"
+        expected_artifact = output_dir / "bb_rating_future_model.joblib"
         if not expected_artifact.is_file():
             shutil.rmtree(output_dir, ignore_errors=True)
-            candidate_cleanup = "removed_incomplete_candidate"
-        _audit(
-            "bb_rating_prediction_job_failed",
-            actor,
-            active_profile or "",
-            json.dumps({
-                "candidate_id": candidate_id,
-                "error": error,
-                "candidate_cleanup": candidate_cleanup,
-            }, ensure_ascii=False),
-        )
+        _audit("bb_rating_prediction_training_failed", actor, active_profile or "", json.dumps({"candidate_id": candidate_id, "error": error}, ensure_ascii=False))
         with STATE.lock:
-            STATE.bb_rating_prediction_job.update(
-                status="failed",
-                stage="Failed",
-                progress=100,
-                message="BB Prediction Model failed; production unchanged.",
-                error=error,
-                candidate_id=None,
-                output=None,
-                cancel_requested=False,
-                finished_at=_utcnow(),
-            )
+            STATE.bb_rating_prediction_job.update(status="failed", stage="Failed", progress=100, message="Training BB Prediction Model fallito; produzione invariata.", error=error, candidate_id=None, output=None, cancel_requested=False, finished_at=_utcnow())
+
 
 
 def _training_worker(
@@ -2002,16 +1992,16 @@ def bb_rating_prediction_status(user: dict[str, str] = Depends(_operator)) -> di
     _cleanup_idle_incomplete_model_candidates()
     with STATE.lock:
         job = dict(STATE.bb_rating_prediction_job)
-    return {"job": job, "release": inspect_model(MODEL_ROOT, "bb-rating-prediction"), "minimum_oos_rows": 500, "native_prediction_model_changed": False}
+    return {"job": job, "release": inspect_model(MODEL_ROOT, "bb-rating-prediction"), "minimum_oof_samples": 500, "target_scale": "official_bb_rating_1_100"}
 
 
-@app.post("/admin-api/bb-rating-prediction/calibrate")
+@app.post("/admin-api/bb-rating-prediction/train")
 def start_bb_rating_prediction(user: dict[str, str] = Depends(_csrf)) -> dict[str, Any]:
     actor = user["username"]
     with STATE.lock:
         job, active_profile = dict(STATE.bb_rating_prediction_job), STATE.active_profile
     if job.get("status") in {"running", "queued"}:
-        raise HTTPException(status_code=409, detail="Prediction calibration already running")
+        raise HTTPException(status_code=409, detail="BB Prediction Model training already running")
     if not active_profile:
         raise HTTPException(status_code=400, detail="Seleziona prima un profilo PostgreSQL")
     with STATE.lock:
@@ -2019,7 +2009,7 @@ def start_bb_rating_prediction(user: dict[str, str] = Depends(_csrf)) -> dict[st
             status="queued",
             stage="Queued",
             progress=0,
-            message="Prediction calibration queued.",
+            message="BB Prediction Model training queued.",
             error=None,
             cancel_requested=False,
             candidate_id=None,
@@ -2038,7 +2028,7 @@ def start_bb_rating_prediction(user: dict[str, str] = Depends(_csrf)) -> dict[st
 def model_releases(user: dict[str, str] = Depends(_operator)) -> dict[str, Any]:
     del user
     _cleanup_idle_incomplete_model_candidates()
-    return {"models": {model: inspect_model(MODEL_ROOT, model) for model in ("bb-rating", "future-performance", "bb-rating-prediction")}, "prediction_model_registry": _registry(), "automatic_api_restart_configured": bool(os.environ.get("API_KEY", "").strip()), "note": "Promotions and rollbacks request an API restart automatically and wait for readiness; candidate training does not restart production."}
+    return {"models": {model: inspect_model(MODEL_ROOT, model) for model in ("bb-rating", "future-performance", "bb-rating-prediction")}, "automatic_api_restart_configured": bool(os.environ.get("API_KEY", "").strip()), "note": "Promotions and rollbacks request an API restart automatically and wait for readiness; candidate training does not restart production."}
 
 
 @app.post("/admin-api/model-releases/{model}/promote")
