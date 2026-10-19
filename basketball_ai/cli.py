@@ -19,7 +19,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--mode",
         choices=(
-            "train", "backtest", "prediction-calibrate", "validate-data", "bb-rating-calibrate", "bb-rating-prediction-train", "future-performance-train", "publish-batch",
+            "train", "backtest", "validate-data", "bb-rating-calibrate", "bb-rating-prediction-train", "future-performance-train", "publish-batch",
             "promote", "rollback", "prepare-snapshot", "refresh-serving", "api",
         ),
         required=True,
@@ -39,7 +39,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--bb-rating-prediction-output-dir", default="models_saved")
     parser.add_argument("--bb-rating-prediction-min-oof-samples", type=int, default=500)
     parser.add_argument("--bb-rating-prediction-include-latest-target-season", action="store_true", help="Include the latest observed target season only when it is confirmed complete.")
-    parser.add_argument("--prediction-calibration-output-dir", default="models_saved/prediction_calibration")
     parser.add_argument("--future-performance-model-dir", default=None)
     parser.add_argument("--future-performance-max-target-season", type=int, default=None)
     parser.add_argument("--future-performance-include-latest-target-season", action="store_true")
@@ -156,73 +155,6 @@ def mode_backtest(args: argparse.Namespace) -> None:
     if not report.get("valid"):
         raise SystemExit(2)
 
-
-def mode_prediction_calibrate(args: argparse.Namespace) -> None:
-    """Calibrate the native Prediction Model 0–10 output onto a 1–100 display scale."""
-    from basketball_ai.models.backtest import run_backtest
-    from basketball_ai.prediction_calibration import write_prediction_calibration, build_prediction_calibration
-
-    if args.database_profile:
-        os.environ["DATABASE_PROFILE"] = args.database_profile
-
-    # Calibration needs the complete historical source, not the potentially
-    # truncated TrainingPlayerCompetitionStats serving materialization. Use an
-    # explicit snapshot only when the operator deliberately requested one.
-    if getattr(args, "snapshot_id", None):
-        data = _load_data(args)
-    else:
-        from basketball_ai.data.postgres_loader import load_all_data
-
-        data = load_all_data(purpose="analysis")
-
-    stats = data["player_stats"].copy()
-    if stats.empty or "season" not in stats.columns:
-        raise RuntimeError("Prediction calibration requires player season history")
-
-    # Match the project's season convention (integer year or "YYYY-YYYY"),
-    # and avoid pd.to_numeric() directly on season strings such as "2025-2026".
-    season_years = pd.to_numeric(
-        stats["season"].astype(str).str.split("-", n=1).str[0],
-        errors="coerce",
-    )
-    seasons = sorted({int(value) for value in season_years.dropna()})
-    if len(seasons) < 5:
-        source_contract = data.get("source_contract", "unknown")
-        raise RuntimeError(
-            "At least five seasons are required for Prediction calibration; "
-            f"loaded {len(seasons)} season(s) {seasons} from {source_contract}. "
-            "Calibration must read complete AI_Source.PlayerCompetitionStats history."
-        )
-
-    # The newest season may be in progress; it may supply features for serving,
-    # but it cannot be a completed outcome target for calibration.
-    completed_max = max(seasons) - 1
-    stats = stats.loc[season_years <= completed_max].copy()
-    if stats.empty:
-        raise RuntimeError(
-            f"No completed seasons remain for Prediction calibration (latest={max(seasons)})"
-        )
-    calibration_data = {**data, "player_stats": stats.reset_index(drop=True)}
-
-    report = run_backtest(
-        calibration_data,
-        output_path=None,
-        include_stage_metrics=False,
-        return_records=True,
-    )
-    if not report.get("valid"):
-        raise RuntimeError("Prediction calibration backtest is invalid")
-    records = report.pop("_oos_records", [])
-    calibration = build_prediction_calibration(records)
-    paths = write_prediction_calibration(calibration, args.prediction_calibration_output_dir)
-    print(json.dumps({
-        "calibration_version": calibration["calibration_version"],
-        "prediction_model_version": calibration["prediction_model_version"],
-        "dataset": calibration["dataset"],
-        "validation": calibration["validation"],
-        "fit": calibration["fit"],
-        "output": paths,
-    }, indent=2, ensure_ascii=False, default=str))
 
 
 def mode_bb_rating_calibrate(args: argparse.Namespace) -> None:
@@ -545,7 +477,6 @@ def main(argv: list[str] | None = None) -> None:
     {
         "train": mode_train,
         "backtest": mode_backtest,
-        "prediction-calibrate": mode_prediction_calibrate,
         "validate-data": mode_validate_data,
         "bb-rating-calibrate": mode_bb_rating_calibrate,
         "bb-rating-prediction-train": mode_bb_rating_prediction_train,
