@@ -327,6 +327,7 @@ def fit_acquisition_impact_model(
         "samples": len(out_of_time),
         "seasons": len({int(row["season"]) for row in out_of_time}),
     }
+    cohort_regressions: list[int] = []
     if out_of_time:
         observed = np.asarray([float(row["observed"]) for row in out_of_time])
         predicted = np.asarray([float(row["prediction"]) for row in out_of_time])
@@ -347,6 +348,56 @@ def fit_acquisition_impact_model(
             },
         })
 
+        # A league/competition-level aggregate can hide a bad held-out season.
+        # Publish season cohorts explicitly and fail closed on material regression
+        # only when a cohort has enough out-of-time examples to be informative.
+        by_target_season: list[dict[str, Any]] = []
+        for held_out_year in sorted({int(row["season"]) for row in out_of_time}):
+            cohort = [row for row in out_of_time if int(row["season"]) == held_out_year]
+            cohort_observed = np.asarray([float(row["observed"]) for row in cohort])
+            cohort_predicted = np.asarray([float(row["prediction"]) for row in cohort])
+            cohort_residuals = cohort_observed - cohort_predicted
+            cohort_rmse = float(np.sqrt(np.mean(np.square(cohort_residuals))))
+            cohort_baseline_rmse = float(np.sqrt(np.mean(np.square(cohort_observed))))
+            supported = len(cohort) >= 8
+            cohort_status = "under_supported" if not supported else (
+                "validated" if cohort_rmse < cohort_baseline_rmse else "baseline_not_beaten"
+            )
+            if supported and cohort_baseline_rmse > 1e-9 and cohort_rmse > cohort_baseline_rmse * 1.5:
+                cohort_regressions.append(held_out_year)
+                cohort_status = "material_regression"
+            by_target_season.append({
+                "target_season": held_out_year,
+                "samples": len(cohort),
+                "status": cohort_status,
+                "rmse": round(cohort_rmse, 4),
+                "baseline_rmse": round(cohort_baseline_rmse, 4),
+                "mae": round(float(np.mean(np.abs(cohort_residuals))), 4),
+                "bias": round(float(np.mean(cohort_residuals)), 4),
+                "beats_zero_change_baseline": bool(cohort_rmse < cohort_baseline_rmse),
+            })
+        validation["by_target_season"] = by_target_season
+        validation["cohort_min_samples"] = 8
+
+        if status == "validated" and cohort_regressions:
+            status = "cohort_regression"
+            reason = (
+                "Il risultato aggregato supera il baseline, ma almeno una stagione target "
+                "con supporto sufficiente mostra una regressione rilevante: "
+                + ", ".join(str(year) for year in cohort_regressions)
+                + "."
+            )
+
+    validation_scope = {
+        "league_id": int(league_id),
+        "competition": normalize_competition(competition),
+        "through_season": int(through_season),
+        "target_seasons": sorted({int(row["season"]) for row in out_of_time}),
+        "design": "expanding_window_walk_forward",
+        "causal_effect_established": False,
+    }
+    validation["scope"] = validation_scope
+
     final_fit = _fit_ridge(rows)
     if final_fit is None:
         status = "model_fit_failed"
@@ -359,6 +410,7 @@ def fit_acquisition_impact_model(
         "training_samples": len(rows),
         "training_seasons": len(years),
         "validation": validation,
+        "validation_scope": validation_scope,
         "feature_names": list(FEATURES),
         "reference_roster_turnover": float(np.median([float(row["roster_turnover"]) for row in rows])),
         "residual_interval_80": (
