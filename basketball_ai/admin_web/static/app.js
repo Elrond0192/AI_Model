@@ -59,7 +59,7 @@ function updateClock(){const d=new Date();$('#top-utc').textContent=d.toISOStrin
 setInterval(updateClock,1000);updateClock();
 
 function activateNav(page){$$('.nav-item').forEach(b=>b.classList.toggle('active',b.dataset.page===page));}
-function mountTemplate(page){const t=$(`#page-${page}`);if(!t){root.innerHTML='<div class="loading">Pagina non disponibile</div>';return;}root.replaceChildren(t.content.cloneNode(true));$$('.jump',root).forEach(b=>b.addEventListener('click',()=>navigate(b.dataset.page)));}
+function mountTemplate(page){const t=$(`#page-${page}`);if(!t){root.innerHTML='<div class="loading">Pagina non disponibile</div>';return;}root.replaceChildren(t.content.cloneNode(true));$('.admin-only',root).forEach(el=>el.classList.toggle('hidden',App.user?.role!=='admin'));$('.jump',root).forEach(b=>b.addEventListener('click',()=>navigate(b.dataset.page)));}
 async function navigate(page){
   if(['training','backtests','registry'].includes(page))page='model-releases';
   if(!document.getElementById('page-'+page))page='overview';
@@ -89,56 +89,127 @@ function kpi(icon,label,value,sub='',tone=''){return `<div class="kpi-card"><div
 function updateTop(o){$('#top-db').textContent=o.database||'not selected';$('#top-model').textContent=o.bb_rating_prediction?.loaded?shortId(o.bb_rating_prediction?.version||'BB Prediction'): 'BB Prediction pending';const bb=o.bb_rating||{};$('#top-bb-rating').textContent=bb.bb_rating_version?'v'+esc(bb.bb_rating_version):'—';$('#top-api').textContent=o.api?.online?'● V2':'● OFFLINE';$('#top-api').className=o.api?.online?'meta-ok':'';}
 
 async function renderOverview(){
-  const o=await api('/admin-api/overview');
-  try{o.bb_rating_prediction=(await api('/admin-api/api-health')).bb_rating_prediction||{};}catch(_){o.bb_rating_prediction={};}
-  App.overview=o;updateTop(o);
+  const [overviewResult, healthResult, predictionResult, bbRatingResult, futureResult] = await Promise.all([
+    api('/admin-api/overview'),
+    api('/admin-api/api-health').catch(()=>({})),
+    api('/admin-api/bb-rating-prediction').catch(()=>({})),
+    api('/admin-api/bb-rating').catch(()=>({})),
+    api('/admin-api/future-performance').catch(()=>({}))
+  ]);
+  const o=overviewResult;
+  const health=healthResult||{};
+  const prediction=predictionResult||{};
+  const bbStatus=bbRatingResult||{};
+  const futureStatus=futureResult||{};
+  o.bb_rating_prediction=health.bb_rating_prediction||{};
+  App.overview=o;
+  updateTop(o);
+
   const bb=o.bb_rating||{};
-  const allReady=(o.api?.online&&o.data_loaded&&bb.ready&&!!o.bb_rating_prediction?.loaded);
-  const dot=$('#overview-system-dot');const status=$('#overview-system-status');
-  if(dot)dot.className='hero-status-dot '+(allReady?'online':'warning');
-  if(status)status.textContent=allReady?'SYSTEM OPERATIONAL':'ACTION REQUIRED';
+  const fp=o.future_performance||{};
+  const modelPrediction=o.bb_rating_prediction||{};
+  const predictionRelease=prediction.release||{};
+  const predictionJob=prediction.job||{};
+  const bbJob=bbStatus.job||{};
+  const futureJob=futureStatus.job||{};
+  const readyCount=[!!bb.ready,!!fp.ready,!!modelPrediction.loaded].filter(Boolean).length;
+  const allReady=!!(o.api?.online&&o.data_loaded&&bb.ready&&modelPrediction.loaded&&fp.ready);
+  const status=$('#overview-system-status');
+  if(status)status.textContent=allReady?'TUTTI I SISTEMI OPERATIVI':'ATTENZIONE: VERIFICA RICHIESTA';
+  const detail=$('#overview-system-detail');
+  if(detail)detail.textContent=allReady
+    ?'API pronta · Dati disponibili · BB-Rating e BB Prediction Model caricati'
+    :(!o.api?.online?'Inference API non raggiungibile':(!o.data_loaded?'Seleziona e carica un profilo dati':'Verifica release e stato dei modelli'));
+  const meta=$('#overview-system-meta');
+  if(meta)meta.textContent=o.database||'Profilo non selezionato';
+  const systemIcon=$('#overview-system-icon');
+  if(systemIcon)systemIcon.className=allReady?'ph ph-check-circle':'ph ph-warning-circle';
   const systemDot=$('#system-dot'),systemLabel=$('#system-label');
   if(systemDot)systemDot.className='system-dot '+(allReady?'online':'warning');
   if(systemLabel)systemLabel.textContent=allReady?'SYSTEM OPERATIONAL':'SYSTEM ATTENTION';
 
-  $('#overview-models').innerHTML=[
-    ['BB Prediction Model','Dedicated release','Future BB-Rating 1–100','model-releases','blue'],
-    ['BB-Rating',bb.ready?'Serving ready':'Needs verification',bb.bb_rating_version?'v'+bb.bb_rating_version:'—','bb-rating','violet'],
-    ['Future Performance','Independent model','Season-ahead forecasts','future-performance','cyan'],
-    ['Metric Rating','Analytical layer','Metric-level strengths','diagnostics','green']
-  ].map(([name,state,meta,page,tone])=>`<button class="model-strip-card ${tone} jump" data-page="${page}"><span class="model-strip-icon"></span><span class="model-strip-copy"><strong>${esc(name)}</strong><small>${esc(state)}</small><em>${esc(meta)}</em></span><i class="ph ph-arrow-up-right"></i></button>`).join('');
-
   const s=o.summary||{};
   $('#overview-kpis').innerHTML=[
-    kpi('▤','Database',o.database||'Not selected',`<span class="dot ${o.data_loaded?'green':'yellow'}"></span>${o.data_loaded?'Connected and loaded':'Needs setup'}`),
-    kpi('▥','Player observations',fmtInt(s.player_rows),'<span>player / competition rows</span>','green'),
-    kpi('◉','Competitions',String((s.competitions||[]).length||'—'),'<span>loaded</span>','violet'),
-    kpi('⬡','BB Prediction Model',o.bb_rating_prediction?.loaded?'Loaded':'Not promoted',o.bb_rating_prediction?.loaded?'<span class="dot green"></span>Direct 1–100 forecast':'<span class="dot yellow"></span>Release required','orange'),
-    kpi('◆','BB-Rating',bb.bb_rating_version?'v'+bb.bb_rating_version:'—',bb.ready?'<span class="dot green"></span>Serving ready':'<span class="dot yellow"></span>Verify artifact','violet'),
-    kpi('⌘','API',o.api?.online?'Online':'Offline',`<span class="dot ${o.api?.online?'green':'red'}"></span>V2 inference`,'green')
+    kpi('⬡','Modelli pronti',readyCount+' / 3','<span>release caricate e disponibili</span>',readyCount===3?'green':'orange'),
+    kpi('▥','Osservazioni giocatore',fmtInt(s.player_rows),'<span>righe giocatore / competizione</span>','green'),
+    kpi('◉','Competizioni',String((s.competitions||[]).length||'—'),'<span>presenti nello snapshot caricato</span>','violet'),
+    kpi('⌘','API inference',o.api?.online?'READY':'OFFLINE',o.api?.online?'<span class="dot green"></span>API raggiungibile':'<span class="dot red"></span>Verifica connessione',o.api?.online?'green':'orange')
   ].join('');
 
-  $('#readiness-body').innerHTML=(o.readiness||[]).map(r=>{
+  const jobRecords=[
+    {name:'BB Prediction Model',page:'model-releases',job:predictionJob},
+    {name:'BB-Rating',page:'bb-rating',job:bbJob},
+    {name:'Future Performance',page:'future-performance',job:futureJob}
+  ].filter(item=>item.job&&item.job.status&&item.job.status!=='idle');
+  const activeJobs=jobRecords.filter(item=>['running','queued'].includes(item.job.status));
+  const sortByTime=(a,b)=>{
+    const ta=Date.parse(a.job.started_at||a.job.finished_at||'')||0;
+    const tb=Date.parse(b.job.started_at||b.job.finished_at||'')||0;
+    return tb-ta;
+  };
+  const currentRecord=(activeJobs.length?activeJobs.slice().sort(sortByTime):jobRecords.slice().sort((a,b)=>(Date.parse(b.job.finished_at||b.job.started_at||'')||0)-(Date.parse(a.job.finished_at||a.job.started_at||'')||0)))[0];
+  const jobPanel=$('#overview-job-panel');
+  const jobState=$('#overview-job-state');
+  if(currentRecord){
+    const job=currentRecord.job;
+    const active=['running','queued'].includes(job.status);
+    const statusLabels={queued:'IN CODA',running:'IN ESECUZIONE',complete:'COMPLETATO',failed:'ERRORE',cancelled:'ANNULLATO'};
+    const className=job.status==='failed'?'is-failed':job.status==='complete'?'is-complete':job.status==='cancelled'?'is-cancelled':active?'is-active':'is-idle';
+    if(jobState){jobState.className='dashboard-state-pill '+className;jobState.textContent=statusLabels[job.status]||String(job.status).toUpperCase();}
+    const message=job.error||job.message||'Nessun dettaglio aggiuntivo.';
+    const progress=['failed','cancelled'].includes(job.status)?'':progressMarkup(job);
+    jobPanel.innerHTML='<div class="dashboard-job-top"><div class="dashboard-job-identity"><span class="dashboard-model-icon"><i class="ph ph-activity"></i></span><div><strong>'+esc(currentRecord.name)+'</strong><span>'+esc(job.stage||'Preparazione')+'</span></div></div><button class="btn btn-secondary btn-small" id="overview-job-open">Apri dettagli <i class="ph ph-arrow-up-right"></i></button></div>'+
+      '<div class="dashboard-job-message">'+esc(message)+'</div>'+
+      progress+
+      '<div class="dashboard-job-foot"><span><i class="ph ph-git-branch"></i> Fase: '+esc(job.stage||'—')+'</span><span>'+esc(job.run_id?'Run ID: '+job.run_id:(job.candidate_id?'Candidate: '+job.candidate_id:'Produzione invariata durante il training'))+'</span></div>';
+    const openJob=$('#overview-job-open');
+    if(openJob)openJob.onclick=()=>navigate(currentRecord.page);
+  }else{
+    if(jobState){jobState.className='dashboard-state-pill is-idle';jobState.textContent='NESSUN JOB ATTIVO';}
+    jobPanel.innerHTML='<div class="dashboard-empty"><span class="dashboard-empty-icon"><i class="ph ph-check-circle"></i></span><div><strong>Nessun job in esecuzione</strong><span>Avvia una calibrazione o un training dalle rispettive pagine. Quando un job partirà, qui appariranno fase e avanzamento effettivo.</span></div></div><div class="dashboard-empty-actions"><button class="btn btn-secondary btn-small" id="overview-open-models">Apri modelli <i class="ph ph-arrow-up-right"></i></button><button class="btn btn-ghost btn-small" id="overview-open-bb-rating">BB-Rating <i class="ph ph-arrow-up-right"></i></button></div>';
+    $('#overview-open-models').onclick=()=>navigate('model-releases');
+    $('#overview-open-bb-rating').onclick=()=>navigate('bb-rating');
+  }
+
+  const readiness=o.readiness||[];
+  $('#readiness-body').innerHTML=readiness.map(r=>{
     const page=r.action==='data'?'data':r.action;
-    const labels={'model-releases':'Open BB Prediction Model','bb-rating':'Open BB-Rating','future-performance':'Open Future Performance',data:'Open data'};
-    return `<tr><td><strong>${esc(r.component)}</strong></td><td><span class="status ${r.status}"><span class="status-dot">${r.status==='ok'?'✓':r.status==='danger'?'×':'△'}</span>${esc(r.label)}</span></td><td>${esc(r.detail)}</td><td class="right"><button class="btn btn-small btn-secondary readiness-action" data-page="${esc(page)}">${esc(labels[page]||'Open')}</button></td></tr>`;
+    const icon=r.component==='PostgreSQL source'?'ph-database':r.component==='Competition context'?'ph-chart-bar':r.component==='BB Prediction Model'?'ph-trend-up':r.component==='Player Future Performance'?'ph-crystal-ball':'ph-star';
+    const stateClass=r.status==='ok'?'is-ok':r.status==='danger'?'is-danger':'is-warning';
+    return '<div class="dashboard-health-row"><span class="dashboard-health-icon"><i class="ph '+icon+'"></i></span><div class="dashboard-health-copy"><strong>'+esc(r.component)+'</strong><span>'+esc(r.detail)+'</span></div><span class="dashboard-health-status '+stateClass+'">'+esc(r.label)+'</span><button class="dashboard-health-open readiness-action" data-page="'+esc(page)+'" aria-label="Apri '+esc(r.component)+'"><i class="ph ph-arrow-up-right"></i></button></div>';
   }).join('');
   $$('.readiness-action').forEach(b=>b.addEventListener('click',()=>navigate(b.dataset.page)));
 
+  const versionOrDash=(v)=>v?'v'+v:'—';
+  const predProd=predictionRelease.production||{};
+  const predCandidate=predictionRelease.candidate||{};
+  const rows=[
+    {name:'BB-Rating',description:'Scoring osservato · scala ufficiale 1–100',state:bb.ready?'READY':(['running','queued'].includes(bbJob.status)?'IN TRAINING':'DA VERIFICARE'),version:versionOrDash(bb.bb_rating_version),validation:bb.ready?'Calibrazione disponibile':'Artifact da verificare',page:'bb-rating'},
+    {name:'BB Prediction Model',description:'Forecast futuro del BB-Rating · scala 1–100',state:modelPrediction.loaded?'READY':(['running','queued'].includes(predictionJob.status)?'IN TRAINING':(predCandidate.valid?'CANDIDATE':'DA VERIFICARE')),version:versionOrDash(predProd.version||predCandidate.version),validation:predCandidate.valid?'Candidate validata':(['running','queued'].includes(predictionJob.status)?'Walk-forward in corso':'Gate di validazione da verificare'),page:'model-releases'},
+    {name:'Future Performance',description:'Previsione statistica della stagione successiva',state:fp.ready?'READY':(['running','queued'].includes(futureJob.status)?'IN TRAINING':'DA VERIFICARE'),version:versionOrDash(futureStatus.future_performance_version||fp.future_performance_version),validation:fp.ready?'Artifact disponibile':'Artifact da verificare',page:'future-performance'}
+  ];
+  $('#overview-model-table').innerHTML=rows.map(row=>{
+    const klass=row.state==='READY'?'is-ok':row.state==='IN TRAINING'?'is-running':row.state==='CANDIDATE'?'is-candidate':'is-warning';
+    return '<tr><td><div class="dashboard-table-model"><span class="dashboard-table-model-icon"><i class="ph '+(row.name==='BB-Rating'?'ph-star':row.name==='BB Prediction Model'?'ph-trend-up':'ph-crystal-ball')+'"></i></span><div><strong>'+esc(row.name)+'</strong><small>'+esc(row.description)+'</small></div></div></td><td><span class="dashboard-health-status '+klass+'">'+esc(row.state)+'</span></td><td class="dashboard-version">'+esc(row.version)+'</td><td>'+esc(row.validation)+'</td><td class="right"><button class="dashboard-table-open" data-page="'+esc(row.page)+'">Apri <i class="ph ph-arrow-up-right"></i></button></td></tr>';
+  }).join('');
+  $$('.dashboard-table-open').forEach(b=>b.onclick=()=>navigate(b.dataset.page));
+
   $('#overview-registry').innerHTML=summaryRows([
-    ['Modello','BB Prediction Model'],
-    ['Scala target','BB-Rating ufficiale 1–100'],
-    ['Runtime',o.bb_rating_prediction?.loaded?'Caricato':'Release da promuovere']
+    ['Stato runtime',modelPrediction.loaded?'Caricato':(predCandidate.valid?'Candidate valida':'Da validare/promuovere')],
+    ['Versione produzione',predProd.version||'—'],
+    ['Scala target','BB-Rating ufficiale 1–100']
   ]);
-
   $('#overview-backtest').innerHTML=summaryRows([
-    ['Modello','Future Performance'],
-    ['Obiettivo','Statistiche della stagione successiva'],
-    ['Stato',o.future_performance?.ready?'Disponibile':'Da verificare']
+    ['Stato',fp.ready?'Disponibile':'Da verificare'],
+    ['Versione',futureStatus.future_performance_version||fp.future_performance_version||'—'],
+    ['Obiettivo','Statistiche della stagione successiva']
   ]);
+  $('#candidate-quality').innerHTML='<div class="quality-card"><span>Validazione</span><strong>Walk-forward per scenario</strong></div><div class="quality-card"><span>Promozione</span><strong>Solo se batte il baseline</strong></div><div class="quality-card"><span>Scala target</span><strong>BB-Rating ufficiale 1–100</strong></div>';
 
-  $('#candidate-quality').innerHTML='<div class="quality-card"><span>Validazione</span><strong>Walk-forward per scenario</strong></div><div class="quality-card"><span>Promozione</span><strong>Solo se batte il baseline</strong></div><div class="quality-card"><span>Scala</span><strong>BB-Rating 1–100</strong></div>';
-  $$('.jump',root).forEach(b=>b.addEventListener('click',()=>navigate(b.dataset.page)));
+  clearTimeout(App.overviewTimer);
+  if(activeJobs.length&&App.page==='overview')App.overviewTimer=setTimeout(()=>renderOverview().catch(e=>{if(e?.name!=='AbortError')toast(e.message,'error')}),2500);
+  const refresh=$('#overview-refresh');
+  if(refresh)refresh.onclick=()=>renderOverview().catch(e=>toast(e.message,'error'));
 }
 async function renderData(){
   async function loadSnapshots(){const data=await api('/admin-api/snapshots'),active=data.active?.snapshot_id,items=data.snapshots||[];$('#snapshots-list').innerHTML=items.length?items.map(s=>`<div class="profile-card ${active===s.snapshot_id?'active':''}"><div class="profile-top"><div class="profile-name">${esc(s.snapshot_id)}</div>${active===s.snapshot_id?'<span class="registry-badge">attivo</span>':''}</div><div class="profile-meta"><span>${esc(s.profile||'—')}</span><span>${esc((s.seasons||[]).length?`${s.seasons[0]}–${s.seasons.at(-1)}`:'—')}</span><span>${fmtInt(s.player_rows)} righe giocatore</span><span>SHA ${esc(String(s.sha256||'').slice(0,12))}</span></div><div class="button-row"><button class="btn btn-primary btn-small snapshot-activate" data-id="${esc(s.snapshot_id)}" ${active===s.snapshot_id?'disabled':''}>Usa per il training</button></div></div>`).join(''):empty('◫','Nessuno storico pronto','Nel riquadro del profilo, verifica la connessione e scegli “Prepara storico modello”.');$$('.snapshot-activate').forEach(b=>b.addEventListener('click',async()=>{b.disabled=true;try{const result=await api(`/admin-api/snapshots/${encodeURIComponent(b.dataset.id)}/activate`,{method:'POST',body:{}});toast(`Storico ${result.snapshot?.snapshot_id||b.dataset.id} attivato`);await loadSnapshots();}catch(e){toast(e.message,'error');b.disabled=false;}}));}

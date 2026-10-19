@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="color-scheme" content="dark"><meta name="theme-color" content="#07131f">
   <title>AI Model Control Center</title>
-  <link rel="stylesheet" href="/assets/app.css?v=2.5.1">
+  <link rel="stylesheet" href="/assets/app.css?v=2.6.0">
   <link rel="stylesheet" href="/assets/phosphor/regular/style.css">
   <link rel="stylesheet" href="/assets/phosphor/fill/style.css">
 </head>
@@ -37,26 +37,26 @@
 
       <nav class="nav-list" aria-label="Navigazione principale">
         <div class="nav-group"><div class="nav-group-label">HOME</div>
-          <button class="nav-item active" data-page="overview"><span class="nav-icon"><i class="ph ph-house"></i></span><span>Overview</span></button>
+          <button class="nav-item active" data-page="overview"><span class="nav-icon"><i class="ph ph-house"></i></span><span>Panoramica</span></button>
         </div>
         <div class="nav-group"><div class="nav-group-label">MODELS</div>
           <button class="nav-item" data-page="bb-rating"><span class="nav-icon"><i class="ph-fill ph-star"></i></span><span>BB-Rating</span></button>
           <button class="nav-item" data-page="future-performance"><span class="nav-icon"><i class="ph ph-crystal-ball"></i></span><span>Future Performance</span></button>
         </div>
         <div class="nav-group"><div class="nav-group-label">VALIDATION</div>
-          <button class="nav-item" data-page="model-releases"><span class="nav-icon"><i class="ph ph-git-branch"></i></span><span>Model Releases</span></button>
+          <button class="nav-item" data-page="model-releases"><span class="nav-icon"><i class="ph ph-git-branch"></i></span><span>Release modelli</span></button>
         </div>
         <div class="nav-group"><div class="nav-group-label">LAB</div>
           <button class="nav-item" data-page="scenarios"><span class="nav-icon"><i class="ph ph-flask"></i></span><span>Scenario Lab</span></button>
         </div>
         <div class="nav-group"><div class="nav-group-label">OPERATIONS</div>
           <button class="nav-item" data-page="data"><span class="nav-icon"><i class="ph ph-database"></i></span><span>Dati e snapshot</span></button>
-          <button class="nav-item" data-page="health"><span class="nav-icon"><i class="ph ph-heartbeat"></i></span><span>API &amp; Health</span></button>
-          <button class="nav-item" data-page="diagnostics"><span class="nav-icon"><i class="ph ph-stethoscope"></i></span><span>API Diagnostics</span></button>
+          <button class="nav-item" data-page="health"><span class="nav-icon"><i class="ph ph-heartbeat"></i></span><span>API e salute</span></button>
+          <button class="nav-item" data-page="diagnostics"><span class="nav-icon"><i class="ph ph-stethoscope"></i></span><span>Diagnostica API</span></button>
         </div>
         <div class="nav-group"><div class="nav-group-label">ADMIN</div>
-          <button class="nav-item admin-only" data-page="audit"><span class="nav-icon"><i class="ph ph-clipboard-text"></i></span><span>Audit Logs</span></button>
-          <button class="nav-item" data-page="settings"><span class="nav-icon"><i class="ph ph-gear"></i></span><span>Settings</span></button>
+          <button class="nav-item admin-only" data-page="audit"><span class="nav-icon"><i class="ph ph-clipboard-text"></i></span><span>Registro audit</span></button>
+          <button class="nav-item" data-page="settings"><span class="nav-icon"><i class="ph ph-gear"></i></span><span>Impostazioni</span></button>
         </div>
       </nav>
 
@@ -86,27 +86,100 @@
   </div>
 
   <template id="page-overview">
-    <section class="page overview-page" data-title="Overview">
-      <div class="page-hero">
-        <div><div class="eyebrow">AI MODEL / OPERATIONS</div><h1>System Overview</h1><p>Stato operativo, modelli in produzione e qualità dell'ultima validazione.</p></div>
-        <div class="hero-status"><span class="hero-status-dot" id="overview-system-dot"></span><div><strong id="overview-system-status">SYSTEM OPERATIONAL</strong><span>Production environment</span></div></div>
+  <section class="page overview-page dashboard-v2" data-title="Panoramica">
+    <div class="dashboard-page-head">
+      <div>
+        <div class="eyebrow">AI_MODEL / CONTROL CENTER</div>
+        <h1>Centro operativo</h1>
+        <p>Stato dei modelli, avanzamento dei job e salute del serving.</p>
       </div>
-      <section class="overview-model-strip">
-        <div class="overview-model-head"><div><div class="eyebrow">PRODUCTION MODELS</div><h2>Active intelligence stack</h2></div><button class="btn btn-small btn-secondary jump" data-page="model-releases">Model Releases</button></div>
-        <div id="overview-models" class="model-strip-grid"></div>
-      </section>
-      <div id="overview-kpis" class="kpi-grid six overview-kpis"></div>
-      <section class="section-block">
-        <div class="section-heading"><div><div class="eyebrow">READINESS</div><h2>Operational readiness</h2></div></div>
-        <div class="table-shell"><table><thead><tr><th>Componente</th><th>Stato</th><th>Dettagli</th><th class="right">Azione</th></tr></thead><tbody id="readiness-body"></tbody></table></div>
-      </section>
-      <div class="split-grid">
-        <section class="panel"><div class="panel-heading"><div><div class="eyebrow">BB PREDICTION</div><h2>Future BB-Rating forecast</h2></div><button class="btn btn-small btn-secondary jump" data-page="model-releases">Apri</button></div><div id="overview-registry"></div></section>
-        <section class="panel"><div class="panel-heading"><div><div class="eyebrow">FUTURE PERFORMANCE</div><h2>Forecast statistico</h2></div><button class="btn btn-small btn-secondary jump" data-page="future-performance">Apri</button></div><div id="overview-backtest"></div></section>
+      <div class="dashboard-head-actions">
+        <div class="dashboard-updated"><span class="dashboard-live-dot"></span><span>Stato operativo e disponibilità dei modelli</span></div>
+        <button id="overview-refresh" class="btn btn-secondary btn-small"><i class="ph ph-arrows-clockwise"></i><span>Aggiorna</span></button>
       </div>
-      <section class="panel candidate-panel"><div class="panel-heading"><div><div class="eyebrow">QUALITY</div><h2>BB Prediction release gates</h2></div></div><div id="candidate-quality" class="quality-grid"><div class="quality-card"><span>Validation</span><strong>Walk-forward per scenario</strong></div><div class="quality-card"><span>Promotion</span><strong>Only if better than baseline</strong></div><div class="quality-card"><span>Scale</span><strong>Official BB-Rating 1–100</strong></div></div></section>
-    </section>
-  </template>
+    </div>
+
+    <div class="dashboard-system-strip">
+      <div class="dashboard-system-left">
+        <span class="dashboard-system-icon"><i class="ph ph-check-circle" id="overview-system-icon"></i></span>
+        <div>
+          <strong id="overview-system-status">Verifica del sistema</strong>
+          <p id="overview-system-detail">Controllo API, dati e modelli in corso.</p>
+        </div>
+      </div>
+      <div class="dashboard-system-meta">
+        <span>AMBIENTE</span><strong id="overview-system-meta">Production</strong>
+      </div>
+    </div>
+
+    <div id="overview-kpis" class="kpi-grid four overview-kpis dashboard-kpis"></div>
+
+    <div class="dashboard-content-grid">
+      <div class="dashboard-main-column">
+        <section class="panel dashboard-job-panel">
+          <div class="panel-heading">
+            <div><div class="eyebrow">JOB MONITOR</div><h2>Attività modello</h2></div>
+            <span id="overview-job-state" class="dashboard-state-pill">NESSUN JOB</span>
+          </div>
+          <div id="overview-job-panel" class="dashboard-job-body">
+            <div class="dashboard-empty"><i class="ph ph-check-circle"></i><strong>Nessun job in esecuzione</strong><span>Qui vedrai la fase e la percentuale reale dei training.</span></div>
+          </div>
+        </section>
+
+        <section class="panel dashboard-model-table-panel">
+          <div class="panel-heading">
+            <div><div class="eyebrow">MODEL REGISTRY</div><h2>Stato modelli</h2><p class="dashboard-panel-subtitle">Release, disponibilità e validazione</p></div>
+            <button class="btn btn-secondary btn-small jump" data-page="model-releases">Tutte le release <i class="ph ph-arrow-up-right"></i></button>
+          </div>
+          <div class="table-shell dashboard-table-shell">
+            <table>
+              <thead><tr><th>Modello</th><th>Stato</th><th>Release</th><th>Validazione</th><th class="right">Azione</th></tr></thead>
+              <tbody id="overview-model-table"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <div class="dashboard-bottom-cards">
+          <section class="panel">
+            <div class="panel-heading"><div><div class="eyebrow">BB PREDICTION</div><h2>Previsione BB-Rating</h2></div><button class="icon-button jump" data-page="model-releases" aria-label="Apri BB Prediction Model"><i class="ph ph-arrow-up-right"></i></button></div>
+            <div id="overview-registry" class="dashboard-summary"></div>
+          </section>
+          <section class="panel">
+            <div class="panel-heading"><div><div class="eyebrow">FUTURE PERFORMANCE</div><h2>Forecast statistico</h2></div><button class="icon-button jump" data-page="future-performance" aria-label="Apri Future Performance"><i class="ph ph-arrow-up-right"></i></button></div>
+            <div id="overview-backtest" class="dashboard-summary"></div>
+          </section>
+        </div>
+      </div>
+
+      <aside class="dashboard-side-column">
+        <section class="panel dashboard-health-panel">
+          <div class="panel-heading"><div><div class="eyebrow">SYSTEM HEALTH</div><h2>Salute del sistema</h2><p class="dashboard-panel-subtitle">Servizi e sorgenti essenziali</p></div><button class="icon-button jump" data-page="health" aria-label="Apri diagnostica salute"><i class="ph ph-arrow-up-right"></i></button></div>
+          <div id="readiness-body" class="dashboard-health-list"></div>
+        </section>
+
+        <section class="panel dashboard-quality-panel">
+          <div class="panel-heading"><div><div class="eyebrow">QUALITY GATES</div><h2>Qualità del modello</h2></div></div>
+          <div id="candidate-quality" class="quality-grid dashboard-quality-grid">
+            <div class="quality-card"><span>Validazione</span><strong>Walk-forward</strong></div>
+            <div class="quality-card"><span>Promozione</span><strong>Baseline superato</strong></div>
+            <div class="quality-card"><span>Scala target</span><strong>BB-Rating 1–100</strong></div>
+          </div>
+        </section>
+
+        <section class="panel dashboard-shortcuts-panel">
+          <div class="panel-heading"><div><div class="eyebrow">QUICK ACCESS</div><h2>Accesso rapido</h2></div></div>
+          <div class="dashboard-shortcuts">
+            <button class="dashboard-shortcut jump" data-page="data"><i class="ph ph-database"></i><span><strong>Dataset e snapshot</strong><small>Profili e dati di training</small></span><i class="ph ph-arrow-up-right shortcut-arrow"></i></button>
+            <button class="dashboard-shortcut jump" data-page="scenarios"><i class="ph ph-flask"></i><span><strong>Scenario Lab</strong><small>Analisi what-if</small></span><i class="ph ph-arrow-up-right shortcut-arrow"></i></button>
+            <button class="dashboard-shortcut jump admin-only" data-page="audit"><i class="ph ph-clipboard-text"></i><span><strong>Registro audit</strong><small>Eventi e operazioni</small></span><i class="ph ph-arrow-up-right shortcut-arrow"></i></button>
+          </div>
+        </section>
+      </aside>
+    </div>
+
+    <footer class="dashboard-footer"><span>AI_Model <strong>Control Center</strong></span><span>Stati e percentuali provengono dalle API operative.</span></footer>
+  </section>
+</template>
 
   <template id="page-data">
     <section class="page">
@@ -352,7 +425,7 @@
     </section>
   </template>
 
-  <script src="/assets/app.js?v=2.5.3" defer></script>
+  <script src="/assets/app.js?v=2.6.0" defer></script>
 </body>
 </html>
 
