@@ -2097,6 +2097,7 @@ class ChatScenarioEngine:
         player_meta = (self.data.get("player_dict", {}) or {}).get(_to_int(player_id), {})
         if isinstance(player_meta, dict):
             global_id = str(player_meta.get("global_id", "")).strip()
+        global_id_from_statistics = not bool(global_id)
         if not global_id and "global_id" in frame.columns:
             candidate = frame.loc[
                 frame["player_id"].map(_to_int) == _to_int(player_id), "global_id"
@@ -2119,9 +2120,12 @@ class ChatScenarioEngine:
                 canonical_by_id = canonical_map.set_index("id")["global_id"]
                 row_identity = frame["player_id"].map(_to_int).map(canonical_by_id)
                 identity_mask = row_identity == global_id
-            elif "global_id" in frame.columns:
+            elif global_id_from_statistics and "global_id" in frame.columns:
                 identity_mask = frame["global_id"].fillna("").astype(str).str.strip() == global_id
             else:
+                # A stale statistic-level ID is not a canonical identity source.
+                # In older data contracts, use the player's resolved internal-ID
+                # set when Players has no global_id mapping.
                 identity_mask = frame["player_id"].map(_to_int).isin(identity_ids)
         else:
             identity_mask = frame["player_id"].map(_to_int).isin(identity_ids)
