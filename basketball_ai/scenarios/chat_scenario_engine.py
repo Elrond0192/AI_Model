@@ -26,7 +26,6 @@ from basketball_ai.bb_rating.competition_tiers import (
     competition_tier_label,
 )
 from basketball_ai.data.loader import _to_int
-from basketball_ai.features.context_features import compute_context_features
 from basketball_ai.models.competition_training import (
     normalize_competition,
     scope_prediction_context,
@@ -1585,12 +1584,18 @@ class ChatScenarioEngine:
         history = []
         for _, row in rows.iterrows():
             usage, ast, minutes = _ratio(row.get("usg_pct")), _ratio(row.get("ast_pct")), _finite(row.get("minutes_per_game"))
-            if usage >= .27: role = "primary_creator"
-            elif usage >= .22 and ast >= .18: role = "secondary_creator"
-            elif usage >= .20: role = "scoring_role"
-            elif ast >= .18: role = "connector"
-            elif minutes >= 20: role = "rotation"
-            else: role = "depth"
+            if usage >= .27:
+                role = "primary_creator"
+            elif usage >= .22 and ast >= .18:
+                role = "secondary_creator"
+            elif usage >= .20:
+                role = "scoring_role"
+            elif ast >= .18:
+                role = "connector"
+            elif minutes >= 20:
+                role = "rotation"
+            else:
+                role = "depth"
             history.append({"season": int(row["_year"]), "role": role, "usage": round(usage,4), "ast_pct": round(ast,4), "minutes_per_game": round(minutes,2), "three_par": round(_ratio(row.get("three_par")),4)})
         changes = [{"from_season": a["season"], "to_season": b["season"], "from": a["role"], "to": b["role"]} for a,b in zip(history,history[1:]) if a["role"] != b["role"]]
         return {"result": {"player": self._player_name(players[0]), "season": int(spec["season"]), "competition": normalize_competition(spec["competition"]), "current_role": history[-1]["role"], "current_profile": history[-1], "history": history, "role_changes": changes},
@@ -1668,11 +1673,16 @@ class ChatScenarioEngine:
         three, team_three = _ratio(player.get("three_par")), _ratio(team.get("three_point_attempt_rate"))
         ast, team_ast = _ratio(player.get("ast_pct")), _finite(team.get("assists_per_game"))
         signals=[]
-        if usage-star > .04: signals.append("player carries more usage than the team star-usage reference")
-        elif usage-star < -.04: signals.append("player carries materially less usage than the team star-usage reference")
-        if three > team_three + .08: signals.append("player is more perimeter-oriented than the team baseline")
-        if ast >= .18 and team_ast >= 22: signals.append("creation profile aligns with a high-assist team environment")
-        if not signals: signals.append("observed role is broadly aligned with the team context")
+        if usage - star > .04:
+            signals.append("player carries more usage than the team star-usage reference")
+        elif usage - star < -.04:
+            signals.append("player carries materially less usage than the team star-usage reference")
+        if three > team_three + .08:
+            signals.append("player is more perimeter-oriented than the team baseline")
+        if ast >= .18 and team_ast >= 22:
+            signals.append("creation profile aligns with a high-assist team environment")
+        if not signals:
+            signals.append("observed role is broadly aligned with the team context")
         return {"result":{"player":self._player_name(players[0]),"team":self._team_name(teams[0]),"season":season,"competition":competition,"player_usage":round(usage,4),"team_star_usage":round(star,4),"usage_gap_vs_team_reference":round(usage-star,4),"player_three_point_rate":round(three,4),"team_three_point_rate":round(team_three,4),"player_ast_pct":round(ast,4),"team_assists_per_game":round(team_ast,2),"team_pace":round(_finite(team.get("pace")),2),"signals":signals},
                 "evidence":[{"type":"player_team_context","count":1}],"support":{"method":"observed_role_vs_team_style","samples":1,"confidence":"medium"},
                 "limitations":["This evaluates contextual alignment; it does not establish that team usage caused performance."]}
@@ -1794,25 +1804,77 @@ class ChatScenarioEngine:
 
     def _shooting_decomposition(self, spec, players, teams, source_league, target_league):
         del teams, target_league
-        if not players: raise ValueError("player is required")
-        rows=self._player_rows(players[0],source_league,spec["competition"],int(spec["season"]))
-        if len(rows)<2: raise ValueError("At least two observed seasons are required")
-        current,previous=rows.iloc[-1],rows.iloc[-2]; metrics=("ts_pct","three_point_pct","ft_pct","three_par","three_point_attempts","free_throw_attempts")
-        deltas={m:round(_finite(current.get(m))- _finite(previous.get(m)),4) for m in metrics if pd.notna(current.get(m)) and pd.notna(previous.get(m))}
-        return {"result":{"player":self._player_name(players[0]),"previous_season":int(previous["_year"]),"current_season":int(current["_year"]),"deltas":deltas},
-                "evidence":[{"type":"consecutive_seasons","count":2}],"support":{"method":"observed_shooting_profile_decomposition","samples":int(current.get("games_played",0) or 0),"confidence":_confidence(int(current.get("games_played",0) or 0))},
-                "limitations":["Without shot-level data this cannot separate shot quality, location and defensive pressure."]}
+        if not players:
+            raise ValueError("player is required")
+        rows = self._player_rows(
+            players[0], source_league, spec["competition"], int(spec["season"])
+        )
+        if len(rows) < 2:
+            raise ValueError("At least two observed seasons are required")
+        current, previous = rows.iloc[-1], rows.iloc[-2]
+        metrics = (
+            "ts_pct", "three_point_pct", "ft_pct", "three_par",
+            "three_point_attempts", "free_throw_attempts",
+        )
+        deltas = {
+            metric: round(_finite(current.get(metric)) - _finite(previous.get(metric)), 4)
+            for metric in metrics
+            if pd.notna(current.get(metric)) and pd.notna(previous.get(metric))
+        }
+        return {
+            "result": {
+                "player": self._player_name(players[0]),
+                "previous_season": int(previous["_year"]),
+                "current_season": int(current["_year"]),
+                "deltas": deltas,
+            },
+            "evidence": [{"type": "consecutive_seasons", "count": 2}],
+            "support": {
+                "method": "observed_shooting_profile_decomposition",
+                "samples": int(current.get("games_played", 0) or 0),
+                "confidence": _confidence(int(current.get("games_played", 0) or 0)),
+            },
+            "limitations": [
+                "Without shot-level data this cannot separate shot quality, location and defensive pressure."
+            ],
+        }
 
     def _defensive_decomposition(self, spec, players, teams, source_league, target_league):
         del teams, target_league
-        if not players: raise ValueError("player is required")
-        rows=self._player_rows(players[0],source_league,spec["competition"],int(spec["season"]))
-        if len(rows)<2: raise ValueError("At least two observed seasons are required")
-        current,previous=rows.iloc[-1],rows.iloc[-2]; metrics=("dbpm","raptor_def","lebron_def","drtg","stl_pct","blk_pct","def_rebounds")
-        deltas={m:round(_finite(current.get(m))- _finite(previous.get(m)),4) for m in metrics if pd.notna(current.get(m)) and pd.notna(previous.get(m))}
-        return {"result":{"player":self._player_name(players[0]),"previous_season":int(previous["_year"]),"current_season":int(current["_year"]),"deltas":deltas},
-                "evidence":[{"type":"consecutive_seasons","count":2}],"support":{"method":"observed_defensive_profile_decomposition","samples":int(current.get("games_played",0) or 0),"confidence":_confidence(int(current.get("games_played",0) or 0))},
-                "limitations":["Box-score defensive metrics do not isolate individual causal defensive impact."]}
+        if not players:
+            raise ValueError("player is required")
+        rows = self._player_rows(
+            players[0], source_league, spec["competition"], int(spec["season"])
+        )
+        if len(rows) < 2:
+            raise ValueError("At least two observed seasons are required")
+        current, previous = rows.iloc[-1], rows.iloc[-2]
+        metrics = (
+            "dbpm", "raptor_def", "lebron_def", "drtg",
+            "stl_pct", "blk_pct", "def_rebounds",
+        )
+        deltas = {
+            metric: round(_finite(current.get(metric)) - _finite(previous.get(metric)), 4)
+            for metric in metrics
+            if pd.notna(current.get(metric)) and pd.notna(previous.get(metric))
+        }
+        return {
+            "result": {
+                "player": self._player_name(players[0]),
+                "previous_season": int(previous["_year"]),
+                "current_season": int(current["_year"]),
+                "deltas": deltas,
+            },
+            "evidence": [{"type": "consecutive_seasons", "count": 2}],
+            "support": {
+                "method": "observed_defensive_profile_decomposition",
+                "samples": int(current.get("games_played", 0) or 0),
+                "confidence": _confidence(int(current.get("games_played", 0) or 0)),
+            },
+            "limitations": [
+                "Box-score defensive metrics do not isolate individual causal defensive impact."
+            ],
+        }
 
 
     def _bb_rating_for_season(
@@ -2387,8 +2449,6 @@ class ChatScenarioEngine:
                     if isinstance(decomposition_result, dict):
                         previous = decomposition_result.get("previous") or {}
                         current = decomposition_result.get("current") or {}
-                        previous_rating = _finite(previous.get("rating"), np.nan)
-                        current_rating = _finite(current.get("rating"), np.nan)
                         previous_team_id = previous.get("team_id")
                         current_team_id = current.get("team_id")
                         previous_team_id = (
