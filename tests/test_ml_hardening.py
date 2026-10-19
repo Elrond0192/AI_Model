@@ -82,6 +82,9 @@ def test_train_reorders_target_seasons_with_feature_rows(monkeypatch):
         def predict(self, X):
             return np.zeros(len(X), dtype=float)
 
+        def get_booster(self):
+            return SimpleNamespace(get_score=lambda importance_type: {})
+
     monkeypatch.setattr(production, "_xgb", lambda *args, **kwargs: FakeXGB())
     monkeypatch.setattr(
         production,
