@@ -1,7 +1,7 @@
 """Regression tests for leakage-safe production ML behavior."""
 from __future__ import annotations
 
-from types import MethodType
+from types import MethodType, SimpleNamespace
 
 import numpy as np
 import pandas as pd
