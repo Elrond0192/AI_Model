@@ -40,7 +40,7 @@ def _analysis_data() -> dict:
                 "player_id": pid, "team_id": team_id, "league_id": 10,
                 "season": year, "competition": "RS", "rating": rating,
                 "games_played": 28, "minutes_per_game": 26 + pid,
-                "points": 10 + pid, "rebounds": 3 + pid, "assists": ast,
+                "points": 10 + pid + (year - 2023), "rebounds": 3 + pid, "assists": ast,
                 "steals": 1.0, "blocks": .4, "ts_pct": ts, "usg_pct": usg,
                 "bpm": bpm, "obpm": bpm - .5, "dbpm": dbpm, "net_rtg": 2 + pid,
                 "ortg": 110 + pid, "drtg": 108 - pid * .2,
@@ -453,7 +453,24 @@ def test_player_intelligence_composes_multiple_question_keys():
 
 
 def test_causal_team_effect_returns_observational_association_without_causal_claim():
-    result = _engine().evaluate(
+    data = _analysis_data()
+    data["player_stats"] = pd.concat([
+        data["player_stats"],
+        pd.DataFrame([{
+            "player_id": 1, "team_id": 101, "league_id": 10, "season": 2022,
+            "competition": "RS", "rating": 6.8, "games_played": 25,
+            "minutes_per_game": 25, "points": 11, "assists": 4,
+            "ts_pct": .56, "usg_pct": .22, "bpm": 2.0, "dbpm": .3,
+        }]),
+    ], ignore_index=True)
+    data["team_season_stats"] = pd.concat([
+        data["team_season_stats"],
+        pd.DataFrame([
+            {"team_id": 101, "league_id": 10, "season": 2022, "competition": "RS", "pace": 70.0, "offensive_rating": 108.0, "defensive_rating": 111.0, "net_rtg": -1.0, "three_point_attempt_rate": .32, "assists_per_game": 19.0},
+            {"team_id": 102, "league_id": 10, "season": 2022, "competition": "RS", "pace": 73.0, "offensive_rating": 112.0, "defensive_rating": 110.0, "net_rtg": 2.0, "three_point_attempt_rate": .38, "assists_per_game": 21.0},
+        ]),
+    ], ignore_index=True)
+    result = ChatScenarioEngine(SimpleNamespace(), data).evaluate(
         {"scenario": "causal_team_effect", "season": 2024, "competition": "RS"},
         [1], [], 10, None,
     )
@@ -461,7 +478,7 @@ def test_causal_team_effect_returns_observational_association_without_causal_cla
     assert result["result"]["causal_effect"] is None
     assert result["result"]["association"]["rating_vs_team_context_correlation"] is not None
     assert result["support"]["method"] == "within_player_observational_team_context"
-    assert any("non un effet causale" in item for item in result["limitations"])
+    assert any("non un effetto causale" in item for item in result["limitations"])
 
 
 def test_player_intelligence_composes_causal_team_effect_as_observational():
