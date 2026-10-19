@@ -380,6 +380,14 @@ def test_player_team_counterfactual_applies_only_explicit_minutes_usage_and_role
 
 def test_cross_league_transfer_is_learned_from_real_transitions():
     engine = ChatScenarioEngine(SimpleNamespace(), _data())
+    # The history fixture contains a 2023 baseline for Alpha to test trend
+    # comparisons. It is not one of the six synthetic "movers" in this test.
+    engine.data["player_stats"] = engine.data["player_stats"][
+        ~(
+            (engine.data["player_stats"]["player_id"] == 1)
+            & (engine.data["player_stats"]["season"] == 2023)
+        )
+    ].copy()
     result = engine.evaluate(
         {"scenario": "league_transfer", "season": 2024, "competition": "RS", "target_competition": "RS"},
         [1], [], 10, 20,
