@@ -1606,13 +1606,10 @@ def _api_bb_prediction_ready() -> bool:
 @app.get("/admin-api/overview")
 async def overview(user: dict[str, str] = Depends(_operator)) -> dict[str, Any]:
     del user
-    registry = _registry()
     with STATE.lock:
         data_loaded = STATE.data is not None
         summary = dict(STATE.summary)
         active_profile = STATE.active_profile
-    seasons = summary.get("seasons", [])
-    training_seasons, excluded_in_progress, blocking = _training_seasons(seasons)
     api_live = await asyncio.to_thread(_probe, "/health/live")
     readiness = [
         {
