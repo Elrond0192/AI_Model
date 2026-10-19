@@ -2613,7 +2613,30 @@ class ChatScenarioEngine:
             raise ValueError("league context is required")
         competition = normalize_competition(spec.get("target_competition") or spec["competition"])
         season = int(spec["season"])
-        projection = self._project_player_for_team(spec, players[0], teams[0], source_league, target_league)
+        raw_parameters = spec.get("parameters", {})
+        parameters = raw_parameters if isinstance(raw_parameters, dict) else {}
+        player_source_season = int(parameters.get("player_season", season))
+        target_season = int(parameters.get("target_season", season + 1))
+        if target_season != season + 1:
+            raise ValueError(
+                "Acquisition impact is a one-season team forecast: target_season must equal "
+                "the target team's context season plus one."
+            )
+        if target_season <= player_source_season:
+            raise ValueError("target_season must be later than player_season")
+        # Keep the player's source cutoff separate from the team's baseline season.
+        # Only an explicit source/target pair is used; no transaction horizon is guessed.
+        projection_spec = {
+            **spec,
+            "parameters": {
+                **parameters,
+                "player_season": player_source_season,
+                "target_season": target_season,
+            },
+        }
+        projection = self._project_player_for_team(
+            projection_spec, players[0], teams[0], source_league, target_league
+        )
         rotation = self._rotation_ratings(teams[0], target_league, competition, season)
         if len(rotation) < 5:
             raise ValueError("Target team needs at least five rotation ratings for an acquisition what-if")
@@ -2653,8 +2676,9 @@ class ChatScenarioEngine:
                 "team": self._team_name(teams[0]),
                 "player": self._player_name(players[0]),
                 "competition": competition,
-                "source_season": season,
-                "target_season": int(season) + 1,
+                "source_season": player_source_season,
+                "team_context_season": int(season),
+                "target_season": target_season,
                 "projected_player_rating": round(incoming, 3),
                 "rotation_rating_before": round(before, 3),
                 "rotation_rating_after": round(after, 3),
@@ -2696,7 +2720,30 @@ class ChatScenarioEngine:
             raise ValueError("league context is required")
         competition = normalize_competition(spec.get("target_competition") or spec["competition"])
         season = int(spec["season"])
-        projection = self._project_player_for_team(spec, players[0], teams[0], source_league, target_league)
+        raw_parameters = spec.get("parameters", {})
+        parameters = raw_parameters if isinstance(raw_parameters, dict) else {}
+        player_source_season = int(parameters.get("player_season", season))
+        target_season = int(parameters.get("target_season", season + 1))
+        if target_season != season + 1:
+            raise ValueError(
+                "Acquisition impact is a one-season team forecast: target_season must equal "
+                "the target team's context season plus one."
+            )
+        if target_season <= player_source_season:
+            raise ValueError("target_season must be later than player_season")
+        # Keep the player's source cutoff separate from the team's baseline season.
+        # Only an explicit source/target pair is used; no transaction horizon is guessed.
+        projection_spec = {
+            **spec,
+            "parameters": {
+                **parameters,
+                "player_season": player_source_season,
+                "target_season": target_season,
+            },
+        }
+        projection = self._project_player_for_team(
+            projection_spec, players[0], teams[0], source_league, target_league
+        )
         rotation = self._rotation_ratings(teams[0], target_league, competition, season)
         if len(rotation) < 5:
             raise ValueError("Target team needs at least five rotation ratings for a replacement what-if")
@@ -2754,8 +2801,9 @@ class ChatScenarioEngine:
                 "team": self._team_name(teams[0]),
                 "incoming_player": self._player_name(players[0]),
                 "outgoing_player": self._player_name(players[1]),
-                "source_season": season,
-                "target_season": int(season) + 1,
+                "source_season": player_source_season,
+                "team_context_season": int(season),
+                "target_season": target_season,
                 "incoming_rating": round(projection["rating"], 3),
                 "outgoing_rating": round(outgoing, 3),
                 "rotation_delta": round(after - before, 3),
