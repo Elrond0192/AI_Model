@@ -1431,14 +1431,26 @@ def _scenario_entity_rows(entity: str, query: str, limit: int = 12) -> list[dict
         current_league_key = ""
         current_team_global_id = ""
         current_team_name = ""
-        if entity == "player" and contexts:
-            latest_context = max(
-                contexts,
-                key=lambda item: (item.get("season", 0), item.get("league_key", "")),
-            )
-            current_league_key = str(latest_context.get("league_key") or "")
-            current_team_global_id = str(latest_context.get("team_global_id") or "")
-            current_team_name = str(latest_context.get("team_name") or "")
+        if entity == "player":
+            # Loaded player metadata is an authoritative current-context hint;
+            # historical competition stats may not include the current season's
+            # team relation (or may not carry team_id at all).
+            metadata_league_key = value_text(row, "current_league_key").upper()
+            metadata_team_id = value_text(row, "current_team_id")
+            if contexts:
+                latest_context = max(
+                    contexts,
+                    key=lambda item: (item.get("season", 0), item.get("league_key", "")),
+                )
+                current_league_key = metadata_league_key or str(latest_context.get("league_key") or "")
+                current_team_global_id = str(latest_context.get("team_global_id") or "")
+                current_team_name = str(latest_context.get("team_name") or "")
+            else:
+                current_league_key = metadata_league_key
+            current_team_global_id = current_team_global_id or team_global_by_id.get(metadata_team_id, "")
+            current_team_name = current_team_name or team_name_by_id.get(metadata_team_id, "")
+            if current_league_key and current_league_key not in league_keys:
+                league_keys.append(current_league_key)
 
         records.append(
             {
