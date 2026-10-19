@@ -412,8 +412,23 @@ async function renderModelReleases(){
   $('#release-bb-rating').innerHTML=fmtRelease(models['bb-rating']||{});
   $('#release-future-performance').innerHTML=fmtRelease(models['future-performance']||{});
   $('#bb-rating-prediction-release').innerHTML=fmtRelease(release);
+  const outputRows=job.output?[
+    ['OOF samples',job.output.oof_samples??'—'],
+    ['MAE modello',fmt(job.output.mae)],
+    ['MAE baseline',fmt(job.output.baseline_mae)],
+    ['RMSE',fmt(job.output.rmse)],
+    ['Stagioni OOF',(job.output.walk_forward_target_seasons||job.output.target_seasons||[]).join(', ')||'—'],
+    ['Gate qualità',job.status==='complete'?'SUPERATO':job.output.promotion_gate_passed===false?'NON SUPERATO':'—'],
+    ['Gruppi oltre soglia',job.output.segment_regression_count??'—'],
+    ['Scenari valutati',Object.keys(job.output.scenario_metrics||{}).length]
+  ]:'';
+  const outputMarkup=job.output
+    ?'<div class="summary-list">'+outputRows.map(([a,b])=>'<div class="summary-row"><span>'+esc(a)+'</span><strong>'+esc(b??'—')+'</strong></div>').join('')+'</div>'+
+      ((job.output.gate_failures||[]).length?'<div class="job-message"><strong>Cause del rifiuto:</strong> '+esc(job.output.gate_failures.join(' · '))+'</div>':'')+
+      ((job.output.segment_regressions||[]).length?'<div class="summary-list"><div class="summary-row"><span>Segmenti con regressione (dettaglio)</span><strong>'+esc(job.output.segment_regression_count||job.output.segment_regressions.length)+'</strong></div>'+job.output.segment_regressions.map(s=>'<div class="summary-row"><span>'+esc((s.dimension||'segmento')+' · '+(s.group||'—')+' (n='+String(s.n??'—')+')')+'</span><strong>MAE '+esc(fmt(s.mae))+' / baseline '+esc(fmt(s.baseline_mae))+'</strong></div>').join('')+'</div>':'')
+    :'';
   $('#bb-rating-prediction-job').innerHTML='<div class="job-head"><div><div class="job-status">'+esc(job.stage||'Ready')+'</div><div class="job-message">'+esc(job.error||job.message||'Nessun training eseguito.')+'</div></div><span class="registry-badge '+(['running','queued'].includes(job.status)?'candidate':'')+'">'+esc(job.status||'idle')+'</span></div>'+
-    (job.output?'<div class="summary-list">'+[['OOF samples',job.output.oof_samples],['MAE',job.output.mae],['RMSE',job.output.rmse],['Scenari valutati',Object.keys(job.output.scenario_metrics||{}).length]].map(([a,b])=>'<div class="summary-row"><span>'+esc(a)+'</span><strong>'+esc(b??'—')+'</strong></div>').join('')+'</div>':'')+
+    outputMarkup+
     progressMarkup(job);
   if(['running','queued'].includes(job.status)) {
     $('#bb-rating-prediction-job').insertAdjacentHTML('beforeend','<div class="button-row"><button id="bb-rating-prediction-cancel" class="btn btn-danger btn-small" '+(job.cancel_requested?'disabled':'')+'>'+(job.cancel_requested?'Interruzione richiesta…':'Interrompi training')+'</button></div>');
