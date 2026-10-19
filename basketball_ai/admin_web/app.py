@@ -892,7 +892,8 @@ def _bb_rating_prediction_job_worker(active_profile: str | None, actor: str, can
         model = BBRatingFuturePredictionModel(min_oof_samples=500)
         metadata = model.fit(data, include_latest_target_season=False)
         metadata["database_profile"] = active_profile
-        metadata["training_snapshot_id"] = data.get("training_snapshot_manifest", {}).get("snapshot_id")
+        snapshot_manifest = data.get("training_snapshot_manifest")
+        metadata["training_snapshot_id"] = snapshot_manifest.get("snapshot_id") if isinstance(snapshot_manifest, dict) else None
         model.metadata.update(metadata)
         _check_cancelled(cancel_event)
         if not metadata.get("promotion_gate_passed", False):
