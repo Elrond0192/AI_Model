@@ -624,8 +624,7 @@ def create_app() -> FastAPI:
         uncertainty = getattr(request.app.state, "bb_rating_uncertainty", None)
         future_model = getattr(request.app.state, "future_performance_model", None)
         bb_rating_future_model = getattr(request.app.state, "bb_rating_future_prediction_model", None)
-        model_metadata = getattr(request.app.state, "model_metadata", {}) or {}
-            return {
+        return {
             "status": "ok",
             "data_loaded": bool(data.get("player_dict")),
             "bb_rating_loaded": bb_rating is not None,
