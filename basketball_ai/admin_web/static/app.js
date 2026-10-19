@@ -80,7 +80,7 @@ async function renderOverview(){
   if(systemLabel)systemLabel.textContent=allReady?'SYSTEM OPERATIONAL':'SYSTEM ATTENTION';
 
   $('#overview-models').innerHTML=[
-    ['Prediction Model',prod.run_id?'Production':'Not promoted',prod.run_id?shortId(prod.run_id):'No active candidate','registry','blue'],
+    ['BB Prediction Model','Dedicated release','Future BB-Rating 1–100','model-releases','blue'],
     ['BB-Rating',bb.ready?'Serving ready':'Needs verification',bb.bb_rating_version?'v'+bb.bb_rating_version:'—','bb-rating','violet'],
     ['Future Performance','Independent model','Season-ahead forecasts','future-performance','cyan'],
     ['Metric Rating','Analytical layer','Metric-level strengths','diagnostics','green']
@@ -301,13 +301,13 @@ async function renderModelReleases(){
   const servingRows=[
     ['Inference API live',health.live?.ok?'Online':'Offline'],
     ['Inference API ready',health.ready?.ok?'Ready':'Not ready'],
-    ['Native Prediction Model loaded',health.prediction_model?.loaded?'Yes':'No'],
-    ['Prediction run / version',(health.prediction_model?.run_id||'—')+' / '+(health.prediction_model?.version||'—')],
-    ['Prediction feature version',health.prediction_model?.feature_version||'—'],
-    ['Prediction data cutoff',health.prediction_model?.data_cutoff||'—'],
-    ['Performance artifact present',health.prediction_model?.production_model_files?.performance_model?'Yes':'No'],
-    ['Compatibility artifact present',health.prediction_model?.production_model_files?.compatibility_model?'Yes':'No'],
-    ['Metric distributions loaded',String(health.prediction_model?.metric_distributions_count??0)],
+    ['Native Prediction Model loaded',health.bb_rating_prediction?.loaded?'Yes':'No'],
+    ['Prediction run / version',(health.bb_rating_prediction?.version||'—')+' / '+(health.bb_rating_prediction?.version||'—')],
+    ['Prediction feature version',health.bb_rating_prediction?.feature_version||'—'],
+    ['Prediction data cutoff',health.bb_rating_prediction?.data_cutoff||'—'],
+    ['Performance artifact present','N/A — direct BB-Rating model'],
+    ['Compatibility artifact present','N/A — direct BB-Rating model'],
+    ['Metric distributions loaded','N/A — direct BB-Rating model'],
     ['BB-Rating loaded',health.bb_rating?.loaded?'Yes':'No'],
     ['BB-Rating uncertainty loaded',health.bb_rating?.uncertainty_loaded?'Yes':'No'],
     ['Future Performance loaded',health.future_performance?.loaded?'Yes':'No'],
