@@ -14,7 +14,6 @@ import joblib
 import numpy as np
 import pandas as pd
 from sklearn.ensemble import HistGradientBoostingRegressor
-from sklearn.isotonic import IsotonicRegression
 from sklearn.metrics import mean_absolute_error, mean_squared_error
 
 from basketball_ai.bb_rating.engine import BBRatingEngine, BB_RATING_VERSION
@@ -474,7 +473,6 @@ class BBRatingFuturePredictionModel:
                 }
 
         actual = oof["observed_bb_rating"].to_numpy(float)
-        raw = oof["predicted_bb_rating"].to_numpy(float)
         baseline = oof["baseline_bb_rating"].to_numpy(float)
         calibrated = oof["calibrated_bb_rating"].to_numpy(float)
 
