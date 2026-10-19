@@ -738,6 +738,7 @@ class ChatScenarioEngine:
             # efficiency, creation and spacing are positive; defensive rating is
             # inverted; pace is treated as a style dimension around league median.
             peers = team_stats[team_stats["_year"] == year]
+
             def pct(metric, value):
                 vals = pd.to_numeric(peers.get(metric), errors="coerce").dropna()
                 if vals.empty or not math.isfinite(value):
