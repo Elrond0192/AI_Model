@@ -237,136 +237,14 @@ def test_model_metadata_invalid_json_falls_back(tmp_path):
     assert _model_metadata(str(tmp_path))["model_version"] == "v2"
 
 
-def test_v2_regular_season_uses_isolated_context(monkeypatch):
-    from basketball_ai.api.routes.predictions_v2 import router
+def test_legacy_prediction_route_is_not_mounted(monkeypatch):
+    monkeypatch.setenv("API_ENV", "development")
+    from basketball_ai.api.main import create_app
 
-    seen = _patch_inference(monkeypatch, "RS")
-    app = FastAPI()
-    app.include_router(router)
-    _fake_state(app)
+    paths = set(create_app().openapi()["paths"])
+    assert "/api/v2/predictions/player-team" not in paths
+    assert "/api/v2/bb-rating-prediction/player" in paths
 
-    response = TestClient(app).post("/api/v2/predictions/player-team", json=_payload())
-    assert response.status_code == 200
-    body = response.json()
-    assert seen["source_season"] == 2025
-    assert seen["league_id"] == 303
-    assert seen["scope_competition"] == "RS"
-    assert body["target_season"] == 2026
-    assert body["predicted_rating_100"] is None
-    assert body["confidence_low_100"] is None
-    assert body["confidence_high_100"] is None
-    assert "predicted_rating" not in body
-    assert "confidence_low" not in body
-    assert "confidence_high" not in body
-    assert body["competition"] == "RS"
-    assert body["competition_support"]["mode"] == "isolated"
-    assert body["competition_support"]["calibration_scope"] == "global"
-    assert body["compatibility"]["selected_team_score"] == 0.74
-    assert body["compatibility"]["real_team_score"] == 0.68
-    assert body["compatibility"]["score_delta_vs_real_team"] == 0.06
-    assert body["performance_vs_expectation"]["available"] is False
-    assert body["performance_vs_expectation"]["target_season"] == 2026
-    assert body["explanation"]["context"] == "isolated_league_competition_as_of_source_season"
-
-
-def test_v2_performance_vs_expectation_uses_calibrated_range(monkeypatch):
-    from basketball_ai.api.routes.predictions_v2 import router
-
-    _patch_inference(monkeypatch, "RS")
-    app = FastAPI()
-    app.include_router(router)
-    _fake_state(app)
-    app.state.prediction_calibration = {
-        "calibration_version": "1.0",
-        "fit": {
-            "x_thresholds": [0.0, 10.0],
-            "y_thresholds_native": [0.0, 10.0],
-        },
-    }
-
-    response = TestClient(app).post(
-        "/api/v2/predictions/player-team",
-        json=_payload(),
-    )
-    assert response.status_code == 200
-    body = response.json()
-    assert body["predicted_rating_100"] == 72.775
-    assert body["confidence_low_100"] == 68.32
-    assert body["confidence_high_100"] == 77.23
-    assert body["prediction_calibration_version"] == "1.0"
-    assert "predicted_rating" not in body
-    assert "confidence_low" not in body
-    assert "confidence_high" not in body
-    pve = body["performance_vs_expectation"]
-    assert pve["available"] is False
-    assert pve["target_season"] == 2026
-    assert pve.get("actual_rating_100") is None
-    assert pve.get("delta_rating_points") is None
-    assert "non è direttamente confrontabile" in pve["explanation"]
-
-def test_v2_playoffs_are_normalised_and_isolated(monkeypatch):
-    from basketball_ai.api.routes.predictions_v2 import router
-
-    seen = _patch_inference(monkeypatch, "PO")
-    app = FastAPI()
-    app.include_router(router)
-    _fake_state(app)
-    response = TestClient(app).post(
-        "/api/v2/predictions/player-team", json=_payload("playoffs")
-    )
-    assert response.status_code == 200
-    body = response.json()
-    assert seen["competition"] == "PO"
-    assert body["competition"] == "PO"
-    assert body["competition_support"]["source_games"] == 20
-    assert body["competition_support"]["exact_source_games"] == 8
-    assert body["competition_support"]["calibration_scope"] == "competition"
-    assert body["competition_support"]["calibration_samples"] == 18
-
-
-def test_v2_returns_422_when_isolated_context_is_unavailable(monkeypatch):
-    import basketball_ai.api.routes.predictions_v2 as route
-    from basketball_ai.api.routes.predictions_v2 import router
-
-    monkeypatch.setattr(route, "build_historical_snapshot", lambda data, season: data)
-    monkeypatch.setattr(route, "resolve_league_id", lambda data, league: 303)
-
-    def fail_scope(*args, **kwargs):
-        raise ValueError("Player has no isolated PO data")
-
-    monkeypatch.setattr(route, "scope_prediction_context", fail_scope)
-    app = FastAPI()
-    app.include_router(router)
-    _fake_state(app)
-    response = TestClient(app).post(
-        "/api/v2/predictions/player-team", json=_payload("PO")
-    )
-    assert response.status_code == 422
-    assert "isolated PO data" in response.json()["detail"]
-
-
-def test_v2_returns_404_for_unknown_global_id(monkeypatch):
-    from basketball_ai.api.routes.predictions_v2 import router
-
-    _patch_inference(monkeypatch)
-    app = FastAPI()
-    app.include_router(router)
-    _fake_state(app)
-    payload = _payload()
-    payload["player_global_id"] = "UNKNOWN"
-    response = TestClient(app).post("/api/v2/predictions/player-team", json=payload)
-    assert response.status_code == 404
-
-
-def test_v2_returns_503_without_engine():
-    from basketball_ai.api.routes.predictions_v2 import router
-
-    app = FastAPI()
-    app.include_router(router)
-    app.state.engine = None
-    app.state.data = {"player_dict": {}, "team_dict": {}}
-    response = TestClient(app).post("/api/v2/predictions/player-team", json=_payload())
-    assert response.status_code == 503
 
 
 def test_health_endpoints_and_readiness(monkeypatch):
@@ -389,7 +267,7 @@ def test_health_endpoints_and_readiness(monkeypatch):
     assert health.json()["data_loaded"] is True
     ready = client.get("/health/ready")
     assert ready.status_code == 503
-    app.state.engine = object()
+    app.state.bb_rating_engine = object()
     ready = client.get("/health/ready")
     assert ready.status_code == 200
 
