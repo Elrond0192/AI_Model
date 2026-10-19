@@ -823,7 +823,30 @@ class ChatScenarioEngine:
             raise ValueError("Target team has no historical context available before the target season")
 
         scoped = dict(snapshot)
-        scoped["player_stats"] = player_rows.copy()
+        effective_player_rows = player_rows.copy()
+        applied_player_context: dict[str, Any] = {}
+        player_overrides = spec.get("player_overrides", {})
+        if isinstance(player_overrides, dict) and not effective_player_rows.empty:
+            # Apply only explicit scenario assumptions to the latest source-season
+            # row. Historical observations remain untouched and source/target
+            # seasons remain separate.
+            override_index = effective_player_rows.index[-1]
+            for key, value in player_overrides.items():
+                if key == "role":
+                    effective_player_rows.at[override_index, "ruolo_combinato"] = str(value)
+                    applied_player_context[key] = str(value)
+                elif key in {"minutes_per_game", "usg_pct"}:
+                    try:
+                        numeric = float(value)
+                    except (TypeError, ValueError):
+                        continue
+                    if key == "minutes_per_game":
+                        numeric = float(np.clip(numeric, 0.0, 48.0))
+                    else:
+                        numeric = float(np.clip(numeric, 0.0, 100.0 if numeric > 1.5 else 1.0))
+                    effective_player_rows.at[override_index, key] = numeric
+                    applied_player_context[key] = numeric
+        scoped["player_stats"] = effective_player_rows
         scoped["team_season_stats"] = team_rows.copy()
         scoped["_as_of_season"] = player_season
         scoped["_prediction_league_id"] = _to_int(target_league)
@@ -886,16 +909,17 @@ class ChatScenarioEngine:
         what_if = {
             "baseline": {"profile_season": player_season, "current_team": self._team_name(current_team_id) if current_team_id is not None else None, "current_rating": round(observed_rating, 3), "current_minutes_per_game": round(_finite(player_latest.get("minutes_per_game")), 3), "current_usage_pct": round(_ratio(player_latest.get("usg_pct")), 4), "competition_tier": competition_tier(self._league_key(source_league)), "competition_tier_label": competition_tier_label(self._league_key(source_league))},
             "target": {"team": self._team_name(teams[0]), "scenario_season": target_season, "context_as_of_season": player_season, "competition_tier": competition_tier(self._league_key(target_league)), "competition_tier_label": competition_tier_label(self._league_key(target_league))},
+            "assumptions": {"applied_player_context": applied_player_context, "minutes_and_role_are_user_supplied_scenario_inputs": bool(applied_player_context)},
             "changes": {"predicted_rating_delta": round(rating_delta, 3), "team_environment_delta": environment_delta, "compatibility": round(compatibility, 4), "compatibility_label": fit_label, "league_factor": round(float(result.league_factor), 4), "context_adjustment": round(float(result.context_adjustment), 4)},
             "outcome": {"label": outcome_label, "predicted_rating": round(float(result.predicted_rating), 3), "confidence_low": round(float(result.confidence_low), 3), "confidence_high": round(float(result.confidence_high), 3)},
             "drivers": ranked_drivers,
             "interpretation": f"Scenario costruito dal profilo osservato fino al {player_season} e proiettato alla stagione {target_season}. Il contesto target usa solo informazioni disponibili al cutoff, evitando leakage della stagione target."
         }
         return {
-            "result": {"player": self._player_name(players[0]), "team": self._team_name(teams[0]), "league": self._league_name(target_league), "competition": result.competition, "competition_tier": competition_tier(self._league_key(target_league)), "competition_tier_label": competition_tier_label(self._league_key(target_league)), "source_season": player_season, "target_season": target_season, "predicted_rating": result.predicted_rating, "confidence_low": result.confidence_low, "confidence_high": result.confidence_high, "base_rating": result.base_rating, "compatibility": result.compatibility_factor, "league_factor": result.league_factor, "context_adjustment": result.context_adjustment, "drivers": result.shap_values, "what_if": what_if},
+            "result": {"player": self._player_name(players[0]), "team": self._team_name(teams[0]), "league": self._league_name(target_league), "competition": result.competition, "competition_tier": competition_tier(self._league_key(target_league)), "competition_tier_label": competition_tier_label(self._league_key(target_league)), "source_season": player_season, "target_season": target_season, "predicted_rating": result.predicted_rating, "confidence_low": result.confidence_low, "confidence_high": result.confidence_high, "base_rating": result.base_rating, "compatibility": result.compatibility_factor, "league_factor": result.league_factor, "context_adjustment": result.context_adjustment, "drivers": result.shap_values, "applied_player_context": applied_player_context, "what_if": what_if},
             "evidence": [{"type": "historical_counterfactual", "player_profile_through": player_season, "scenario_season": target_season}, {"type": "target_team_context", "team": self._team_name(teams[0]), "context_through": player_season}],
             "support": {"method": "strict_supervised_historical_counterfactual", **dict(scoped.get("_competition_support", {}))},
-            "limitations": ["Il contesto della squadra target è valutato con le informazioni disponibili al cutoff del profilo, non con i risultati reali della stagione target."]
+            "limitations": ["Il contesto della squadra target è valutato con le informazioni disponibili al cutoff del profilo, non con i risultati reali della stagione target.", "Minutaggio, usage e ruolo modificati sono ipotesi esplicite dello scenario, non dati osservati né promesse di rotazione.", "Infortuni, disponibilità futura e condizioni contrattuali non vengono inferiti: devono essere forniti come assunzioni separate e non sono inclusi automaticamente nella stima."]
         }
 
     def _league_transfer(self, spec, players, teams, source_league, target_league):
