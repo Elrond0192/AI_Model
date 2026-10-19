@@ -1349,7 +1349,7 @@ class PerformanceModel:
             "train_rmse": train_rmse,
             "val_rmse":   val_rmse,
             "val_mae":    val_mae,
-            "val_r2":     val_r2, 
+            "val_r2":     val_r2,
             "target_diagnostics": target_diagnostics,
         }
 
