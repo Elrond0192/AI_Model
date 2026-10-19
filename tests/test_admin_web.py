@@ -374,6 +374,12 @@ def test_helpers_and_static_assets(monkeypatch, tmp_path):
     js = (admin.STATIC_ROOT / "app.js").read_text(encoding="utf-8")
     assert "Attività modello" in html
     assert "Salute del sistema" in html
+    future_page_start = html.index('<template id="page-future-performance">')
+    future_page_end = html.index("</template>", future_page_start)
+    future_page = html[future_page_start:future_page_end]
+    assert 'class="page-title-with-icon"' in future_page
+    assert 'class="ph ph-crystal-ball"' in future_page
+    assert ".page-title-icon" in css
     # Phosphor files live under STATIC_ROOT/assets/phosphor, while STATIC_ROOT is mounted at /assets.
     assert 'href="/assets/assets/phosphor/regular/style.css"' in html
     assert 'href="/assets/assets/phosphor/fill/style.css"' in html
