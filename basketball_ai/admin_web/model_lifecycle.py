@@ -11,7 +11,6 @@ from typing import Any
 
 _LOCK = threading.RLock()
 _MODEL_PATHS = {
-    "prediction-calibration": ("prediction_calibration", "prediction_rating_calibration.json"),
     "bb-rating": ("bb_rating_calibration", "bb_rating_calibration.json"),
     "future-performance": ("future_performance", "metadata.json"),
     "bb-rating-prediction": ("bb_rating_future_prediction", "metadata.json"),
@@ -40,34 +39,7 @@ def validate_artifact(model: str, directory: str | Path) -> dict[str, Any]:
     if not isinstance(artifact, dict):
         return {"valid": False, "reason": f"{filename} must contain a JSON object"}
 
-    if model == "prediction-calibration":
-        dataset = artifact.get("dataset") or {}
-        fit = artifact.get("fit") or {}
-        mapping = fit
-        if int(dataset.get("rows") or 0) < 500:
-            return {"valid": False, "reason": "Prediction calibration requires at least 500 OOS rows"}
-        x_values = mapping.get("x_thresholds") or []
-        y_values = mapping.get("y_thresholds_native") or []
-        if len(x_values) < 2 or len(y_values) < 2 or len(x_values) != len(y_values):
-            return {"valid": False, "reason": "Prediction calibration mapping requires equally sized threshold arrays with at least two values"}
-        try:
-            x_numbers = [float(value) for value in x_values]
-            y_numbers = [float(value) for value in y_values]
-        except (TypeError, ValueError):
-            return {"valid": False, "reason": "Prediction calibration thresholds must be numeric"}
-        import math
-        if not all(math.isfinite(value) for value in x_numbers + y_numbers):
-            return {"valid": False, "reason": "Prediction calibration thresholds must be finite"}
-        if any(left >= right for left, right in zip(x_numbers, x_numbers[1:])):
-            return {"valid": False, "reason": "Prediction calibration x thresholds must be strictly increasing"}
-        if any(left > right for left, right in zip(y_numbers, y_numbers[1:])):
-            return {"valid": False, "reason": "Prediction calibration mapping must be monotonic"}
-        validation = artifact.get("validation") or {}
-        if validation.get("status") != "validated_oos" or int(validation.get("n_folds") or 0) < 1:
-            return {"valid": False, "reason": "Prediction calibration requires at least one valid temporal OOS fold"}
-        if not artifact.get("prediction_model_version"):
-            return {"valid": False, "reason": "Prediction model version is missing"}
-    elif model == "bb-rating":
+    if model == "bb-rating":
         uncertainty_path = root / "bb_rating_uncertainty.json"
         if not uncertainty_path.exists() and root.name == "bb_rating_calibration":
             uncertainty_path = root.parent / "bb_rating_uncertainty.json"
