@@ -372,9 +372,14 @@ def test_helpers_and_static_assets(monkeypatch, tmp_path):
     html = (admin.STATIC_ROOT / "index.html").read_text(encoding="utf-8")
     css = (admin.STATIC_ROOT / "app.css").read_text(encoding="utf-8")
     js = (admin.STATIC_ROOT / "app.js").read_text(encoding="utf-8")
-    assert "Operational readiness" in html
+    assert "Attività modello" in html
+    assert "Salute del sistema" in html
+    # Phosphor files live under STATIC_ROOT/assets/phosphor, while STATIC_ROOT is mounted at /assets.
+    assert 'href="/assets/assets/phosphor/regular/style.css"' in html
+    assert 'href="/assets/assets/phosphor/fill/style.css"' in html
     assert "Come funziona" in html
-    assert "Prepara storico modello" in html
+    assert "Caricato automaticamente dal DB" in html
+    assert "Ricarica da PostgreSQL" in js
     assert "Dati e snapshot" in html
     assert "Model Registry" not in html
     assert 'id="page-training"' not in html
@@ -382,7 +387,18 @@ def test_helpers_and_static_assets(monkeypatch, tmp_path):
     assert 'id="page-registry"' not in html
     assert "Model Releases" in html
     assert "bb-rating-prediction" in js
+    assert "admin-api/auto-load" in js
+    assert "async function enterBackOffice" in js
+    assert "await enterBackOffice(s.user)" in js
+    assert "await enterBackOffice(d.user)" in js
     assert "Prediction 1–100 calibration" not in html
+    # DOM iteration must use $$ (querySelectorAll), not $ (querySelector).
+    mount_template = js[js.index("function mountTemplate"):js.index("async function navigate")]
+    assert "$$('.admin-only',root).forEach" in mount_template
+    assert "$$('.jump',root).forEach" in mount_template
+    assert "));$('.admin-only',root).forEach" not in mount_template
+    assert ";$('.jump',root).forEach" not in mount_template
+
     assert "Native Prediction Model (0–10)" not in html
     assert "data-model=\"prediction\"" not in html
     assert "renderModelReleases" in js
@@ -1095,6 +1111,36 @@ async def test_profile_test_and_load(monkeypatch):
 
     with pytest.raises(HTTPException):
         await admin.test_database_profile("missing", {"username": "admin", "role": "admin", "token": "x"})
+
+
+@pytest.mark.asyncio
+async def test_auto_load_database_when_back_office_opens(monkeypatch):
+    _reset_state()
+    monkeypatch.delenv("DATABASE_PROFILE", raising=False)
+    monkeypatch.setattr(admin, "load_profiles", lambda: {"production": {"database": "hoopmetrics"}})
+
+    calls = []
+
+    async def fake_load(name, user):
+        calls.append((name, user["username"]))
+        return {"ok": True, "profile": name, "summary": {"player_rows": 123}, "snapshot": {"snapshot_id": "snap-1"}}
+
+    monkeypatch.setattr(admin, "load_database_profile", fake_load)
+    user = {"username": "admin", "role": "admin", "token": "x"}
+    loaded = await admin.auto_load_database(user)
+
+    assert loaded["loaded"] is True
+    assert loaded["profile"] == "production"
+    assert loaded["summary"]["player_rows"] == 123
+    assert calls == [("production", "admin")]
+
+    # Never silently choose a database when several profiles exist and none is active.
+    _reset_state()
+    monkeypatch.setattr(admin, "load_profiles", lambda: {"production": {}, "staging": {}})
+    not_loaded = await admin.auto_load_database(user)
+    assert not_loaded["loaded"] is False
+    assert "più profili" in not_loaded["message"]
+    assert calls == [("production", "admin")]
 
 
 @pytest.mark.asyncio
