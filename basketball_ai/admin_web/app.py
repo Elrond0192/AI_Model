@@ -1397,7 +1397,9 @@ def _scenario_entity_rows(entity: str, query: str, limit: int = 12) -> list[dict
         if entity == "player":
             subtitle_values = (value_text(row, "position"),)
         else:
-            subtitle_values = ()
+            # Team autocomplete keeps the short-name label from the loaded
+            # canonical snapshot while the full name remains the display name.
+            subtitle_values = (value_text(row, "short_name"),)
         subtitle = " · ".join(value for value in subtitle_values if value and value != name)
 
         league_keys: list[str] = []
