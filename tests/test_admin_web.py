@@ -378,7 +378,8 @@ def test_helpers_and_static_assets(monkeypatch, tmp_path):
     assert 'href="/assets/assets/phosphor/regular/style.css"' in html
     assert 'href="/assets/assets/phosphor/fill/style.css"' in html
     assert "Come funziona" in html
-    assert "Prepara storico modello" in html
+    assert "Caricato automaticamente dal DB" in html
+    assert "Ricarica da PostgreSQL" in js
     assert "Dati e snapshot" in html
     assert "Model Registry" not in html
     assert 'id="page-training"' not in html
