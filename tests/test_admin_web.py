@@ -374,6 +374,9 @@ def test_helpers_and_static_assets(monkeypatch, tmp_path):
     js = (admin.STATIC_ROOT / "app.js").read_text(encoding="utf-8")
     assert "Attività modello" in html
     assert "Salute del sistema" in html
+    # Phosphor files live under STATIC_ROOT/assets/phosphor, while STATIC_ROOT is mounted at /assets.
+    assert 'href="/assets/assets/phosphor/regular/style.css"' in html
+    assert 'href="/assets/assets/phosphor/fill/style.css"' in html
     assert "Come funziona" in html
     assert "Prepara storico modello" in html
     assert "Dati e snapshot" in html
