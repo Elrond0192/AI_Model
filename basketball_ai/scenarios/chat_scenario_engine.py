@@ -810,24 +810,36 @@ class ChatScenarioEngine:
             raise ValueError("league context is required")
         parameters = spec.get("parameters", {}) or {}
         player_season = int(parameters.get("player_season", spec["season"]))
+        team_context_season = int(parameters.get("team_context_season", player_season))
         target_season = int(parameters.get("target_season", player_season + 1))
-        if target_season <= player_season:
-            raise ValueError("target_season must be later than player_season")
+        if not player_season <= team_context_season < target_season:
+            raise ValueError(
+                "Require player_season <= team_context_season < target_season "
+                "to keep source profile and team context temporally valid."
+            )
         target_competition = normalize_competition(spec.get("target_competition") or spec["competition"])
         source_competition = normalize_competition(spec["competition"])
 
         if source_league != target_league:
             return self._league_transfer(
                 {**spec, "season": player_season,
-                 "parameters": {**parameters, "player_season": player_season, "target_season": target_season}},
+                 "parameters": {
+                     **parameters,
+                     "player_season": player_season,
+                     "team_context_season": team_context_season,
+                     "target_season": target_season,
+                 }},
                 players, teams, source_league, target_league
             )
 
-        snapshot = build_historical_snapshot(self.data, player_season)
+        # Player performance stays capped at the requested profile season, while
+        # target-team context can use later information only if it was available
+        # before the requested target season.
+        snapshot = build_historical_snapshot(self.data, team_context_season)
         player_rows = self._player_rows(players[0], source_league, source_competition, player_season)
         if player_rows.empty:
             raise ValueError("Player has no source-season history for the requested cutoff")
-        team_rows = self._team_rows(teams[0], target_league, target_competition, player_season)
+        team_rows = self._team_rows(teams[0], target_league, target_competition, team_context_season)
         if team_rows.empty:
             raise ValueError("Target team has no historical context available before the target season")
 
@@ -857,7 +869,7 @@ class ChatScenarioEngine:
                     applied_player_context[key] = numeric
         scoped["player_stats"] = effective_player_rows
         scoped["team_season_stats"] = team_rows.copy()
-        scoped["_as_of_season"] = player_season
+        scoped["_as_of_season"] = team_context_season
         scoped["_prediction_league_id"] = _to_int(target_league)
         scoped["_prediction_competition"] = target_competition
         scoped["_prediction_team_id"] = _to_int(teams[0])
@@ -865,6 +877,7 @@ class ChatScenarioEngine:
             "mode": "historical_counterfactual",
             "competition": target_competition,
             "source_season": player_season,
+            "team_context_season": team_context_season,
             "target_season": target_season,
             "source_player_seasons": int(len(player_rows)),
         }
@@ -917,16 +930,16 @@ class ChatScenarioEngine:
 
         what_if = {
             "baseline": {"profile_season": player_season, "current_team": self._team_name(current_team_id) if current_team_id is not None else None, "current_rating": round(observed_rating, 3), "current_minutes_per_game": round(_finite(player_latest.get("minutes_per_game")), 3), "current_usage_pct": round(_ratio(player_latest.get("usg_pct")), 4), "competition_tier": competition_tier(self._league_key(source_league)), "competition_tier_label": competition_tier_label(self._league_key(source_league))},
-            "target": {"team": self._team_name(teams[0]), "scenario_season": target_season, "context_as_of_season": player_season, "competition_tier": competition_tier(self._league_key(target_league)), "competition_tier_label": competition_tier_label(self._league_key(target_league))},
+            "target": {"team": self._team_name(teams[0]), "scenario_season": target_season, "context_as_of_season": team_context_season, "competition_tier": competition_tier(self._league_key(target_league)), "competition_tier_label": competition_tier_label(self._league_key(target_league))},
             "assumptions": {"applied_player_context": applied_player_context, "minutes_and_role_are_user_supplied_scenario_inputs": bool(applied_player_context)},
             "changes": {"predicted_rating_delta": round(rating_delta, 3), "team_environment_delta": environment_delta, "compatibility": round(compatibility, 4), "compatibility_label": fit_label, "league_factor": round(float(result.league_factor), 4), "context_adjustment": round(float(result.context_adjustment), 4)},
             "outcome": {"label": outcome_label, "predicted_rating": round(float(result.predicted_rating), 3), "confidence_low": round(float(result.confidence_low), 3), "confidence_high": round(float(result.confidence_high), 3)},
             "drivers": ranked_drivers,
-            "interpretation": f"Scenario costruito dal profilo osservato fino al {player_season} e proiettato alla stagione {target_season}. Il contesto target usa solo informazioni disponibili al cutoff, evitando leakage della stagione target."
+            "interpretation": f"Scenario costruito dal profilo osservato del giocatore fino al {player_season}, con contesto della squadra aggiornato fino al {team_context_season}, e proiettato alla stagione {target_season}. Nessun dato osservato della stagione target entra nella stima."
         }
         return {
-            "result": {"player": self._player_name(players[0]), "team": self._team_name(teams[0]), "league": self._league_name(target_league), "competition": result.competition, "competition_tier": competition_tier(self._league_key(target_league)), "competition_tier_label": competition_tier_label(self._league_key(target_league)), "source_season": player_season, "target_season": target_season, "predicted_rating": result.predicted_rating, "confidence_low": result.confidence_low, "confidence_high": result.confidence_high, "base_rating": result.base_rating, "compatibility": result.compatibility_factor, "league_factor": result.league_factor, "context_adjustment": result.context_adjustment, "drivers": result.shap_values, "applied_player_context": applied_player_context, "what_if": what_if},
-            "evidence": [{"type": "historical_counterfactual", "player_profile_through": player_season, "scenario_season": target_season}, {"type": "target_team_context", "team": self._team_name(teams[0]), "context_through": player_season}],
+            "result": {"player": self._player_name(players[0]), "team": self._team_name(teams[0]), "league": self._league_name(target_league), "competition": result.competition, "competition_tier": competition_tier(self._league_key(target_league)), "competition_tier_label": competition_tier_label(self._league_key(target_league)), "source_season": player_season, "team_context_season": team_context_season, "target_season": target_season, "predicted_rating": result.predicted_rating, "confidence_low": result.confidence_low, "confidence_high": result.confidence_high, "base_rating": result.base_rating, "compatibility": result.compatibility_factor, "league_factor": result.league_factor, "context_adjustment": result.context_adjustment, "drivers": result.shap_values, "applied_player_context": applied_player_context, "what_if": what_if},
+            "evidence": [{"type": "historical_counterfactual", "player_profile_through": player_season, "scenario_season": target_season}, {"type": "target_team_context", "team": self._team_name(teams[0]), "context_through": team_context_season}],
             "support": {"method": "strict_supervised_historical_counterfactual", **dict(scoped.get("_competition_support", {}))},
             "limitations": ["Il contesto della squadra target è valutato con le informazioni disponibili al cutoff del profilo, non con i risultati reali della stagione target.", "Minutaggio, usage e ruolo modificati sono ipotesi esplicite dello scenario, non dati osservati né promesse di rotazione.", "Infortuni, disponibilità futura e condizioni contrattuali non vengono inferiti: devono essere forniti come assunzioni separate e non sono inclusi automaticamente nella stima."]
         }
@@ -1033,9 +1046,13 @@ class ChatScenarioEngine:
             raise ValueError("source_league and target_league are required")
         parameters = spec.get("parameters", {}) or {}
         player_season = int(parameters.get("player_season", spec["season"]))
+        team_context_season = int(parameters.get("team_context_season", player_season))
         target_season = int(parameters.get("target_season", player_season + 1))
-        if target_season <= player_season:
-            raise ValueError("target_season must be later than player_season")
+        if not player_season <= team_context_season < target_season:
+            raise ValueError(
+                "Require player_season <= team_context_season < target_season "
+                "to keep source profile and team context temporally valid."
+            )
         source_comp = normalize_competition(spec["competition"])
         target_comp = normalize_competition(spec.get("target_competition") or source_comp)
         source_rows = self._player_rows(players[0], source_league, source_comp, player_season)
@@ -1055,7 +1072,7 @@ class ChatScenarioEngine:
         context_score, context = (0.5, {})
         if teams:
             context_score, context = self._target_context_score(
-                players[0], teams[0], target_league, target_comp, player_season
+                players[0], teams[0], target_league, target_comp, team_context_season
             )
         fit_delta = float(np.clip((context_score - 0.65) * 0.70, -0.30, 0.25)) if teams else 0.0
         projected = float(np.clip(source_rating + transfer_delta + fit_delta, 0.0, 10.0))
@@ -1065,7 +1082,7 @@ class ChatScenarioEngine:
         if len(samples) < 5:
             limitations.append("Cross-league support is sparse; the estimate relies materially on league-quality priors.")
         limitations.append(
-            f"Il contesto target è limitato alle informazioni disponibili fino al {player_season}; "
+            f"Il contesto della squadra target è limitato alle informazioni disponibili fino al {team_context_season}; "
             f"i dati reali del {target_season} non entrano nella previsione."
         )
         what_if = {
@@ -1078,7 +1095,7 @@ class ChatScenarioEngine:
             "target": {
                 "team": self._team_name(teams[0]) if teams else None,
                 "scenario_season": target_season,
-                "context_as_of_season": player_season,
+                "context_as_of_season": team_context_season,
                 "competition_tier": competition_tier(self._league_key(target_league)),
                 "competition_tier_label": competition_tier_label(self._league_key(target_league)),
             },
@@ -1111,6 +1128,7 @@ class ChatScenarioEngine:
                 "target_competition_tier": competition_tier(self._league_key(target_league)),
                 "target_competition_tier_label": competition_tier_label(self._league_key(target_league)),
                 "source_season": int(source["_year"]),
+                "team_context_season": team_context_season,
                 "target_season": target_season,
                 "source_rating": round(source_rating, 3),
                 "projected_rating": round(projected, 3),
@@ -1124,7 +1142,8 @@ class ChatScenarioEngine:
                 "what_if": what_if,
             },
             "evidence": [
-                {"type": "historical_cross_league_transitions", "count": len(samples), "source_season": player_season, "target_season": target_season}
+                {"type": "historical_cross_league_transitions", "count": len(samples), "source_season": player_season, "target_season": target_season},
+                {"type": "target_team_context", "context_through": team_context_season, "team": self._team_name(teams[0]) if teams else None}
             ],
             "support": {"method": method, "samples": len(samples), "confidence": _confidence(len(samples))},
             "limitations": limitations,
@@ -2631,6 +2650,7 @@ class ChatScenarioEngine:
             "parameters": {
                 **parameters,
                 "player_season": player_source_season,
+                "team_context_season": season,
                 "target_season": target_season,
             },
         }
@@ -2738,6 +2758,7 @@ class ChatScenarioEngine:
             "parameters": {
                 **parameters,
                 "player_season": player_source_season,
+                "team_context_season": season,
                 "target_season": target_season,
             },
         }
