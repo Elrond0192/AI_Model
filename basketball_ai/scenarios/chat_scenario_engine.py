@@ -922,6 +922,101 @@ class ChatScenarioEngine:
             "limitations": ["Il contesto della squadra target è valutato con le informazioni disponibili al cutoff del profilo, non con i risultati reali della stagione target.", "Minutaggio, usage e ruolo modificati sono ipotesi esplicite dello scenario, non dati osservati né promesse di rotazione.", "Infortuni, disponibilità futura e condizioni contrattuali non vengono inferiti: devono essere forniti come assunzioni separate e non sono inclusi automaticamente nella stima."]
         }
 
+    def _transfer_samples(
+        self,
+        source_league_id: int,
+        target_league_id: int,
+        source_competition: str,
+        target_competition: str,
+        through_season: int,
+    ) -> list[float]:
+        """Return observed same-player source-to-next-season target rating deltas.
+
+        through_season is the last allowed source season; the target row may
+        therefore be one season later. Rows are filtered by league and phase
+        before matching, and never matched across competitions by accident.
+        """
+        frame = self.data.get("player_stats", pd.DataFrame())
+        required = {"player_id", "league_id", "season", "competition", "rating"}
+        if not isinstance(frame, pd.DataFrame) or frame.empty or not required.issubset(frame.columns):
+            return []
+
+        rows = frame.copy()
+        rows["_year"] = rows["season"].map(_year)
+        rows["_league_id"] = rows["league_id"].map(_to_int)
+        rows["_rating"] = pd.to_numeric(rows["rating"], errors="coerce")
+        rows["_player_key"] = rows["player_id"].map(
+            lambda value: f"player:{_to_int(value)}" if _to_int(value) is not None else ""
+        )
+        # Prefer canonical identity when populated: internal IDs can differ
+        # between a domestic league and continental competition.
+        if "global_id" in rows.columns:
+            canonical = rows["global_id"].fillna("").astype(str).str.strip()
+            valid_canonical = canonical.ne("") & ~canonical.str.lower().isin({"nan", "none", "null"})
+            rows.loc[valid_canonical, "_player_key"] = "global:" + canonical[valid_canonical]
+        players = self.data.get("players", pd.DataFrame())
+        if isinstance(players, pd.DataFrame) and {"id", "global_id"}.issubset(players.columns):
+            identity_map = {}
+            for record in players[["id", "global_id"]].to_dict("records"):
+                pid = _to_int(record.get("id"))
+                gid = str(record.get("global_id") or "").strip()
+                if pid is not None and gid and gid.lower() not in {"nan", "none", "null"}:
+                    identity_map[pid] = "global:" + gid
+            mapped = rows["player_id"].map(_to_int).map(identity_map)
+            rows.loc[mapped.notna(), "_player_key"] = mapped[mapped.notna()]
+
+        allowed_leagues = {_to_int(source_league_id), _to_int(target_league_id)}
+        rows = rows[
+            rows["_year"].notna()
+            & (rows["_year"] <= int(through_season) + 1)
+            & rows["_rating"].notna()
+            & rows["_player_key"].ne("")
+            & rows["_league_id"].isin(allowed_leagues)
+        ].copy()
+        rows["_competition"] = rows["competition"].map(normalize_competition)
+        source = rows[
+            (rows["_league_id"] == _to_int(source_league_id))
+            & (rows["_competition"] == normalize_competition(source_competition))
+            & (rows["_year"] <= int(through_season))
+        ]
+        target = rows[
+            (rows["_league_id"] == _to_int(target_league_id))
+            & (rows["_competition"] == normalize_competition(target_competition))
+        ]
+        if source.empty or target.empty:
+            return []
+
+        target_lookup = {}
+        target = target.sort_values(["_player_key", "_year"])
+        for record in target.to_dict("records"):
+            target_lookup[(record["_player_key"], int(record["_year"]))] = float(record["_rating"])
+
+        samples = []
+        for record in source.sort_values(["_player_key", "_year"]).to_dict("records"):
+            source_year = int(record["_year"])
+            target_rating = target_lookup.get((record["_player_key"], source_year + 1))
+            if target_rating is None:
+                continue
+            delta = float(target_rating) - float(record["_rating"])
+            if math.isfinite(delta):
+                samples.append(delta)
+        return samples
+
+    def _league_quality_fallback(self, source_league_id: int, target_league_id: int) -> float:
+        """Conservative native-rating prior for a league transition.
+
+        Lower competition-tier numbers represent stronger leagues. If either
+        tier is unknown, return a neutral prior rather than guess league quality.
+        """
+        source_tier = competition_tier(self._league_key(source_league_id))
+        target_tier = competition_tier(self._league_key(target_league_id))
+        try:
+            source_rank = int(float(source_tier))
+            target_rank = int(float(target_tier))
+        except (TypeError, ValueError):
+            return 0.0
+        return float(np.clip((target_rank - source_rank) * 0.35, -1.5, 1.5))
+
     def _league_transfer(self, spec, players, teams, source_league, target_league):
         if not players:
             raise ValueError("player is required")
