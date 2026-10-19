@@ -480,3 +480,31 @@ def test_transfer_rotation_membership_uses_canonical_player_identity():
     assert engine._same_player_identity(101, 201) is True
     assert engine._same_player_identity(101, 301) is False
     assert engine._same_player_identity(101, 101) is True
+
+
+def test_acquisition_validation_fails_when_each_target_season_is_under_supported():
+    data = _synthetic_roster_history()
+    keep_teams = set(range(1, 8))
+    for key in ("player_stats", "team_player_relations", "team_season_stats"):
+        frame = data[key]
+        data[key] = frame[frame["team_id"].isin(keep_teams)].copy()
+
+    model = fit_acquisition_impact_model(
+        data, league_id=10, competition="RS", through_season=2022
+    )
+
+    assert model["status"] == "insufficient_walk_forward_validation"
+    validation = model["validation"]
+    assert validation["samples"] >= 20
+    assert validation["minimum_samples_per_target_season"] == 8
+    assert validation["supported_target_seasons"] == []
+    assert validation["under_supported_target_seasons"]
+    assert model["validation_scope"]["causal_effect_established"] is False
+    impact = predict_acquisition_impact(
+        model,
+        roster_quality_delta=0.5,
+        transaction_turnover_delta=0.15,
+        prior_net_rtg=2.0,
+        prior_net_rtg_change=0.25,
+    )
+    assert impact["available"] is False
