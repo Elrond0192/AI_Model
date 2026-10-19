@@ -6,7 +6,7 @@ The player timeline has one consistent scale:
 - past and present: observed BB-Rating from the pinned `BBRatingEngine`;
 - future: predicted observed BB-Rating for target season `t+1`, on the same 1-100 scale.
 
-The native statistical rating (0-10) and its existing 1-100 display calibration are not BB-Rating labels and are never the target of this model. The existing Prediction Model 2.6.0 remains independent and unchanged.
+The native statistical rating (0-10) and its existing 1-100 display calibration are not BB-Rating labels and are never the target of this model. The legacy native Prediction Model 2.6.0 and its display calibration are no longer exposed as a user-facing prediction feature; this model predicts BB-Rating directly.
 
 ## Model and labels
 
@@ -45,7 +45,7 @@ python -m basketball_ai.cli --mode bb-rating-prediction-train \
   --bb-rating-prediction-output-dir models_saved
 ```
 
-The command excludes the latest observed season as a target by default (it can still be used as source history) to avoid training on an in-progress season. Only pass `--bb-rating-prediction-include-latest-target-season` when that season has been confirmed complete. It writes a lifecycle-managed candidate under `models_saved/candidates/bb-rating-prediction/<candidate_id>/` only if enough walk-forward OOF predictions exist and the MAE gate passes. It does not automatically promote the candidate. Inspect it in Model Center → Model Releases → BB Prediction Model (1–100), then use the normal candidate validation/promotion/rollback controls. Keep the existing Prediction Model 2.6.0 and its artifacts intact.
+The command excludes the latest observed season as a target by default (it can still be used as source history) to avoid training on an in-progress season. Only pass `--bb-rating-prediction-include-latest-target-season` when that season has been confirmed complete. It writes a lifecycle-managed candidate under `models_saved/candidates/bb-rating-prediction/<candidate_id>/` only if enough walk-forward OOF predictions exist and the MAE gate passes. It does not automatically promote the candidate. Inspect it in Model Center → Model Releases → BB Prediction Model (1–100), then use the normal candidate validation/promotion/rollback controls. The old native Prediction Model is not used as a target, intermediate conversion or user-facing prediction. Historical artifacts may remain on disk for audit/rollback until downstream consumers have been migrated.
 
 After independent review, promote the candidate through Model Center or set `BB_RATING_FUTURE_MODEL_DIR` to an explicitly approved release directory. The API loads only the promoted release path, never the candidate directory.
 
@@ -69,7 +69,7 @@ Example request:
 
 The response contains a direct 1-100 BB-Rating prediction, empirical OOF 10th-90th residual interval, scenario, calibration level and support counts. The source league is optional; if omitted, the model deterministically selects the highest-usage source context in the requested source season/phase. Specify it when a player has simultaneous league contexts. The target team is optional; when omitted, the team transition is unknown and the model must not pretend it has calibrated a same-team or transfer scenario.
 
-The health response exposes `bb_rating_future_prediction_loaded` and the loaded model version. A missing release disables only this new endpoint; it does not silently substitute the native-rating Prediction Model.
+The health response exposes `bb_rating_future_prediction_loaded` and the loaded model version. The old `/api/v2/predictions/player-team` endpoint is no longer mounted; use the direct BB Prediction endpoint for future BB-Rating. A missing release disables only this new endpoint; it does not silently substitute the native-rating Prediction Model.
 
 ## Important limitations
 
