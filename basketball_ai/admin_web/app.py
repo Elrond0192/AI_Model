@@ -1347,6 +1347,7 @@ def _scenario_entity_rows(entity: str, query: str, limit: int = 12) -> list[dict
     records: list[dict[str, Any]] = []
     loaded_entity_by_id: dict[str, dict[str, Any]] = {}
     loaded_entity_by_global_id: dict[str, dict[str, Any]] = {}
+    loaded_entities_by_name: dict[str, list[dict[str, Any]]] = {}
     if isinstance(loaded, dict):
         entity_frame = loaded.get("players" if entity == "player" else "teams")
         if isinstance(entity_frame, pd.DataFrame) and "id" in entity_frame.columns:
@@ -1361,12 +1362,25 @@ def _scenario_entity_rows(entity: str, query: str, limit: int = 12) -> list[dict
                 for item in loaded_records
                 if value_text(item, "global_id")
             }
+            for item in loaded_records:
+                exact_name = " ".join(value_text(item, "name").casefold().split())
+                if exact_name:
+                    loaded_entities_by_name.setdefault(exact_name, []).append(item)
+    # Name-only enrichment is permitted only for a unique exact-name match;
+    # ambiguous names never borrow current-team metadata from another player.
+    loaded_entity_by_unique_name = {
+        name: matches[0]
+        for name, matches in loaded_entities_by_name.items()
+        if len(matches) == 1
+    }
     for row in rows:
-        # Canonical GlobalId survives source-local ID remapping. Use internal ID
-        # first, then the canonical identity when enriching with current metadata.
-        by_internal_id = loaded_entity_by_id.get(value_text(row, "id"), {})
+        # Canonical GlobalId is strongest, internal ID is a compatibility fallback,
+        # and unique exact-name matching enriches metadata only (never identity).
         by_global_id = loaded_entity_by_global_id.get(value_text(row, "global_id"), {})
-        loaded_entity = by_global_id or by_internal_id
+        by_internal_id = loaded_entity_by_id.get(value_text(row, "id"), {})
+        exact_name = " ".join(value_text(row, "name").casefold().split())
+        by_unique_name = loaded_entity_by_unique_name.get(exact_name, {})
+        loaded_entity = by_global_id or by_internal_id or by_unique_name
         row = {**loaded_entity, **row}
         # SQL source contracts may expose these enrichment-only fields as NULL;
         # preserve trustworthy in-memory values instead of overwriting them.
