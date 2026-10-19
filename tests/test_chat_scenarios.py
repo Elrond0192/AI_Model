@@ -327,6 +327,57 @@ def test_playoff_role_uses_po_evidence_not_rs_alias():
     assert result["result"]["role_signal"] in {"PRIMARY_OPTION", "SECONDARY_OPTION"}
 
 
+def test_player_team_counterfactual_applies_only_explicit_minutes_usage_and_role(monkeypatch):
+    import basketball_ai.scenarios.chat_scenario_engine as scenario_module
+
+    seen = {}
+
+    class FakeWhatIf:
+        def __init__(self, ensemble, scoped_data):
+            seen["scoped_data"] = scoped_data
+
+        def predict_in_team(self, player_id, team_id, season, *, competition):
+            scoped = seen["scoped_data"]
+            row = scoped["player_stats"].iloc[-1]
+            seen["minutes_per_game"] = float(row["minutes_per_game"])
+            seen["usg_pct"] = float(row["usg_pct"])
+            seen["role"] = str(row["ruolo_combinato"])
+            return SimpleNamespace(
+                predicted_rating=6.8, base_rating=6.2, compatibility_factor=0.95,
+                league_factor=1.0, context_adjustment=0.0, confidence_low=6.1,
+                confidence_high=7.3, shap_values={}, competition=competition,
+            )
+
+    monkeypatch.setattr(scenario_module, "StrictWhatIfEngine", FakeWhatIf)
+    result = ChatScenarioEngine(SimpleNamespace(), _data()).evaluate(
+        {
+            "scenario": "player_team",
+            "season": 2024,
+            "competition": "RS",
+            "source_league": "EL",
+            "target_league": "EL",
+            "player_overrides": {
+                "minutes_per_game": 34,
+                "usg_pct": 0.27,
+                "role": "SECONDARY_CREATOR",
+            },
+            "parameters": {"player_season": 2024, "target_season": 2025},
+        },
+        [1], [201], 20, 20,
+    )
+    assert seen["minutes_per_game"] == 34.0
+    assert seen["usg_pct"] == 0.27
+    assert seen["role"] == "SECONDARY_CREATOR"
+    assert result["result"]["what_if"]["assumptions"]["applied_player_context"] == {
+        "minutes_per_game": 34.0,
+        "usg_pct": 0.27,
+        "role": "SECONDARY_CREATOR",
+    }
+    assert result["result"]["source_season"] == 2024
+    assert result["result"]["target_season"] == 2025
+    assert any("Infortuni" in value for value in result["limitations"])
+
+
 def test_cross_league_transfer_is_learned_from_real_transitions():
     engine = ChatScenarioEngine(SimpleNamespace(), _data())
     result = engine.evaluate(
