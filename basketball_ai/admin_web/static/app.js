@@ -304,7 +304,7 @@ async function renderModelReleases(){
   $('#model-release-serving').innerHTML=summaryRows(servingRows);
   $('#release-bb-rating').innerHTML=fmtRelease(models['bb-rating']||{});
   $('#release-future-performance').innerHTML=fmtRelease(models['future-performance']||{});
-  $('#release-bb-rating-prediction').innerHTML=fmtRelease(release);
+  $('#prediction-calibration-release').innerHTML=fmtRelease(release);
   $('#prediction-calibration-release').innerHTML='';
   $('#prediction-calibration-job').innerHTML='<div class="job-head"><div><div class="job-status">'+esc(job.stage||'Ready')+'</div><div class="job-message">'+esc(job.error||job.message||'Nessun training eseguito.')+'</div></div><span class="registry-badge '+(['running','queued'].includes(job.status)?'candidate':'')+'">'+esc(job.status||'idle')+'</span></div>'+
     (job.output?'<div class="summary-list">'+[['OOF samples',job.output.oof_samples],['MAE',job.output.mae],['RMSE',job.output.rmse],['Scenari valutati',(job.output.scenario_metrics||[]).length]].map(([a,b])=>'<div class="summary-row"><span>'+esc(a)+'</span><strong>'+esc(b??'—')+'</strong></div>').join('')+'</div>':'')+
