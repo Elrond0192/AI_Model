@@ -393,6 +393,9 @@ def test_helpers_and_static_assets(monkeypatch, tmp_path):
     assert 'id="page-registry"' not in html
     assert "Model Releases" in html
     assert "bb-rating-prediction" in js
+    assert "MAE baseline" in js
+    assert "Cause del rifiuto" in js
+    assert "Segmenti con regressione" in js
     assert "admin-api/auto-load" in js
     assert "async function enterBackOffice" in js
     assert "await enterBackOffice(s.user)" in js
@@ -569,6 +572,59 @@ def test_bb_rating_prediction_worker_writes_candidate_without_touching_productio
     assert job["output"]["mae"] == 6.1
     assert (root / "candidates" / "bb-rating-prediction" / job["candidate_id"] / "bb_rating_future_model.joblib").is_file()
     assert not (root / "bb_rating_future_prediction").exists()
+    _reset_state()
+
+
+def test_bb_rating_prediction_gate_failure_preserves_validation_diagnostics(monkeypatch, tmp_path):
+    _reset_state()
+    root = tmp_path / "models_saved"
+    monkeypatch.setattr(admin, "MODEL_ROOT", root)
+    monkeypatch.setattr(admin, "_utcnow", lambda: "now")
+    monkeypatch.setattr(admin, "_audit", lambda *args, **kwargs: None)
+
+    metadata = {
+        "promotion_gate_passed": False,
+        "oof_samples": 620,
+        "oof_mae_after_calibration": 6.4,
+        "oof_rmse_after_calibration": 8.7,
+        "oof_baseline_mae": 5.8,
+        "target_seasons": [2021, 2022, 2023, 2024],
+        "walk_forward_target_seasons": [2022, 2023],
+        "walk_forward_fold_count": 2,
+        "minimum_walk_forward_target_seasons": 3,
+        "segment_regressions": [
+            {"dimension": "scenario", "group": "same_context", "n": 420, "mae": 7.3, "baseline_mae": 6.1}
+        ],
+        "under_supported_segments": [{"dimension": "scenario", "group": "league_transfer", "n": 12}],
+        "scenario_metrics": {"same_context": {"n": 420, "mae": 7.3, "baseline_mae": 6.1}},
+    }
+
+    class GateFailModel:
+        def __init__(self, min_oof_samples):
+            assert min_oof_samples == 500
+            self.metadata = {}
+
+        def fit(self, data, include_latest_target_season=False):
+            assert include_latest_target_season is False
+            return metadata
+
+    import basketball_ai.bb_rating.future_prediction as model_module
+    import basketball_ai.data.postgres_loader as loader
+    monkeypatch.setattr(model_module, "BBRatingFuturePredictionModel", GateFailModel)
+    monkeypatch.setattr(loader, "load_all_data", lambda **kwargs: {"source_contract": "canonical"})
+
+    admin._bb_rating_prediction_job_worker("production", "admin")
+
+    job = admin.STATE.bb_rating_prediction_job
+    assert job["status"] == "failed"
+    assert job["stage"] == "Validation gates failed"
+    assert "MAE modello 6.400" in job["error"]
+    assert "baseline 5.800" in job["error"]
+    assert "Solo 2 stagioni OOF" in job["error"]
+    assert job["output"]["promotion_gate_passed"] is False
+    assert job["output"]["segment_regression_count"] == 1
+    assert job["output"]["segment_regressions"][0]["group"] == "same_context"
+    assert not (root / "candidates" / "bb-rating-prediction").exists()
     _reset_state()
 
 
