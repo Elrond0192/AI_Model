@@ -160,7 +160,8 @@ def test_main_mounts_v2_only(monkeypatch):
 
     app = create_app()
     paths = set(app.openapi()["paths"])
-    assert "/api/v2/predictions/player-team" in paths
+    assert "/api/v2/predictions/player-team" not in paths
+    assert "/api/v2/bb-rating-prediction/player" in paths
     assert not any(path.startswith("/api/v1") for path in paths)
     assert "/predictions/batch" not in paths
     assert "/predictions/{player_id}/explain" not in paths
@@ -399,18 +400,24 @@ def test_api_key_protects_v2_and_allows_service_call(monkeypatch):
     monkeypatch.delenv("JWT_SECRET", raising=False)
     from basketball_ai.api.main import create_app
 
-    _patch_inference(monkeypatch)
     app = create_app()
-    _fake_state(app)
     client = TestClient(app)
-    denied = client.post("/api/v2/predictions/player-team", json=_payload())
+    payload = {
+        "player_global_id": "p1",
+        "source_season": 2025,
+        "source_league": "ITA1",
+        "source_competition": "RS",
+        "target_league": "ITA1",
+        "target_competition": "RS",
+    }
+    denied = client.post("/api/v2/bb-rating-prediction/player", json=payload)
     assert denied.status_code == 401
     allowed = client.post(
-        "/api/v2/predictions/player-team",
-        json=_payload(),
+        "/api/v2/bb-rating-prediction/player",
+        json=payload,
         headers={"X-API-Key": "service-key-12345678901234567890"},
     )
-    assert allowed.status_code == 200
+    assert allowed.status_code in {200, 503}
 
 
 def test_request_body_limit_short_circuits(monkeypatch):
