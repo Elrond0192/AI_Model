@@ -619,7 +619,6 @@ def create_app() -> FastAPI:
     if _PROMETHEUS_AVAILABLE:
         _Instrumentator().instrument(app).expose(app, endpoint="/metrics")
 
-    from basketball_ai.api.routes.predictions_v2 import router as predictions_v2_router
     from basketball_ai.api.routes.scenarios_v2 import router as scenarios_v2_router
     from basketball_ai.api.routes.metric_rating_v2 import router as metric_rating_v2_router
     from basketball_ai.api.routes.bb_rating_v2 import router as bb_rating_v2_router
@@ -627,7 +626,6 @@ def create_app() -> FastAPI:
     from basketball_ai.api.routes.bb_rating_prediction_v2 import router as bb_rating_prediction_v2_router
     from basketball_ai.api.routes.player_intelligence_v2 import router as player_intelligence_v2_router
 
-    app.include_router(predictions_v2_router)
     app.include_router(scenarios_v2_router)
     app.include_router(metric_rating_v2_router)
     app.include_router(bb_rating_v2_router)
@@ -670,11 +668,7 @@ def create_app() -> FastAPI:
         return {
             "status": "ok",
             "data_loaded": bool(data.get("player_dict")),
-            "prediction_model_loaded": prediction_engine is not None,
-            "prediction_model_run_id": model_metadata.get("model_run_id"),
-            "prediction_model_version": model_metadata.get("model_version"),
-            "prediction_feature_version": model_metadata.get("feature_version"),
-            "prediction_data_cutoff": model_metadata.get("data_cutoff"),
+                "prediction_data_cutoff": model_metadata.get("data_cutoff"),
             "production_model_files": {
                 "performance_model": (model_root / "performance_model.joblib").is_file(),
                 "compatibility_model": (model_root / "compatibility_model.joblib").is_file(),
