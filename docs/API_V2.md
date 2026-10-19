@@ -1,6 +1,6 @@
 # AI_Model prediction contract v2
 
-`AI_Model` is an inference service, not a chatbot. WordPress resolves player/team entities and calls `POST /api/v2/predictions/player-team` with server-side global IDs.
+`AI_Model` is an inference service, not a chatbot. WordPress resolves player/team entities and calls `POST /api/v2/bb-rating-prediction/player` with server-side global IDs.
 
 ## Request
 
