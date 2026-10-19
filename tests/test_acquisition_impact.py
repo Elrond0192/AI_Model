@@ -147,6 +147,17 @@ def test_acquisition_model_must_pass_walk_forward_validation_before_scoring():
     assert validation["seasons"] >= 3
     assert validation["rmse"] < validation["baseline_rmse"]
     assert validation["beats_zero_change_baseline"] is True
+    cohorts = validation["by_target_season"]
+    assert len(cohorts) >= 3
+    assert all(row["target_season"] <= 2022 for row in cohorts)
+    assert all(row["samples"] > 0 for row in cohorts)
+    assert all(row["status"] in {
+        "validated", "baseline_not_beaten", "under_supported", "material_regression"
+    } for row in cohorts)
+    assert model["validation_scope"]["league_id"] == 10
+    assert model["validation_scope"]["competition"] == "RS"
+    assert model["validation_scope"]["through_season"] == 2022
+    assert model["validation_scope"]["design"] == "expanding_window_walk_forward"
 
     impact = predict_acquisition_impact(
         model,
