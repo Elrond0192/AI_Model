@@ -272,12 +272,12 @@ async function renderBBRating(){
 
 async function renderModelReleases(){
   const data=await api('/admin-api/model-releases');
-  const calibration=await api('/admin-api/prediction-calibration');
+  const prediction=await api('/admin-api/bb-rating-prediction');
   let health={};
   try{health=await api('/admin-api/api-health');}catch(_){health={};}
   const models=data.models||{};
-  const job=calibration.job||{};
-  const release=calibration.release||{};
+  const job=prediction.job||{};
+  const release=prediction.release||{};
   const fmtRelease=(m)=>{
     const prod=m.production||{},cand=m.candidate||{},prev=m.previous||{};
     return '<div class="summary-list">'+
@@ -286,62 +286,46 @@ async function renderModelReleases(){
       '<div class="summary-row"><span>Candidate</span><strong>'+esc(cand.id||'Nessuna')+'</strong></div>'+
       '<div class="summary-row"><span>Validazione candidate</span><strong>'+esc(cand.valid?'OK':(cand.reason||'Non disponibile'))+'</strong></div>'+
       '<div class="summary-row"><span>Versione candidate</span><strong>'+esc(cand.version||'—')+'</strong></div>'+
-      '<div class="summary-row"><span>Data cutoff</span><strong>'+esc(cand.data_cutoff||'—')+'</strong></div>'+
-      '<div class="summary-row"><span>Stagioni validate</span><strong>'+esc((cand.seasons||[]).join(', ')||'—')+'</strong></div>'+
+      '<div class="summary-row"><span>OOF samples</span><strong>'+esc(cand.oof_samples??'—')+'</strong></div>'+
+      '<div class="summary-row"><span>MAE walk-forward</span><strong>'+esc(fmt(cand.mae))+'</strong></div>'+
       '<div class="summary-row"><span>Precedente disponibile</span><strong>'+esc(prev.valid?'Sì':'No')+'</strong></div>'+
       '</div>';
   };
-  const native=data.prediction_model_registry||{};
-  $('#native-prediction-registry').innerHTML='<div class="summary-list">'+
-    '<div class="summary-row"><span>Production run</span><strong>'+esc(native.production?.run_id||'—')+'</strong></div>'+
-    '<div class="summary-row"><span>Production version</span><strong>'+esc(native.production?.model_version||'—')+'</strong></div>'+
-    '<div class="summary-row"><span>Candidate run</span><strong>'+esc(native.candidate?.run_id||'—')+'</strong></div>'+
-    '<div class="summary-row"><span>Candidate OOT RMSE</span><strong>'+esc(fmt(native.candidate?.overall_rmse))+'</strong></div>'+
-    '</div>';
   const servingRows=[
     ['Inference API live',health.live?.ok?'Online':'Offline'],
     ['Inference API ready',health.ready?.ok?'Ready':'Not ready'],
-    ['Native Prediction Model loaded',health.bb_rating_prediction?.loaded?'Yes':'No'],
-    ['Prediction run / version',(health.bb_rating_prediction?.version||'—')+' / '+(health.bb_rating_prediction?.version||'—')],
-    ['Prediction feature version',health.bb_rating_prediction?.feature_version||'—'],
-    ['Prediction data cutoff',health.bb_rating_prediction?.data_cutoff||'—'],
-    ['Performance artifact present','N/A — direct BB-Rating model'],
-    ['Compatibility artifact present','N/A — direct BB-Rating model'],
-    ['Metric distributions loaded','N/A — direct BB-Rating model'],
     ['BB-Rating loaded',health.bb_rating?.loaded?'Yes':'No'],
     ['BB-Rating uncertainty loaded',health.bb_rating?.uncertainty_loaded?'Yes':'No'],
-    ['Future Performance loaded',health.future_performance?.loaded?'Yes':'No'],
     ['BB Prediction Model loaded',health.bb_rating_prediction?.loaded?'Yes':'No'],
     ['BB Prediction Model version',health.bb_rating_prediction?.version||'—'],
-    ['BB-Rating runtime version',health.bb_rating?.runtime_calibration_version||'—'],
-    ['Future Performance runtime version',health.future_performance?.version||'—'],
+    ['Future Performance loaded',health.future_performance?.loaded?'Yes':'No'],
     ['Automatic API restart',data.automatic_api_restart_configured?'Configured (restart + readiness check)':'Not configured (API_KEY missing)'],
   ];
   $('#model-release-serving').innerHTML=summaryRows(servingRows);
   $('#release-bb-rating').innerHTML=fmtRelease(models['bb-rating']||{});
   $('#release-future-performance').innerHTML=fmtRelease(models['future-performance']||{});
-  $('#release-bb-rating-prediction').innerHTML=fmtRelease(models['bb-rating-prediction']||{});
-  $('#prediction-calibration-release').innerHTML=fmtRelease(release);
-  $('#prediction-calibration-job').innerHTML='<div class="job-head"><div><div class="job-status">'+esc(job.stage||'Ready')+'</div><div class="job-message">'+esc(job.error||job.message||'Nessuna calibrazione eseguita.')+'</div></div><span class="registry-badge '+(['running','queued'].includes(job.status)?'candidate':'')+'">'+esc(job.status||'idle')+'</span></div>'+
-    (job.output?'<div class="summary-list">'+[['OOS rows',job.output.rows],['Target seasons',(job.output.target_seasons||[]).join(', ')],['OOS folds',job.output.n_folds],['Prediction version',job.output.prediction_model_version]].map(([a,b])=>'<div class="summary-row"><span>'+esc(a)+'</span><strong>'+esc(b??'—')+'</strong></div>').join('')+'</div>':'')+
+  $('#release-bb-rating-prediction').innerHTML=fmtRelease(release);
+  $('#prediction-calibration-release').innerHTML='';
+  $('#prediction-calibration-job').innerHTML='<div class="job-head"><div><div class="job-status">'+esc(job.stage||'Ready')+'</div><div class="job-message">'+esc(job.error||job.message||'Nessun training eseguito.')+'</div></div><span class="registry-badge '+(['running','queued'].includes(job.status)?'candidate':'')+'">'+esc(job.status||'idle')+'</span></div>'+
+    (job.output?'<div class="summary-list">'+[['OOF samples',job.output.oof_samples],['MAE',job.output.mae],['RMSE',job.output.rmse],['Scenari valutati',(job.output.scenario_metrics||[]).length]].map(([a,b])=>'<div class="summary-row"><span>'+esc(a)+'</span><strong>'+esc(b??'—')+'</strong></div>').join('')+'</div>':'')+
     (job.progress!=null?'<div class="progress-track"><div class="progress-bar" style="width:'+Math.max(0,Math.min(100,Number(job.progress)||0))+'%"></div></div>':'');
   if(['running','queued'].includes(job.status)) {
-    $('#prediction-calibration-job').insertAdjacentHTML('beforeend','<div class="button-row"><button id="prediction-calibration-cancel" class="btn btn-danger btn-small" '+(job.cancel_requested?'disabled':'')+'>'+(job.cancel_requested?'Interruzione richiesta…':'Interrompi calibrazione')+'</button></div>');
+    $('#prediction-calibration-job').insertAdjacentHTML('beforeend','<div class="button-row"><button id="prediction-calibration-cancel" class="btn btn-danger btn-small" '+(job.cancel_requested?'disabled':'')+'>'+(job.cancel_requested?'Interruzione richiesta…':'Interrompi training')+'</button></div>');
     const cancel=$('#prediction-calibration-cancel');
-    cancel.onclick=async()=>{cancel.disabled=true;try{await api('/admin-api/jobs/prediction-calibration/cancel',{method:'POST',body:{}});toast('Interruzione calibrazione richiesta');await renderModelReleases();}catch(e){toast(e.message,'error');cancel.disabled=false;}};
+    cancel.onclick=async()=>{cancel.disabled=true;try{await api('/admin-api/jobs/bb-rating-prediction/cancel',{method:'POST',body:{}});toast('Interruzione training richiesta');await renderModelReleases();}catch(e){toast(e.message,'error');cancel.disabled=false;}};
   }
   const start=$('#prediction-calibration-start');
   start.disabled=['running','queued'].includes(job.status);
-  start.textContent=['running','queued'].includes(job.status)?'Calibrazione in corso…':'Genera candidate';
+  start.textContent=['running','queued'].includes(job.status)?'Training in corso…':'Allena candidate';
   start.onclick=async()=>{
     start.disabled=true;
-    try{await api('/admin-api/prediction-calibration/calibrate',{method:'POST',body:{}});toast('Prediction calibration avviata');await renderModelReleases();}
+    try{await api('/admin-api/bb-rating-prediction/train',{method:'POST',body:{}});toast('Training BB Prediction Model avviato');await renderModelReleases();}
     catch(e){toast(e.message,'error');start.disabled=false;}
   };
   $('#model-releases-refresh').onclick=()=>renderModelReleases().catch(e=>toast(e.message,'error'));
   $$('.release-promote').forEach(button=>{
     const model=button.dataset.model;
-    const item=model==='prediction-calibration'?release:(models[model]||{});
+    const item=models[model]||{};
     button.disabled=!(item.candidate&&item.candidate.valid);
     button.onclick=async()=>{
       if(!confirm('Promuovere il candidate '+model+'? Il sistema riavvierà automaticamente l’API e verificherà la readiness.'))return;
@@ -352,7 +336,7 @@ async function renderModelReleases(){
   });
   $$('.release-rollback').forEach(button=>{
     const model=button.dataset.model;
-    const item=model==='prediction-calibration'?release:(models[model]||{});
+    const item=models[model]||{};
     button.disabled=!(item.previous&&item.previous.valid);
     button.onclick=async()=>{
       if(!confirm('Ripristinare la release precedente di '+model+'? Il sistema riavvierà automaticamente l’API e verificherà la readiness.'))return;
