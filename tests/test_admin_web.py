@@ -399,7 +399,9 @@ def test_helpers_and_static_assets(monkeypatch, tmp_path):
     assert "const setHtml" in future_js
     assert "streamlit" not in (html + css + js).lower()
     assert admin.healthz() == {"status": "ok"}
-    assert Path(admin.index().path).name == "index.html"
+    response = admin.index()
+    assert response.status_code == 200
+    assert b"Model Releases" in response.body
 
 
 
