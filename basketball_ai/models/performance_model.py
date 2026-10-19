@@ -1442,6 +1442,7 @@ class PerformanceModel:
         if getattr(self, "target_mode", "rating") == "delta_vs_prior":
             return raw_prediction
         return float(np.clip(raw_prediction, 3.5, 10.0))
+
     def get_shap_values(self, feature_dict: Dict[str, float]) -> Dict[str, float]:
         if not self.is_trained or not _SHAP_AVAILABLE:
             return {}
