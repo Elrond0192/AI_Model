@@ -87,6 +87,13 @@ def test_direct_bb_rating_model_trains_oof_predicts_and_roundtrips(tmp_path):
     assert metadata["target_scale"] == [1, 100]
     assert metadata["oof_samples"] >= 20
     assert "target_team__pace" in model.feature_columns
+    assert metadata["walk_forward_target_seasons"] == sorted(metadata["walk_forward_target_seasons"])
+    assert metadata["walk_forward_fold_count"] == len(metadata["walk_forward_target_seasons"])
+    assert metadata["minimum_walk_forward_target_seasons"] == 3
+    assert "ITA1" in metadata["source_league_metrics"]
+    assert any(key.startswith("ITA1=>ITA1::") for key in metadata["source_destination_scenario_metrics"])
+    # A small fixture must not be allowed to pass promotion merely on row count.
+    assert metadata["promotion_gate_passed"] is False
     assert metadata["oof_mae_after_calibration"] >= 0
 
     prediction = model.predict_from_data(
