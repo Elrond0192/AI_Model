@@ -291,7 +291,7 @@ async function renderModelReleases(){
       '<div class="summary-row"><span>Validazione candidate</span><strong>'+esc(cand.valid?'OK':(cand.reason||'Non disponibile'))+'</strong></div>'+
       '<div class="summary-row"><span>Versione candidate</span><strong>'+esc(cand.version||'—')+'</strong></div>'+
       '<div class="summary-row"><span>OOF samples</span><strong>'+esc(cand.oof_samples??'—')+'</strong></div>'+
-      '<div class="summary-row"><span>MAE walk-forward</span><strong>'+esc(fmt(cand.oof_mae_after_calibration??cand.mae))+'</strong></div>'+
+      '<div class="summary-row"><span>MAE walk-forward</span><strong>'+esc(fmt(cand.oof_mae_after_calibration??cand.validation?.oof_mae_after_calibration??cand.mae))+'</strong></div>'+
       '<div class="summary-row"><span>Precedente disponibile</span><strong>'+esc(prev.valid?'Sì':'No')+'</strong></div>'+
       '</div>';
   };
