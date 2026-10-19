@@ -34,6 +34,11 @@ _PUBLIC_RAW_RATING_KEYS = {
     "delta_vs_observed", "baseline_rating", "scenario_rating",
     "rating_with_pair_context", "observed_rating", "expected_rating",
     "actual_rating", "forecast_rating",
+    # These acquisition fields are native player-rating comparisons, not
+    # BB-Rating or team Net Rating. Never leak them through the public scenario API.
+    "projected_player_rating", "incoming_rating", "outgoing_rating",
+    "rotation_rating_before", "rotation_rating_after", "rotation_delta",
+    "replacement_level_rating", "rotation_quality_delta",
 }
 _PUBLIC_RAW_METRIC_NAMES = {"rating", "source_rating", "statistical_rating"}
 _DROP_PUBLIC_FIELD = object()
