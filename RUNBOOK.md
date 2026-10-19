@@ -125,7 +125,6 @@ a new, validated calibration is required. The API reads the shared artifact from
 docker compose run --rm admin \
   python main.py --mode prediction-calibrate \
   --database-profile production \
-  --prediction-calibration-output-dir /app/models_saved/prediction_calibration
 ```
 
 The CLI fallback writes an artifact directly and does not trigger the Model Center restart workflow; after using this fallback, restart the API manually and verify readiness.
@@ -150,7 +149,6 @@ For playoffs:
 
 ```bash
 curl -fsS -X POST \
-  http://127.0.0.1:8000/api/v2/predictions/player-team \
   -H 'Content-Type: application/json' \
   -H "X-API-Key: $API_KEY" \
   -d '{
@@ -261,7 +259,6 @@ Never commit `.env`, DB profile JSON, model artifacts, registries/metadata, sess
 The admin console writes auxiliary model outputs to immutable candidate directories under `runtime/models/candidates/<model>/<run-id>/`. Calibration/training must not write directly to serving paths.
 
 Supported release IDs:
-- `prediction-calibration`: `prediction_rating_calibration.json` (at least 500 OOS rows and a valid monotonic mapping).
 - `bb-rating`: calibration report plus `bb_rating_uncertainty.json`.
 - `future-performance`: fitted `metadata.json` plus every model file declared in `model_files`.
 
