@@ -110,13 +110,13 @@
 
   <template id="page-data">
     <section class="page">
-      <div class="page-heading"><div><h1>Dati e snapshot</h1><p>Configura PostgreSQL, prepara lo storico immutabile e porta i dati al training senza passare dal terminale.</p></div></div>
+      <div class="page-heading"><div><h1>Dati e snapshot</h1><p>Configura PostgreSQL e prepara lo storico immutabile per BB Prediction Model e Future Performance.</p></div></div>
       <section class="panel lifecycle-panel">
         <div class="panel-heading"><h2>Come funziona</h2><span class="registry-badge">Nessun terminale per l’operatività ordinaria</span></div>
         <div class="quality-grid lifecycle-grid">
           <div class="quality-card"><span>1 · Database</span><strong>Testa il profilo</strong><small>Verifica connessione e contratto AI.</small></div>
           <div class="quality-card"><span>2 · Storico modello</span><strong>Prepara storico modello</strong><small>Legge solo Anagrafiche e AdvancedStats: non carica PBP.</small></div>
-          <div class="quality-card"><span>3 · Training</span><strong>Usa lo snapshot</strong><small>Genera un candidate; production resta invariato.</small></div>
+          <div class="quality-card"><span>3 · BB Prediction</span><strong>Allena e valida il candidate</strong><small>Usa Model Releases; la produzione resta invariata fino alla promozione.</small></div>
           <div class="quality-card"><span>4 · Scenari avanzati</span><strong>On demand</strong><small>PBP e lineup sono separati dal training.</small></div>
         </div>
         <p class="microcopy">La migrazione iniziale degli schemi PostgreSQL resta un’operazione tecnica una tantum. Dopo l’installazione, usa questa pagina per il normale ciclo dati.</p>
@@ -140,34 +140,6 @@
       <section class="panel"><div class="panel-heading"><h2>Storico pronto per il modello</h2><button id="refresh-snapshots" class="btn btn-small btn-secondary">Aggiorna</button></div><p class="microcopy">Uno snapshot è una copia immutabile dei dati core storici. Prepararlo non allena il modello e non legge play-by-play.</p><div id="snapshots-list" class="profile-list"></div></section>
       <section class="panel"><div class="panel-heading"><h2>Stato delle stagioni</h2><button id="refresh-lifecycle" class="btn btn-small btn-secondary">Aggiorna</button></div><p class="microcopy">Segna una stagione <strong>Completa</strong> solo quando AdvancedStats e risultati finali sono definitivi. Il training esclude automaticamente le stagioni <strong>In corso</strong>; resta bloccato solo in presenza di stagioni non classificate o <strong>Bloccate</strong>.</p><div id="season-lifecycle-list" class="profile-list"></div></section>
       <section class="panel contract-panel"><div class="panel-heading"><h2>Contratto dati canonical</h2></div><div class="contract-tags"><span>"AI_Source"."Leagues"</span><span>"AI_Source"."Teams"</span><span>"AI_Source"."Players"</span><span>player_competition_stats</span><span>team_competition_stats</span><span>immutable training snapshot</span><span>scenario_* serving</span></div></section>
-    </section>
-  </template>
-
-  <template id="page-training">
-    <section class="page">
-      <div class="page-heading action-heading"><div><h1>Training</h1><p>Usa esclusivamente uno snapshot già preparato: niente caricamenti automatici o letture PBP.</p></div><button id="start-training" class="btn btn-primary">Avvia training</button></div>
-      <div id="training-kpis" class="kpi-grid four"></div>
-      <section id="training-job" class="panel job-panel"></section>
-      <section class="panel"><div class="panel-heading"><h2>Leakage-safe training contract</h2></div><div class="table-shell"><table><thead><tr><th>Stage</th><th>Seasons</th><th>Purpose</th></tr></thead><tbody id="training-contract"></tbody></table></div></section>
-      <section class="panel"><div class="panel-heading"><h2>Immutable run configuration</h2></div><div id="training-config" class="config-grid"></div></section>
-    </section>
-  </template>
-
-  <template id="page-backtests">
-    <section class="page">
-      <div class="page-heading"><div><h1>Backtests</h1><p>Walk-forward out-of-time dell'ensemble esatto di produzione</p></div></div>
-      <div id="backtest-kpis" class="kpi-grid four"></div>
-      <div class="split-grid"><section class="panel"><div class="panel-heading"><h2>RMSE by target season</h2></div><div id="backtest-chart" class="chart-box"></div></section><section class="panel"><div class="panel-heading"><h2>Candidate summary</h2></div><div id="backtest-summary"></div></section></div>
-      <section class="panel"><div class="panel-heading"><h2>By competition</h2></div><div class="table-shell"><table><thead><tr><th>Competition</th><th>N</th><th>RMSE</th><th>MAE</th><th>Bias</th><th>Coverage</th></tr></thead><tbody id="competition-body"></tbody></table></div></section>
-    </section>
-  </template>
-
-  <template id="page-registry">
-    <section class="page">
-      <div class="page-heading"><div><h1>Model Registry</h1><p>Candidate immutabili, promotion gates e rollback controllato</p></div></div>
-      <div id="registry-cards" class="split-grid"></div>
-      <section class="panel"><div class="panel-heading"><h2>Promotion controls</h2></div><div class="control-row"><label class="confirm"><input id="registry-confirm" type="checkbox"><span>Ho verificato il walk-forward report e i promotion gates</span></label><div class="button-row"><button id="promote-btn" class="btn btn-primary" disabled>Promuovi candidate</button><button id="rollback-btn" class="btn btn-danger" disabled>Rollback previous</button></div></div></section>
-      <section class="panel"><div class="panel-heading"><h2>Registry history</h2></div><div class="table-shell"><table><thead><tr><th>UTC</th><th>Event</th><th>Run ID</th></tr></thead><tbody id="registry-history"></tbody></table></div></section>
     </section>
   </template>
 
