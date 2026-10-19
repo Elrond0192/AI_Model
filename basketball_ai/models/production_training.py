@@ -59,7 +59,14 @@ def season_year(value: Any) -> int:
 
 
 def _numeric_seasons(frame: pd.DataFrame) -> pd.Series:
-    """Vectorised season-to-year conversion used by every hot training path."""
+    """Vectorised season-to-year conversion used by every hot training path.
+
+    Optional relation/context frames can legitimately be empty and omit all
+    columns. Preserve their index and return a nullable numeric series instead
+    of raising a KeyError in historical snapshot construction.
+    """
+    if "season" not in frame.columns:
+        return pd.Series(np.nan, index=frame.index, dtype=float)
     raw = frame["season"]
     numeric = pd.to_numeric(raw, errors="coerce")
     missing = numeric.isna() & raw.notna()
