@@ -127,6 +127,14 @@ def build_historical_snapshot(data: Dict[str, Any], source_season: int) -> Dict[
     # context scoping can still resolve the requested team's GlobalId when
     # the incoming team_id is not present in the historical snapshot.
     source_team_dict = data.get("team_dict")
+    if not isinstance(source_team_dict, dict):
+        source_teams = data.get("teams")
+        if isinstance(source_teams, pd.DataFrame) and not source_teams.empty and "id" in source_teams.columns:
+            source_team_dict = {
+                _to_int(row["id"]): row
+                for row in source_teams.to_dict("records")
+                if _to_int(row.get("id")) is not None
+            }
     snapshot = _build_historical_snapshot(data, source_season)
     if isinstance(source_team_dict, dict):
         snapshot["_source_team_dict"] = source_team_dict
