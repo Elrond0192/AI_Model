@@ -88,14 +88,23 @@ def build_scenario_provenance(
         except (TypeError, ValueError):
             context_season = None
 
+    # Validation is an explicit property of the result, never inferred from
+    # a method name. In particular, "acquisition_impact_not_validated" must
+    # never be mistaken for a passing walk-forward validation.
     impact_status = str(result.get("acquisition_impact_status", "") or "").strip().lower()
+    explicit_validation_status = str(
+        result.get("validation_status", support.get("validation_status", "")) or ""
+    ).strip().lower()
+    method_name = str(support.get("method", "") or "").strip().lower()
     if impact_status:
         validation_status = impact_status
-    elif "walk_forward_validated" in str(support.get("method", "")).lower() or "validated" in str(support.get("method", "")).lower():
-        validation_status = "walk_forward_validated"
-    elif str(support.get("method", "")).lower() == "observed_data":
+    elif explicit_validation_status:
+        validation_status = explicit_validation_status
+    elif method_name in {"observed_data", "observed_clutch_advanced_stats"}:
         validation_status = "not_applicable"
-    elif support.get("method"):
+    elif "not_validated" in method_name or "uncalibrated" in method_name:
+        validation_status = "not_validated"
+    elif method_name:
         validation_status = "not_reported"
     else:
         validation_status = "not_assessed"
@@ -124,6 +133,16 @@ def build_scenario_provenance(
                 }
                 and isinstance(value, (str, int, float, bool))
             }
+
+    applied_context = result.get("applied_player_context", {})
+    if not isinstance(applied_context, dict):
+        applied_context = {}
+    applied_inputs = {
+        str(key): value
+        for key, value in applied_context.items()
+        if str(key) in {"minutes_per_game", "usg_pct", "role"}
+        and isinstance(value, (str, int, float, bool))
+    }
 
     impact_model = result.get("impact_model", {})
     impact_model = impact_model if isinstance(impact_model, dict) else {}
@@ -167,5 +186,6 @@ def build_scenario_provenance(
         "validation_status": validation_status,
         "validation_scope": validation_scope,
         "explicit_inputs": explicit_inputs,
+        "applied_inputs": applied_inputs,
         "not_modeled": not_modeled,
     }
