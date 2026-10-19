@@ -3684,7 +3684,7 @@ class ChatScenarioEngine:
                 )
         else:
             limitations.append(
-                "La squadra definisce il contesto, ma il Team Fit non è stato calcolato perché i dati di roster/statistiche non sono sufficienti."
+                "La squadra definisce il contesto, ma il Team Fit completo non è stato calcolato perché i dati di roster/statistiche non sono sufficienti."
             )
 
         if teams:
