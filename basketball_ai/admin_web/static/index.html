@@ -188,7 +188,7 @@
         <div class="panel-heading"><h2>Come funziona</h2><span class="registry-badge">Nessun terminale per l’operatività ordinaria</span></div>
         <div class="quality-grid lifecycle-grid">
           <div class="quality-card"><span>1 · Database</span><strong>Testa il profilo</strong><small>Verifica connessione e contratto AI.</small></div>
-          <div class="quality-card"><span>2 · Storico modello</span><strong>Prepara storico modello</strong><small>Legge solo Anagrafiche e AdvancedStats: non carica PBP.</small></div>
+          <div class="quality-card"><span>2 · Storico modello</span><strong>Caricato automaticamente dal DB</strong><small>All’apertura del BO carica il profilo PostgreSQL e prepara lo snapshot core, senza PBP/lineup.</small></div>
           <div class="quality-card"><span>3 · BB Prediction</span><strong>Allena e valida il candidate</strong><small>Usa Model Releases; la produzione resta invariata fino alla promozione.</small></div>
           <div class="quality-card"><span>4 · Scenari avanzati</span><strong>On demand</strong><small>PBP e lineup sono separati dal training.</small></div>
         </div>
