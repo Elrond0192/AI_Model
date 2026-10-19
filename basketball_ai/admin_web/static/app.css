@@ -249,3 +249,17 @@ footer{padding:15px 36px 20px;font-size:11px}
 .page-heading.action-heading{padding-bottom:18px;border-bottom:1px solid rgba(36,77,105,.55);margin-bottom:22px}
 .page-heading.action-heading .eyebrow{margin-bottom:6px}
 .model-state{box-shadow:inset 0 1px rgba(255,255,255,.025)}
+
+/* Job progress: readable percentages, a luminous fill and a restrained live shimmer. */
+.job-progress{margin-top:16px}
+.job-progress-meta{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:8px;color:#8eaec5;font-size:10px;letter-spacing:.035em}
+.job-progress-meta strong{min-width:3.5ch;text-align:right;color:#e5f7ff;font-size:13px;font-weight:800;font-variant-numeric:tabular-nums}
+.job-progress .progress-track{height:10px;margin-top:0;overflow:hidden;border:1px solid rgba(72,141,190,.34);background:linear-gradient(180deg,#06121e,#0a2032);box-shadow:inset 0 1px 3px rgba(0,0,0,.28)}
+.job-progress .progress-bar{position:relative;overflow:hidden;min-width:0;border-radius:inherit;background:linear-gradient(90deg,#2268ff 0%,#18b7f2 58%,#5be3ff 100%);box-shadow:0 0 16px rgba(28,153,255,.35);transition:width .65s cubic-bezier(.22,1,.36,1)}
+.job-progress.is-active .progress-bar:not(.is-indeterminate)::after{content:"";position:absolute;inset:0 auto 0 -40%;width:38%;background:linear-gradient(90deg,transparent,rgba(255,255,255,.58),transparent);transform:skewX(-18deg);animation:ai-progress-shimmer 1.65s ease-in-out infinite}
+.job-progress .progress-bar.is-indeterminate{width:38%;animation:ai-progress-indeterminate 1.45s ease-in-out infinite}
+.job-progress .progress-bar.is-indeterminate::after{animation:none}
+.job-progress.is-queued .job-progress-meta strong{color:#9ecfff}
+@keyframes ai-progress-shimmer{0%{left:-40%}100%{left:110%}}
+@keyframes ai-progress-indeterminate{0%{transform:translateX(-105%)}100%{transform:translateX(300%)}}
+@media(prefers-reduced-motion:reduce){.job-progress .progress-bar,.job-progress.is-active .progress-bar::after{transition:none;animation:none}.job-progress .progress-bar.is-indeterminate{transform:none;width:38%}}
