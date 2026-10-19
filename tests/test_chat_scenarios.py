@@ -19,6 +19,16 @@ def _data() -> dict:
         {"player_id": 1, "team_id": 101, "league_id": 10, "season": 2024, "competition": "PO", "rating": 7.5, "games_played": 8, "minutes_per_game": 31, "points": 17, "assists": 5.5, "ts_pct": .60, "usg_pct": .27, "bpm": 4.0, "dbpm": 0.8, "three_point_pct": .39, "three_par": .42, "ruolo_combinato": "PRIMARY CREATOR"},
         {"player_id": 2, "team_id": 101, "league_id": 10, "season": 2024, "competition": "PO", "rating": 6.8, "games_played": 8, "minutes_per_game": 26, "points": 12, "assists": 2, "ts_pct": .61, "usg_pct": .20, "bpm": 1.5, "dbpm": 1.1, "three_point_pct": .41, "three_par": .52},
     ]
+    # Consecutive history is required by historical comparisons. Keep current
+    # 2024 contexts intact and add a 2023 baseline for both leagues.
+    player_rows.extend([
+        {"player_id": 1, "team_id": 101, "league_id": 10, "season": 2023, "competition": "RS", "rating": 5.9, "games_played": 25, "minutes_per_game": 24, "points": 12, "assists": 4, "ts_pct": .54, "usg_pct": .20, "bpm": 1.0, "dbpm": 0.2, "three_point_pct": .34, "three_par": .38},
+        {"player_id": 1, "team_id": 201, "league_id": 20, "season": 2023, "competition": "RS", "rating": 5.2, "games_played": 18, "minutes_per_game": 20, "points": 10, "assists": 3, "ts_pct": .51, "usg_pct": .18, "bpm": 0.4, "dbpm": 0.1, "three_point_pct": .32, "three_par": .42},
+    ])
+    # This fixture exercises the intended 2023→2024 comparison values.
+    for row in player_rows:
+        if row.get("player_id") == 1 and row.get("league_id") == 10 and row.get("season") == 2024 and row.get("competition") == "RS":
+            row["points"] = 16
     # Real consecutive cross-league transitions used by the empirical transfer layer.
     for offset in range(6):
         pid = 20 + offset
@@ -421,6 +431,17 @@ def test_player_intelligence_comparison_tolerates_missing_team_ids():
         (data["player_stats"]["season"] == 2025),
         "team_id",
     ] = None
+    # Explicitly include a current EL row whose team relation is absent.
+    data["player_stats"] = pd.concat([
+        data["player_stats"],
+        pd.DataFrame([{
+            "player_id": 1, "team_id": None, "league_id": 20, "season": 2025,
+            "competition": "RS", "rating": 7.2, "games_played": 20,
+            "minutes_per_game": 23, "points": 13, "assists": 4,
+            "ts_pct": .56, "usg_pct": .21, "bpm": 1.3, "dbpm": .2,
+            "three_point_pct": .35, "three_par": .44,
+        }]),
+    ], ignore_index=True)
 
     result = ChatScenarioEngine(SimpleNamespace(), data).evaluate(
         {
