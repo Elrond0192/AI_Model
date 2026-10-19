@@ -261,6 +261,12 @@ class ChatScenarioEngine:
 
         return ids
 
+    def _same_player_identity(self, first_player_id: int, second_player_id: int) -> bool:
+        """Compare canonical player identities, not league-specific internal IDs."""
+        first_ids = self._player_identity_ids(first_player_id)
+        second_ids = self._player_identity_ids(second_player_id)
+        return bool(first_ids and second_ids and first_ids.intersection(second_ids))
+
     def _player_rows(
         self,
         player_id: int,
@@ -2732,8 +2738,11 @@ class ChatScenarioEngine:
         rotation = self._rotation_ratings(teams[0], target_league, competition, season)
         if len(rotation) < 5:
             raise ValueError("Target team needs at least five rotation ratings for an acquisition what-if")
-        if any(pid == _to_int(players[0]) for pid, _ in rotation):
-            raise ValueError("The incoming player is already in the target team's observed rotation")
+        if any(self._same_player_identity(pid, players[0]) for pid, _ in rotation):
+            raise ValueError(
+                "The incoming player already belongs to the target team's observed rotation "
+                "under the same canonical player identity"
+            )
         top = rotation[:8]
         before = float(np.mean([rating for _, rating in top]))
         incoming = projection["rating"]
@@ -2789,6 +2798,18 @@ class ChatScenarioEngine:
                     "reason": forecast.get("reason"),
                 }),
                 "player_projection": projection["analysis"]["result"],
+                "applied_player_context": dict(
+                    projection["analysis"]["result"].get("applied_player_context", {})
+                ),
+                "scenario_assumptions": {
+                    "player_source_season": player_source_season,
+                    "team_context_season": int(season),
+                    "target_season": target_season,
+                    "user_supplied_player_overrides": dict(
+                        projection["analysis"]["result"].get("applied_player_context", {})
+                    ),
+                    "injuries_contracts_salary_inferred": False,
+                },
             },
             "evidence": [
                 {"type": "historical_roster_transitions", "count": int(forecast.get("model", {}).get("training_samples", 0))},
@@ -2840,18 +2861,37 @@ class ChatScenarioEngine:
         rotation = self._rotation_ratings(teams[0], target_league, competition, season)
         if len(rotation) < 5:
             raise ValueError("Target team needs at least five rotation ratings for a replacement what-if")
-        outgoing_id = _to_int(players[1])
+        outgoing_requested_id = _to_int(players[1])
         incoming_id = _to_int(players[0])
-        outgoing = next((rating for pid, rating in rotation if pid == outgoing_id), None)
-        if outgoing is None:
-            raise ValueError("Outgoing player is not in the target context rotation")
-        if incoming_id != outgoing_id and any(pid == incoming_id for pid, _ in rotation):
-            raise ValueError("The incoming player is already in the target team's observed rotation")
+        outgoing_matches = [
+            (pid, rating)
+            for pid, rating in rotation
+            if self._same_player_identity(pid, outgoing_requested_id)
+        ]
+        if len(outgoing_matches) != 1:
+            if not outgoing_matches:
+                raise ValueError("Outgoing player is not in the target context rotation")
+            raise ValueError(
+                "Outgoing player resolves to multiple roster rows; refusing an ambiguous replacement"
+            )
+        outgoing_id, outgoing = outgoing_matches[0]
+        if self._same_player_identity(incoming_id, outgoing_id):
+            raise ValueError(
+                "Incoming and outgoing players resolve to the same canonical player identity"
+            )
+        if any(self._same_player_identity(pid, incoming_id) for pid, _ in rotation):
+            raise ValueError(
+                "The incoming player is already in the target team's observed rotation "
+                "under the same canonical player identity"
+            )
         top = rotation[:8]
-        if not any(pid == outgoing_id for pid, _ in top):
+        if not any(self._same_player_identity(pid, outgoing_id) for pid, _ in top):
             raise ValueError("Outgoing player is outside the top-eight modeled rotation")
         before = float(np.mean([rating for _, rating in top]))
-        values = [rating for pid, rating in top if pid != outgoing_id]
+        values = [
+            rating for pid, rating in top
+            if not self._same_player_identity(pid, outgoing_id)
+        ]
         values.append(projection["rating"])
         after = float(np.mean(values))
         relations = self.data.get("team_player_relations", pd.DataFrame())
@@ -2911,6 +2951,18 @@ class ChatScenarioEngine:
                     "status": forecast.get("status"),
                     "reason": forecast.get("reason"),
                 }),
+                "applied_player_context": dict(
+                    projection["analysis"]["result"].get("applied_player_context", {})
+                ),
+                "scenario_assumptions": {
+                    "player_source_season": player_source_season,
+                    "team_context_season": int(season),
+                    "target_season": target_season,
+                    "user_supplied_player_overrides": dict(
+                        projection["analysis"]["result"].get("applied_player_context", {})
+                    ),
+                    "injuries_contracts_salary_inferred": False,
+                },
             },
             "evidence": [
                 {"type": "historical_roster_transitions", "count": int(forecast.get("model", {}).get("training_samples", 0))},
