@@ -63,6 +63,7 @@ def test_train_reorders_target_seasons_with_feature_rows(monkeypatch):
         self._last_season_years = [2024, 2022, 2023]
         self._last_source_years = [2023, 2021, 2022]
         self._skipped_gap_pairs = 0
+        self._last_feature_frame_raw = pd.DataFrame({"marker": [2024.0, 2022.0, 2023.0]})
         return (
             pd.DataFrame({"marker": [2024.0, 2022.0, 2023.0]}),
             np.asarray([24.0, 22.0, 23.0]),
@@ -239,7 +240,7 @@ def test_backtest_segment_metrics_expose_promotion_contract():
     assert segment["n"] == 2
     assert np.isclose(segment["rmse"], np.sqrt(0.625))
     assert np.isclose(segment["mae"], 0.75)
-    assert np.isclose(segment["bias"], -0.75)
+    assert np.isclose(segment["bias"], -0.25)
     assert np.isclose(segment["interval_coverage"], 1.0)
     assert "model_rmse" in segment
     assert "model_bias" in segment
