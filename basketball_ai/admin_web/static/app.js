@@ -40,6 +40,8 @@ setInterval(updateClock,1000);updateClock();
 function activateNav(page){$$('.nav-item').forEach(b=>b.classList.toggle('active',b.dataset.page===page));}
 function mountTemplate(page){const t=$(`#page-${page}`);if(!t){root.innerHTML='<div class="loading">Pagina non disponibile</div>';return;}root.replaceChildren(t.content.cloneNode(true));$$('.jump',root).forEach(b=>b.addEventListener('click',()=>navigate(b.dataset.page)));}
 async function navigate(page){
+  if(['training','backtests','registry'].includes(page))page='model-releases';
+  if(!document.getElementById('page-'+page))page='overview';
   App.controllers.forEach(controller=>controller.abort());
   App.controllers.clear();
   clearTimeout(App.trainingTimer);
@@ -52,12 +54,9 @@ async function navigate(page){
   try{
     if(page==='overview')await renderOverview();
     if(page==='data')await renderData();
-    if(page==='training')await renderTraining();
-    if(page==='backtests')await renderBacktests();
     if(page==='bb-rating')await renderBBRating();
     if(page==='future-performance')await renderFuturePerformancePage();
     if(page==='scenarios')await renderScenarios();
-    if(page==='registry')await renderRegistry();
     if(page==='model-releases')await renderModelReleases();
     if(page==='health')await renderHealth();
     if(page==='diagnostics')await renderDiagnostics();
