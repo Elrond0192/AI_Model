@@ -1366,7 +1366,13 @@ def _scenario_entity_rows(entity: str, query: str, limit: int = 12) -> list[dict
         # first, then the canonical identity when enriching with current metadata.
         by_internal_id = loaded_entity_by_id.get(value_text(row, "id"), {})
         by_global_id = loaded_entity_by_global_id.get(value_text(row, "global_id"), {})
-        row = {**(by_internal_id or by_global_id), **row}
+        loaded_entity = by_global_id or by_internal_id
+        row = {**loaded_entity, **row}
+        # SQL source contracts may expose these enrichment-only fields as NULL;
+        # preserve trustworthy in-memory values instead of overwriting them.
+        for metadata_key in ("current_team_id", "current_league_key", "short_name"):
+            if not value_text(row, metadata_key) and value_text(loaded_entity, metadata_key):
+                row[metadata_key] = loaded_entity[metadata_key]
         internal_id = value_text(row, "id")
         if not internal_id:
             continue
