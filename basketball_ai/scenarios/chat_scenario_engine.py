@@ -109,14 +109,14 @@ class ChatScenarioEngine:
         bb_rating_engine: Any | None = None,
         bb_rating_uncertainty: Any | None = None,
         future_performance_model: Any | None = None,
-        prediction_calibration: dict[str, Any] | None = None,
+        bb_rating_prediction_model: Any | None = None,
     ) -> None:
         self.ensemble = ensemble
         self.data = data
         self.advanced = AdvancedSimulationEngine(data)
         self.bb_rating_engine = bb_rating_engine
         self.bb_rating_uncertainty = bb_rating_uncertainty
-        self.prediction_calibration = prediction_calibration
+        self.bb_rating_prediction_model = bb_rating_prediction_model
         self.future_performance_model = future_performance_model
 
     def evaluate(
@@ -1629,7 +1629,7 @@ class ChatScenarioEngine:
             "bb_rating": {"available": False},
             "bb_rating_uncertainty": {"available": False},
             "future_performance": {"available": False},
-            "prediction_model": {"available": False},
+            "bb_rating_prediction": {"available": False},
         }
 
         # A generic/current Player Intelligence request is descriptive only.
@@ -1650,7 +1650,7 @@ class ChatScenarioEngine:
                 "regression_risk",
                 "team_counterfactual",
                 "prediction",
-                "prediction_model",
+                "bb_rating_prediction",
                 "future_performance",
             } & set(requested_keys)
         )
@@ -1794,53 +1794,55 @@ class ChatScenarioEngine:
             except (ValueError, RuntimeError, KeyError) as exc:
                 result["future_performance"]["reason"] = str(exc)
 
-        # Prediction Model is also forward-looking for Chat V3 purposes;
-        # keep it out of a generic/current Player Intelligence answer.
+        # Future-looking evidence is opt-in; the retired native 0–10 predictor
+        # is never used or converted into a user-facing rating.
         if not forward_requested:
             return result
 
-        # The model output is native 0-10 and must never enter Chat as a raw
-        # rating. Only publish its calibrated 1-100 forecast when the active
-        # Prediction calibration release is loaded.
+        if self.bb_rating_prediction_model is None:
+            result["bb_rating_prediction"] = {
+                "available": False,
+                "reason": "bb_rating_prediction_model_unavailable",
+                "target_season": season + 1,
+            }
+            return result
+
         try:
+            target_league_key = self._league_key(target_league) or league
+            target_competition = normalize_competition(
+                (spec.get("parameters", {}) or {}).get("target_competition", competition)
+            )
             rows = self._player_rows(player_id, source_league, competition, season)
             latest = self._latest(rows)
-            current_team_id = _to_int(latest.get("team_id"))
-            if current_team_id is not None and source_league is not None:
-                prediction, _ = self._direct_prediction(
-                    player_id, current_team_id, source_league, season, competition
-                )
-                calibration = self.prediction_calibration
-                fit = calibration.get("fit") if isinstance(calibration, dict) else None
-                if not isinstance(fit, dict):
-                    result["prediction_model"] = {
-                        "available": False,
-                        "reason": "prediction_calibration_unavailable",
-                        "target_season": season + 1,
-                    }
-                else:
-                    from basketball_ai.prediction_calibration import native_to_100
-
-                    predicted_100 = native_to_100(float(prediction.predicted_rating), fit)
-                    low_100 = native_to_100(float(prediction.confidence_low), fit)
-                    high_100 = native_to_100(float(prediction.confidence_high), fit)
-                    result["prediction_model"] = {
-                        "available": True,
-                        "scope": "current_team_context",
-                        "target_season": season + 1,
-                        "team": self._team_name(current_team_id),
-                        "predicted_rating_100": round(predicted_100, 1),
-                        "confidence_low_100": round(min(low_100, high_100), 1),
-                        "confidence_high_100": round(max(low_100, high_100), 1),
-                        "prediction_calibration_version": calibration.get("calibration_version"),
-                        "interpretation": (
-                            f"Punteggio previsionale calibrato su scala 1–100 per la stagione {season + 1}. "
-                            "È una previsione del rating sorgente, non il BB-Rating contestuale osservato; "
-                            "non va confrontata direttamente con il BB-Rating storico."
-                        ),
-                    }
+            source_team_id = _to_int(latest.get("team_id"))
+            target_team_id = _to_int(teams[0]) if teams else (
+                source_team_id if target_league_key == league else None
+            )
+            team_row = self.data.get("team_dict", {}).get(target_team_id, {}) if target_team_id is not None else {}
+            target_team_global_id = str(
+                team_row.get("global_id", team_row.get("IdGlobal", "")) or ""
+            ) or None
+            prediction = self.bb_rating_prediction_model.predict_from_data(
+                self.data,
+                player_global_id=global_id,
+                source_season=season,
+                source_league=league,
+                source_competition=competition,
+                target_league=target_league_key,
+                target_competition=target_competition,
+                target_team_global_id=target_team_global_id,
+            )
+            result["bb_rating_prediction"] = {
+                "available": True,
+                **prediction,
+                "interpretation": (
+                    f"Previsione diretta del BB-Rating contestuale per la stagione "
+                    f"{prediction.get('target_season', season + 1)} sulla scala ufficiale 1–100. "
+                    "Non è il rating osservato e non dimostra l'effetto causale di un trasferimento."
+                ),
+            }
         except (ValueError, RuntimeError, KeyError, TypeError, AttributeError) as exc:
-            result["prediction_model"] = {
+            result["bb_rating_prediction"] = {
                 "available": False,
                 "reason": str(exc),
                 "target_season": season + 1,
