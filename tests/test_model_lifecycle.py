@@ -52,7 +52,7 @@ def test_future_performance_candidate_requires_all_declared_model_files(tmp_path
 
 def test_unsupported_model_is_rejected():
     with pytest.raises(ValueError, match="Unsupported model"):
-        inspect_model(".", "../prediction-calibration")
+        inspect_model(".", "../unsupported-model")
 
 
 def test_bb_rating_candidate_can_be_promoted_with_matching_uncertainty(tmp_path: Path):
