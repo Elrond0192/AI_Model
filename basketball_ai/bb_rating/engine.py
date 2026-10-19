@@ -226,10 +226,11 @@ class MetricEvidence:
                 METRIC_SEMANTICS[self.metric],
                 self.value,
                 self.percentile,
-            ) if self.metric in METRIC_SEMANTICS
-              and self.value is not None
-              and self.percentile is not None
-            else None,
+            ) if (
+                self.metric in METRIC_SEMANTICS
+                and self.value is not None
+                and self.percentile is not None
+            ) else None,
         }
 
 
