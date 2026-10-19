@@ -1313,8 +1313,15 @@ def build_calibration_report(
     min_peer_samples = max(5, int(config.min_peer_samples))
     min_context_samples = max(1, int(config.min_context_samples))
 
+    source_stats = data.get("player_stats", pd.DataFrame())
+    raw_net_diff_zero_share = None
+    if isinstance(source_stats, pd.DataFrame) and "net_rtg_diff" in source_stats.columns:
+        raw_net_diff = pd.to_numeric(source_stats["net_rtg_diff"], errors="coerce").dropna()
+        if not raw_net_diff.empty:
+            raw_net_diff_zero_share = float(raw_net_diff.eq(0).mean())
+
     engine = BBRatingEngine(
-        data.get("player_stats", pd.DataFrame()),
+        source_stats,
         data.get("players", pd.DataFrame()),
         min_peer_samples=min_peer_samples,
     )
@@ -1514,6 +1521,11 @@ def build_calibration_report(
     }
 
     report["warnings"] = _diagnostic_warnings(report)
+    if raw_net_diff_zero_share is not None and raw_net_diff_zero_share >= 0.30:
+        report["warnings"].append(
+            f"NET_RTG_DIFF: {raw_net_diff_zero_share:.1%} dei valori sorgente è esattamente zero; "
+            "il campo viene trattato come dato non disponibile e la provenienza On/Off va verificata."
+        )
     scoring_registry_ok = all(
         row["column_exists"]
         and row["semantic_exists"]
@@ -1536,6 +1548,13 @@ def build_calibration_report(
         and row["zero_pct_available"] is not None
         and row["zero_pct_available"] >= 0.99
     ]
+    # BB-Rating masks zero NET_RTG_DIFF values because the upstream cache
+    # historically encoded unavailable On/Off data as zero. Preserve a separate
+    # raw-source diagnostic so a column of placeholders cannot look healthy just
+    # because masked values disappear before percentile scoring.
+    if raw_net_diff_zero_share is not None and raw_net_diff_zero_share >= 0.99:
+        if "NET_RTG_DIFF" not in constant_scoring_metrics:
+            constant_scoring_metrics.append("NET_RTG_DIFF")
     primary_context_share = (
         source_by_name.get("league+season+phase", 0.0)
         if len(frame) else 0.0
