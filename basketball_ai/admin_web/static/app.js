@@ -66,12 +66,14 @@ async function navigate(page){
   }catch(e){if(e?.name!=='AbortError')toast(e.message,'error');}
 }
 function kpi(icon,label,value,sub='',tone=''){return `<div class="kpi-card"><div class="kpi-icon ${tone}">${icon}</div><div class="kpi-label">${esc(label)}</div><div class="kpi-value ${tone==='green'?'online':''}">${esc(value)}</div><div class="kpi-sub">${sub}</div></div>`;}
-function updateTop(o){$('#top-db').textContent=o.database||'not selected';$('#top-model').textContent=shortId(o.production?.run_id);const bb=o.bb_rating||{};$('#top-bb-rating').textContent=bb.bb_rating_version?'v'+esc(bb.bb_rating_version):'—';$('#top-api').textContent=o.api?.online?'● V2':'● OFFLINE';$('#top-api').className=o.api?.online?'meta-ok':'';}
+function updateTop(o){$('#top-db').textContent=o.database||'not selected';$('#top-model').textContent=o.bb_rating_prediction?.loaded?shortId(o.bb_rating_prediction?.version||'BB Prediction'): 'BB Prediction pending';const bb=o.bb_rating||{};$('#top-bb-rating').textContent=bb.bb_rating_version?'v'+esc(bb.bb_rating_version):'—';$('#top-api').textContent=o.api?.online?'● V2':'● OFFLINE';$('#top-api').className=o.api?.online?'meta-ok':'';}
 
 async function renderOverview(){
-  const o=await api('/admin-api/overview');App.overview=o;updateTop(o);
+  const o=await api('/admin-api/overview');
+  try{o.bb_rating_prediction=(await api('/admin-api/api-health')).bb_rating_prediction||{};}catch(_){o.bb_rating_prediction={};}
+  App.overview=o;updateTop(o);
   const s=o.summary||{},bb=o.bb_rating||{},prod=o.production||{},cand=o.candidate||{},q=o.candidate_quality||{};
-  const allReady=(o.api?.online&&o.data_loaded&&bb.ready&&!!prod.run_id);
+  const allReady=(o.api?.online&&o.data_loaded&&bb.ready&&!!o.bb_rating_prediction?.loaded);
   const dot=$('#overview-system-dot');const status=$('#overview-system-status');
   if(dot)dot.className='hero-status-dot '+(allReady?'online':'warning');
   if(status)status.textContent=allReady?'SYSTEM OPERATIONAL':'ACTION REQUIRED';
@@ -102,18 +104,19 @@ async function renderOverview(){
   }).join('');
   $$('.readiness-action').forEach(b=>b.addEventListener('click',()=>navigate(b.dataset.page)));
 
-  $('#overview-registry').innerHTML=(prod.run_id||cand.run_id)?summaryRows([
-    ['Production',prod.run_id?shortId(prod.run_id):'—'],
-    ['Candidate',cand.run_id?shortId(cand.run_id):'—'],
-    ['Candidate RMSE',cand.overall_rmse!==undefined?fmt(cand.overall_rmse):'—']
-  ]):empty('⬡','BB Prediction Model','Generate and validate its candidate in Model Releases.','Open BB Prediction Model','model-releases');
+  $('#overview-registry').innerHTML=summaryRows([
+    ['Modello','BB Prediction Model'],
+    ['Scala target','BB-Rating ufficiale 1–100'],
+    ['Runtime',o.bb_rating_prediction?.loaded?'Caricato':'Release da promuovere']
+  ]);
 
-  $('#overview-backtest').innerHTML=q.rmse!==null&&q.rmse!==undefined?summaryRows([
-    ['RMSE',fmt(q.rmse)],['MAE',fmt(q.mae)],['Coverage',pct(q.coverage)],['OOS folds',String(q.seasons||0)]
-  ]):empty('▤','No Future Performance data','Open Future Performance to inspect the separate statistical forecast.','Open Future Performance','future-performance');
+  $('#overview-backtest').innerHTML=summaryRows([
+    ['Modello','Future Performance'],
+    ['Obiettivo','Statistiche della stagione successiva'],
+    ['Stato',o.future_performance?.ready?'Disponibile':'Da verificare']
+  ]);
 
-  const quality=[['RMSE',fmt(q.rmse)],['MAE',fmt(q.mae)],['R²',fmt(q.r2)],['Coverage',pct(q.coverage)],['Seasons',q.seasons??'—'],['Competitions',q.competitions??'—']];
-  $('#candidate-quality').innerHTML=quality.map(([a,b])=>`<div class="quality-card"><span>${esc(a)}</span><strong>${esc(b)}</strong></div>`).join('');
+  $('#candidate-quality').innerHTML='<div class="quality-card"><span>Validazione</span><strong>Walk-forward per scenario</strong></div><div class="quality-card"><span>Promozione</span><strong>Solo se batte il baseline</strong></div><div class="quality-card"><span>Scala</span><strong>BB-Rating 1–100</strong></div>';
   $$('.jump',root).forEach(b=>b.addEventListener('click',()=>navigate(b.dataset.page)));
 }
 async function renderData(){
@@ -305,7 +308,6 @@ async function renderModelReleases(){
   $('#release-bb-rating').innerHTML=fmtRelease(models['bb-rating']||{});
   $('#release-future-performance').innerHTML=fmtRelease(models['future-performance']||{});
   $('#prediction-calibration-release').innerHTML=fmtRelease(release);
-  $('#prediction-calibration-release').innerHTML='';
   $('#prediction-calibration-job').innerHTML='<div class="job-head"><div><div class="job-status">'+esc(job.stage||'Ready')+'</div><div class="job-message">'+esc(job.error||job.message||'Nessun training eseguito.')+'</div></div><span class="registry-badge '+(['running','queued'].includes(job.status)?'candidate':'')+'">'+esc(job.status||'idle')+'</span></div>'+
     (job.output?'<div class="summary-list">'+[['OOF samples',job.output.oof_samples],['MAE',job.output.mae],['RMSE',job.output.rmse],['Scenari valutati',(job.output.scenario_metrics||[]).length]].map(([a,b])=>'<div class="summary-row"><span>'+esc(a)+'</span><strong>'+esc(b??'—')+'</strong></div>').join('')+'</div>':'')+
     (job.progress!=null?'<div class="progress-track"><div class="progress-bar" style="width:'+Math.max(0,Math.min(100,Number(job.progress)||0))+'%"></div></div>':'');
