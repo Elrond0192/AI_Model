@@ -7,6 +7,27 @@ function cookie(name){const p=document.cookie.split('; ').find(x=>x.startsWith(n
 function fmt(v,d=3){if(v===null||v===undefined||v===''||Number.isNaN(Number(v)))return '—';return Number(v).toFixed(d);}
 function fmtInt(v){if(v===null||v===undefined)return '—';return new Intl.NumberFormat('it-IT',{notation:Number(v)>=1000000?'compact':'standard',maximumFractionDigits:1}).format(Number(v));}
 function pct(v){if(v===null||v===undefined||Number.isNaN(Number(v)))return '—';return `${(Number(v)*100).toFixed(1)}%`;}
+
+function progressMarkup(job){
+  const status=String(job?.status||'idle').toLowerCase();
+  if(!status||status==='idle')return '';
+  const raw=job?.progress;
+  const numeric=raw===null||raw===undefined||raw===''?NaN:Number(raw);
+  const progress=Number.isFinite(numeric)?Math.round(Math.max(0,Math.min(100,numeric))):null;
+  const active=status==='running'||status==='queued';
+  const indeterminate=active&&(status==='queued'||progress===null||progress===0);
+  const label=status==='queued'?'In coda':status==='running'?'Avanzamento':status==='complete'?'Completato':status==='failed'?'Esecuzione terminata con errore':status==='cancelled'?'Annullato':'Stato avanzamento';
+  const displayed=progress===null?'—':`${progress}%`;
+  const width=indeterminate?38:(progress??0);
+  const valueAttribute=progress===null?'':` aria-valuenow="${progress}"`;
+  const valueText=status==='queued'?' aria-valuetext="In coda"':'';
+  return `<div class="job-progress ${active?'is-active':''} ${status==='queued'?'is-queued':''}">
+    <div class="job-progress-meta"><span>${esc(label)}</span><strong>${displayed}</strong></div>
+    <div class="progress-track" role="progressbar" aria-label="Avanzamento del job" aria-valuemin="0" aria-valuemax="100"${valueAttribute}${valueText}>
+      <div class="progress-bar ${indeterminate?'is-indeterminate':''}" style="width:${width}%"></div>
+    </div>
+  </div>`;
+}
 function shortId(v){const s=String(v||'');return s.length>18?`${s.slice(0,12)}…${s.slice(-5)}`:(s||'Not promoted');}
 function toast(message,type='success'){const el=$('#toast');el.textContent=message;el.className=`toast show ${type}`;clearTimeout(el._timer);el._timer=setTimeout(()=>el.className='toast',3600);}
 function loading(){root.innerHTML='<div class="loading"><div><div class="spinner"></div>Caricamento…</div></div>';}
@@ -148,7 +169,7 @@ async function renderTraining(){
   const job=$('#training-job');
   const idleMessage=!datasetLoaded&&j.status==='idle'?'Prima prepara e attiva uno snapshot nella pagina Dati e snapshot. Il training non carica dati automaticamente.':(j.error||j.message||'');
   const trainingActive=['running','queued'].includes(j.status);
-  job.innerHTML=`<div class="job-head"><div><div class="job-status">${esc(j.stage||'Ready')}</div><div class="job-message">${esc(idleMessage)}</div></div><span class="registry-badge ${trainingActive?'candidate':''}">${esc(j.status||'idle')}</span></div><div class="progress-track"><div class="progress-bar" style="width:${Math.max(0,Math.min(100,Number(j.progress)||0))}%"></div></div>${j.run_id?`<div class="job-message">Run ID: ${esc(j.run_id)}</div>`:''}${trainingActive?'<div class="button-row"><button id="training-cancel" class="btn btn-danger btn-small" '+(j.cancel_requested?'disabled':'')+'>'+(j.cancel_requested?'Interruzione richiesta…':'Interrompi training')+'</button></div>':''}`;
+  job.innerHTML=`<div class="job-head"><div><div class="job-status">${esc(j.stage||'Ready')}</div><div class="job-message">${esc(idleMessage)}</div></div><span class="registry-badge ${trainingActive?'candidate':''}">${esc(j.status||'idle')}</span></div>${progressMarkup(j)}${j.run_id?`<div class="job-message">Run ID: ${esc(j.run_id)}</div>`:''}${trainingActive?'<div class="button-row"><button id="training-cancel" class="btn btn-danger btn-small" '+(j.cancel_requested?'disabled':'')+'>'+(j.cancel_requested?'Interruzione richiesta…':'Interrompi training')+'</button></div>':''}`;
   const cancelTraining=$('#training-cancel');
   if(cancelTraining)cancelTraining.onclick=async()=>{cancelTraining.disabled=true;try{await api('/admin-api/jobs/training/cancel',{method:'POST',body:{}});toast('Interruzione training richiesta');await renderTraining();}catch(e){toast(e.message,'error');cancelTraining.disabled=false;}};
   const start=$('#start-training');
@@ -264,7 +285,7 @@ async function renderBBRating(){
     }catch(e){toast(e.message,'error');calibrate.disabled=false;}
   };
 
-  $('#bb-rating-job').innerHTML=j.status&&j.status!=='idle'?'<div class="job-head"><div><div class="job-status">'+esc(j.stage||'Calibration')+'</div><div class="job-message">'+esc(j.error||j.message||'')+'</div></div><span class="registry-badge '+((j.status==='running'||j.status==='queued')?'candidate':'')+'">'+esc(j.status)+'</span></div><div class="progress-track"><div class="progress-bar" style="width:'+Math.max(0,Math.min(100,Number(j.progress)||0))+'%"></div></div>':'<div class="job-message">Nessuna calibrazione eseguita dal Control Center in questa sessione.</div>';
+  $('#bb-rating-job').innerHTML=j.status&&j.status!=='idle'?'<div class="job-head"><div><div class="job-status">'+esc(j.stage||'Calibration')+'</div><div class="job-message">'+esc(j.error||j.message||'')+'</div></div><span class="registry-badge '+((j.status==='running'||j.status==='queued')?'candidate':'')+'">'+esc(j.status)+'</span></div>'+progressMarkup(j):'<div class="job-message">Nessuna calibrazione eseguita dal Control Center in questa sessione.</div>';
   if(['running','queued'].includes(j.status)) {
     $('#bb-rating-job').insertAdjacentHTML('beforeend','<div class="button-row"><button id="bb-rating-cancel" class="btn btn-danger btn-small" '+(j.cancel_requested?'disabled':'')+'>'+(j.cancel_requested?'Interruzione richiesta…':'Interrompi calibrazione')+'</button></div>');
     const cancel=$('#bb-rating-cancel');
@@ -310,7 +331,7 @@ async function renderModelReleases(){
   $('#bb-rating-prediction-release').innerHTML=fmtRelease(release);
   $('#bb-rating-prediction-job').innerHTML='<div class="job-head"><div><div class="job-status">'+esc(job.stage||'Ready')+'</div><div class="job-message">'+esc(job.error||job.message||'Nessun training eseguito.')+'</div></div><span class="registry-badge '+(['running','queued'].includes(job.status)?'candidate':'')+'">'+esc(job.status||'idle')+'</span></div>'+
     (job.output?'<div class="summary-list">'+[['OOF samples',job.output.oof_samples],['MAE',job.output.mae],['RMSE',job.output.rmse],['Scenari valutati',Object.keys(job.output.scenario_metrics||{}).length]].map(([a,b])=>'<div class="summary-row"><span>'+esc(a)+'</span><strong>'+esc(b??'—')+'</strong></div>').join('')+'</div>':'')+
-    (job.progress!=null?'<div class="progress-track"><div class="progress-bar" style="width:'+Math.max(0,Math.min(100,Number(job.progress)||0))+'%"></div></div>':'');
+    progressMarkup(job);
   if(['running','queued'].includes(job.status)) {
     $('#bb-rating-prediction-job').insertAdjacentHTML('beforeend','<div class="button-row"><button id="bb-rating-prediction-cancel" class="btn btn-danger btn-small" '+(job.cancel_requested?'disabled':'')+'>'+(job.cancel_requested?'Interruzione richiesta…':'Interrompi training')+'</button></div>');
     const cancel=$('#bb-rating-prediction-cancel');
