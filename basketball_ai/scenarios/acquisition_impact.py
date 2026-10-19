@@ -347,8 +347,6 @@ def fit_acquisition_impact_model(
         residuals = observed - predicted
         rmse = float(np.sqrt(np.mean(np.square(residuals))))
         baseline_rmse = float(np.sqrt(np.mean(np.square(observed))))
-        mae = float(np.mean(np.abs(residuals)))
-        baseline_mae = float(np.mean(np.abs(observed)))
         bias = float(np.mean(residuals))
         if rmse < baseline_rmse and abs(bias) < max(0.01, baseline_rmse * 0.5):
             status = "validated"
