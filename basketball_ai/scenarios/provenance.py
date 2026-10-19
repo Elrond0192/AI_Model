@@ -90,10 +90,12 @@ def build_scenario_provenance(
     impact_status = str(result.get("acquisition_impact_status", "") or "").strip().lower()
     if impact_status:
         validation_status = impact_status
-    elif any(token in str(support.get("method", "")).lower() for token in ("walk_forward", "validated")):
-        validation_status = "walk_forward_validated" if support.get("confidence") not in {"low", None, ""} else "validation_reported"
+    elif "walk_forward_validated" in str(support.get("method", "")).lower() or "validated" in str(support.get("method", "")).lower():
+        validation_status = "walk_forward_validated"
+    elif str(support.get("method", "")).lower() == "observed_data":
+        validation_status = "not_applicable"
     elif support.get("method"):
-        validation_status = "not_model_validated"
+        validation_status = "not_reported"
     else:
         validation_status = "not_assessed"
 
