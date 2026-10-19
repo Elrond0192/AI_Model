@@ -314,15 +314,33 @@ def fit_acquisition_impact_model(
                 "residual": observed - prediction,
             })
 
+    all_oof_seasons = sorted({int(row["season"]) for row in out_of_time})
+    oof_samples_by_season = {
+        year: sum(int(row["season"]) == year for row in out_of_time)
+        for year in all_oof_seasons
+    }
+    supported_oof_seasons = [
+        year for year, count in oof_samples_by_season.items()
+        if count >= MIN_WALK_FORWARD_SAMPLES_PER_SEASON
+    ]
+    under_supported_oof_seasons = [
+        year for year, count in oof_samples_by_season.items()
+        if count < MIN_WALK_FORWARD_SAMPLES_PER_SEASON
+    ]
     if len(rows) < MIN_FINAL_SAMPLES:
         status = "insufficient_historical_transitions"
         reason = f"Servono almeno {MIN_FINAL_SAMPLES} transizioni storiche complete; disponibili {len(rows)}."
     elif (
         len(out_of_time) < MIN_WALK_FORWARD_SAMPLES
-        or len({int(row["season"]) for row in out_of_time}) < MIN_WALK_FORWARD_SEASONS
+        or len(supported_oof_seasons) < MIN_WALK_FORWARD_SEASONS
     ):
         status = "insufficient_walk_forward_validation"
-        reason = "Il backtest walk-forward non ha abbastanza previsioni fuori campione distribuite su almeno tre stagioni."
+        reason = (
+            "Il backtest walk-forward richiede almeno "
+            f"{MIN_WALK_FORWARD_SEASONS} stagioni target con almeno "
+            f"{MIN_WALK_FORWARD_SAMPLES_PER_SEASON} predizioni fuori campione ciascuna; "
+            f"stagioni supportate: {len(supported_oof_seasons)}."
+        )
     else:
         observed = np.asarray([float(row["observed"]) for row in out_of_time])
         predicted = np.asarray([float(row["prediction"]) for row in out_of_time])
