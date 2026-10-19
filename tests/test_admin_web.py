@@ -384,11 +384,13 @@ def test_helpers_and_static_assets(monkeypatch, tmp_path):
     assert "Model Releases" in html
     assert "bb-rating-prediction" in js
     assert "Prediction 1–100 calibration" not in html
-    # DOM iteration must use $ (querySelectorAll), not $ (querySelector).
-    assert "$('.admin-only',root).forEach" in js
-    assert "$('.jump',root).forEach" in js
-    assert "$('.admin-only',root).forEach" not in js
-    assert "$('.jump',root).forEach" not in js
+    # DOM iteration must use $$ (querySelectorAll), not $ (querySelector).
+    mount_template = js[js.index("function mountTemplate"):js.index("async function navigate")]
+    assert "$$('.admin-only',root).forEach" in mount_template
+    assert "$$('.jump',root).forEach" in mount_template
+    assert "));$('.admin-only',root).forEach" not in mount_template
+    assert ";$('.jump',root).forEach" not in mount_template
+
     assert "Native Prediction Model (0–10)" not in html
     assert "data-model=\"prediction\"" not in html
     assert "renderModelReleases" in js
