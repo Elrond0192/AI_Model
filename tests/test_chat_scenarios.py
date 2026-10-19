@@ -347,8 +347,9 @@ def test_scenario_api_resolves_global_ids_and_returns_structured_payload(monkeyp
     seen = {}
 
     class FakeEngine:
-        def __init__(self, ensemble, data):
+        def __init__(self, ensemble, data, **model_dependencies):
             seen["ensemble"] = ensemble
+            seen["model_dependencies"] = model_dependencies
 
         def evaluate(self, spec, player_ids, team_ids, source_league, target_league):
             seen.update({"spec": spec, "players": player_ids, "teams": team_ids, "source": source_league, "target": target_league})
