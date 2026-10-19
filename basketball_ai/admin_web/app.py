@@ -5,7 +5,6 @@ It serves a same-origin static UI plus authenticated JSON endpoints on port 8501
 """
 from __future__ import annotations
 
-import argparse
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -25,7 +24,7 @@ import uuid
 
 import pandas as pd
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from sqlalchemy import text
@@ -44,6 +43,7 @@ from basketball_ai.auth.auth import (
 )
 from basketball_ai.data.connection_profiles import load_profiles, profile_url, save_profile
 from basketball_ai.data.loader import _to_int
+from basketball_ai.data.postgres_loader import _source_object_diagnostics
 from basketball_ai.data.postgres_loader import get_engine, load_all_data
 from basketball_ai.data.training_snapshots import (
     create_training_snapshot,
