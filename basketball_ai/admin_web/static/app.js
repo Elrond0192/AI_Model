@@ -1,4 +1,4 @@
-const App={user:null,page:'overview',overview:null,trainingTimer:null,bbRatingTimer:null,futurePerformanceTimer:null,predictionCalibrationTimer:null,controllers:new Set()};
+const App={user:null,page:'overview',overview:null,trainingTimer:null,bbRatingTimer:null,futurePerformanceTimer:null,bbRatingPredictionTimer:null,controllers:new Set()};
 const $=(s,r=document)=>r.querySelector(s);const $$=(s,r=document)=>[...r.querySelectorAll(s)];
 const root=$('#page-root');
 
@@ -45,7 +45,7 @@ async function navigate(page){
   clearTimeout(App.trainingTimer);
   clearTimeout(App.bbRatingTimer);
   clearTimeout(App.futurePerformanceTimer);
-  clearTimeout(App.predictionCalibrationTimer);
+  clearTimeout(App.bbRatingPredictionTimer);
   App.page=page;
   activateNav(page);
   mountTemplate(page);
@@ -307,16 +307,16 @@ async function renderModelReleases(){
   $('#model-release-serving').innerHTML=summaryRows(servingRows);
   $('#release-bb-rating').innerHTML=fmtRelease(models['bb-rating']||{});
   $('#release-future-performance').innerHTML=fmtRelease(models['future-performance']||{});
-  $('#prediction-calibration-release').innerHTML=fmtRelease(release);
-  $('#prediction-calibration-job').innerHTML='<div class="job-head"><div><div class="job-status">'+esc(job.stage||'Ready')+'</div><div class="job-message">'+esc(job.error||job.message||'Nessun training eseguito.')+'</div></div><span class="registry-badge '+(['running','queued'].includes(job.status)?'candidate':'')+'">'+esc(job.status||'idle')+'</span></div>'+
+  $('#bb-rating-prediction-release').innerHTML=fmtRelease(release);
+  $('#bb-rating-prediction-job').innerHTML='<div class="job-head"><div><div class="job-status">'+esc(job.stage||'Ready')+'</div><div class="job-message">'+esc(job.error||job.message||'Nessun training eseguito.')+'</div></div><span class="registry-badge '+(['running','queued'].includes(job.status)?'candidate':'')+'">'+esc(job.status||'idle')+'</span></div>'+
     (job.output?'<div class="summary-list">'+[['OOF samples',job.output.oof_samples],['MAE',job.output.mae],['RMSE',job.output.rmse],['Scenari valutati',(job.output.scenario_metrics||[]).length]].map(([a,b])=>'<div class="summary-row"><span>'+esc(a)+'</span><strong>'+esc(b??'—')+'</strong></div>').join('')+'</div>':'')+
     (job.progress!=null?'<div class="progress-track"><div class="progress-bar" style="width:'+Math.max(0,Math.min(100,Number(job.progress)||0))+'%"></div></div>':'');
   if(['running','queued'].includes(job.status)) {
-    $('#prediction-calibration-job').insertAdjacentHTML('beforeend','<div class="button-row"><button id="prediction-calibration-cancel" class="btn btn-danger btn-small" '+(job.cancel_requested?'disabled':'')+'>'+(job.cancel_requested?'Interruzione richiesta…':'Interrompi training')+'</button></div>');
-    const cancel=$('#prediction-calibration-cancel');
+    $('#bb-rating-prediction-job').insertAdjacentHTML('beforeend','<div class="button-row"><button id="bb-rating-prediction-cancel" class="btn btn-danger btn-small" '+(job.cancel_requested?'disabled':'')+'>'+(job.cancel_requested?'Interruzione richiesta…':'Interrompi training')+'</button></div>');
+    const cancel=$('#bb-rating-prediction-cancel');
     cancel.onclick=async()=>{cancel.disabled=true;try{await api('/admin-api/jobs/bb-rating-prediction/cancel',{method:'POST',body:{}});toast('Interruzione training richiesta');await renderModelReleases();}catch(e){toast(e.message,'error');cancel.disabled=false;}};
   }
-  const start=$('#prediction-calibration-start');
+  const start=$('#bb-rating-prediction-start');
   start.disabled=['running','queued'].includes(job.status);
   start.textContent=['running','queued'].includes(job.status)?'Training in corso…':'Allena candidate';
   start.onclick=async()=>{
@@ -347,7 +347,7 @@ async function renderModelReleases(){
       catch(e){toast(e.message,'error');button.disabled=false;}
     };
   });
-  if(['running','queued'].includes(job.status)&&App.page==='model-releases')App.predictionCalibrationTimer=setTimeout(()=>renderModelReleases().catch(e=>toast(e.message,'error')),2500);
+  if(['running','queued'].includes(job.status)&&App.page==='model-releases')App.bbRatingPredictionTimer=setTimeout(()=>renderModelReleases().catch(e=>toast(e.message,'error')),2500);
 }
 
 function chartSvg(points){if(!points||points.length<1)return empty('⌁','Dati non disponibili','I fold walk-forward appariranno dopo il training.');const vals=points.map(p=>Number(p.rmse)).filter(Number.isFinite);if(!vals.length)return '';const min=Math.min(...vals),max=Math.max(...vals),range=Math.max(max-min,.001),w=640,h=210,pad=34;const coords=points.map((p,i)=>{const x=pad+(i*(w-pad*2)/Math.max(1,points.length-1));const y=h-pad-((Number(p.rmse)-min)/range)*(h-pad*2);return{x,y,p};});return `<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none"><line class="chart-grid-line" x1="${pad}" y1="${h-pad}" x2="${w-pad}" y2="${h-pad}"/><line class="chart-grid-line" x1="${pad}" y1="${pad}" x2="${w-pad}" y2="${pad}"/><polyline class="chart-line" points="${coords.map(c=>`${c.x},${c.y}`).join(' ')}"/>${coords.map(c=>`<circle class="chart-dot" cx="${c.x}" cy="${c.y}" r="5"/><text class="chart-label" x="${c.x}" y="${h-9}" text-anchor="middle">${esc(c.p.target_season??'')}</text>`).join('')}</svg>`;}
