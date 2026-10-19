@@ -88,11 +88,12 @@ async function renderOverview(){
     ['Metric Rating','Analytical layer','Metric-level strengths','diagnostics','green']
   ].map(([name,state,meta,page,tone])=>`<button class="model-strip-card ${tone} jump" data-page="${page}"><span class="model-strip-icon"></span><span class="model-strip-copy"><strong>${esc(name)}</strong><small>${esc(state)}</small><em>${esc(meta)}</em></span><i class="ph ph-arrow-up-right"></i></button>`).join('');
 
+  const s=o.summary||{};
   $('#overview-kpis').innerHTML=[
     kpi('▤','Database',o.database||'Not selected',`<span class="dot ${o.data_loaded?'green':'yellow'}"></span>${o.data_loaded?'Connected and loaded':'Needs setup'}`),
     kpi('▥','Player observations',fmtInt(s.player_rows),'<span>player / competition rows</span>','green'),
     kpi('◉','Competitions',String((s.competitions||[]).length||'—'),'<span>loaded</span>','violet'),
-    kpi('⬡','Production',prod.run_id?'Active':'Not promoted',prod.run_id?`<span class="dot green"></span>${esc(shortId(prod.run_id))}`:'<span class="dot red"></span>Promotion required','orange'),
+    kpi('⬡','BB Prediction Model',o.bb_rating_prediction?.loaded?'Loaded':'Not promoted',o.bb_rating_prediction?.loaded?'<span class="dot green"></span>Direct 1–100 forecast':'<span class="dot yellow"></span>Release required','orange'),
     kpi('◆','BB-Rating',bb.bb_rating_version?'v'+bb.bb_rating_version:'—',bb.ready?'<span class="dot green"></span>Serving ready':'<span class="dot yellow"></span>Verify artifact','violet'),
     kpi('⌘','API',o.api?.online?'Online':'Offline',`<span class="dot ${o.api?.online?'green':'red'}"></span>V2 inference`,'green')
   ].join('');
