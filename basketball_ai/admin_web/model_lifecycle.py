@@ -66,9 +66,9 @@ def validate_artifact(model: str, directory: str | Path) -> dict[str, Any]:
             return {"valid": False, "reason": "Direct BB-Rating model requires at least 500 walk-forward OOF rows"}
         if not artifact.get("promotion_gate_passed"):
             return {"valid": False, "reason": "Walk-forward baseline or supported-segment regression gate failed"}
-        for filename in ("bb_rating_future_model.joblib", "calibration.json"):
-            if not (root / filename).is_file():
-                return {"valid": False, "reason": f"Direct BB-Rating artifact missing: {filename}"}
+        for required_file in ("bb_rating_future_model.joblib", "calibration.json"):
+            if not (root / required_file).is_file():
+                return {"valid": False, "reason": f"Direct BB-Rating artifact missing: {required_file}"}
         metrics = artifact.get("scenario_metrics") or {}
         if not metrics:
             return {"valid": False, "reason": "Per-scenario walk-forward metrics are missing"}
@@ -87,7 +87,6 @@ def validate_artifact(model: str, directory: str | Path) -> dict[str, Any]:
         "model": model,
         "artifact": filename,
         "version": artifact.get("model_version") or artifact.get("calibration_version") or artifact.get("future_performance_version") or artifact.get("bb_rating_version"),
-        "prediction_model_version": artifact.get("prediction_model_version"),
         "feature_version": artifact.get("feature_version"),
         "data_cutoff": artifact.get("data_cutoff") or artifact.get("data_cutoff_season") or (artifact.get("dataset") or {}).get("data_cutoff") or (artifact.get("dataset") or {}).get("season_max"),
         "rows": (artifact.get("dataset") or {}).get("rows") or artifact.get("n_pairs") or artifact.get("oof_samples") or artifact.get("training_samples"),
