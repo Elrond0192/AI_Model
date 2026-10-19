@@ -13,7 +13,8 @@ _OBSERVED = {
     "player_compare", "team_compare", "player_pair", "metric_explanation",
     "role_analysis", "performance_decomposition", "performance_stability",
     "team_usage_analysis", "shooting_decomposition", "defensive_decomposition",
-    "model_evidence",
+    "model_evidence", "best_team_fit", "best_player_fit", "player_scouting",
+    "player_similarity",
 }
 _HYPOTHETICAL = {
     "player_team", "league_transfer", "team_add_player", "team_replace_player",
