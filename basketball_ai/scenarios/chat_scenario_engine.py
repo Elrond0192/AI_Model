@@ -349,6 +349,41 @@ class ChatScenarioEngine:
             raise ValueError("No data is available for the requested context")
         return rows.iloc[-1]
 
+    def _target_context_score(
+        self,
+        player_id: int,
+        team_id: int,
+        target_league: int,
+        competition: str,
+        through_season: int,
+        *,
+        source_league: int | None = None,
+        player_overrides: dict[str, Any] | None = None,
+    ) -> tuple[float, dict[str, Any]]:
+        """Report team context conservatively without inventing roster-fit calibration.
+
+        The legacy cross-league transition estimator has no validated conditional
+        coefficients for role/minutes/usage or roster complementarity. Return its
+        neutral anchor and expose that gap instead of manufacturing a Team Fit.
+        """
+        team_rows = self._team_rows(team_id, target_league, competition, through_season)
+        player_rows = self._player_rows(player_id, source_league, competition, through_season)
+        overrides = player_overrides if isinstance(player_overrides, dict) else {}
+        return 0.65, {
+            "available": False,
+            "status": "unvalidated_roster_complementarity",
+            "team_context_available": not team_rows.empty,
+            "player_source_context_available": not player_rows.empty,
+            "team_context_season": int(through_season),
+            "roster_complementarity_scored": False,
+            "player_context_assumptions_provided": bool(overrides),
+            "player_context_assumptions_quantified": False,
+            "reason": (
+                "Historical team-season aggregates do not constitute a validated "
+                "roster-aware conditional fit model for this cross-league scenario."
+            ),
+        }
+
     def _direct_prediction(
         self,
         player_id: int,
@@ -1039,6 +1074,27 @@ class ChatScenarioEngine:
             return 0.0
         return float(np.clip((target_rank - source_rank) * 0.35, -1.5, 1.5))
 
+    @staticmethod
+    def _normalise_player_overrides(value: Any) -> dict[str, Any]:
+        if not isinstance(value, dict):
+            return {}
+        applied: dict[str, Any] = {}
+        role = str(value.get("role", "") or "").strip()
+        if role:
+            applied["role"] = role[:80]
+        try:
+            if value.get("minutes_per_game") is not None:
+                applied["minutes_per_game"] = float(np.clip(float(value["minutes_per_game"]), 0.0, 48.0))
+        except (TypeError, ValueError):
+            pass
+        try:
+            if value.get("usg_pct") is not None:
+                raw_usage = float(value["usg_pct"])
+                applied["usg_pct"] = float(np.clip(raw_usage, 0.0, 100.0 if raw_usage > 1.5 else 1.0))
+        except (TypeError, ValueError):
+            pass
+        return applied
+
     def _league_transfer(self, spec, players, teams, source_league, target_league):
         if not players:
             raise ValueError("player is required")
@@ -1069,12 +1125,16 @@ class ChatScenarioEngine:
             empirical = None
             transfer_delta = fallback_delta
             method = "league_quality_fallback"
-        context_score, context = (0.5, {})
+        player_overrides = self._normalise_player_overrides(spec.get("player_overrides", {}))
+        context_score, context = (0.65, {"available": False, "status": "target_team_not_provided"})
         if teams:
             context_score, context = self._target_context_score(
-                players[0], teams[0], target_league, target_comp, team_context_season
+                players[0], teams[0], target_league, target_comp, team_context_season,
+                source_league=source_league, player_overrides=player_overrides,
             )
-        fit_delta = float(np.clip((context_score - 0.65) * 0.70, -0.30, 0.25)) if teams else 0.0
+        # Do not apply a fabricated numeric fit correction without a validated
+        # roster-aware model. Historical transition deltas remain separate.
+        fit_delta = float(np.clip((context_score - 0.65) * 0.70, -0.30, 0.25)) if teams and context.get("available") else 0.0
         projected = float(np.clip(source_rating + transfer_delta + fit_delta, 0.0, 10.0))
         residual_scale = float(np.std(samples, ddof=1)) if len(samples) >= 2 else 0.75
         half_width = max(0.45, residual_scale * (1.35 if len(samples) < 10 else 1.0))
@@ -1085,7 +1145,19 @@ class ChatScenarioEngine:
             f"Il contesto della squadra target è limitato alle informazioni disponibili fino al {team_context_season}; "
             f"i dati reali del {target_season} non entrano nella previsione."
         )
+        limitations.append(
+            "La stima di transizione tra leghe non è calibrata per quantificare effetti condizionali di ruolo, minuti o usage; "
+            "le assunzioni esplicite sono conservate, ma non si attribuisce loro un effetto numerico non validato."
+        )
+        limitations.append(
+            "Il fit rispetto al roster target è non disponibile finché non esiste una validazione specifica della complementarità e della rotazione; "
+            "gli aggregati di squadra non vengono presentati come Team Fit completo."
+        )
         what_if = {
+            "assumptions": {
+                "user_supplied_player_context": player_overrides,
+                "quantification_status": "not_calibrated_for_cross_league_role_minutes_usage_effects",
+            },
             "baseline": {
                 "profile_season": player_season,
                 "current_rating": round(source_rating, 3),
