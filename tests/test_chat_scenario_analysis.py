@@ -658,7 +658,7 @@ def test_player_intelligence_expands_team_usage_and_keeps_counterfactual_explici
     )
     assert set(counterfactual["result"]["analyses"]) == {"player_team", "model_evidence"}
     assert counterfactual["result"]["analyses"]["player_team"]["available"] is False
-    evidence = counterfactual["result"]["analyses"]["model_evidence"]["result"]
+    evidence = counterfactual["result"]["analyses"]["model_evidence"]
     assert "reason" not in evidence["bb_rating_prediction"]
     assert "target_season" not in evidence["bb_rating_prediction"]
 
