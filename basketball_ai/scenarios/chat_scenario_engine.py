@@ -2547,6 +2547,10 @@ class ChatScenarioEngine:
                                 if previous_bb_rating is not None and current_bb_rating is not None
                                 else None
                             ),
+                            "current_season_status": str(
+                                decomposition_result.get("current_season_status", "unknown")
+                            ),
+                            "is_provisional": bool(decomposition_result.get("is_provisional", False)),
                             "previous_stats": {
                                 key: round(_finite(previous.get(key)), 2)
                                 for key in ("points", "assists", "rebounds", "minutes_per_game")
