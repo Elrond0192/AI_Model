@@ -16,8 +16,10 @@ The registry is exposed at:
 
 ## Implemented analysis layers
 
-1. **performance_decomposition** — volume, efficiency, role and impact changes.
+1. **performance_decomposition** — volume, efficiency, role and impact changes; includes per-36-minute production so role/minute changes can be separated descriptively from rate-adjusted production.
 2. **metric_explanation** — metric meaning plus same-context percentile and interpretation.
+
+For season-over-season comparisons, the public rating is always the canonical BB-Rating (1–100), never the source-statistics `rating` field. A comparison for the active calendar-year season is marked provisional and must not be presented as a completed-season result. Per-36-minute rates help describe volume changes; they are not causal attribution and do not by themselves explain a BB-Rating delta.
 3. **role_analysis** — reconstructs observed role and role changes over time.
 4. **performance_stability** — historical dispersion, trend and peak-vs-baseline.
 5. **team_usage_analysis** — compares player role with team style and usage context.
