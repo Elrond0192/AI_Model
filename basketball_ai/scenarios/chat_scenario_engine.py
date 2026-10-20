@@ -1017,7 +1017,7 @@ class ChatScenarioEngine:
             candidate_ids = set()
             for lineup in context["_lineup_player_ids"]:
                 candidate_ids.update(int(value) for value in lineup if int(value) != int(player_id))
-            for teammate_id in candidate_ids:
+            for teammate_id in sorted(candidate_ids):
                 teammate_present = context["_lineup_player_ids"].map(
                     lambda values: int(teammate_id) in values
                 )
