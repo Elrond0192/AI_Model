@@ -820,6 +820,7 @@ class ChatScenarioEngine:
     # Supervised/direct prediction and cross-league transfer
     # ------------------------------------------------------------------
     def _clutch_analysis(self, spec, players, teams, source_league, target_league):
+        del teams, target_league
         if not players:
             raise ValueError("player is required")
         season = int(spec["season"])
@@ -827,18 +828,101 @@ class ChatScenarioEngine:
         rows = self._player_rows(players[0], source_league, competition, season)
         if rows.empty:
             raise ValueError("No player history is available for the requested clutch context")
-        metrics = ("clutch_games", "clutch_pts", "clutch_ts_pct", "clutch_net_rtg", "clutch_ast_to_tov")
-        latest = _serialise(self._latest(rows), metrics)
-        history = [
-            {"season": int(row["_year"]), **_serialise(row, metrics)}
-            for row in rows.tail(8).to_dict("records")
+
+        metrics = (
+            "clutch_games", "clutch_pts", "clutch_fg2m", "clutch_fg2a",
+            "clutch_fg3m", "clutch_fg3a", "clutch_ftm", "clutch_fta",
+            "clutch_ast", "clutch_orb", "clutch_drb", "clutch_stl",
+            "clutch_blk", "clutch_tov", "clutch_fg_pct", "clutch_fg2_pct",
+            "clutch_fg3_pct", "clutch_ft_pct", "clutch_efg_pct",
+            "clutch_ts_pct", "clutch_ftr", "clutch_three_par",
+            "clutch_ast_to_tov", "clutch_ortg", "clutch_drtg",
+            "clutch_net_rtg", "clutch_team_id", "clutch_clutchness_rating",
+        )
+        # The detailed fields are the source-row marker. Do not mistake the
+        # legacy COALESCE(..., 0) defaults in PlayerCompetitionStats for a real
+        # clutch row; the native source row may not exist for a season/context.
+        detail_markers = (
+            "clutch_fg2a", "clutch_fg3a", "clutch_fta", "clutch_ast",
+            "clutch_orb", "clutch_drb", "clutch_stl", "clutch_blk",
+            "clutch_tov", "clutch_clutchness_rating",
+        )
+        detailed_schema_available = any(column in rows.columns for column in detail_markers)
+
+        def has_clutch_row(row: dict[str, Any]) -> bool:
+            if detailed_schema_available:
+                return any(
+                    column in row and pd.notna(row.get(column))
+                    for column in detail_markers
+                )
+            # Backward-compatible partial mode until ai_source_full.sql is rerun
+            # to materialize the expanded clutch projection.
+            games = _finite(row.get("clutch_games"), 0.0)
+            return math.isfinite(games) and games > 0
+
+        def snapshot(row: dict[str, Any]) -> dict[str, Any]:
+            available = has_clutch_row(row)
+            result = _serialise(row, metrics)
+            result["data_available"] = bool(available)
+            if not available:
+                for metric in metrics:
+                    result.pop(metric, None)
+                return result
+            games = _finite(row.get("clutch_games"), float("nan"))
+            points = _finite(row.get("clutch_pts"), float("nan"))
+            if math.isfinite(games) and games > 0 and math.isfinite(points):
+                result["clutch_pts_per_game"] = round(points / games, 3)
+            return result
+
+        all_rows = rows.tail(8).to_dict("records")
+        history_snapshots = [
+            {"season": int(row["_year"]), **snapshot(row)}
+            for row in all_rows
         ]
-        samples = int(pd.to_numeric(rows.get("clutch_games"), errors="coerce").fillna(0).sum()) if "clutch_games" in rows else 0
+        history_with_data = [
+            item for item in history_snapshots if item.get("data_available")
+        ]
+        latest = snapshot(self._latest(rows).to_dict())
+        samples = int(sum(
+            max(0, int(_finite(row.get("clutch_games"), 0.0)))
+            for row in all_rows if has_clutch_row(row)
+        ))
+        source_rows = len(history_with_data)
+        available = bool(latest.get("data_available"))
+        status = "available" if available else "unavailable"
+        reason = None if available else (
+            "No matching AdvanceStats_Clutch row is available in the canonical player context. "
+            "The Scenario* simulation tables are not a source for these clutch aggregates."
+        )
         return {
-            "result": {"player": self._player_name(players[0]), "competition": competition, "through_season": season, "latest_clutch": latest, "clutch_history": history},
-            "evidence": [{"type": "observed_clutch_advanced_stats", "seasons_considered": len(rows), "clutch_games": samples}],
-            "support": {"method": "observed_clutch_advanced_stats", "samples": samples, "confidence": _confidence(samples)},
-            "limitations": ["This reports observed clutch aggregates. Possession-level last-five-minute simulations require PBP clock and score fields for the requested competition."],
+            "result": {
+                "player": self._player_name(players[0]),
+                "competition": competition,
+                "through_season": season,
+                "status": status,
+                "reason": reason,
+                "latest_clutch": latest,
+                "clutch_history": history_with_data,
+                "seasons_with_clutch_data": source_rows,
+                "seasons_without_clutch_data_in_window": len(history_snapshots) - source_rows,
+            },
+            "evidence": [{
+                "type": "observed_advance_stats_clutch",
+                "seasons_considered": len(history_snapshots),
+                "seasons_with_data": source_rows,
+                "clutch_games": samples,
+            }],
+            "support": {
+                "method": "observed_advance_stats_clutch",
+                "samples": samples,
+                "confidence": _confidence(samples),
+            },
+            "limitations": [
+                "Questi sono aggregati osservati dei finali punto a punto negli ultimi cinque minuti; non sono una simulazione possesso per possesso.",
+                "Il ClutchnessRating sorgente è descrittivo e non equivale al BB-Rating canonico 1–100.",
+                "Con meno di cinque partite clutch il campione è piccolo; percentuali e ORtg/DRtg possono essere instabili.",
+                "Per attribuire un effetto individuale servono controlli per avversari, compagni, quintetti e stato della partita.",
+            ],
         }
 
     def _team_lineup_context_association(
