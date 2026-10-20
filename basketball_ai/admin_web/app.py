@@ -901,7 +901,13 @@ def _bb_rating_prediction_job_worker(active_profile: str | None, actor: str, can
         model.metadata.update(metadata)
         _check_cancelled(cancel_event)
         if not metadata.get("promotion_gate_passed", False):
-            mae = metadata.get("oof_mae_after_calibration")
+            # The release gate evaluates the final serving policy, including safe
+            # contextual fallbacks. Calibrated-only MAE is reported separately.
+            mae = metadata.get(
+                "oof_mae_after_scenario_fallback",
+                metadata.get("oof_mae_after_calibration"),
+            )
+            mae_calibrated_model = metadata.get("oof_mae_after_calibration")
             baseline_mae = metadata.get("oof_baseline_mae")
             target_seasons = metadata.get("walk_forward_target_seasons") or []
             fold_count = int(metadata.get("walk_forward_fold_count") or len(target_seasons))
@@ -954,7 +960,8 @@ def _bb_rating_prediction_job_worker(active_profile: str | None, actor: str, can
                 "duplicate_target_context_pairs": metadata.get("duplicate_target_context_pairs"),
                 "unresolved_team_identity_rows": metadata.get("unresolved_team_identity_rows"),
                 "mae": mae,
-                "mae_after_scenario_fallback": metadata.get("oof_mae_after_scenario_fallback"),
+                "mae_calibrated_model": mae_calibrated_model,
+                "mae_after_scenario_fallback": mae,
                 "baseline_mae": baseline_mae,
                 "rmse": metadata.get("oof_rmse_after_calibration"),
                 "target_seasons": metadata.get("target_seasons") or [],
@@ -1000,7 +1007,11 @@ def _bb_rating_prediction_job_worker(active_profile: str | None, actor: str, can
             "calibration_support": metadata.get("calibration_support") or {},
             "duplicate_target_context_pairs": metadata.get("duplicate_target_context_pairs"),
             "unresolved_team_identity_rows": metadata.get("unresolved_team_identity_rows"),
-            "mae": metadata.get("oof_mae_after_calibration", metrics.get("mae")),
+            "mae": metadata.get(
+                "oof_mae_after_scenario_fallback",
+                metrics.get("mae", metadata.get("oof_mae_after_calibration")),
+            ),
+            "mae_calibrated_model": metadata.get("oof_mae_after_calibration"),
             "mae_after_scenario_fallback": metadata.get("oof_mae_after_scenario_fallback"),
             "rmse": metadata.get("oof_rmse_after_calibration", metrics.get("rmse")),
             "baseline_mae": metadata.get("oof_baseline_mae", metrics.get("baseline_mae")),
