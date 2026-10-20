@@ -352,7 +352,7 @@ def _build_scenario_policy_maps(
     predictions: np.ndarray,
     *,
     min_samples: int = 40,
-) -> dict[str, dict[str, dict[str, float | int | bool]]]:
+) -> dict[str, dict[str, dict[str, Any]]]:
     """Measure whether the calibrated model is safe to use within OOF cohorts."""
     maps: dict[str, dict[str, dict[str, float | int | bool]]] = {
         dimension: {} for dimension in _POLICY_DIMENSION_ORDER
