@@ -1010,7 +1010,7 @@ BEGIN
                         PARTITION BY r.player_global_id, r.league_key, r.season, r.competition
                         ORDER BY
                                  CASE WHEN coalesce(r.direct_team_global_id, r.fallback_team_global_id) IS NULL THEN 1 ELSE 0 END,
-                                 CASE WHEN r.source_team_id IS NULL OR btrim(r.source_team_id) = '' THEN 1 ELSE 0 END,
+                                 CASE WHEN r.source_team_id IS NULL THEN 1 ELSE 0 END,
                                  coalesce(r.games, 0) DESC,
                                  r.source_team_id NULLS LAST
                     ) AS rn
