@@ -103,8 +103,11 @@ def test_team_stats_support_gamesplayed_and_fallback_team_identity():
 
 def test_ai_source_projects_all_native_advance_stats_clutch_fields():
     sql = SOURCE_SQL.read_text(encoding="utf-8").lower()
-    assert "opt_table := 'advancestats_clutch_' || league_key" in sql
     assert "opt_table := 'advancedstats_clutch_' || league_key" in sql
+    assert "opt_table := 'advancestats_clutch_' || league_key" in sql
+    assert sql.index("opt_table := 'advancedstats_clutch_' || league_key") < sql.index(
+        "opt_table := 'advancestats_clutch_' || league_key"
+    )
     assert "from \"analisi\".%10$i cl0" in sql
     assert "clutch_games_expr := 'coalesce('" in sql
     assert "clutch_fg2m_expr" in sql
