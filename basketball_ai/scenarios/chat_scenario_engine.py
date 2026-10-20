@@ -868,6 +868,7 @@ class ChatScenarioEngine:
             "net_rating_without_player": None,
             "difference": None,
             "by_season": [],
+            "teammate_associations": [],
         }
         if not isinstance(stints, pd.DataFrame) or stints.empty:
             return {**empty_result, "reason": "Lineup stint data is unavailable for this context."}
