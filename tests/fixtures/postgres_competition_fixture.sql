@@ -100,7 +100,7 @@ CREATE TABLE IF NOT EXISTS "Analisi"."AdvancedStats_Clutch_ITA1" (
   "ClutchnessRating" text
 );
 
-CREATE TABLE IF NOT EXISTS "Pbp"."ITA1_2025" (
+CREATE TABLE IF NOT EXISTS "Pbp"."ITA1" (
   "Season" integer NOT NULL,
   "Competition" text NOT NULL,
   "GameCode" text NOT NULL,
@@ -123,7 +123,7 @@ TRUNCATE TABLE
   "Analisi"."AdvancedStatsTeam_ITA1",
   "Analisi"."AdvancedStats_Clutch_ITA1",
   "Boxscore"."ITA1",
-  "Pbp"."ITA1_2025";
+  "Pbp"."ITA1";
 
 INSERT INTO "Anagrafiche"."ITA1"
   ("Season", "Id", "IdGlobal", "PlayerName", "Team", "BirthDate", "Pos", "TeamName")
@@ -184,7 +184,7 @@ VALUES
   (2025, 'P_LOCAL', '1001', 'PO', 3, 4, 1, 2, 0, 1, 2, 2, 1, 0, 1,
    0, 0, 1, 0.333, 0.5, 0.0, 1.0, 0.333, 0.444, 0.667, 0.333, 1.0, 100.0, 112.0, -12.0, 'C');
 
-INSERT INTO "Pbp"."ITA1_2025"
+INSERT INTO "Pbp"."ITA1"
   ("Season", "Competition", "GameCode", "Player", "TeamId", "HomeClub",
    "QuarterTime", "Score", "Quarter", "PlayType", "AttemptAnd1", "HomeLineup", "AwayLineup")
 VALUES
