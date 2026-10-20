@@ -107,3 +107,34 @@ def test_scenario_feed_cache_avoids_second_query(monkeypatch):
     loader.load_scenario_feeds("shot_profile_counterfactual", **kwargs)
     loader.load_scenario_feeds("shot_profile_counterfactual", **kwargs)
     assert calls == 1
+
+
+
+def test_player_intelligence_attribution_loads_only_bounded_lineup_feed(monkeypatch):
+    statements = []
+    monkeypatch.setattr(loader, "get_engine", lambda url=None: _Engine())
+    monkeypatch.setattr(loader, "_scenario_cache", {})
+
+    def fake_read_sql(statement, engine, params):
+        statements.append((str(statement), params))
+        return pd.DataFrame(columns=loader._OPTIONAL_COLUMNS["lineup_stints"])
+
+    monkeypatch.setattr(loader.pd, "read_sql", fake_read_sql)
+    result = loader.load_scenario_feeds(
+        "player_intelligence_team_attribution",
+        player_ids=[11],
+        team_ids=[33, 44],
+        league_keys=["EL"],
+        season=2025,
+        competition="RS",
+    )
+
+    assert len(statements) == 1
+    sql, params = statements[0]
+    assert '"AI_Source"."ScenarioLineupStats"' in sql
+    assert "season BETWEEN" in sql
+    assert "upper(competition)" in sql
+    assert "league_key IN" in sql
+    assert params["season_min"] == 2022
+    assert params["season_max"] == 2025
+    assert not result["lineup_stints"].empty
