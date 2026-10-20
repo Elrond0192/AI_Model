@@ -99,6 +99,99 @@ def _confidence(samples: int) -> str:
     return "low"
 
 
+def _bb_rating_contribution_decomposition(
+    previous_detail: dict[str, Any] | None,
+    current_detail: dict[str, Any] | None,
+    previous_season: int,
+    current_season: int,
+) -> dict[str, Any] | None:
+    """Compare score-formula components without presenting them as causal effects."""
+    if not isinstance(previous_detail, dict) or not isinstance(current_detail, dict):
+        return None
+    before_comp = previous_detail.get("rating_composition")
+    after_comp = current_detail.get("rating_composition")
+    if not isinstance(before_comp, dict) or not isinstance(after_comp, dict):
+        return None
+
+    def by_metric(composition: dict[str, Any]) -> dict[str, dict[str, Any]]:
+        rows = composition.get("metrics")
+        if not isinstance(rows, list):
+            return {}
+        return {
+            str(row.get("metric")): row
+            for row in rows
+            if isinstance(row, dict) and str(row.get("metric", "")).strip()
+        }
+
+    before_rows = by_metric(before_comp)
+    after_rows = by_metric(after_comp)
+    if not before_rows or not after_rows:
+        return None
+
+    components: list[dict[str, Any]] = []
+    dimension_deltas: dict[str, float] = {}
+    for key in sorted(set(before_rows) | set(after_rows)):
+        before = before_rows.get(key, {})
+        after = after_rows.get(key, {})
+        before_points = _finite(before.get("score_deviation_from_midpoint_points"))
+        after_points = _finite(after.get("score_deviation_from_midpoint_points"))
+        delta = after_points - before_points
+        dimension = str(after.get("dimension") or before.get("dimension") or "other")
+        dimension_deltas[dimension] = dimension_deltas.get(dimension, 0.0) + delta
+        components.append({
+            "metric": key,
+            "display_name": str(after.get("display_name") or before.get("display_name") or key),
+            "dimension": dimension,
+            "previous_percentile_pct": before.get("contextual_percentile_pct"),
+            "current_percentile_pct": after.get("contextual_percentile_pct"),
+            "previous_effective_weight": round(_finite(before.get("effective_weight")), 8),
+            "current_effective_weight": round(_finite(after.get("effective_weight")), 8),
+            "previous_contribution_points": round(before_points, 6),
+            "current_contribution_points": round(after_points, 6),
+            "contribution_delta_points": round(delta, 6),
+        })
+    components.sort(
+        key=lambda row: (abs(float(row["contribution_delta_points"])), row["metric"]),
+        reverse=True,
+    )
+    dimensions = [
+        {"dimension": key, "contribution_delta_points": round(value, 6)}
+        for key, value in dimension_deltas.items()
+    ]
+    dimensions.sort(key=lambda row: abs(float(row["contribution_delta_points"])), reverse=True)
+
+    before_score = int(round(_finite(previous_detail.get("score"))))
+    after_score = int(round(_finite(current_detail.get("score"))))
+    before_unrounded = _finite(before_comp.get("unrounded_bb_rating"), float(before_score))
+    after_unrounded = _finite(after_comp.get("unrounded_bb_rating"), float(after_score))
+    unrounded_delta = after_unrounded - before_unrounded
+    rounded_delta = after_score - before_score
+    component_total = sum(float(row["contribution_delta_points"]) for row in components)
+
+    return {
+        "available": True,
+        "method": "mathematical_score_formula_decomposition",
+        "attribution_type": "mathematical_not_causal",
+        "previous_season": int(previous_season),
+        "current_season": int(current_season),
+        "previous_bb_rating": before_score,
+        "current_bb_rating": after_score,
+        "bb_rating_delta": rounded_delta,
+        "reference_score": 50.5,
+        "unrounded_bb_rating_delta_points": round(unrounded_delta, 6),
+        "sum_component_delta_points": round(component_total, 6),
+        "rounding_residual_points": round(rounded_delta - unrounded_delta, 6),
+        "dimensions": dimensions,
+        "components": components,
+        "interpretation": "Scomposizione aritmetica della variazione del punteggio, non attribuzione causale.",
+        "limitations": [
+            "I percentili sono relativi al gruppo di confronto della rispettiva stagione.",
+            "Differenze nella popolazione di confronto o nei pesi effettivi dovute a dati mancanti possono modificare i contributi.",
+            "La scomposizione descrive la formula del punteggio e non dimostra perché sia cambiato il rendimento reale.",
+        ],
+    }
+
+
 class ChatScenarioEngine:
     """Evaluate structured basketball questions for the conversational layer."""
 
