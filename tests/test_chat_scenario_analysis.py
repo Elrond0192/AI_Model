@@ -533,6 +533,7 @@ def test_decomposition_uses_canonical_bb_rating_and_rate_adjusted_production():
     assert payload["previous_bb_rating"] == 70
     assert payload["current_bb_rating"] == 72
     assert payload["bb_rating_delta"] == 2
+    assert payload["bb_rating_contribution_decomposition"]["available"] is False
     assert payload["rate_adjusted_production"]["unit"] == "per_36_minutes"
     assert payload["rate_adjusted_production"]["previous_per36"]["points_per36"] == pytest.approx(14.667)
     assert payload["rate_adjusted_production"]["current_per36"]["points_per36"] == pytest.approx(16.0)
