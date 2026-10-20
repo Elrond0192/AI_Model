@@ -2025,10 +2025,9 @@ class ChatScenarioEngine:
         }
 
 
-    def _bb_rating_for_season(
+    def _bb_rating_detail_for_season(
         self, global_id: str, league_id: int | None, season: int, competition: str
-    ) -> int | None:
-        """Return the canonical BB-Rating for an observed player-season, never source rating."""
+    ) -> dict[str, Any] | None:
         if self.bb_rating_engine is None or not global_id or league_id is None:
             return None
         league_key = self._league_key(league_id)
@@ -2041,12 +2040,33 @@ class ChatScenarioEngine:
                 season=int(season),
                 phase=normalize_competition(competition),
             )
-            score = getattr(rated, "score", None)
+            payload = rated if isinstance(rated, dict) else {}
+            if isinstance(rated, dict):
+                score = payload.get("bb_rating", payload.get("score"))
+            else:
+                score = getattr(rated, "score", None)
+                serializer = getattr(rated, "to_dict", None)
+                if callable(serializer):
+                    serialized = serializer()
+                    if isinstance(serialized, dict):
+                        payload = serialized
             if score is None or not math.isfinite(float(score)):
                 return None
-            return int(round(float(score)))
+            return {
+                "score": int(round(float(score))),
+                "rating_composition": payload.get("rating_composition"),
+                "dimensions": payload.get("dimensions", {}),
+                "peer_group": payload.get("peer_group", {}),
+                "quality": payload.get("quality"),
+            }
         except (ValueError, RuntimeError, KeyError, TypeError, AttributeError):
             return None
+
+    def _bb_rating_for_season(
+        self, global_id: str, league_id: int | None, season: int, competition: str
+    ) -> int | None:
+        detail = self._bb_rating_detail_for_season(global_id, league_id, season, competition)
+        return int(detail["score"]) if isinstance(detail, dict) else None
 
     def _model_evidence(self, spec, players, teams, source_league, target_league):
         """Compose model evidence and make the prediction context explicit.
