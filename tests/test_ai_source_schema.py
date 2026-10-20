@@ -101,6 +101,25 @@ def test_team_stats_support_gamesplayed_and_fallback_team_identity():
     assert "quote_literal(league_key||':')||" in compact
 
 
+def test_ai_source_projects_all_native_advance_stats_clutch_fields():
+    sql = SOURCE_SQL.read_text(encoding="utf-8").lower()
+    assert "opt_table := 'advancestats_clutch_' || league_key" in sql
+    assert "opt_table := 'advancedstats_clutch_' || league_key" in sql
+    assert "from \"analisi\".%10$i cl0" in sql
+    assert "clutch_games_expr := 'coalesce('" in sql
+    assert "clutch_fg2m_expr" in sql
+    for field in (
+        "clutch_fg2m", "clutch_fg2a", "clutch_fg3m", "clutch_fg3a",
+        "clutch_ftm", "clutch_fta", "clutch_ast", "clutch_orb",
+        "clutch_drb", "clutch_stl", "clutch_blk", "clutch_tov",
+        "clutch_fg_pct", "clutch_fg2_pct", "clutch_fg3_pct", "clutch_ft_pct",
+        "clutch_efg_pct", "clutch_ts_pct", "clutch_ftr", "clutch_three_par",
+        "clutch_ortg", "clutch_drtg", "clutch_net_rtg", "clutch_team_id",
+        "clutch_clutchness_rating",
+    ):
+        assert f"as {field}" in sql
+
+
 def test_ai_source_does_not_own_simulation_feeds():
     sql = SOURCE_SQL.read_text(encoding="utf-8").lower()
     assert "c.relname like 'simulation%'" not in sql
@@ -227,6 +246,9 @@ def test_scenario_serving_tolerates_missing_optional_simulation_feeds():
     assert "skipping shot-profile scenario feed" in sql
     assert "skipping defender matchup feed" in sql
     assert "skipping lineup scenario feed" in sql
+    assert "get diagnostics affected_rows = row_count" in sql
+    assert "scenariolineupstats remains empty" in sql
+    assert "simulationlineupstints has no matching source rows" in sql
 
 
 def test_scenario_serving_is_physical_indexed_and_incremental():
