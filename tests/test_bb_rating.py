@@ -27,6 +27,22 @@ def test_percentile_does_not_mutate_read_only_array():
     assert BBRatingEngine._percentile(readonly_values, 2.5, "higher_better") == pytest.approx(0.5)
 
 
+def test_local_competition_tier_overrides_stale_database_tier():
+    stats = pd.DataFrame([{
+        "league_key": "ITA1",
+        "league_id": 123,
+        "season": 2025,
+        "competition": "RS",
+        "player_global_id": "tier-check",
+    }])
+    stale_leagues = pd.DataFrame([{"id": 123, "name": "ITA1", "tier": 1}])
+
+    prepared = BBRatingEngine._prepare_frame(stats, None, stale_leagues)
+
+    assert prepared.loc[0, "competition_tier"] == 2
+    assert prepared.loc[0, "competition_tier_label"] == "National first division"
+
+
 def test_net_rtg_diff_zero_is_missing_for_bb_rating():
     frame = pd.DataFrame([
         {
