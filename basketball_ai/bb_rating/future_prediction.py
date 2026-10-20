@@ -76,17 +76,29 @@ def _team_global_map(data: dict[str, Any]) -> dict[tuple[str, str, int], str]:
 
 
 def _target_league_tier(data: dict[str, Any], league_key: str) -> Any:
+    wanted = str(league_key).strip().upper()
+    # The shipped map is authoritative for known league codes. In particular,
+    # never let a stale DB value such as tier=1 for LIT1 or ITA2 distort a scenario.
+    configured_tier = competition_tier(wanted)
+    if configured_tier is not None:
+        return configured_tier
+
     leagues = data.get("leagues", pd.DataFrame())
     if leagues is not None and not leagues.empty and "tier" in leagues.columns:
-        wanted = str(league_key).strip().upper()
         for row in leagues.to_dict("records"):
             candidates = {
                 _clean(row.get("name")).upper(),
                 _clean(row.get("league_key")).upper(),
             }
-            if wanted in candidates and row.get("tier") is not None:
-                return row.get("tier")
-    return competition_tier(league_key)
+            if wanted not in candidates:
+                continue
+            try:
+                tier = int(float(row.get("tier")))
+            except (TypeError, ValueError):
+                continue
+            if tier > 0:
+                return tier
+    return None
 
 
 def _team_identity(row: pd.Series, team_map: dict[tuple[str, str, int], str]) -> str | None:
