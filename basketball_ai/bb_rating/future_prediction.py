@@ -574,6 +574,7 @@ class BBRatingFuturePredictionModel:
         self.numeric_columns = _numeric_feature_columns(frame)
         records: list[dict[str, Any]] = []
         # Canonical global identity supports provider-specific player IDs changing.
+        allowed_target_contexts = forecast_competitions().difference({"HOME", "AWAY"})
         grouped = {key: group for key, group in frame.groupby("player_global_id", sort=False)}
         for player_global_id, group in grouped.items():
             source_rows = group.to_dict("records")
@@ -592,7 +593,6 @@ class BBRatingFuturePredictionModel:
                 # Competition codes also contain views/phases (HOME, AWAY, RS, TOT,
                 # etc.); they are not independent competition identities. Pair only
                 # like-for-like contexts and never cross-join all origins to all targets.
-                allowed_target_contexts = forecast_competitions()
                 for target_raw in destinations:
                     target = pd.Series(target_raw)
                     target_league = _clean(target.get("league_key")).upper()
