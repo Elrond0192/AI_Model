@@ -59,7 +59,7 @@ function showApp(user){App.user=user;$('#login-screen').classList.add('hidden');
 
 async function enterBackOffice(user){
   showApp(user);
-  await navigate('overview');
+  void navigate('overview');
   let result=null,error=null;
   try{result=await api('/admin-api/auto-load',{method:'POST',body:{},keepAlive:true});}
   catch(e){error=e.message;}
