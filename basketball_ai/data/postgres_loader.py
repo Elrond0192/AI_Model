@@ -100,6 +100,8 @@ _SCENARIO_FEEDS = {
     "roster_optimizer": ("lineup_stints",),
     "composite_scenario": ("pbp_events", "lineup_stints", "play_type_stats", "shot_profiles"),
     "causal_effect": ("causal_panel",),
+    "causal_team_effect": ("lineup_stints",),
+    "player_intelligence_team_attribution": ("lineup_stints",),
 }
 
 _scenario_cache: dict[tuple[Any, ...], tuple[float, dict[str, pd.DataFrame]]] = {}
