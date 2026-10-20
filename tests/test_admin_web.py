@@ -386,12 +386,21 @@ def test_helpers_and_static_assets(monkeypatch, tmp_path):
     sidebar_end = html.index("</button>", sidebar_start)
     sidebar_item = html[sidebar_start:sidebar_end]
     assert '<svg viewBox="0 0 24 24"' in sidebar_item
-    overview_icon_start = html.index('class="future-performance-overview-title"')
-    overview_icon_end = html.index("</h2>", overview_icon_start)
-    overview_title = html[overview_icon_start:overview_icon_end]
-    assert 'class="future-performance-overview-icon"' in overview_title
-    assert '<svg viewBox="0 0 24 24"' in overview_title
-    assert ".future-performance-overview-icon" in css
+    model_registry_label_start = html.index('<div class="eyebrow dashboard-section-eyebrow"><i class="ph ph-git-branch"')
+    model_registry_label_end = html.index("</div>", model_registry_label_start)
+    assert "MODEL REGISTRY" in html[model_registry_label_start:model_registry_label_end]
+    system_health_label_start = html.index('<div class="eyebrow dashboard-section-eyebrow"><i class="ph ph-heartbeat"')
+    system_health_label_end = html.index("</div>", system_health_label_start)
+    assert "SYSTEM HEALTH" in html[system_health_label_start:system_health_label_end]
+    future_marker = html.index("FUTURE PERFORMANCE", html.index("dashboard-bottom-cards"))
+    future_label_start = html.rfind('<div class="eyebrow dashboard-section-eyebrow">', 0, future_marker)
+    future_label_end = html.index("</div>", future_marker)
+    future_label = html[future_label_start:future_label_end]
+    assert '<svg viewBox="0 0 24 24"' in future_label
+    assert "Forecast statistico" in html[future_label_end:future_label_end + 80]
+    assert "future-performance-overview-icon" not in html
+    assert ".dashboard-section-eyebrow svg" in css
+    assert 'href="/assets/app.css?v=2.6.3"' in html
     # Phosphor files live under STATIC_ROOT/assets/phosphor, while STATIC_ROOT is mounted at /assets.
     assert 'href="/assets/assets/phosphor/regular/style.css"' in html
     assert 'href="/assets/assets/phosphor/fill/style.css"' in html
