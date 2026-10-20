@@ -109,6 +109,7 @@ CREATE OR REPLACE PROCEDURE "AI_Source"."RefreshScenarioServing"(
 LANGUAGE plpgsql
 AS $$
 DECLARE normalized_competition text := upper(btrim(p_competition));
+        affected_rows bigint;
 BEGIN
     IF p_league_key IS NULL OR p_season IS NULL OR normalized_competition = '' THEN
         RAISE EXCEPTION 'league_key, season and competition are required';
@@ -130,6 +131,11 @@ BEGIN
               FROM "AI_Source"."SimulationPlayTypeStats"
              WHERE league_key = $1 AND season = $2 AND upper(competition) = $3
         $copy_play_type$ USING p_league_key, p_season, normalized_competition;
+        GET DIAGNOSTICS affected_rows = ROW_COUNT;
+        IF affected_rows = 0 THEN
+            RAISE NOTICE 'ScenarioPlayTypeStats remains empty for %/%/%: SimulationPlayTypeStats has no matching source rows',
+                p_league_key, p_season, normalized_competition;
+        END IF;
     ELSE
         RAISE NOTICE 'Skipping play-type scenario feed: AI_Source.SimulationPlayTypeStats is missing';
     END IF;
@@ -145,6 +151,11 @@ BEGIN
               FROM "AI_Source"."SimulationShotProfiles"
              WHERE league_key = $1 AND season = $2 AND upper(competition) = $3
         $copy_shot_profiles$ USING p_league_key, p_season, normalized_competition;
+        GET DIAGNOSTICS affected_rows = ROW_COUNT;
+        IF affected_rows = 0 THEN
+            RAISE NOTICE 'ScenarioShotProfiles remains empty for %/%/%: SimulationShotProfiles has no matching source rows',
+                p_league_key, p_season, normalized_competition;
+        END IF;
     ELSE
         RAISE NOTICE 'Skipping shot-profile scenario feed: AI_Source.SimulationShotProfiles is missing';
     END IF;
@@ -168,6 +179,11 @@ BEGIN
              GROUP BY offensive_player_id, defender_id, team_id, opponent_team_id,
                       league_key, season, upper(competition)
         $copy_defender_matchups$ USING p_league_key, p_season, normalized_competition;
+        GET DIAGNOSTICS affected_rows = ROW_COUNT;
+        IF affected_rows = 0 THEN
+            RAISE NOTICE 'ScenarioDefenderMatchups remains empty for %/%/%: SimulationPbpEvents has no matching non-null defender rows',
+                p_league_key, p_season, normalized_competition;
+        END IF;
     ELSE
         RAISE NOTICE 'Skipping defender matchup feed: AI_Source.SimulationPbpEvents is missing';
     END IF;
@@ -193,6 +209,11 @@ BEGIN
              GROUP BY player_ids, team_id, opponent_team_id, offense_player_id,
                       defense_player_id, league_key, season, upper(competition)
         $copy_lineup_stats$ USING p_league_key, p_season, normalized_competition;
+        GET DIAGNOSTICS affected_rows = ROW_COUNT;
+        IF affected_rows = 0 THEN
+            RAISE NOTICE 'ScenarioLineupStats remains empty for %/%/%: SimulationLineupStints has no matching source rows',
+                p_league_key, p_season, normalized_competition;
+        END IF;
     ELSE
         RAISE NOTICE 'Skipping lineup scenario feed: AI_Source.SimulationLineupStints is missing';
     END IF;
