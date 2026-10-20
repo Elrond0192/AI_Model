@@ -285,8 +285,9 @@ jobs:
             SELECT stats.clutch_games, stats.clutch_pts, stats.clutch_clutchness_rating
               INTO clutch_games, clutch_points, clutch_grade
               FROM "AI_Source"."PlayerCompetitionStats" AS stats
+              JOIN "AI_Source"."Players" AS player ON player.id=stats.player_id
              WHERE stats.league_key='ITA1' AND stats.season=2025
-               AND stats.competition='RS' AND stats.global_id='P_GLOBAL';
+               AND stats.competition='RS' AND player.global_id='P_GLOBAL';
             IF clutch_games IS DISTINCT FROM 6.0
                OR clutch_points IS DISTINCT FROM 12.0
                OR clutch_grade IS DISTINCT FROM 'B' THEN
