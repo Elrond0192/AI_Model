@@ -84,6 +84,15 @@ def test_ai_source_assigns_configured_league_tiers_and_reconciles_unique_team_id
     assert "coalesce(r.direct_team_global_id, r.fallback_team_global_id) is null" in sql
 
 
+def test_team_stats_support_gamesplayed_and_fallback_team_identity():
+    sql = SOURCE_SQL.read_text(encoding="utf-8").lower()
+    assert "array['games','gamesplayed']" in "".join(sql.split())
+    assert "quote_literal(league_key || ':')" in sql
+    assert "|| team_local_expr || ') as team_global_id" in sql
+    # The roster registry and team-season statistics must use the same fallback key.
+    assert "quote_literal(league_key || ':') ||" in sql
+
+
 def test_ai_source_does_not_own_simulation_feeds():
     sql = SOURCE_SQL.read_text(encoding="utf-8").lower()
     assert "c.relname like 'simulation%'" not in sql
