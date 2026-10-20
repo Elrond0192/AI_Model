@@ -511,6 +511,32 @@ def test_causal_team_effect_uses_canonical_bb_rating_and_controls_role_minutes_u
             {"team_id": 102, "league_id": 10, "season": 2022, "competition": "RS", "pace": 73.0, "offensive_rating": 112.0, "defensive_rating": 110.0, "net_rtg": 2.0, "three_point_attempt_rate": .38, "assists_per_game": 21.0},
         ]),
     ], ignore_index=True)
+    data["lineup_stints"] = pd.DataFrame([
+        {
+            "league_key": "A", "season": 2023, "competition": "RS",
+            "team_id": 101, "opponent_team_id": 102,
+            "player_ids": "1,2,3,4,5", "possessions": 150,
+            "net_rtg": 6.0, "ortg": 110.0, "drtg": 104.0,
+        },
+        {
+            "league_key": "A", "season": 2023, "competition": "RS",
+            "team_id": 101, "opponent_team_id": 102,
+            "player_ids": "2,3,4,5,6", "possessions": 150,
+            "net_rtg": 1.0, "ortg": 106.0, "drtg": 105.0,
+        },
+        {
+            "league_key": "A", "season": 2024, "competition": "RS",
+            "team_id": 102, "opponent_team_id": 101,
+            "player_ids": "1,2,3,4,5", "possessions": 150,
+            "net_rtg": -4.0, "ortg": 103.0, "drtg": 107.0,
+        },
+        {
+            "league_key": "A", "season": 2024, "competition": "RS",
+            "team_id": 102, "opponent_team_id": 101,
+            "player_ids": "2,3,4,5,6", "possessions": 150,
+            "net_rtg": -1.0, "ortg": 105.0, "drtg": 106.0,
+        },
+    ])
 
     class CanonicalBBRating:
         def rate_player(self, global_id, *, league, season, phase):
@@ -535,6 +561,16 @@ def test_causal_team_effect_uses_canonical_bb_rating_and_controls_role_minutes_u
     ]
     assert payload["current_context"]["bb_rating"] == 63
     assert "rating" not in payload["current_context"]
+    lineup = payload["lineup_context_association"]
+    assert lineup["status"] == "exploratory_observational_association"
+    assert lineup["outcome"] == "observed_team_net_rating"
+    assert lineup["is_causal"] is False
+    assert lineup["seasons_compared"] == 2
+    assert lineup["player_lineup_possessions"] == 300
+    assert lineup["other_lineup_possessions"] == 300
+    assert lineup["net_rating_with_player"] == 1.0
+    assert lineup["net_rating_without_player"] == 0.0
+    assert lineup["difference"] == 1.0
     assert payload["team_switches"]
     switch = payload["team_switches"][-1]
     assert switch["bb_rating_change"] == -7
