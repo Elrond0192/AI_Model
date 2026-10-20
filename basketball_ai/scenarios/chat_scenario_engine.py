@@ -504,7 +504,9 @@ class ChatScenarioEngine:
             "volume": ("minutes_per_game", "points", "assists", "rebounds"),
             "efficiency": ("ts_pct", "three_point_pct", "ft_pct", "tov_pct"),
             "role": ("usg_pct", "ast_pct", "three_par"),
-            "impact": ("rating", "bpm", "obpm", "dbpm", "net_rtg"),
+            # The native source-statistics rating is deliberately excluded.
+            # Observed rating comparisons must use the canonical BB-Rating below.
+            "impact": ("bpm", "obpm", "dbpm", "net_rtg"),
         }
         deltas: dict[str, dict[str, float]] = {}
         for group, metrics in metric_groups.items():
@@ -519,6 +521,28 @@ class ChatScenarioEngine:
         minutes_delta = deltas["volume"].get("minutes_per_game", 0.0)
         points_delta = deltas["volume"].get("points", 0.0)
         ts_delta = deltas["efficiency"].get("ts_pct", 0.0)
+
+        # Rate-normalized production helps distinguish a larger role/more minutes
+        # from a change in per-minute production. It is descriptive, not causal.
+        rate_metrics = ("points", "assists", "rebounds", "steals", "blocks")
+
+        def per36_profile(row: pd.Series) -> dict[str, float]:
+            minutes = _finite(row.get("minutes_per_game"))
+            if minutes <= 0:
+                return {}
+            profile: dict[str, float] = {}
+            for metric in rate_metrics:
+                value = row.get(metric)
+                if pd.notna(value):
+                    profile[f"{metric}_per36"] = round(_finite(value) * 36.0 / minutes, 3)
+            return profile
+
+        previous_per36 = per36_profile(previous)
+        current_per36 = per36_profile(current)
+        per36_deltas = {
+            metric: round(current_per36[metric] - previous_per36[metric], 3)
+            for metric in current_per36.keys() & previous_per36.keys()
+        }
 
         player_meta = self.data.get("player_dict", {}).get(_to_int(players[0]), {})
         global_id = str(player_meta.get("global_id", "")) if isinstance(player_meta, dict) else ""
@@ -535,22 +559,41 @@ class ChatScenarioEngine:
         )
 
         if abs(minutes_delta) > 1.5 and abs(points_delta) > 0:
-            volume_interpretation = "production_change is partly associated with a meaningful minutes change"
+            volume_interpretation = (
+                "minutes and per-game production changed together; compare the "
+                "rate_adjusted_production values before interpreting the difference; "
+                "minutes alone do not explain the BB-Rating change"
+            )
         else:
-            volume_interpretation = "production change is not primarily explained by minutes"
+            volume_interpretation = (
+                "the observed minute and per-game production changes do not, by "
+                "themselves, identify what explains the BB-Rating change"
+            )
 
         if abs(ts_delta) >= 0.02:
-            efficiency_interpretation = "efficiency changed materially"
+            efficiency_interpretation = "shooting efficiency changed materially"
         else:
-            efficiency_interpretation = "efficiency was relatively stable"
+            efficiency_interpretation = "shooting efficiency was relatively stable"
 
         impact_interpretation = None
         if bb_rating_delta is not None:
             if abs(bb_rating_delta) >= 5:
-                impact_interpretation = "BB-Rating changed materially"
+                impact_interpretation = (
+                    "BB-Rating changed materially; this is an observed outcome, "
+                    "not a causal decomposition"
+                )
             else:
                 impact_interpretation = "BB-Rating was relatively stable"
 
+        current_calendar_year = int(pd.Timestamp.now().year)
+        if current_year == current_calendar_year:
+            current_season_status = "in_progress"
+        elif current_year < current_calendar_year:
+            current_season_status = "complete"
+        else:
+            current_season_status = "unknown"
+
+        public_metrics = tuple(metric for metric in _PLAYER_METRICS if metric != "rating")
         return {
             "result": {
                 "player": self._player_name(players[0]),
@@ -559,9 +602,17 @@ class ChatScenarioEngine:
                 "competition": competition,
                 "previous_season": previous_year,
                 "current_season": current_year,
-                "previous": _serialise(previous, _PLAYER_METRICS),
-                "current": _serialise(current, _PLAYER_METRICS),
+                "current_season_status": current_season_status,
+                "is_provisional": current_season_status == "in_progress",
+                "previous": _serialise(previous, public_metrics),
+                "current": _serialise(current, public_metrics),
                 "deltas": deltas,
+                "rate_adjusted_production": {
+                    "unit": "per_36_minutes",
+                    "previous": previous_per36,
+                    "current": current_per36,
+                    "deltas": per36_deltas,
+                },
                 "previous_bb_rating": previous_bb_rating,
                 "current_bb_rating": current_bb_rating,
                 "bb_rating_delta": bb_rating_delta,
@@ -569,11 +620,13 @@ class ChatScenarioEngine:
                     "volume": volume_interpretation,
                     "efficiency": efficiency_interpretation,
                     "impact": impact_interpretation,
+                    "causal_attribution": "not_identified",
                 },
             },
             "evidence": [
                 {"type": "consecutive_seasons", "count": 2},
                 {"type": "metric_groups", "groups": list(metric_groups)},
+                {"type": "rate_adjusted_production", "unit": "per_36_minutes"},
             ],
             "support": {
                 "method": "observed_season_over_season_decomposition",
@@ -581,7 +634,8 @@ class ChatScenarioEngine:
                 "confidence": _confidence(int(current.get("games_played", 0) or 0)),
             },
             "limitations": [
-                "This decomposition describes changes; it does not establish causal effects."
+                "This decomposition describes season-over-season changes; it does not establish causal effects.",
+                "A season marked in_progress is provisional and must not be described as a completed-season result.",
             ],
         }
 
