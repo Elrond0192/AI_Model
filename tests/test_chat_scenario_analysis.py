@@ -615,6 +615,30 @@ def test_causal_team_effect_uses_canonical_bb_rating_and_controls_role_minutes_u
     assert result_without_lineups["result"]["causal_effect"] is None
 
 
+def test_player_intelligence_composes_shooting_and_defensive_evidence_bundles():
+    engine = _engine()
+
+    shooting = engine.evaluate(
+        {"scenario": "player_intelligence", "season": 2024, "competition": "RS",
+         "parameters": {"question_key": "shot_profile"}},
+        [1], [], 10, None,
+    )
+    assert set(shooting["result"]["analyses"]) == {
+        "performance_decomposition", "shooting_decomposition",
+        "metric_explanation", "model_evidence",
+    }
+
+    defense = engine.evaluate(
+        {"scenario": "player_intelligence", "season": 2024, "competition": "RS",
+         "parameters": {"question_key": "defensive_reason"}},
+        [1], [], 10, None,
+    )
+    assert set(defense["result"]["analyses"]) == {
+        "performance_decomposition", "role_analysis",
+        "defensive_decomposition", "metric_explanation", "model_evidence",
+    }
+
+
 def test_player_intelligence_composes_causal_team_effect_as_observational():
     result = _engine().evaluate(
         {"scenario": "player_intelligence", "season": 2024, "competition": "RS",
