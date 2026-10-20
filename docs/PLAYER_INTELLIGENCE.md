@@ -48,6 +48,8 @@ This separation is intentional because basketball performance is affected by pla
 
 The `player_intelligence` scenario accepts either a single `question_key` or an ordered `question_keys` list (up to 8). Multiple keys are deduplicated and their analysis layers are composed into one evidence bundle. The response exposes `question_keys` and sets `question_key` to null when multiple intents are requested.
 
+Every selected question also receives the common `model_evidence` layer. For `potential`, `regression_risk` and `team_counterfactual`, that layer opts into the dedicated Future Performance and BB Prediction Model outputs; for current/observed questions it remains descriptive. The registry lists the dedicated layers actually composed rather than treating a skipped placeholder (for example, an uncalled standalone compatibility layer) as executed evidence.
+
 This is intended for Chat V3 questions such as "is he improving, what is his role, and how stable is he?" without requiring independent scenario calls for each sub-question.
 
 ## Evidence orchestrator
