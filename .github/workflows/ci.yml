@@ -282,11 +282,11 @@ jobs:
             scenario_shot_rows bigint;
             scenario_matchup_rows bigint;
           BEGIN
-            SELECT clutch_games, clutch_pts, clutch_clutchness_rating
+            SELECT stats.clutch_games, stats.clutch_pts, stats.clutch_clutchness_rating
               INTO clutch_games, clutch_points, clutch_grade
-              FROM "AI_Source"."PlayerCompetitionStats"
-             WHERE league_key='ITA1' AND season=2025
-               AND competition='RS' AND global_id='P_GLOBAL';
+              FROM "AI_Source"."PlayerCompetitionStats" AS stats
+             WHERE stats.league_key='ITA1' AND stats.season=2025
+               AND stats.competition='RS' AND stats.global_id='P_GLOBAL';
             IF clutch_games IS DISTINCT FROM 6.0
                OR clutch_points IS DISTINCT FROM 12.0
                OR clutch_grade IS DISTINCT FROM 'B' THEN
