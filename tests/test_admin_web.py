@@ -385,6 +385,9 @@ def test_helpers_and_static_assets(monkeypatch, tmp_path):
     assert "if(!keepAlive)App.controllers.add(controller);" in api_body
     assert "if(!requestOptions.signal&&!keepAlive)fetchOptions.signal=controller.signal;" in api_body
     assert 'href="/assets/app.js?v=2.6.2"' in html
+    assert 'class="dashboard-footer"' not in html
+    assert "Stati e percentuali provengono dalle API operative." not in html
+    assert "<footer>© AI Model Control Center v2.6.0</footer>" in html
     assert "Attività modello" in html
     assert "Salute del sistema" in html
     future_page_start = html.index('<template id="page-future-performance">')
