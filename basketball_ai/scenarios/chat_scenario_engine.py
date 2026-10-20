@@ -2679,6 +2679,11 @@ class ChatScenarioEngine:
                                 if previous_bb_rating is not None and current_bb_rating is not None
                                 else None
                             ),
+                            "bb_rating_contribution_decomposition": (
+                                decomposition_result.get("bb_rating_contribution_decomposition")
+                                if isinstance(decomposition_result.get("bb_rating_contribution_decomposition"), dict)
+                                else {"available": False}
+                            ),
                             "current_season_status": str(
                                 decomposition_result.get("current_season_status", "unknown")
                             ),
