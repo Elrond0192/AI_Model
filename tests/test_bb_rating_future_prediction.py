@@ -5,6 +5,7 @@ from basketball_ai.bb_rating.future_prediction import (
     BBRatingFuturePredictionModel,
     _team_context_features,
     _team_context_index,
+    _target_league_tier,
 )
 from basketball_ai.bb_rating.prediction_scenarios import classify_transition
 
@@ -64,6 +65,19 @@ def _synthetic_data():
             "id": 1, "name": "ITA1", "league_key": "ITA1", "tier": 2,
         }]),
     }
+
+
+def test_target_league_tier_uses_local_registry_over_stale_db_values():
+    data = {
+        "leagues": pd.DataFrame([
+            {"id": 1, "name": "LIT1", "league_key": "LIT1", "tier": 1},
+            {"id": 2, "name": "ITA2", "league_key": "ITA2", "tier": 1},
+        ])
+    }
+
+    assert _target_league_tier(data, "EL") == 1
+    assert _target_league_tier(data, "LIT1") == 2
+    assert _target_league_tier(data, "ITA2") == 3
 
 
 def test_competition_phase_transitions_are_distinguished():
