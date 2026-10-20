@@ -906,12 +906,23 @@ def _bb_rating_prediction_job_worker(active_profile: str | None, actor: str, can
             target_seasons = metadata.get("walk_forward_target_seasons") or []
             fold_count = int(metadata.get("walk_forward_fold_count") or len(target_seasons))
             regressions = metadata.get("segment_regressions") or []
+            oof_support = metadata.get("oof_support") or {}
+            unique_oof_players = oof_support.get("unique_players")
+            minimum_oof_players = int(metadata.get("minimum_oof_unique_players") or 40)
             gate_failures: list[str] = []
             if fold_count < int(metadata.get("minimum_walk_forward_target_seasons") or 3):
                 gate_failures.append(
                     f"Solo {fold_count} stagioni OOF; ne servono almeno "
                     f"{int(metadata.get('minimum_walk_forward_target_seasons') or 3)}"
                 )
+            if unique_oof_players is None:
+                gate_failures.append("Conteggio dei giocatori OOF distinti assente")
+            elif int(unique_oof_players) < minimum_oof_players:
+                gate_failures.append(
+                    f"Solo {int(unique_oof_players)} giocatori OOF distinti; ne servono almeno {minimum_oof_players}"
+                )
+            if int(metadata.get("duplicate_target_context_pairs") or 0) != 0:
+                gate_failures.append("Sono presenti coppie duplicate per contesto target")
             if mae is None or baseline_mae is None:
                 gate_failures.append("Metriche MAE modello/baseline non disponibili")
             elif float(mae) >= float(baseline_mae):
@@ -937,7 +948,13 @@ def _bb_rating_prediction_job_worker(active_profile: str | None, actor: str, can
                 "promotion_gate_passed": False,
                 "gate_failures": gate_failures,
                 "oof_samples": metadata.get("oof_samples"),
+                "training_support": metadata.get("training_support") or {},
+                "oof_support": oof_support,
+                "calibration_support": metadata.get("calibration_support") or {},
+                "duplicate_target_context_pairs": metadata.get("duplicate_target_context_pairs"),
+                "unresolved_team_identity_rows": metadata.get("unresolved_team_identity_rows"),
                 "mae": mae,
+                "mae_after_scenario_fallback": metadata.get("oof_mae_after_scenario_fallback"),
                 "baseline_mae": baseline_mae,
                 "rmse": metadata.get("oof_rmse_after_calibration"),
                 "target_seasons": metadata.get("target_seasons") or [],
@@ -978,7 +995,13 @@ def _bb_rating_prediction_job_worker(active_profile: str | None, actor: str, can
         details = {
             "candidate_id": candidate_id,
             "oof_samples": metadata.get("oof_samples"),
+            "training_support": metadata.get("training_support") or {},
+            "oof_support": metadata.get("oof_support") or {},
+            "calibration_support": metadata.get("calibration_support") or {},
+            "duplicate_target_context_pairs": metadata.get("duplicate_target_context_pairs"),
+            "unresolved_team_identity_rows": metadata.get("unresolved_team_identity_rows"),
             "mae": metadata.get("oof_mae_after_calibration", metrics.get("mae")),
+            "mae_after_scenario_fallback": metadata.get("oof_mae_after_scenario_fallback"),
             "rmse": metadata.get("oof_rmse_after_calibration", metrics.get("rmse")),
             "baseline_mae": metadata.get("oof_baseline_mae", metrics.get("baseline_mae")),
             "scenario_metrics": metadata.get("scenario_metrics") or {},
