@@ -153,8 +153,9 @@ def test_build_records_pairs_only_compatible_contexts_and_one_origin_per_target(
     }
     records = BBRatingFuturePredictionModel()._build_records(data)
 
-    # Four target contexts, each represented once; no RS<->HOME cross-pairing.
-    assert len(records) == 4
+    # Only forecastable statistical contexts survive; HOME splits cannot be target rows.
+    assert len(records) == 2
+    assert records["target_competition"].eq("RS").all()
     assert not records.duplicated(
         ["player_global_id", "target_season", "target_league", "target_competition"]
     ).any()
