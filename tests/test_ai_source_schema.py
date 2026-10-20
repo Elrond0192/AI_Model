@@ -268,7 +268,8 @@ def test_scenario_serving_owns_and_rebuilds_simulation_sources():
         assert f'create table if not exists "ai_source"."{table}"' in sql
 
     assert 'create or replace procedure "ai_source"."refreshsimulationsources"' in sql
-    assert 'from "pbp".%1$i' in sql
+    assert 'from "pbp".%1$i p' in sql
+    assert 'where p."season"::integer = $1' in sql
     assert 'from "analisi".%1$i q' in sql
     assert 'call "ai_source"."refreshsimulationsources"(sim_ctx.league_key, sim_ctx.season)' in sql
     assert "unknown_two_point" in sql
