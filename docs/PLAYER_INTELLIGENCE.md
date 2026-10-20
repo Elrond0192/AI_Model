@@ -68,7 +68,7 @@ The `player_intelligence` scenario now composes the appropriate analysis layers 
 - `team_counterfactual` → player-in-team scenario
 - `shot_profile` → season-over-season performance decomposition + shooting decomposition + metric explanation
 - `defensive_reason` → performance decomposition + observed role analysis + defensive decomposition + metric explanation
-- `clutch_value` → clutch analysis
+- `clutch_value` → observed `AdvanceStats_Clutch_<league_key>` aggregates (clutch games, points, 2P/3P/FT volume and efficiency, rebounds, assists, steals, blocks, turnovers, ORtg/DRtg/NetRtg and native ClutchnessRating when available). This path comes through `PlayerCompetitionStats`, not the optional `Scenario*` tables.
 - `causal_team_effect` → team-context association + observed team-switch analysis
 
 This keeps the analytical layers independent while giving Chat V3 a single evidence-composition entry point.
@@ -154,3 +154,12 @@ The first attribution extension uses the existing `ScenarioLineupStats` serving 
 The observed outcome is team `net_rtg` by lineup, not the individual BB-Rating. The pooled with/without-player comparison is returned only when at least two matched team-seasons and at least 100 possessions in each group are available. Teammate-presence comparisons are scoped to a single team-season and to stints where the player is on court; each numeric difference requires at least 100 possessions in both teammate-presence groups. Otherwise, the per-season evidence (if any) is exposed as insufficient rather than turned into a headline effect. These thresholds are minimum evidence guards, not a claim of statistical significance.
 
 Next validation gates remain: (1) measure the coverage of the serving feed by league/season and verify `player_ids` membership is complete; (2) quantify lineup selection bias and account for opponent, venue, teammate combinations and game state where fields exist; (3) perform out-of-time stability checks; (4) build a defensible comparison design before using causal language. Lineup-presence and teammate-presence associations do not satisfy those causal gates by themselves.
+
+
+## Clutch source and optional scenario-feed coverage
+
+Clutch aggregates are sourced from `Analisi.AdvanceStats_Clutch_<league_key>` (the older `AdvancedStats_Clutch_<league_key>` spelling remains a fallback) and joined to the matching player-season-competition row when `ai_source_full.sql` builds `AI_Source.PlayerCompetitionStats`. The projected fields include counting stats, shooting makes/attempts and percentages, ORtg/DRtg/NetRtg, and the source `ClutchnessRating` category. The latter is a source label, not the canonical BB-Rating scale.
+
+The clutch analysis distinguishes a real source row from default zeros. If the detail fields are absent or null for the requested context, `result.status` is `unavailable` rather than presenting zeroes as observed clutch performance. It exposes the sample size and a per-clutch-game points rate when possible; ratios/ratings are flagged as unstable below five clutch games. The source is a seasonal aggregate for the last five minutes of close games, not possession-by-possession evidence.
+
+Separately, `ai_scenario_serving.sql` copies data from optional `AI_Source.Simulation*` feeds into the physical `Scenario*` tables. It does not generate these upstream feeds. A successful refresh can therefore leave a Scenario table empty when the matching Simulation source has no rows for that league/season/competition. The refresh procedure now emits an explicit notice in this case. Do not fabricate ScenarioLineupStats, PBP matchups, play-type stats or shot profiles to fill that gap; those analyses must remain unavailable or prior-only until their real source feeds are populated.
