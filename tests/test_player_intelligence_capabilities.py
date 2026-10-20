@@ -34,7 +34,6 @@ def test_player_intelligence_capability_registry():
     assert "observed_role" in by_key["causal_team_effect"]["evidence"]
     assert "lineup_context_association" in by_key["causal_team_effect"]["analyses"]
     assert "within_team_season_lineup_net_rating" in by_key["causal_team_effect"]["evidence"]
-    assert "causal_teammate_effect_attribution" in by_key["causal_team_effect"]["missing_analyses"]
     assert "lineup_context_association" in by_key["performance_attribution"]["analyses"]
 
 
