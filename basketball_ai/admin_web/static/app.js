@@ -35,13 +35,14 @@ function empty(icon,title,copy,button='',page=''){return `<div class="empty-stat
 function summaryRows(rows){return `<div class="summary-list">${rows.map(([a,b])=>`<div class="summary-row"><span>${esc(a)}</span><strong>${esc(b)}</strong></div>`).join('')}</div>`;}
 
 async function api(path,options={}){
-  const headers={'Accept':'application/json',...(options.headers||{})};
-  if(options.body!==undefined){headers['Content-Type']='application/json';options.body=JSON.stringify(options.body);}
-  if((options.method||'GET').toUpperCase()!=='GET'){const token=cookie('hm_ai_admin_csrf');if(token)headers['X-CSRF-Token']=token;}
+  const {keepAlive=false,...requestOptions}=options;
+  const headers={'Accept':'application/json',...(requestOptions.headers||{})};
+  if(requestOptions.body!==undefined){headers['Content-Type']='application/json';requestOptions.body=JSON.stringify(requestOptions.body);}
+  if((requestOptions.method||'GET').toUpperCase()!=='GET'){const token=cookie('hm_ai_admin_csrf');if(token)headers['X-CSRF-Token']=token;}
   const controller=new AbortController();
-  App.controllers.add(controller);
-  const fetchOptions={credentials:'same-origin',...options,headers};
-  if(!options.signal)fetchOptions.signal=controller.signal;
+  if(!keepAlive)App.controllers.add(controller);
+  const fetchOptions={credentials:'same-origin',...requestOptions,headers};
+  if(!requestOptions.signal&&!keepAlive)fetchOptions.signal=controller.signal;
   try{
     const res=await fetch(path,fetchOptions);
     let data={};try{data=await res.json();}catch(_){data={};}
@@ -58,11 +59,11 @@ function showApp(user){App.user=user;$('#login-screen').classList.add('hidden');
 
 async function enterBackOffice(user){
   showApp(user);
-  root.innerHTML='<div class="loading"><div><div class="spinner"></div>Connessione al database e caricamento automatico dei dati…</div></div>';
-  let result=null,error=null;
-  try{result=await api('/admin-api/auto-load',{method:'POST',body:{}});}
-  catch(e){error=e.message;}
   await navigate('overview');
+  let result=null,error=null;
+  try{result=await api('/admin-api/auto-load',{method:'POST',body:{},keepAlive:true});}
+  catch(e){error=e.message;}
+  if(App.user&&App.page==='overview')await navigate('overview');
   if(result?.loaded)toast(`Dati aggiornati da ${result.profile}: ${fmtInt(result.summary?.player_rows)} righe giocatore`);
   else if(result?.message)toast(result.message,'error');
   else if(error)toast('Caricamento automatico dal DB non riuscito: '+error,'error');
