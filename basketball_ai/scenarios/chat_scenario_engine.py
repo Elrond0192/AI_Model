@@ -2970,8 +2970,17 @@ class ChatScenarioEngine:
             "potential": ("potential_synthesis", "age_trajectory"),
             "regression_risk": ("regression_risk",),
             "team_counterfactual": ("player_team", "compatibility"),
-            "shot_profile": ("shooting_decomposition",),
-            "defensive_reason": ("defensive_decomposition",),
+            "shot_profile": (
+                "performance_decomposition",
+                "shooting_decomposition",
+                "metric_explanation",
+            ),
+            "defensive_reason": (
+                "performance_decomposition",
+                "role_analysis",
+                "defensive_decomposition",
+                "metric_explanation",
+            ),
             "clutch_value": ("clutch_analysis",),
             "causal_team_effect": ("causal_team_effect",),
         }
