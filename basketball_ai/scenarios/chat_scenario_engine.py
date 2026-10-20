@@ -948,8 +948,9 @@ class ChatScenarioEngine:
                     found.add(int(parsed))
             return found
 
-        frame["_has_player"] = frame["player_ids"].map(
-            lambda value: int(player_id) in lineup_ids(value)
+        frame["_lineup_player_ids"] = frame["player_ids"].map(lineup_ids)
+        frame["_has_player"] = frame["_lineup_player_ids"].map(
+            lambda values: int(player_id) in values
         )
         frame["_possessions"] = pd.to_numeric(frame["possessions"], errors="coerce")
         frame["_net_rtg"] = pd.to_numeric(frame["net_rtg"], errors="coerce")
@@ -1003,6 +1004,61 @@ class ChatScenarioEngine:
         without_possessions = sum(row["other_lineup_possessions"] for row in by_season)
         with_net, _ = summarize(matched_frame[matched_frame["_has_player"]])
         without_net, _ = summarize(matched_frame[~matched_frame["_has_player"]])
+
+        # Teammate presence is evaluated only among stints where the subject
+        # player is on court, and only within the same team-season. These are
+        # descriptive lineup associations and cannot separate teammate skill
+        # from role assignment, opponent selection or game-state effects.
+        teammate_associations = []
+        for (year, team_id), context in frame[frame["_has_player"]].groupby(
+            ["_year", "_team_id"], dropna=True
+        ):
+            candidate_ids = set()
+            for lineup in context["_lineup_player_ids"]:
+                candidate_ids.update(int(value) for value in lineup if int(value) != int(player_id))
+            for teammate_id in candidate_ids:
+                teammate_present = context["_lineup_player_ids"].map(
+                    lambda values: int(teammate_id) in values
+                )
+                with_teammate = context[teammate_present]
+                without_teammate = context[~teammate_present]
+                teammate_net, teammate_possessions = summarize(with_teammate)
+                without_net_in_player_lineups, without_possessions_in_player_lineups = summarize(without_teammate)
+                enough = teammate_possessions >= 100 and without_possessions_in_player_lineups >= 100
+                teammate_associations.append({
+                    "teammate": self._player_name(int(teammate_id)),
+                    "season": int(year),
+                    "team": self._team_name(int(team_id)),
+                    "status": (
+                        "exploratory_observational_association"
+                        if enough else "insufficient_evidence"
+                    ),
+                    "team_net_rating_with_both": (
+                        round(teammate_net, 3) if enough and teammate_net is not None else None
+                    ),
+                    "team_net_rating_with_player_without_teammate": (
+                        round(without_net_in_player_lineups, 3)
+                        if enough and without_net_in_player_lineups is not None else None
+                    ),
+                    "difference": (
+                        round(teammate_net - without_net_in_player_lineups, 3)
+                        if enough and teammate_net is not None and without_net_in_player_lineups is not None
+                        else None
+                    ),
+                    "possessions_with_both": round(teammate_possessions, 2),
+                    "possessions_with_player_without_teammate": round(
+                        without_possessions_in_player_lineups, 2
+                    ),
+                })
+        teammate_associations = sorted(
+            teammate_associations,
+            key=lambda row: (
+                row["status"] == "exploratory_observational_association",
+                row["possessions_with_both"] + row["possessions_with_player_without_teammate"],
+            ),
+            reverse=True,
+        )[:12]
+
         adequately_supported = (
             len(by_season) >= 2
             and with_possessions >= 100
@@ -1022,6 +1078,7 @@ class ChatScenarioEngine:
             "net_rating_without_player": round(without_net, 3) if adequately_supported and without_net is not None else None,
             "difference": round(with_net - without_net, 3) if adequately_supported and with_net is not None and without_net is not None else None,
             "by_season": sorted(by_season, key=lambda row: row["season"]),
+            "teammate_associations": teammate_associations,
         }
 
     def _causal_team_effect(self, spec, players, teams, source_league, target_league):
