@@ -11,7 +11,10 @@ from basketball_ai.api.scenario_contracts_v2 import ScenarioRequestV2
 from basketball_ai.data.nationality_codes import nationality_matches, normalize_nationality
 from basketball_ai.scenarios.scouting_archetypes import ARCHETYPE_METRICS
 from basketball_ai.scenarios.advanced_role_archetypes import map_advanced_roles
-from basketball_ai.scenarios.chat_scenario_engine import ChatScenarioEngine
+from basketball_ai.scenarios.chat_scenario_engine import (
+    ChatScenarioEngine,
+    _bb_rating_contribution_decomposition,
+)
 
 
 def _analysis_data() -> dict:
@@ -534,6 +537,51 @@ def test_decomposition_uses_canonical_bb_rating_and_rate_adjusted_production():
     assert payload["rate_adjusted_production"]["previous_per36"]["points_per36"] == pytest.approx(14.667)
     assert payload["rate_adjusted_production"]["current_per36"]["points_per36"] == pytest.approx(16.0)
     assert payload["interpretation"]["causal_attribution"] == "not_identified"
+
+
+def test_bb_rating_component_decomposition_reconciles_without_causal_claim():
+    previous = {
+        "score": 60,
+        "rating_composition": {
+            "unrounded_bb_rating": 60.2,
+            "metrics": [
+                {"metric": "A", "display_name": "Efficienza al tiro", "dimension": "offense",
+                 "contextual_percentile_pct": 55.0, "effective_weight": 0.5,
+                 "score_deviation_from_midpoint_points": 6.0},
+                {"metric": "B", "display_name": "Impatto difensivo", "dimension": "defense",
+                 "contextual_percentile_pct": 52.0, "effective_weight": 0.5,
+                 "score_deviation_from_midpoint_points": 3.7},
+            ],
+        },
+    }
+    current = {
+        "score": 63,
+        "rating_composition": {
+            "unrounded_bb_rating": 63.1,
+            "metrics": [
+                {"metric": "A", "display_name": "Efficienza al tiro", "dimension": "offense",
+                 "contextual_percentile_pct": 60.0, "effective_weight": 0.5,
+                 "score_deviation_from_midpoint_points": 8.2},
+                {"metric": "B", "display_name": "Impatto difensivo", "dimension": "defense",
+                 "contextual_percentile_pct": 55.0, "effective_weight": 0.5,
+                 "score_deviation_from_midpoint_points": 4.4},
+            ],
+        },
+    }
+
+    result = _bb_rating_contribution_decomposition(previous, current, 2023, 2024)
+
+    assert result is not None
+    assert result["available"] is True
+    assert result["attribution_type"] == "mathematical_not_causal"
+    assert result["bb_rating_delta"] == 3
+    assert result["unrounded_bb_rating_delta_points"] == pytest.approx(2.9)
+    assert result["sum_component_delta_points"] == pytest.approx(2.9)
+    assert result["rounding_residual_points"] == pytest.approx(0.1)
+    by_metric = {row["metric"]: row for row in result["components"]}
+    assert by_metric["A"]["contribution_delta_points"] == pytest.approx(2.2)
+    assert by_metric["B"]["contribution_delta_points"] == pytest.approx(0.7)
+    assert result["dimensions"][0]["contribution_delta_points"] == pytest.approx(2.2)
 
 
 def test_decomposition_marks_current_calendar_season_provisional():
