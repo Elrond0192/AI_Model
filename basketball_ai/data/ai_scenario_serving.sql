@@ -237,7 +237,8 @@ BEGIN
         RAISE EXCEPTION 'A valid league key and season are required';
     END IF;
 
-    v_pbp_table := v_league_key || '_' || p_season::text;
+    -- HoopmetricsEngine stores PBP in one table per league with Season rows.
+    v_pbp_table := v_league_key;
     v_lineup_table := 'AdvancedStats_Lineups_Quarter_' || v_league_key;
 
     DELETE FROM "AI_Source"."SimulationPbpEvents"
