@@ -102,7 +102,7 @@ def test_statistical_phase_codes_do_not_create_competition_transitions():
     assert classify_transition("A", "B", "ITA1", "ITA1", "RS", "HOME") == (
         "team_change_same_league"
     )
-    assert classify_transition("A", "B", "ITA1", "EL", "AWAY", "TOT") == (
+    assert classify_transition("A", "B", "ITA1", "EL", "AWAY", "TOT", 3, 1) == (
         "team_and_league_change_tier_up"
     )
 
