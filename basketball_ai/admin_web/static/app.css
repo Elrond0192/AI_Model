@@ -493,10 +493,8 @@ input:focus,select:focus,textarea:focus{border-color:#4e7fc5!important;box-shado
 @media(max-width:520px){.page-title-icon{width:34px;height:34px;font-size:17px;gap:9px}}
 
 
-/* Future Performance identity: use the same globe mark in nav and overview. */
+/* Overview section icons stay with their eyebrow labels, not the card titles. */
 .nav-icon svg{display:inline-block;vertical-align:-3px}
-.future-performance-overview-title{display:flex;align-items:center;gap:9px;margin:0}
-.future-performance-overview-icon{
-  width:29px;height:29px;display:inline-grid;place-items:center;flex:0 0 auto;
-  border:1px solid #354452;border-radius:8px;background:#1c252d;color:#83bcff
-}
+.dashboard-v2 .dashboard-section-eyebrow{display:flex;align-items:center;gap:5px}
+.dashboard-v2 .dashboard-section-eyebrow i{font-size:11px;line-height:1;color:#83bcff}
+.dashboard-v2 .dashboard-section-eyebrow svg{display:inline-block;width:12px;height:12px;flex:0 0 auto;vertical-align:middle;color:#83bcff}
