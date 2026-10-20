@@ -38,7 +38,7 @@ Questa roadmap distingue l'esistenza del codice dalla disponibilità effettiva d
 
 ### 4. Sorgenti Simulation e Scenario serving
 - `ai_scenario_serving.sql` ora possiede il DDL delle tabelle `Simulation*`, invece di aspettarsi che siano state create da un bootstrap separato.
-- È stato aggiunto `AI_Source.RefreshSimulationSources(league_key, season)` per ricostruire i feed sorgente partendo da `Pbp.{LEAGUE}_{SEASON}`, dalle anagrafiche canoniche e, quando disponibile, da `Analisi.AdvancedStats_Lineups_Quarter_{LEAGUE}`.
+- È stato aggiunto `AI_Source.RefreshSimulationSources(league_key, season)` per ricostruire i feed sorgente partendo da `Pbp.{LEAGUE}` filtered by `Season`, dalle anagrafiche canoniche e, quando disponibile, da `Analisi.AdvancedStats_Lineups_Quarter_{LEAGUE}`.
 - Il refresh stagionale richiama la procedura Simulation una volta per lega/stagione prima di aggiornare i contesti `Scenario*`.
 - `SimulationPbpEvents` salva esposizioni PBP e assegna probabilisticamente gli eventi offensivi ai giocatori della lineup avversaria; la difesa individuale **non è osservata direttamente** dal feed PBP.
 - `SimulationLineupStints` privilegia le statistiche di quintetto AdvancedStats; se non sono utilizzabili, usa aggregati derivati dalle lineup nel PBP.
@@ -85,7 +85,7 @@ Per le stagioni storiche, ripetere la chiamata per ogni anno per cui sono presen
 4. Verificare una richiesta API/chat `clutch_value` contro una riga nota del database, includendo il numero di partite clutch e la competizione.
 
 ### P1 — Audit copertura di PBP e lineup
-1. Misurare la copertura di `Pbp.{LEAGUE}_{SEASON}`, `AdvancedStats_Lineups_Quarter_{LEAGUE}` e delle mappe di identità canoniche per lega/stagione.
+1. Misurare la copertura di `Pbp.{LEAGUE}` filtered by `Season`, `AdvancedStats_Lineups_Quarter_{LEAGUE}` e delle mappe di identità canoniche per lega/stagione.
 2. Identificare righe PBP senza giocatore canonico, squadra canonica o quintetto completo; non correggerle per inferenza arbitraria.
 3. Controllare che il numero di giocatori in ogni lineup canonica sia esattamente cinque.
 4. Verificare se esistono dati di tracking difensivo reali. Finché non esistono, `defender_id` resta un'esposizione inferita dalla lineup avversaria con probabilità, non un assegnamento difensivo osservato.
