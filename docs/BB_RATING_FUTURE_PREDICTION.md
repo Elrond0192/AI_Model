@@ -26,7 +26,7 @@ Scenarios describe only what the available identity data can support:
 - league change, with or without team change, split by authoritative tier direction when available;
 - unknown/uncertain when either team identity is unresolved, which uses the safe fallback rather than interpreting local IDs as stable identities.
 
-Scenario calibration first attempts destination league + scenario, then scenario-only, then global. Cohort calibration requires at least 40 distinct players when canonical player IDs are available (40 rows is not sufficient); reports also expose rows evaluated, players, player-season transitions and unique target contexts. MAE/RMSE and training/calibration weights balance each player-season across its target contexts. Returned metadata keeps row volume separate from effective support.
+Scenario calibration first attempts destination league + scenario, then scenario-only, then global. Cohort calibration requires at least 40 distinct players when canonical player IDs are available (40 rows is not sufficient); reports also expose rows evaluated, players, player-season transitions and unique target contexts. MAE/RMSE, training/calibration weights and residual-interval quantiles balance each player-season across its target contexts. The serving response's `calibration_samples` and `interval_samples` use distinct players when canonical IDs are available; the corresponding `calibration_rows` and `interval_rows` retain raw row counts. Metadata therefore keeps row volume separate from effective support.
 
 ## Baselines and release gate
 
