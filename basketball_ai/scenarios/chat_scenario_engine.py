@@ -609,8 +609,8 @@ class ChatScenarioEngine:
                 "deltas": deltas,
                 "rate_adjusted_production": {
                     "unit": "per_36_minutes",
-                    "previous": previous_per36,
-                    "current": current_per36,
+                    "previous_per36": previous_per36,
+                    "current_per36": current_per36,
                     "deltas": per36_deltas,
                 },
                 "previous_bb_rating": previous_bb_rating,
