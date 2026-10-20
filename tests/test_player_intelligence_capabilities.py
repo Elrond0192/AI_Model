@@ -33,6 +33,11 @@ def test_player_intelligence_capability_registry():
     ]
     assert by_key["regression_risk"]["status"] == "available"
     assert by_key["causal_team_effect"]["status"] == "partial"
+    assert by_key["clutch_value"]["status"] == "partial"
+    assert "observed_advance_stats_clutch_boxscore" in by_key["clutch_value"]["evidence"]
+    assert "clutch_games_sample_size" in by_key["clutch_value"]["evidence"]
+    assert "AdvanceStats_Clutch_<league_key> keyed by player, season and competition" in by_key["clutch_value"]["required_data"]
+    assert any("5 clutch games" in item for item in by_key["clutch_value"]["minimum_evidence"])
     assert by_key["team_usage"]["analyses"] == [
         "role_analysis", "performance_decomposition", "team_usage_analysis",
         "metric_explanation", "model_evidence",
