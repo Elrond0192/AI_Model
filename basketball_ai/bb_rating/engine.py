@@ -323,10 +323,9 @@ class BBRatingEngine:
             .str.strip()
             .str.upper()
         )
-        # Prefer the canonical league master tier when available. The local
-        # registry remains a deterministic fallback for datasets that expose
-        # only league_key (including newly introduced BEL1/ITA2 before the
-        # league master has been refreshed).
+        # The local registry is authoritative for configured leagues: stale
+        # canonical DB tiers must not override known competition classifications.
+        # Use the DB tier only for league keys not yet covered by the local map.
         canonical_tier = pd.Series(pd.NA, index=frame.index, dtype="Int64")
         if leagues is not None and not leagues.empty and {"id", "tier"}.issubset(leagues.columns) and "league_id" in frame.columns:
             league_meta = leagues[["id", "tier"]].copy()
@@ -341,8 +340,8 @@ class BBRatingEngine:
             numeric_league_id = pd.to_numeric(frame["league_id"], errors="coerce")
             canonical_tier = numeric_league_id.map(tier_map).astype("Int64")
         fallback_tier = frame["league_key"].map(competition_tier).astype("Int64")
-        frame["competition_tier"] = canonical_tier.where(
-            canonical_tier.notna(), fallback_tier
+        frame["competition_tier"] = fallback_tier.where(
+            fallback_tier.notna(), canonical_tier
         )
         frame["competition_tier_label"] = frame["competition_tier"].map(
             competition_tier_name
