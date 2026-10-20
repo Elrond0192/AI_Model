@@ -113,6 +113,12 @@ def test_calibration_group_support_counts_unique_players_not_repeated_rows():
     assert all(item["unique_players"] == 2 for item in groups)
     assert all(item["fitted"] is False for item in groups)
 
+    prediction = calibrator.predict(50.0, scenario="transfer", target_league_id="EL")
+    assert prediction["calibration_level"] == "global"
+    assert prediction["calibration_samples"] == 2
+    assert prediction["calibration_unique_players"] == 2
+    assert prediction["calibration_rows"] == 40
+
 
 def test_tier_transition_is_part_of_league_change_scenario():
     assert classify_transition("A", "B", "ITA1", "EL", "RS", "RS", 3, 1) == (
