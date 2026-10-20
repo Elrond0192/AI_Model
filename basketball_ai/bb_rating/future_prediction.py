@@ -26,8 +26,8 @@ from basketball_ai.bb_rating.prediction_scenarios import (
 from basketball_ai.models.competition_training import normalize_competition
 from basketball_ai.models.production_training import _numeric_seasons
 
-MODEL_VERSION = "1.1.0"
-FEATURE_VERSION = "bb-rating-direct-target-v2"
+MODEL_VERSION = "1.2.0"
+FEATURE_VERSION = "bb-rating-direct-target-v3-context-compatible"
 _TEAM_NUMERIC_COLUMNS = (
     "pace", "offensive_rating", "defensive_rating", "net_rating",
     "three_point_attempt_rate", "assists_per_game", "star_player_usage",
@@ -102,12 +102,13 @@ def _target_league_tier(data: dict[str, Any], league_key: str) -> Any:
 
 
 def _team_identity(row: pd.Series, team_map: dict[tuple[str, str, int], str]) -> str | None:
+    """Return only a resolved global team identity; local IDs are not cross-season proof."""
     team = _clean(row.get("team_id"))
     league = _clean(row.get("league_id"))
     year = _year(row.get("season"))
-    if not team or year is None:
+    if not team or not league or year is None:
         return None
-    return team_map.get((team, league, year), f"{league}:{team}")
+    return team_map.get((team, league, year))
 
 
 def _team_context_index(data: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
@@ -276,6 +277,49 @@ def _row_policy_keys(row: Any) -> dict[str, str]:
     }
 
 
+def _support_counts(frame: pd.DataFrame) -> dict[str, int | float | None]:
+    """Expose row volume separately from independent player/transition/context support."""
+    rows = int(len(frame))
+    players = (
+        int(frame["player_global_id"].nunique(dropna=True))
+        if "player_global_id" in frame.columns else None
+    )
+    transition_columns = [column for column in ("player_global_id", "target_season")
+                          if column in frame.columns]
+    target_columns = [column for column in (
+        "player_global_id", "target_season", "target_league", "target_competition"
+    ) if column in frame.columns]
+    transitions = (
+        int(frame[transition_columns].dropna(subset=transition_columns).drop_duplicates().shape[0])
+        if len(transition_columns) == 2 else None
+    )
+    target_contexts = (
+        int(frame[target_columns].dropna(subset=target_columns).drop_duplicates().shape[0])
+        if len(target_columns) == 4 else None
+    )
+    return {
+        "rows_evaluated": rows,
+        "unique_players": players,
+        "unique_player_season_transitions": transitions,
+        "unique_target_contexts": target_contexts,
+        "rows_per_target_context": (
+            round(rows / target_contexts, 3) if target_contexts else None
+        ),
+    }
+
+
+def _player_season_weights(frame: pd.DataFrame) -> np.ndarray:
+    """Give each player-season transition equal total weight across its target contexts."""
+    if not {"player_global_id", "target_season"}.issubset(frame.columns) or frame.empty:
+        return np.ones(len(frame), dtype=float)
+    counts = frame.groupby(
+        ["player_global_id", "target_season"], dropna=False
+    )["target_season"].transform("size").to_numpy(dtype=float)
+    weights = 1.0 / np.maximum(counts, 1.0)
+    mean_weight = float(np.mean(weights))
+    return weights / mean_weight if mean_weight > 0 else np.ones(len(frame), dtype=float)
+
+
 def _build_scenario_policy_maps(
     frame: pd.DataFrame,
     predictions: np.ndarray,
@@ -305,7 +349,12 @@ def _build_scenario_policy_maps(
             if not isinstance(values, tuple):
                 values = (values,)
             n = int(len(group))
-            if n < min_samples:
+            support = _support_counts(group)
+            # Once player identity is available, row count is not accepted as a
+            # substitute for independent support. Missing IDs retain the legacy
+            # row-count behaviour only for standalone callers without identity data.
+            effective_support = support["unique_players"] if support["unique_players"] is not None else n
+            if int(effective_support) < min_samples:
                 continue
             if dimension == "source_destination_scenario":
                 key = f"{_clean(values[0]).upper()}=>{_clean(values[1]).upper()}::{_clean(values[2]) or SCENARIO_UNKNOWN}"
@@ -321,11 +370,14 @@ def _build_scenario_policy_maps(
             actual = group["_policy_actual"].to_numpy(dtype=float)
             model_prediction = group["_policy_prediction"].to_numpy(dtype=float)
             baseline_prediction = group["_policy_baseline"].to_numpy(dtype=float)
-            model_mae = float(mean_absolute_error(actual, model_prediction))
-            baseline_mae = float(mean_absolute_error(actual, baseline_prediction))
+            sample_weight = _player_season_weights(group)
+            model_mae = float(mean_absolute_error(actual, model_prediction, sample_weight=sample_weight))
+            baseline_mae = float(mean_absolute_error(actual, baseline_prediction, sample_weight=sample_weight))
             allowed_mae = baseline_mae * 1.10 + 0.25
             maps[dimension][key] = {
                 "n": n,
+                **support,
+                "support_unit": "unique_players" if support["unique_players"] is not None else "rows",
                 "mae": model_mae,
                 "baseline_mae": baseline_mae,
                 "allowed_mae": float(allowed_mae),
@@ -509,42 +561,84 @@ class BBRatingFuturePredictionModel:
                 destinations = by_year.get(target_year, [])
                 if not destinations:
                     continue
-                for source_raw in origins:
+                # Build one row per target player/season/league/statistical context.
+                # Competition codes also contain views/phases (HOME, AWAY, RS, TOT,
+                # etc.); they are not independent competition identities. Pair only
+                # like-for-like contexts and never cross-join all origins to all targets.
+                for target_raw in destinations:
+                    target = pd.Series(target_raw)
+                    target_league = _clean(target.get("league_key")).upper()
+                    target_comp = normalize_competition(target.get("competition"))
+                    label_key = (str(player_global_id), source_year + 1, target_league, target_comp)
+                    target_score = labels.get(label_key)
+                    if target_score is None:
+                        continue
+
+                    compatible_origins = [
+                        origin for origin in origins
+                        if normalize_competition(origin.get("competition")) == target_comp
+                    ]
+                    if not compatible_origins:
+                        continue
+
+                    # Prefer the source row from the destination league when it
+                    # exists. Otherwise select one deterministic primary source
+                    # context by usage; this prevents target reuse across origins.
+                    same_league_origins = [
+                        origin for origin in compatible_origins
+                        if _clean(origin.get("league_key")).upper() == target_league
+                    ]
+                    candidates = same_league_origins or compatible_origins
+                    candidate_frame = pd.DataFrame(candidates).copy()
+                    usage_columns = [
+                        column for column in ("games_played", "minutes", "minutes_per_game")
+                        if column in candidate_frame.columns
+                    ]
+                    for column in usage_columns:
+                        candidate_frame[column] = pd.to_numeric(candidate_frame[column], errors="coerce")
+                    sort_columns = list(usage_columns)
+                    ascending = [False] * len(usage_columns)
+                    if "league_key" in candidate_frame.columns:
+                        sort_columns.append("league_key")
+                        ascending.append(True)
+                    source_raw = (
+                        candidate_frame.sort_values(
+                            sort_columns, ascending=ascending, na_position="last", kind="stable"
+                        ).iloc[0].to_dict()
+                        if sort_columns else candidates[0]
+                    )
                     source = pd.Series(source_raw)
                     source_team = _team_identity(source, team_map)
-                    for target_raw in destinations:
-                        target = pd.Series(target_raw)
-                        target_league = _clean(target.get("league_key")).upper()
-                        target_comp = normalize_competition(target.get("competition"))
-                        label_key = (str(player_global_id), source_year + 1, target_league, target_comp)
-                        target_score = labels.get(label_key)
-                        source_league = _clean(source.get("league_key")).upper()
-                        source_comp = normalize_competition(source.get("competition"))
-                        source_score = labels.get((str(player_global_id), source_year, source_league, source_comp))
-                        if target_score is None or source_score is None:
-                            continue
-                        target_team = _team_identity(target, team_map)
-                        features = _row_features(
-                            source, source_year=source_year,
-                            target_league=target_league, target_competition=target_comp,
-                            source_team=source_team, target_team=target_team,
-                            numeric_columns=self.numeric_columns,
-                            target_tier=target.get("competition_tier"),
-                            source_bb_rating=float(source_score),
-                            team_context=_team_context_features(
-                                team_context_index, target_team, target_league, source_year
-                            ),
-                        )
-                        records.append({
-                            **features,
-                            "observed_bb_rating": float(target_score),
-                            "target_season": source_year + 1,
-                            "player_global_id": str(player_global_id),
-                            "source_team": source_team or "",
-                            "target_team": target_team or "",
-                            "source_league": source_league,
-                            "source_competition": source_comp,
-                        })
+                    source_league = _clean(source.get("league_key")).upper()
+                    source_comp = normalize_competition(source.get("competition"))
+                    source_score = labels.get(
+                        (str(player_global_id), source_year, source_league, source_comp)
+                    )
+                    if source_score is None:
+                        continue
+
+                    target_team = _team_identity(target, team_map)
+                    features = _row_features(
+                        source, source_year=source_year,
+                        target_league=target_league, target_competition=target_comp,
+                        source_team=source_team, target_team=target_team,
+                        numeric_columns=self.numeric_columns,
+                        target_tier=target.get("competition_tier"),
+                        source_bb_rating=float(source_score),
+                        team_context=_team_context_features(
+                            team_context_index, target_team, target_league, source_year
+                        ),
+                    )
+                    records.append({
+                        **features,
+                        "observed_bb_rating": float(target_score),
+                        "target_season": source_year + 1,
+                        "player_global_id": str(player_global_id),
+                        "source_team": source_team or "",
+                        "target_team": target_team or "",
+                        "source_league": source_league,
+                        "source_competition": source_comp,
+                    })
         result = pd.DataFrame(records)
         if result.empty:
             raise ValueError("No consecutive-season BB-Rating target pairs could be constructed")
@@ -554,6 +648,11 @@ class BBRatingFuturePredictionModel:
         result = result[result["observed_bb_rating"].between(1, 100)]
         if result.empty:
             raise ValueError("No valid official BB-Rating labels in the 1-100 range")
+        target_key = ["player_global_id", "target_season", "target_league", "target_competition"]
+        if result.duplicated(subset=target_key).any():
+            raise ValueError(
+                "BB Prediction Model pairing invariant failed: duplicate player-season target contexts"
+            )
         return result
 
     def fit(
@@ -568,6 +667,7 @@ class BBRatingFuturePredictionModel:
         encoded = _encode(feature_frame, self.categorical_columns)
         self.feature_columns = list(encoded.columns)
         y = records["observed_bb_rating"].to_numpy(dtype=float)
+        sample_weights = _player_season_weights(records)
         years = records["target_season"].to_numpy(dtype=int)
         oof_predictions = np.full(len(records), np.nan, dtype=float)
         baseline_predictions = np.full(len(records), np.nan, dtype=float)
@@ -581,7 +681,10 @@ class BBRatingFuturePredictionModel:
                 max_iter=180, learning_rate=0.06, max_leaf_nodes=15,
                 l2_regularization=2.0, random_state=self.random_state,
             )
-            fold.fit(encoded.iloc[train_idx], y[train_idx])
+            fold.fit(
+                encoded.iloc[train_idx], y[train_idx],
+                sample_weight=sample_weights[train_idx],
+            )
             oof_predictions[test_idx] = np.clip(fold.predict(encoded.iloc[test_idx]), 1, 100)
 
             train_records = records.iloc[train_idx]
@@ -693,9 +796,18 @@ class BBRatingFuturePredictionModel:
         for (league, scenario), group in oof.assign(_residual=residual).groupby(
             ["target_league", "scenario"], sort=False
         ):
-            if len(group) >= 40:
+            interval_support = _support_counts(group)
+            supported = (
+                int(interval_support["unique_players"]) >= 40
+                if interval_support["unique_players"] is not None else len(group) >= 40
+            )
+            if supported:
                 self.residual_intervals[f"{league}::{scenario}"] = {
                     "n": int(len(group)),
+                    "unique_players": int(interval_support["unique_players"] or 0),
+                    "unique_player_season_transitions": int(
+                        interval_support["unique_player_season_transitions"] or 0
+                    ),
                     "low": float(group["_residual"].quantile(0.10)),
                     "high": float(group["_residual"].quantile(0.90)),
                 }
@@ -704,24 +816,42 @@ class BBRatingFuturePredictionModel:
         baseline = oof["baseline_bb_rating"].to_numpy(float)
         calibrated = oof["calibrated_bb_rating"].to_numpy(float)
 
-        def metric_pack(mask: np.ndarray) -> dict[str, float | int | bool | None]:
+        def metric_pack(mask: np.ndarray) -> dict[str, Any]:
             if not np.any(mask):
                 return {
-                    "n": 0, "mae": None, "rmse": None, "bias": None,
-                    "calibration_error": None, "baseline_mae": None,
+                    "n": 0, "rows_evaluated": 0, "unique_players": 0,
+                    "unique_player_season_transitions": 0, "unique_target_contexts": 0,
+                    "rows_per_target_context": None, "mae": None, "rmse": None,
+                    "bias": None, "calibration_error": None, "baseline_mae": None,
                     "baseline_rmse": None, "beats_baseline": None,
                 }
-            truth, prediction, baseline_prediction = actual[mask], calibrated[mask], baseline[mask]
-            mae = float(mean_absolute_error(truth, prediction))
-            baseline_mae_group = float(mean_absolute_error(truth, baseline_prediction))
+            group = oof.loc[mask].copy()
+            support = _support_counts(group)
+            truth = group["observed_bb_rating"].to_numpy(dtype=float)
+            prediction = group["calibrated_bb_rating"].to_numpy(dtype=float)
+            baseline_prediction = group["baseline_bb_rating"].to_numpy(dtype=float)
+            sample_weight = _player_season_weights(group)
+            mae = float(mean_absolute_error(truth, prediction, sample_weight=sample_weight))
+            baseline_mae_group = float(mean_absolute_error(
+                truth, baseline_prediction, sample_weight=sample_weight
+            ))
+            prediction_rmse = float(np.sqrt(np.average(
+                np.square(prediction - truth), weights=sample_weight
+            )))
+            baseline_rmse = float(np.sqrt(np.average(
+                np.square(baseline_prediction - truth), weights=sample_weight
+            )))
+            weighted_prediction_mean = float(np.average(prediction, weights=sample_weight))
+            weighted_actual_mean = float(np.average(truth, weights=sample_weight))
             return {
                 "n": int(mask.sum()),
+                **support,
                 "mae": mae,
-                "rmse": float(np.sqrt(mean_squared_error(truth, prediction))),
-                "bias": float(np.mean(prediction - truth)),
-                "calibration_error": float(abs(np.mean(prediction) - np.mean(truth))),
+                "rmse": prediction_rmse,
+                "bias": float(np.average(prediction - truth, weights=sample_weight)),
+                "calibration_error": float(abs(weighted_prediction_mean - weighted_actual_mean)),
                 "baseline_mae": baseline_mae_group,
-                "baseline_rmse": float(np.sqrt(mean_squared_error(truth, baseline_prediction))),
+                "baseline_rmse": baseline_rmse,
                 "beats_baseline": bool(mae < baseline_mae_group),
             }
 
@@ -751,8 +881,9 @@ class BBRatingFuturePredictionModel:
                 (oof["target_league"].astype(str).to_numpy() == str(league))
                 & (oof["scenario"].astype(str).to_numpy() == str(scenario))
             )
-        mae_model = float(mean_absolute_error(actual, calibrated))
-        mae_baseline = float(mean_absolute_error(actual, baseline))
+        overall_metrics = metric_pack(np.ones(len(oof), dtype=bool))
+        mae_model = float(overall_metrics["mae"])
+        mae_baseline = float(overall_metrics["baseline_mae"])
 
         segment_regressions = []
         under_supported_segments = []
@@ -764,12 +895,22 @@ class BBRatingFuturePredictionModel:
             ("source_destination_scenario", by_source_destination_scenario),
         ):
             for group_name, metrics in metrics_by_group.items():
-                if int(metrics.get("n") or 0) < 40:
+                effective_support = metrics.get("unique_players")
+                support_count = int(
+                    effective_support if effective_support is not None
+                    else (metrics.get("n") or 0)
+                )
+                if support_count < 40:
                     under_supported_segments.append({
                         "dimension": dimension,
                         "group": str(group_name),
                         "n": int(metrics.get("n") or 0),
-                        "status": "insufficient_samples_for_segment_gate",
+                        "rows_evaluated": int(metrics.get("rows_evaluated") or metrics.get("n") or 0),
+                        "unique_players": metrics.get("unique_players"),
+                        "unique_player_season_transitions": metrics.get("unique_player_season_transitions"),
+                        "unique_target_contexts": metrics.get("unique_target_contexts"),
+                        "support_unit": "unique_players" if effective_support is not None else "rows",
+                        "status": "insufficient_independent_player_support_for_segment_gate",
                     })
                     continue
                 model_mae = metrics.get("mae")
@@ -780,7 +921,12 @@ class BBRatingFuturePredictionModel:
                 if float(model_mae) > allowed_mae:
                     segment_regressions.append({
                         "dimension": dimension, "group": str(group_name),
-                        "n": int(metrics["n"]), "mae": float(model_mae),
+                        "n": int(metrics["n"]),
+                        "rows_evaluated": int(metrics.get("rows_evaluated") or metrics["n"]),
+                        "unique_players": metrics.get("unique_players"),
+                        "unique_player_season_transitions": metrics.get("unique_player_season_transitions"),
+                        "unique_target_contexts": metrics.get("unique_target_contexts"),
+                        "mae": float(model_mae),
                         "baseline_mae": float(baseline_mae_group),
                     })
         walk_forward_target_seasons = sorted(int(value) for value in oof["target_season"].unique())
@@ -796,8 +942,16 @@ class BBRatingFuturePredictionModel:
             max_iter=220, learning_rate=0.05, max_leaf_nodes=15,
             l2_regularization=2.0, random_state=self.random_state,
         )
-        self.model.fit(encoded, y)
+        self.model.fit(encoded, y, sample_weight=sample_weights)
         calibrated_oof = np.clip(calibrated, 1, 100)
+        weighted_oof = _player_season_weights(oof)
+        raw_calibrated_model = np.clip(nested_calibrated, 1, 100)
+        oof_after_calibration_mae = float(mean_absolute_error(
+            actual, raw_calibrated_model, sample_weight=weighted_oof
+        ))
+        oof_after_fallback_mae = float(mean_absolute_error(
+            actual, calibrated_oof, sample_weight=weighted_oof
+        ))
         self.metadata = {
             "model": "BBRatingFuturePredictionModel",
             "model_version": MODEL_VERSION,
@@ -808,27 +962,40 @@ class BBRatingFuturePredictionModel:
             "calibration_method": "walk_forward_oof_isotonic_with_baseline_safe_scenario_fallback",
             "training_samples": int(len(records)),
             "oof_samples": int(len(oof)),
+            "training_support": _support_counts(records),
+            "oof_support": _support_counts(oof),
+            "duplicate_target_context_pairs": int(records.duplicated(
+                subset=["player_global_id", "target_season", "target_league", "target_competition"]
+            ).sum()),
+            "unresolved_team_identity_rows": int((
+                records["source_team"].astype(str).eq("")
+                | records["target_team"].astype(str).eq("")
+            ).sum()),
             "target_seasons": sorted(int(v) for v in set(years)),
             "oof_mae_before_calibration": float(mean_absolute_error(
-                oof["observed_bb_rating"], oof["predicted_bb_rating"]
+                oof["observed_bb_rating"], oof["predicted_bb_rating"], sample_weight=weighted_oof
             )),
             "oof_mae_calibrated_model": float(mean_absolute_error(
-                oof["observed_bb_rating"], nested_calibrated
+                oof["observed_bb_rating"], nested_calibrated, sample_weight=weighted_oof
             )),
-            "oof_mae_after_calibration": float(mean_absolute_error(
-                oof["observed_bb_rating"], calibrated_oof
-            )),
-            "oof_mae_after_scenario_fallback": float(mean_absolute_error(
-                oof["observed_bb_rating"], calibrated_oof
-            )),
-            "oof_rmse_calibrated_model": float(np.sqrt(mean_squared_error(
-                oof["observed_bb_rating"], nested_calibrated
+            "oof_mae_after_calibration": oof_after_calibration_mae,
+            "oof_mae_after_scenario_fallback": oof_after_fallback_mae,
+            "oof_rmse_calibrated_model": float(np.sqrt(np.average(
+                np.square(nested_calibrated - actual), weights=weighted_oof
             ))),
-            "oof_rmse_after_calibration": float(np.sqrt(mean_squared_error(
-                oof["observed_bb_rating"], calibrated_oof
+            "oof_rmse_after_calibration": float(np.sqrt(np.average(
+                np.square(raw_calibrated_model - actual), weights=weighted_oof
             ))),
-            "oof_bias_after_calibration": float(np.mean(calibrated_oof - actual)),
-            "oof_calibration_error": float(abs(np.mean(calibrated_oof) - np.mean(actual))),
+            "oof_bias_after_calibration": float(np.average(
+                raw_calibrated_model - actual, weights=weighted_oof
+            )),
+            "oof_calibration_error": float(abs(
+                np.average(raw_calibrated_model, weights=weighted_oof)
+                - np.average(actual, weights=weighted_oof)
+            )),
+            "oof_rmse_after_scenario_fallback": float(np.sqrt(np.average(
+                np.square(calibrated_oof - actual), weights=weighted_oof
+            ))),
             "oof_baseline_mae": mae_baseline,
             "oof_baseline_rmse": float(np.sqrt(mean_squared_error(actual, baseline))),
             "promotion_gate_passed": promotion_gate_passed,
@@ -841,7 +1008,11 @@ class BBRatingFuturePredictionModel:
             "walk_forward_fold_count": int(len(walk_forward_target_seasons)),
             "minimum_walk_forward_target_seasons": 3,
             "minimum_supported_segment_samples": 40,
-            "promotion_gate": "the temporally nested serving policy must beat baseline overall, have at least 3 OOF target seasons, and keep supported source-league, destination-league, transition-scenario, destination-league-scenario and source-destination-scenario cohorts within 10 percent plus 0.25 points of baseline; unvalidated or regressing contexts use the contextual baseline",
+            "minimum_supported_segment_players": 40,
+            "segment_support_unit": "unique player_global_id values; rows are reported separately",
+            "pairing_policy": "one primary source context per player-target-season-league-competition; source and target statistical context codes must match",
+            "team_identity_policy": "only resolved global team IDs establish team continuity; local fallback is not treated as verified",
+            "promotion_gate": "the player-season-balanced temporally nested serving policy must beat baseline overall, have at least 3 OOF target seasons, and keep supported source-league, destination-league, transition-scenario, destination-league-scenario and source-destination-scenario cohorts within 10 percent plus 0.25 points of baseline; cohort support requires 40 distinct players; unvalidated or regressing contexts use the contextual baseline",
             "scenario_metrics": by_scenario,
             "source_league_metrics": by_source,
             "destination_league_metrics": by_destination,
