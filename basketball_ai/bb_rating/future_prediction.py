@@ -1217,6 +1217,18 @@ class BBRatingFuturePredictionModel:
         target_league = str(target_league).strip().upper()
         target_competition = normalize_competition(target_competition)
         source_competition = normalize_competition(source_competition)
+        allowed_target_contexts = forecast_competitions().difference({"HOME", "AWAY"})
+        if target_competition not in allowed_target_contexts:
+            allowed_text = ", ".join(sorted(allowed_target_contexts))
+            raise ValueError(
+                f"Target context {target_competition!r} is not configured for BB-Rating forecasts; "
+                f"allowed contexts: {allowed_text}"
+            )
+        if source_competition != target_competition:
+            raise ValueError(
+                "Source and target statistical contexts must match; "
+                "the model cannot infer a competition change from context codes"
+            )
         if source_competition:
             matching_phase = source[
                 source["competition"].map(normalize_competition) == source_competition
