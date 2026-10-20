@@ -115,6 +115,10 @@ def test_build_records_pairs_only_compatible_contexts_and_one_origin_per_target(
         {"player_id": 1, "player_global_id": "P1", "league_id": 2, "league_key": "EC",
          "season": 2023, "competition": "HOME", "team_id": 20, "games_played": 9,
          "points_per_game": 13.0},
+        # Latest-season sentinel: target year 2023 remains eligible for the backtest.
+        {"player_id": 1, "player_global_id": "P1", "league_id": 1, "league_key": "ITA1",
+         "season": 2024, "competition": "RS", "team_id": 10, "games_played": 10,
+         "points_per_game": 12.5},
     ]
     stats = pd.DataFrame(rows)
 
@@ -134,7 +138,7 @@ def test_build_records_pairs_only_compatible_contexts_and_one_origin_per_target(
     }
     records = BBRatingFuturePredictionModel()._build_records(data)
 
-    # Three target contexts, each represented once; no RS<->HOME cross-pairing.
+    # Four target contexts, each represented once; no RS<->HOME cross-pairing.
     assert len(records) == 4
     assert not records.duplicated(
         ["player_global_id", "target_season", "target_league", "target_competition"]
