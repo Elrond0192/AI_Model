@@ -87,7 +87,14 @@ def test_ai_source_assigns_configured_league_tiers_and_reconciles_unique_team_id
 def test_team_stats_support_gamesplayed_and_fallback_team_identity():
     sql = SOURCE_SQL.read_text(encoding="utf-8").lower()
     compact = "".join(sql.split())
+    team_section = sql.split("-- canonical teamcompetitionstats", 1)[1].split(
+        "-- player registry staging", 1
+    )[0]
+    team_compact = "".join(team_section.split())
     assert "array['games','gamesplayed']" in compact
+    # TeamCompetitionStats must read the per-team Games value emitted by AdvancedStats.
+    assert "array['games','gamesplayed']" in team_compact
+    assert "coalesce(games,0)::integerasgames_played" in team_compact
     assert "quote_literal(league_key||':')" in compact
     assert "||team_local_expr||')asteam_global_id" in compact
     # The roster registry and team-season statistics must use the same fallback key.
