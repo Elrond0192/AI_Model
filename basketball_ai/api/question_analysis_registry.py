@@ -116,6 +116,7 @@ QUESTION_CAPABILITIES: tuple[QuestionCapability, ...] = (
             "team_usage_analysis",
             "causal_team_effect",
             "lineup_context_association",
+            "observed_teammate_lineup_associations",
             "metric_explanation",
         ),
         missing_analyses=("causal_teammate_effect_attribution", "causal_identification"),
@@ -124,6 +125,7 @@ QUESTION_CAPABILITIES: tuple[QuestionCapability, ...] = (
             "role_and_usage_changes",
             "observed_team_context_association",
             "within_team_season_lineup_net_rating",
+            "teammate_lineup_presence_within_player_minutes",
         ),
         limitation=(
             "La composizione distingue cambiamenti individuali, contesto squadra e Net Rating osservato "
@@ -140,6 +142,7 @@ QUESTION_CAPABILITIES: tuple[QuestionCapability, ...] = (
             "team_switch_analysis",
             "bb_rating_context_adjustment",
             "lineup_context_association",
+            "observed_teammate_lineup_associations",
         ),
         missing_analyses=("causal_identification", "causal_teammate_effect_attribution"),
         evidence=(
@@ -150,11 +153,15 @@ QUESTION_CAPABILITIES: tuple[QuestionCapability, ...] = (
             "usage",
             "observed_role",
             "within_team_season_lineup_net_rating",
+            "teammate_lineup_presence_within_player_minutes",
         ),
         limitation=(
             "L'esito individuale resta il BB-Rating canonico 1-100. Il confronto dei quintetti descrive "
             "il Net Rating di squadra osservato nelle lineup con/senza il giocatore, non il suo BB-Rating "
-            "né un effetto individuale. Tutti i risultati restano osservazionali e non dimostrano causalità."
+            "né un effetto individuale. Le associazioni per compagno confrontano il Net Rating della squadra "
+            "nei quintetti con il giocatore e quel compagno insieme rispetto ai quintetti con il giocatore "
+            "senza quel compagno; restano descrittive e possono risentire della selezione dei quintetti. "
+            "Tutti i risultati restano osservazionali e non dimostrano causalità."
         ),
     ),
     QuestionCapability(
