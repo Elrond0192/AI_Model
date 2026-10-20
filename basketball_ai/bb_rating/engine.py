@@ -28,6 +28,24 @@ from basketball_ai.bb_rating.semantics import METRIC_SEMANTICS, metric_interpret
 
 BB_RATING_VERSION = "1.9"
 
+# Human-readable labels for the scored components. The internal metric keys remain
+# stable for API compatibility; these labels are intended for explanatory output.
+RATING_COMPONENT_LABELS = {
+    "RAPTOR": "Impatto complessivo",
+    "VORP": "Valore rispetto al ricambio",
+    "PER": "Efficienza complessiva",
+    "TS%": "Efficienza al tiro",
+    "AST%": "Creazione per i compagni",
+    "TOV%": "Controllo delle palle perse",
+    "RAPTOR_DEF": "Impatto difensivo",
+    "NET_RTG_DIFF": "Differenza di rendimento con/senza in campo",
+    "STL%": "Recuperi difensivi",
+    "BLK%": "Protezione del ferro",
+    "REB%": "Controllo dei rimbalzi",
+    "HUSTLE": "Attività e seconde opportunità",
+    "FOUL_DRAWING": "Capacità di subire falli",
+}
+
 # Minimum population preferred for a stable league/season/competition peer
 # context. The primary scoring population remains the requested competition
 # context; small contexts are surfaced through the quality/limited-context
@@ -251,6 +269,7 @@ class BBRatingResult:
     peer_group: dict[str, Any]
     quality: str
     metric_coverage: float
+    rating_composition: dict[str, Any]
     competition_tier: Optional[int] = None
     competition_tier_label: Optional[str] = None
     version: str = BB_RATING_VERSION
@@ -272,6 +291,7 @@ class BBRatingResult:
             "peer_group": dict(self.peer_group),
             "quality": self.quality,
             "metric_coverage": round(float(self.metric_coverage), 4),
+            "rating_composition": dict(self.rating_composition),
             "competition_tier": self.competition_tier,
             "competition_tier_label": self.competition_tier_label,
             "bb_rating_version": self.version,
@@ -674,6 +694,59 @@ class BBRatingEngine:
             role=role,
             usg_percentile=usg_percentile,
         )
+
+        # Exact arithmetic decomposition of the already-established score formula.
+        # The score formula and all metric weights remain unchanged. Centred
+        # component values sum to the unrounded score minus the neutral reference
+        # (50.5), allowing season-to-season differences to be reconciled precisely.
+        composition_metrics: list[dict[str, Any]] = []
+        dimension_contributions: dict[str, float] = {}
+        for evidence in usable:
+            if evidence.weight <= 0.0 or evidence.percentile is None:
+                continue
+            effective_weight = float(evidence.weight) / float(used_weight)
+            percentile = float(evidence.percentile)
+            score_component = effective_weight * percentile * 99.0
+            centered_component = effective_weight * (percentile - 0.5) * 99.0
+            dimension_contributions[evidence.dimension] = (
+                dimension_contributions.get(evidence.dimension, 0.0) + centered_component
+            )
+            composition_metrics.append({
+                "metric": evidence.metric,
+                "display_name": RATING_COMPONENT_LABELS.get(evidence.metric, evidence.metric),
+                "dimension": evidence.dimension,
+                "contextual_percentile": round(percentile, 6),
+                "contextual_percentile_pct": round(percentile * 100.0, 2),
+                "configured_weight": round(float(evidence.weight), 6),
+                "effective_weight": round(effective_weight, 8),
+                "score_component_points": round(score_component, 6),
+                "score_deviation_from_midpoint_points": round(centered_component, 6),
+            })
+
+        unrounded_score = 1.0 + 99.0 * float(composite_pct)
+        rating_composition = {
+            "method": "weighted_contextual_percentile_components_v1",
+            "neutral_reference_score": 50.5,
+            "composite_percentile": round(float(composite_pct), 8),
+            "unrounded_bb_rating": round(unrounded_score, 6),
+            "rounding_adjustment_points": round(float(score) - unrounded_score, 6),
+            "effective_weight_total": round(
+                sum(float(row["effective_weight"]) for row in composition_metrics), 8
+            ),
+            "scoring_metric_count": len(composition_metrics),
+            "metrics": composition_metrics,
+            "dimension_contributions": [
+                {
+                    "dimension": dimension,
+                    "score_deviation_from_midpoint_points": round(value, 6),
+                }
+                for dimension, value in sorted(dimension_contributions.items())
+            ],
+            "interpretation": (
+                "Arithmetic decomposition of the existing weighted-percentile score; "
+                "not a causal attribution of on-court outcomes."
+            ),
+        }
 
         metrics_dict = {e.metric: e for e in evidences}
         return BBRatingResult(
