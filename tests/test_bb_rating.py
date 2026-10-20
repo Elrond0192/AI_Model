@@ -180,6 +180,23 @@ def test_bb_rating_is_deterministic_and_contextual():
         assert key in payload_metrics
         assert payload_metrics[key]["interpretation"]
 
+    composition = payload["rating_composition"]
+    assert composition["method"] == "weighted_contextual_percentile_components_v1"
+    assert composition["effective_weight_total"] == pytest.approx(1.0)
+    assert composition["scoring_metric_count"] == len(composition["metrics"])
+    assert composition["metrics"]
+    assert all(row["display_name"] for row in composition["metrics"])
+    centered_total = sum(
+        row["score_deviation_from_midpoint_points"] for row in composition["metrics"]
+    )
+    assert centered_total == pytest.approx(
+        composition["unrounded_bb_rating"] - composition["neutral_reference_score"],
+        abs=2e-5,
+    )
+    assert composition["unrounded_bb_rating"] == pytest.approx(
+        1.0 + 99.0 * composition["composite_percentile"], abs=2e-5
+    )
+
 
 
 def test_competition_tier_mapping_distinguishes_level_without_changing_context():
