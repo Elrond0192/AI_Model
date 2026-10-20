@@ -525,6 +525,12 @@ def test_causal_team_effect_uses_canonical_bb_rating_and_controls_role_minutes_u
             "net_rtg": 1.0, "ortg": 106.0, "drtg": 105.0,
         },
         {
+            "league_key": "A", "season": 2023, "competition": "RS",
+            "team_id": 101, "opponent_team_id": 102,
+            "player_ids": "1,3,4,5,6", "possessions": 150,
+            "net_rtg": 6.0, "ortg": 110.0, "drtg": 104.0,
+        },
+        {
             "league_key": "A", "season": 2024, "competition": "RS",
             "team_id": 102, "opponent_team_id": 101,
             "player_ids": "1,2,3,4,5", "possessions": 150,
@@ -535,6 +541,12 @@ def test_causal_team_effect_uses_canonical_bb_rating_and_controls_role_minutes_u
             "team_id": 102, "opponent_team_id": 101,
             "player_ids": "2,3,4,5,6", "possessions": 150,
             "net_rtg": -1.0, "ortg": 105.0, "drtg": 106.0,
+        },
+        {
+            "league_key": "A", "season": 2024, "competition": "RS",
+            "team_id": 102, "opponent_team_id": 101,
+            "player_ids": "1,3,4,5,6", "possessions": 150,
+            "net_rtg": -4.0, "ortg": 103.0, "drtg": 107.0,
         },
     ])
 
@@ -571,6 +583,14 @@ def test_causal_team_effect_uses_canonical_bb_rating_and_controls_role_minutes_u
     assert lineup["net_rating_with_player"] == 1.0
     assert lineup["net_rating_without_player"] == 0.0
     assert lineup["difference"] == 1.0
+    beta_association = next(
+        item for item in lineup["teammate_associations"]
+        if item["teammate"] == "Beta" and item["season"] == 2023
+    )
+    assert beta_association["status"] == "exploratory_observational_association"
+    assert beta_association["possessions_with_both"] == 150
+    assert beta_association["possessions_with_player_without_teammate"] == 150
+    assert beta_association["difference"] == 0.0
     assert payload["team_switches"]
     switch = payload["team_switches"][-1]
     assert switch["bb_rating_change"] == -7
