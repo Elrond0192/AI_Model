@@ -375,7 +375,8 @@ def test_helpers_and_static_assets(monkeypatch, tmp_path):
     enter_start = js.index("async function enterBackOffice(user){")
     enter_end = js.index("function updateClock()", enter_start)
     enter_body = js[enter_start:enter_end]
-    assert enter_body.index("await navigate('overview')") < enter_body.index("api('/admin-api/auto-load'")
+    assert enter_body.index("void navigate('overview')") < enter_body.index("api('/admin-api/auto-load'")
+    assert "if(App.user&&App.page==='overview')await navigate('overview')" in enter_body
     assert "keepAlive:true" in enter_body
     api_start = js.index("async function api(path,options={}){")
     api_end = js.index("function showLogin()", api_start)
@@ -383,7 +384,7 @@ def test_helpers_and_static_assets(monkeypatch, tmp_path):
     assert "const {keepAlive=false,...requestOptions}=options;" in api_body
     assert "if(!keepAlive)App.controllers.add(controller);" in api_body
     assert "if(!requestOptions.signal&&!keepAlive)fetchOptions.signal=controller.signal;" in api_body
-    assert 'href="/assets/app.js?v=2.6.1"' in html
+    assert 'href="/assets/app.js?v=2.6.2"' in html
     assert "Attività modello" in html
     assert "Salute del sistema" in html
     future_page_start = html.index('<template id="page-future-performance">')
