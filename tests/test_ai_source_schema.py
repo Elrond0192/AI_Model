@@ -254,6 +254,29 @@ def test_scenario_serving_tolerates_missing_optional_simulation_feeds():
     assert "simulationlineupstints has no matching source rows" in sql
 
 
+def test_scenario_serving_owns_and_rebuilds_simulation_sources():
+    sql = SERVING_SQL.read_text(encoding="utf-8").lower()
+
+    for table in (
+        "simulationpbpevents",
+        "simulationlineupstints",
+        "simulationplaytypestats",
+        "simulationshotprofiles",
+        "simulationcausalpanel",
+        "simulationsourcerefreshstate",
+    ):
+        assert f'create table if not exists "ai_source"."{table}"' in sql
+
+    assert 'create or replace procedure "ai_source"."refreshsimulationsources"' in sql
+    assert 'from "pbp".%1$i' in sql
+    assert 'from "analisi".%1$i q' in sql
+    assert 'call "ai_source"."refreshsimulationsources"(sim_ctx.league_key, sim_ctx.season)' in sql
+    assert "unknown_two_point" in sql
+    assert "unknown_three_point" in sql
+    assert "simulationcausalpanel remains empty" in sql
+    assert 'create index if not exists ix_simulation_pbp_context' in sql
+
+
 def test_scenario_serving_is_physical_indexed_and_incremental():
     sql = SERVING_SQL.read_text(encoding="utf-8").lower()
     for table in (
