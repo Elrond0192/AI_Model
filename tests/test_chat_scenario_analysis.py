@@ -663,6 +663,88 @@ def test_player_intelligence_expands_team_usage_and_keeps_counterfactual_explici
     assert "target_season" not in evidence["bb_rating_prediction"]
 
 
+def test_clutch_analysis_uses_full_observed_advance_stats_clutch_profile():
+    data = _analysis_data()
+    clutch_fields = {
+        "clutch_games": [("2023", 5), ("2024", 8)],
+        "clutch_pts": [("2023", 2), ("2024", 4)],
+        "clutch_fg2m": [("2023", 1), ("2024", 1)],
+        "clutch_fg2a": [("2023", 1), ("2024", 2)],
+        "clutch_fg3m": [("2023", 0), ("2024", 1)],
+        "clutch_fg3a": [("2023", 4), ("2024", 3)],
+        "clutch_ftm": [("2023", 0), ("2024", 1)],
+        "clutch_fta": [("2023", 0), ("2024", 2)],
+        "clutch_ast": [("2023", 1), ("2024", 2)],
+        "clutch_orb": [("2023", 1), ("2024", 0)],
+        "clutch_drb": [("2023", 1), ("2024", 3)],
+        "clutch_stl": [("2023", 0), ("2024", 1)],
+        "clutch_blk": [("2023", 0), ("2024", 0)],
+        "clutch_tov": [("2023", 0), ("2024", 1)],
+        "clutch_fg_pct": [("2023", .2), ("2024", .4)],
+        "clutch_fg2_pct": [("2023", 1.0), ("2024", .5)],
+        "clutch_fg3_pct": [("2023", 0.0), ("2024", 1/3)],
+        "clutch_ft_pct": [("2023", None), ("2024", .5)],
+        "clutch_efg_pct": [("2023", .2), ("2024", .5)],
+        "clutch_ts_pct": [("2023", .2), ("2024", .48)],
+        "clutch_ftr": [("2023", 0.0), ("2024", .4)],
+        "clutch_three_par": [("2023", .8), ("2024", .6)],
+        "clutch_ast_to_tov": [("2023", None), ("2024", 2.0)],
+        "clutch_ortg": [("2023", 89.38), ("2024", 113.64)],
+        "clutch_drtg": [("2023", 124.09), ("2024", 110.1)],
+        "clutch_net_rtg": [("2023", -34.71), ("2024", 3.54)],
+        "clutch_team_id": [("2023", None), ("2024", None)],
+        "clutch_clutchness_rating": [("2023", "D"), ("2024", "C")],
+    }
+    stats = data["player_stats"]
+    for column in clutch_fields:
+        stats[column] = None
+    mask = (
+        (stats["player_id"] == 1)
+        & (stats["competition"].astype(str).str.upper() == "RS")
+    )
+    for index in stats[mask].index:
+        year = str(int(stats.loc[index, "season"]))
+        for column, values in clutch_fields.items():
+            match = next((value for row_year, value in values if row_year == year), None)
+            stats.loc[index, column] = match
+
+    result = ChatScenarioEngine(SimpleNamespace(), data).evaluate(
+        {"scenario": "clutch_analysis", "season": 2024, "competition": "RS"},
+        [1], [], 10, None,
+    )
+    payload = result["result"]
+    latest = payload["latest_clutch"]
+    assert payload["status"] == "available"
+    assert latest["data_available"] is True
+    assert latest["clutch_games"] == 8
+    assert latest["clutch_pts"] == 4
+    assert latest["clutch_pts_per_game"] == .5
+    assert latest["clutch_fg2a"] == 2
+    assert latest["clutch_fg3m"] == 1
+    assert latest["clutch_ast"] == 2
+    assert latest["clutch_stl"] == 1
+    assert latest["clutch_ortg"] == 113.64
+    assert latest["clutch_drtg"] == 110.1
+    assert latest["clutch_net_rtg"] == 3.54
+    assert latest["clutch_clutchness_rating"] == "C"
+    assert payload["seasons_with_clutch_data"] == 2
+    assert result["support"]["method"] == "observed_advance_stats_clutch"
+    assert result["support"]["samples"] == 13
+
+
+def test_clutch_analysis_does_not_present_empty_join_defaults_as_observed_zeroes():
+    result = _engine().evaluate(
+        {"scenario": "clutch_analysis", "season": 2024, "competition": "RS"},
+        [1], [], 10, None,
+    )
+    payload = result["result"]
+    assert payload["status"] == "unavailable"
+    assert payload["latest_clutch"]["data_available"] is False
+    assert "clutch_games" not in payload["latest_clutch"]
+    assert "AdvanceStats_Clutch" in payload["reason"]
+    assert result["support"]["samples"] == 0
+
+
 def test_player_intelligence_composes_causal_team_effect_as_observational():
     result = _engine().evaluate(
         {"scenario": "player_intelligence", "season": 2024, "competition": "RS",
