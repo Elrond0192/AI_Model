@@ -30,7 +30,7 @@ QUESTION_CAPABILITIES: tuple[QuestionCapability, ...] = (
         question="Come sta giocando il giocatore?",
         status="available",
         analyses=("bb_rating", "performance_vs_expectation"),
-        evidence=("observed_context_rating", "expected_rating"),
+        evidence=("canonical_bb_rating_1_100", "calibrated_expectation_if_available"),
     ),
     QuestionCapability(
         key="why_performing",
@@ -66,7 +66,7 @@ QUESTION_CAPABILITIES: tuple[QuestionCapability, ...] = (
         question="Il suo rendimento è coerente con il ruolo?",
         status="available",
         analyses=("role_analysis", "bb_rating", "performance_vs_expectation", "performance_decomposition"),
-        evidence=("role", "rating", "role_metrics"),
+        evidence=("observed_role", "canonical_bb_rating_1_100", "role_metrics"),
     ),
     QuestionCapability(
         key="team_usage",
@@ -81,14 +81,14 @@ QUESTION_CAPABILITIES: tuple[QuestionCapability, ...] = (
         question="È affidabile o sta vivendo un picco?",
         status="available",
         analyses=("player_trend", "bb_rating", "performance_stability"),
-        evidence=("historical_ratings", "trend"),
+        evidence=("historical_bb_rating_1_100", "trend"),
     ),
     QuestionCapability(
         key="potential",
         question="Qual è il suo potenziale?",
         status="available",
         analyses=("potential_synthesis", "age_trajectory", "bb_rating"),
-        evidence=("rating_trajectory", "age_curve"),
+        evidence=("observed_bb_rating_trajectory_1_100", "age_curve"),
         limitation="Il potenziale sintetizza traiettoria osservata ed età; le previsioni numeriche future restano responsabilità dei modelli Prediction/Future Performance.",
     ),
     QuestionCapability(
@@ -115,27 +115,47 @@ QUESTION_CAPABILITIES: tuple[QuestionCapability, ...] = (
             "role_analysis",
             "team_usage_analysis",
             "causal_team_effect",
+            "lineup_context_association",
             "metric_explanation",
         ),
-        missing_analyses=("teammate_lineup_attribution", "causal_identification"),
+        missing_analyses=("causal_teammate_effect_attribution", "causal_identification"),
         evidence=(
             "season_over_season_player_metrics",
             "role_and_usage_changes",
             "observed_team_context_association",
+            "within_team_season_lineup_net_rating",
         ),
         limitation=(
-            "La composizione distingue cambiamenti individuali e associazioni con il contesto squadra; "
-            "non isola l'effetto causale dei singoli compagni senza dati di lineup e un disegno causale."
+            "La composizione distingue cambiamenti individuali, contesto squadra e Net Rating osservato "
+            "nei quintetti con/senza il giocatore. Non identifica da sola il contributo causale di compagni "
+            "o giocatore; selezione dei quintetti e confondenti restano rilevanti."
         ),
     ),
     QuestionCapability(
         key="causal_team_effect",
         question="La squadra sta causando il suo rendimento?",
         status="partial",
-        analyses=("team_context_association", "team_switch_analysis", "bb_rating_context_adjustment"),
-        missing_analyses=("causal_identification", "teammate_lineup_effects"),
-        evidence=("canonical_bb_rating_1_100", "team_context", "team_switches", "minutes", "usage", "observed_role"),
-        limitation="L'associazione usa il BB-Rating canonico 1-100; quando la storia è sufficiente controlla anche andamento temporale, minuti, utilizzo e ruolo. Resta osservazionale e non dimostra che la squadra abbia causato il cambiamento.",
+        analyses=(
+            "team_context_association",
+            "team_switch_analysis",
+            "bb_rating_context_adjustment",
+            "lineup_context_association",
+        ),
+        missing_analyses=("causal_identification", "causal_teammate_effect_attribution"),
+        evidence=(
+            "canonical_bb_rating_1_100",
+            "team_context",
+            "team_switches",
+            "minutes",
+            "usage",
+            "observed_role",
+            "within_team_season_lineup_net_rating",
+        ),
+        limitation=(
+            "L'esito individuale resta il BB-Rating canonico 1-100. Il confronto dei quintetti descrive "
+            "il Net Rating di squadra osservato nelle lineup con/senza il giocatore, non il suo BB-Rating "
+            "né un effetto individuale. Tutti i risultati restano osservazionali e non dimostrano causalità."
+        ),
     ),
     QuestionCapability(
         key="shot_profile",
