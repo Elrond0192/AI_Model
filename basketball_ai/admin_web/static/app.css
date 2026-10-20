@@ -491,3 +491,12 @@ input:focus,select:focus,textarea:focus{border-color:#4e7fc5!important;box-shado
 .page-heading h1.page-title-with-icon{display:flex;align-items:center;gap:12px;margin:0 0 10px}
 .page-title-icon{width:38px;height:38px;display:inline-grid;place-items:center;flex:0 0 auto;border:1px solid #354452;border-radius:7px;background:#1c252d;color:#83bcff;font-size:19px}
 @media(max-width:520px){.page-title-icon{width:34px;height:34px;font-size:17px;gap:9px}}
+
+
+/* Future Performance identity: use the same globe mark in nav and overview. */
+.nav-icon svg{display:inline-block;vertical-align:-3px}
+.future-performance-overview-title{display:flex;align-items:center;gap:9px;margin:0}
+.future-performance-overview-icon{
+  width:29px;height:29px;display:inline-grid;place-items:center;flex:0 0 auto;
+  border:1px solid #354452;border-radius:8px;background:#1c252d;color:#83bcff
+}
