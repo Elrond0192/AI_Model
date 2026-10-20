@@ -774,6 +774,7 @@ class BBRatingEngine:
             },
             quality=quality,
             metric_coverage=coverage,
+            rating_composition=rating_composition,
             competition_tier=tier,
             competition_tier_label=tier_label,
         )
