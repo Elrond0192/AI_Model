@@ -20,7 +20,7 @@ def player_intelligence_capabilities() -> dict:
     Prediction Model or BB-Rating outputs.
     """
     return {
-        "version": "1.0",
+        "version": "1.1",
         "summary": registry_summary(),
         "capabilities": capability_dicts(),
     }
