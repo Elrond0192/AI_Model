@@ -31,6 +31,7 @@ class BBRatingPlayerResponseV2(BaseModel):
     peer_group: dict
     quality: str
     metric_coverage: float = Field(ge=0.0, le=1.0)
+    rating_composition: dict | None = None
     competition_tier: int | None = Field(default=None, ge=1, le=3)
     competition_tier_label: str | None = None
     bb_rating_version: str
