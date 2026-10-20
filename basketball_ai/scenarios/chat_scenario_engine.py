@@ -954,14 +954,20 @@ class ChatScenarioEngine:
 
             minutes = _finite(row.get("minutes_per_game"), np.nan)
             usage = _ratio(row.get("usg_pct"), np.nan)
-            role_value = (
-                row.get("ruolo_combinato")
-                or row.get("role")
-                or row.get("position")
-                or (player_meta.get("position") if isinstance(player_meta, dict) else None)
-                or "unknown"
-            )
-            role = str(role_value).strip() or "unknown"
+            role_value = None
+            for candidate_role in (
+                row.get("ruolo_combinato"),
+                row.get("role"),
+                row.get("position"),
+                player_meta.get("position") if isinstance(player_meta, dict) else None,
+            ):
+                if candidate_role is None or pd.isna(candidate_role):
+                    continue
+                candidate_text = str(candidate_role).strip()
+                if candidate_text and candidate_text.lower() not in {"nan", "none"}:
+                    role_value = candidate_text
+                    break
+            role = str(role_value or "unknown")
             records.append({
                 "season": year,
                 "team_id": team_id,
@@ -981,7 +987,7 @@ class ChatScenarioEngine:
         history = pd.DataFrame(records).sort_values(["season", "team_id"]).reset_index(drop=True)
         correlation = None
         if (
-            len(history) >= 3
+            len(history) >= 5
             and history["bb_rating"].nunique() >= 2
             and history["team_context_score"].nunique() >= 2
         ):
