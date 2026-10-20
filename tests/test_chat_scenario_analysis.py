@@ -464,17 +464,28 @@ def test_player_intelligence_composes_multiple_question_keys():
     }
 
 
-def test_causal_team_effect_returns_observational_association_without_causal_claim():
+def test_causal_team_effect_uses_canonical_bb_rating_and_controls_role_minutes_usage():
     data = _analysis_data()
+    for player_id, player in data["player_dict"].items():
+        player["global_id"] = f"PLAYER-{player_id}"
+    # A team change and falling BB-Rating are deliberate, while native source
+    # rating follows a different trend. The analysis must use only canonical
+    # BB-Rating returned by the injected engine.
     data["player_stats"] = pd.concat([
         data["player_stats"],
         pd.DataFrame([{
             "player_id": 1, "team_id": 101, "league_id": 10, "season": 2022,
-            "competition": "RS", "rating": 6.8, "games_played": 25,
+            "competition": "RS", "rating": 8.9, "games_played": 25,
             "minutes_per_game": 25, "points": 11, "assists": 4,
             "ts_pct": .56, "usg_pct": .22, "bpm": 2.0, "dbpm": .3,
         }]),
     ], ignore_index=True)
+    target_mask = (
+        (data["player_stats"]["player_id"] == 1)
+        & (data["player_stats"]["season"].astype(int) == 2024)
+        & (data["player_stats"]["competition"].astype(str).str.upper() == "RS")
+    )
+    data["player_stats"].loc[target_mask, "team_id"] = 102
     data["team_season_stats"] = pd.concat([
         data["team_season_stats"],
         pd.DataFrame([
@@ -482,15 +493,37 @@ def test_causal_team_effect_returns_observational_association_without_causal_cla
             {"team_id": 102, "league_id": 10, "season": 2022, "competition": "RS", "pace": 73.0, "offensive_rating": 112.0, "defensive_rating": 110.0, "net_rtg": 2.0, "three_point_attempt_rate": .38, "assists_per_game": 21.0},
         ]),
     ], ignore_index=True)
-    result = ChatScenarioEngine(SimpleNamespace(), data).evaluate(
+
+    class CanonicalBBRating:
+        def rate_player(self, global_id, *, league, season, phase):
+            assert global_id == "PLAYER-1"
+            assert league == "A"
+            assert phase == "RS"
+            return SimpleNamespace(score={2022: 76, 2023: 70, 2024: 63}[int(season)])
+
+    result = ChatScenarioEngine(
+        SimpleNamespace(), data, bb_rating_engine=CanonicalBBRating()
+    ).evaluate(
         {"scenario": "causal_team_effect", "season": 2024, "competition": "RS"},
         [1], [], 10, None,
     )
-    assert result["result"]["causal_identification"] == "unavailable"
-    assert result["result"]["causal_effect"] is None
-    assert result["result"]["association"]["rating_vs_team_context_correlation"] is not None
-    assert result["support"]["method"] == "within_player_observational_team_context"
-    assert any("non un effetto causale" in item for item in result["limitations"])
+    payload = result["result"]
+    assert payload["causal_identification"] == "unavailable"
+    assert payload["causal_effect"] is None
+    assert payload["association"]["bb_rating_vs_team_context_correlation"] is not None
+    assert payload["association"]["adjusted"]["status"] == "insufficient_history"
+    assert payload["association"]["adjusted"]["controls"] == [
+        "season trend", "minutes per game", "usage", "observed role"
+    ]
+    assert payload["current_context"]["bb_rating"] == 63
+    assert "rating" not in payload["current_context"]
+    assert payload["team_switches"]
+    switch = payload["team_switches"][-1]
+    assert switch["bb_rating_change"] == -7
+    assert switch["minutes_per_game_change"] is not None
+    assert "rating_change" not in switch
+    assert result["support"]["method"] == "within_player_observational_bb_rating_team_context"
+    assert any("effetto causale" in item for item in result["limitations"])
 
 
 def test_player_intelligence_composes_causal_team_effect_as_observational():
