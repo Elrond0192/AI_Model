@@ -30,9 +30,9 @@ CREATE SCHEMA IF NOT EXISTS "AI_Source";
 
 -- ---------------------------------------------------------------------------
 -- Remove only the canonical objects owned by this bootstrap and obsolete
--- RawInternal objects. Simulation* feed tables are external inputs consumed by
--- ai_scenario_serving.sql; preserve them across canonical rebuilds. Serving
--- tables (Training*, Scenario*, ServingRefreshState, etc.) are intentionally kept.
+-- RawInternal objects. Simulation source feeds and Scenario/Training serving
+-- tables are owned by ai_scenario_serving.sql and are intentionally preserved
+-- across this canonical rebuild.
 -- ---------------------------------------------------------------------------
 
 DO $cleanup$
