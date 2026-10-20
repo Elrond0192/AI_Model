@@ -214,9 +214,28 @@ QUESTION_CAPABILITIES: tuple[QuestionCapability, ...] = (
     QuestionCapability(
         key="clutch_value",
         question="Quanto vale nei momenti decisivi?",
-        status="available",
+        status="partial",
         analyses=("clutch_analysis", "model_evidence"),
-        evidence=("clutch_metrics",),
+        evidence=(
+            "observed_advance_stats_clutch_boxscore",
+            "clutch_shooting_splits",
+            "clutch_net_rating",
+            "source_clutchness_rating",
+            "clutch_games_sample_size",
+        ),
+        required_data=(
+            "AdvanceStats_Clutch_<league_key> keyed by player, season and competition",
+            "PlayerCompetitionStats refreshed from the native clutch relation",
+        ),
+        optional_data=("Native ClutchnessRating category when present in the source table",),
+        minimum_evidence=(
+            "Show the sample size for every season and competition",
+            "Treat shooting percentages and ORtg/DRtg as unstable below 5 clutch games",
+        ),
+        limitation=(
+            "Reports observed last-five-minute aggregates in close games, not a possession-level simulation. "
+            "The native ClutchnessRating is not BB-Rating; no causal player impact is inferred."
+        ),
     ),
 )
 
