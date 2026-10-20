@@ -23,7 +23,7 @@ from basketball_ai.bb_rating.prediction_scenarios import (
     SCENARIO_UNKNOWN,
     classify_transition,
 )
-from basketball_ai.models.competition_training import normalize_competition
+from basketball_ai.models.competition_training import forecast_competitions, normalize_competition
 from basketball_ai.models.production_training import _numeric_seasons
 
 MODEL_VERSION = "1.2.0"
@@ -592,10 +592,16 @@ class BBRatingFuturePredictionModel:
                 # Competition codes also contain views/phases (HOME, AWAY, RS, TOT,
                 # etc.); they are not independent competition identities. Pair only
                 # like-for-like contexts and never cross-join all origins to all targets.
+                allowed_target_contexts = forecast_competitions()
                 for target_raw in destinations:
                     target = pd.Series(target_raw)
                     target_league = _clean(target.get("league_key")).upper()
                     target_comp = normalize_competition(target.get("competition"))
+                    # HOME/AWAY and similar statistical splits are not separate
+                    # season-ahead targets. Respect the shared forecast allow-list
+                    # (RS, PO, TOT by default; explicitly configurable for cups).
+                    if target_comp not in allowed_target_contexts:
+                        continue
                     label_key = (str(player_global_id), source_year + 1, target_league, target_comp)
                     target_score = labels.get(label_key)
                     if target_score is None:
