@@ -13,7 +13,7 @@ def test_player_intelligence_capability_registry():
 
     assert response.status_code == 200
     body = response.json()
-    assert body["version"] == "1.0"
+    assert body["version"] == "1.1"
     assert body["summary"]["total"] >= 10
     assert body["summary"]["available"] >= 1
     assert body["summary"]["partial"] >= 1
@@ -37,6 +37,9 @@ def test_player_intelligence_capability_registry():
     assert "lineup_context_association" in by_key["performance_attribution"]["analyses"]
     assert "observed_teammate_lineup_associations" in by_key["performance_attribution"]["analyses"]
     assert "teammate_lineup_presence_within_player_minutes" in by_key["performance_attribution"]["evidence"]
+    assert "ScenarioLineupStats sourced from SimulationLineupStints" in by_key["performance_attribution"]["optional_data"]
+    assert any("100 possessions per group" in item for item in by_key["performance_attribution"]["minimum_evidence"])
+    assert "canonical BB-Rating engine on the public 1-100 scale" in by_key["performance_attribution"]["required_data"]
 
 
 def test_registry_is_metadata_only():
