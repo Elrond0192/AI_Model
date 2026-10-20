@@ -148,8 +148,14 @@ def test_player_history_uses_canonical_identity_across_internal_player_ids():
     )
     assert result["result"]["previous_season"] == 2023
     assert result["result"]["current_season"] == 2024
-    assert result["result"]["previous"]["rating"] == 6.0
-    assert result["result"]["current"]["rating"] == 7.0
+    assert result["result"]["previous"]["games_played"] == 26
+    assert result["result"]["current"]["games_played"] == 30
+    assert result["result"]["previous"]["points"] == 12.0
+    assert result["result"]["current"]["points"] == 16.0
+    assert "rating" not in result["result"]["previous"]
+    assert "rating" not in result["result"]["current"]
+    assert result["result"]["previous_bb_rating"] is None
+    assert result["result"]["current_bb_rating"] is None
 
 
 def test_player_intelligence_reports_season_comparison_separately_for_each_league():
@@ -248,7 +254,7 @@ def test_player_history_falls_back_to_players_dataframe_for_canonical_identity()
     history = pd.DataFrame([
         {
             "player_id": 21, "team_id": 101, "league_id": 10, "season": 2023,
-            "competition": "RS", "rating": 6.1, "games_played": 25,
+            "competition": "RS", "rating": 6.1, "games_played": 23,
         },
         {
             "player_id": 1, "team_id": 101, "league_id": 10, "season": 2024,
@@ -278,8 +284,12 @@ def test_player_history_falls_back_to_players_dataframe_for_canonical_identity()
 
     assert result["result"]["previous_season"] == 2023
     assert result["result"]["current_season"] == 2024
-    assert result["result"]["previous"]["rating"] == 6.1
-    assert result["result"]["current"]["rating"] == 7.2
+    assert result["result"]["previous"]["games_played"] == 23
+    assert result["result"]["current"]["games_played"] == 28
+    assert "rating" not in result["result"]["previous"]
+    assert "rating" not in result["result"]["current"]
+    assert result["result"]["previous_bb_rating"] is None
+    assert result["result"]["current_bb_rating"] is None
 
 
 def test_player_intelligence_single_context_accepts_integer_player_ids():
