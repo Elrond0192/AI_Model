@@ -784,7 +784,17 @@ BEGIN
             OR pg_temp.ai_find_column(r.table_schema, r.table_name, ARRAY['clutchteamid']) IS NULL
             OR pg_temp.ai_find_column(r.table_schema, r.table_name, ARRAY['clutchnessrating']) IS NULL
         ) THEN
-            opt_table := 'AdvancedStats_Clutch_' || league_key;
+            -- The production source relation is named AdvanceStats_Clutch_<LEAGUE>.
+            -- Keep the older AdvancedStats spelling as a backward-compatible fallback.
+            opt_table := 'AdvanceStats_Clutch_' || league_key;
+            IF NOT EXISTS (
+                SELECT 1 FROM pg_catalog.pg_class c
+                JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+                WHERE n.nspname='Analisi' AND c.relname=opt_table
+                  AND c.relkind IN ('r','p')
+            ) THEN
+                opt_table := 'AdvancedStats_Clutch_' || league_key;
+            END IF;
             IF EXISTS (
                 SELECT 1 FROM pg_catalog.pg_class c
                 JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
