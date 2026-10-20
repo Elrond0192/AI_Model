@@ -12,7 +12,7 @@ from basketball_ai.api.scenario_contracts_v2 import (
     ScenarioResponseV2,
 )
 from basketball_ai.data.postgres_loader import load_scenario_feeds
-from basketball_ai.models.competition_training import resolve_league_id
+from basketball_ai.models.competition_training import normalize_competition, resolve_league_id
 from basketball_ai.scenarios.chat_scenario_engine import ChatScenarioEngine
 
 router = APIRouter(prefix="/api/v2/scenarios", tags=["scenarios-v2"])
@@ -78,6 +78,51 @@ def _sanitize_public_scenario_payload(value):
     return value
 
 
+def _season_year_for_feed(value) -> int | None:
+    try:
+        return int(str(value).strip()[:4])
+    except (TypeError, ValueError):
+        return None
+
+
+def _lineup_feed_scope(
+    data: dict,
+    player_ids: list[int],
+    requested_team_ids: list[int],
+    source_league_id: int | None,
+    season: int,
+    competition: str,
+) -> list[int]:
+    """Bound player-attribution lineup reads to the player's recent team history."""
+    team_ids = set(requested_team_ids)
+    stats = data.get("player_stats")
+    if stats is None or getattr(stats, "empty", True):
+        return sorted(team_ids)
+    if not {"player_id", "team_id", "season", "competition"}.issubset(stats.columns):
+        return sorted(team_ids)
+    for row in stats.to_dict("records"):
+        try:
+            player_id = int(row.get("player_id"))
+            team_id = int(row.get("team_id"))
+        except (TypeError, ValueError):
+            continue
+        year = _season_year_for_feed(row.get("season"))
+        if player_id not in set(player_ids) or year is None:
+            continue
+        if year < max(2000, int(season) - 3) or year > int(season):
+            continue
+        if normalize_competition(row.get("competition")) != normalize_competition(competition):
+            continue
+        if source_league_id is not None and "league_id" in row:
+            try:
+                if int(row.get("league_id")) != int(source_league_id):
+                    continue
+            except (TypeError, ValueError):
+                continue
+        team_ids.add(team_id)
+    return sorted(team_ids)
+
+
 def _resolve_global_ids(data: dict, values: list[str], entity: str) -> list[int]:
     dictionary = data.get("player_dict" if entity == "player" else "team_dict", {})
     by_global = {
@@ -125,11 +170,38 @@ async def evaluate_scenario(body: ScenarioRequestV2, request: Request):
             key = row.get("league_key")
             if key:
                 league_keys.append(str(key))
+        # Player/team attribution needs lineup stints for the player's own
+        # recent team-seasons. Load them only for the relevant question families;
+        # ordinary Player Intelligence requests avoid an unnecessary PBP query.
+        feed_scenario = body.scenario
+        needs_lineup_context = body.scenario == "causal_team_effect"
+        if body.scenario == "player_intelligence":
+            parameters = body.parameters or {}
+            raw_keys = parameters.get("question_keys")
+            if not isinstance(raw_keys, (list, tuple)):
+                raw_keys = [parameters.get("question_key", "current_level")]
+            normalized_keys = {str(key).strip().lower() for key in raw_keys}
+            needs_lineup_context = bool(
+                normalized_keys & {"performance_attribution", "causal_team_effect"}
+            )
+            if needs_lineup_context:
+                feed_scenario = "player_intelligence_team_attribution"
+        feed_team_ids = (
+            _lineup_feed_scope(
+                data,
+                player_ids,
+                team_ids,
+                source_league_id,
+                body.season,
+                body.competition,
+            )
+            if needs_lineup_context else team_ids
+        )
         feeds = await asyncio.to_thread(
             load_scenario_feeds,
-            body.scenario,
+            feed_scenario,
             player_ids=player_ids,
-            team_ids=team_ids,
+            team_ids=feed_team_ids,
             league_keys=league_keys,
             season=body.season,
             competition=body.competition,
