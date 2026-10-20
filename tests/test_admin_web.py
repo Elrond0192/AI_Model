@@ -381,6 +381,17 @@ def test_helpers_and_static_assets(monkeypatch, tmp_path):
     assert '<svg class="future-performance-icon-svg"' in future_page
     assert 'viewBox="0 0 24 24"' in future_page
     assert ".page-title-icon" in css
+
+    sidebar_start = html.index('<button class="nav-item" data-page="future-performance">')
+    sidebar_end = html.index("</button>", sidebar_start)
+    sidebar_item = html[sidebar_start:sidebar_end]
+    assert '<svg viewBox="0 0 24 24"' in sidebar_item
+    overview_icon_start = html.index('class="future-performance-overview-title"')
+    overview_icon_end = html.index("</h2>", overview_icon_start)
+    overview_title = html[overview_icon_start:overview_icon_end]
+    assert 'class="future-performance-overview-icon"' in overview_title
+    assert '<svg viewBox="0 0 24 24"' in overview_title
+    assert ".future-performance-overview-icon" in css
     # Phosphor files live under STATIC_ROOT/assets/phosphor, while STATIC_ROOT is mounted at /assets.
     assert 'href="/assets/assets/phosphor/regular/style.css"' in html
     assert 'href="/assets/assets/phosphor/fill/style.css"' in html
