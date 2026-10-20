@@ -6,6 +6,8 @@ from basketball_ai.bb_rating.future_prediction import (
     _team_context_features,
     _team_context_index,
     _target_league_tier,
+    _team_global_map,
+    _team_identity,
 )
 from basketball_ai.bb_rating.prediction_scenarios import classify_transition
 
@@ -78,6 +80,19 @@ def test_target_league_tier_uses_local_registry_over_stale_db_values():
     assert _target_league_tier(data, "EL") == 1
     assert _target_league_tier(data, "LIT1") == 2
     assert _target_league_tier(data, "ITA2") == 3
+
+
+def test_ambiguous_local_team_mapping_is_not_treated_as_verified_identity():
+    history = pd.DataFrame([
+        {"team_id": 7, "league_id": 1, "season": 2024, "global_id": "TEAM-A"},
+        {"team_id": 7, "league_id": 1, "season": 2024, "global_id": "TEAM-B"},
+    ])
+    team_map = _team_global_map({"team_season_stats": history})
+
+    assert team_map == {}
+    assert _team_identity(
+        pd.Series({"team_id": 7, "league_id": 1, "season": 2024}), team_map
+    ) is None
 
 
 def test_statistical_phase_codes_do_not_create_competition_transitions():
