@@ -197,6 +197,17 @@ def test_direct_bb_rating_model_trains_oof_predicts_and_roundtrips(tmp_path):
     assert 1 <= prediction["confidence_low_100"] <= prediction["confidence_high_100"] <= 100
     assert prediction["target_scale"] == "BB-Rating 1-100"
 
+    with pytest.raises(ValueError, match="not configured for BB-Rating forecasts"):
+        model.predict_from_data(
+            data, player_global_id="P1", source_season=2022,
+            target_league="ITA1", target_competition="HOME",
+        )
+    with pytest.raises(ValueError, match="statistical contexts must match"):
+        model.predict_from_data(
+            data, player_global_id="P1", source_season=2022,
+            target_league="ITA1", source_competition="RS", target_competition="PO",
+        )
+
     model.save(tmp_path)
     loaded = BBRatingFuturePredictionModel.load(tmp_path)
     restored = loaded.predict_from_data(
