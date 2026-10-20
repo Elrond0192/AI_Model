@@ -1344,6 +1344,7 @@ class ChatScenarioEngine:
             "Il confronto aggiustato è esplorativo e controlla andamento temporale, minuti, utilizzo e ruolo osservato soltanto quando i dati consentono una stima stabile.",
             "Compagni, quintetti, allenatore, infortuni, calendario, cambi di lega e selezione del campione possono ancora confondere l'associazione.",
             "Il confronto tra lineup con e senza il giocatore misura il Net Rating di squadra osservato nei quintetti, non il BB-Rating del giocatore né il suo contributo causale.",
+            "Le differenze per compagno sono associazioni del Net Rating di squadra nei possessi condivisi rispetto a quelli senza quel compagno, non stime del valore individuale o di un effetto causale.",
             "L'effetto causale resta non identificato senza un controfattuale difendibile e un controllo esplicito dei confondenti.",
         ]
         if len(switches) < 2:
