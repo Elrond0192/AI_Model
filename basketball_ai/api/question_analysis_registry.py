@@ -21,6 +21,9 @@ class QuestionCapability:
     analyses: tuple[str, ...]
     missing_analyses: tuple[str, ...] = ()
     evidence: tuple[str, ...] = ()
+    required_data: tuple[str, ...] = ()
+    optional_data: tuple[str, ...] = ()
+    minimum_evidence: tuple[str, ...] = ()
     limitation: str | None = None
 
 
@@ -127,6 +130,20 @@ QUESTION_CAPABILITIES: tuple[QuestionCapability, ...] = (
             "within_team_season_lineup_net_rating",
             "teammate_lineup_presence_within_player_minutes",
         ),
+        required_data=(
+            "PlayerCompetitionStats with observed role, minutes and usage",
+            "TeamCompetitionStats in the same league, season and competition",
+            "canonical BB-Rating engine on the public 1-100 scale",
+        ),
+        optional_data=(
+            "ScenarioLineupStats sourced from SimulationLineupStints",
+        ),
+        minimum_evidence=(
+            "Team-context association: at least 5 valid BB-Rating/team-context seasons",
+            "Adjusted association: at least max(8, design_columns + 3) complete observations and non-degenerate residuals",
+            "Pooled lineup comparison: at least 2 matched team-seasons and 100 possessions per group",
+            "Teammate comparison: at least 100 possessions in each teammate-presence group within a team-season",
+        ),
         limitation=(
             "La composizione distingue cambiamenti individuali, contesto squadra e Net Rating osservato "
             "nei quintetti con/senza il giocatore. Non identifica da sola il contributo causale di compagni "
@@ -154,6 +171,20 @@ QUESTION_CAPABILITIES: tuple[QuestionCapability, ...] = (
             "observed_role",
             "within_team_season_lineup_net_rating",
             "teammate_lineup_presence_within_player_minutes",
+        ),
+        required_data=(
+            "PlayerCompetitionStats with canonical global player identity",
+            "TeamCompetitionStats in the requested league and competition",
+            "BB-Rating history from the canonical BB-Rating engine",
+        ),
+        optional_data=(
+            "ScenarioLineupStats sourced from SimulationLineupStints",
+        ),
+        minimum_evidence=(
+            "Team-context association: at least 5 valid BB-Rating/team-context seasons",
+            "Adjusted association: enough complete observations for season, minutes, usage and role controls",
+            "Pooled lineup comparison: at least 2 matched team-seasons and 100 possessions per group",
+            "Teammate comparison: at least 100 possessions in each teammate-presence group within a team-season",
         ),
         limitation=(
             "L'esito individuale resta il BB-Rating canonico 1-100. Il confronto dei quintetti descrive "
