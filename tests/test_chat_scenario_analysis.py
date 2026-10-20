@@ -473,12 +473,26 @@ def test_causal_team_effect_uses_canonical_bb_rating_and_controls_role_minutes_u
     # BB-Rating returned by the injected engine.
     data["player_stats"] = pd.concat([
         data["player_stats"],
-        pd.DataFrame([{
-            "player_id": 1, "team_id": 101, "league_id": 10, "season": 2022,
-            "competition": "RS", "rating": 8.9, "games_played": 25,
-            "minutes_per_game": 25, "points": 11, "assists": 4,
-            "ts_pct": .56, "usg_pct": .22, "bpm": 2.0, "dbpm": .3,
-        }]),
+        pd.DataFrame([
+            {
+                "player_id": 1, "team_id": 101, "league_id": 10, "season": 2020,
+                "competition": "RS", "rating": 9.2, "games_played": 25,
+                "minutes_per_game": 28, "points": 12, "assists": 4,
+                "ts_pct": .57, "usg_pct": .20, "bpm": 2.0, "dbpm": .3,
+            },
+            {
+                "player_id": 1, "team_id": 101, "league_id": 10, "season": 2021,
+                "competition": "RS", "rating": 9.4, "games_played": 26,
+                "minutes_per_game": 29, "points": 13, "assists": 4.2,
+                "ts_pct": .58, "usg_pct": .21, "bpm": 2.1, "dbpm": .3,
+            },
+            {
+                "player_id": 1, "team_id": 101, "league_id": 10, "season": 2022,
+                "competition": "RS", "rating": 8.9, "games_played": 25,
+                "minutes_per_game": 25, "points": 11, "assists": 4,
+                "ts_pct": .56, "usg_pct": .22, "bpm": 2.0, "dbpm": .3,
+            },
+        ]),
     ], ignore_index=True)
     target_mask = (
         (data["player_stats"]["player_id"] == 1)
@@ -489,6 +503,10 @@ def test_causal_team_effect_uses_canonical_bb_rating_and_controls_role_minutes_u
     data["team_season_stats"] = pd.concat([
         data["team_season_stats"],
         pd.DataFrame([
+            {"team_id": 101, "league_id": 10, "season": 2020, "competition": "RS", "pace": 70.0, "offensive_rating": 108.0, "defensive_rating": 111.0, "net_rtg": -1.0, "three_point_attempt_rate": .32, "assists_per_game": 19.0},
+            {"team_id": 102, "league_id": 10, "season": 2020, "competition": "RS", "pace": 73.0, "offensive_rating": 112.0, "defensive_rating": 110.0, "net_rtg": 2.0, "three_point_attempt_rate": .38, "assists_per_game": 21.0},
+            {"team_id": 101, "league_id": 10, "season": 2021, "competition": "RS", "pace": 70.5, "offensive_rating": 109.0, "defensive_rating": 110.5, "net_rtg": -0.5, "three_point_attempt_rate": .33, "assists_per_game": 19.5},
+            {"team_id": 102, "league_id": 10, "season": 2021, "competition": "RS", "pace": 73.5, "offensive_rating": 112.5, "defensive_rating": 109.5, "net_rtg": 2.5, "three_point_attempt_rate": .385, "assists_per_game": 21.5},
             {"team_id": 101, "league_id": 10, "season": 2022, "competition": "RS", "pace": 70.0, "offensive_rating": 108.0, "defensive_rating": 111.0, "net_rtg": -1.0, "three_point_attempt_rate": .32, "assists_per_game": 19.0},
             {"team_id": 102, "league_id": 10, "season": 2022, "competition": "RS", "pace": 73.0, "offensive_rating": 112.0, "defensive_rating": 110.0, "net_rtg": 2.0, "three_point_attempt_rate": .38, "assists_per_game": 21.0},
         ]),
@@ -499,7 +517,7 @@ def test_causal_team_effect_uses_canonical_bb_rating_and_controls_role_minutes_u
             assert global_id == "PLAYER-1"
             assert league == "A"
             assert phase == "RS"
-            return SimpleNamespace(score={2022: 76, 2023: 70, 2024: 63}[int(season)])
+            return SimpleNamespace(score={2020: 80, 2021: 78, 2022: 76, 2023: 70, 2024: 63}[int(season)])
 
     result = ChatScenarioEngine(
         SimpleNamespace(), data, bb_rating_engine=CanonicalBBRating()
