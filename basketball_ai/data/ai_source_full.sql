@@ -1145,7 +1145,7 @@ BEGIN
             || season_expr || '::integer AS season, '
             || team_local_expr || ' AS source_team_id, '
             || comp_expr || ' AS competition, '
-            || pg_temp.ai_expr(r.table_schema, r.table_name, 't', 'numeric', ARRAY['games']) || ' AS games, '
+            || pg_temp.ai_expr(r.table_schema, r.table_name, 't', 'numeric', ARRAY['games','gamesplayed']) || ' AS games, '
             || pg_temp.ai_expr(r.table_schema, r.table_name, 't', 'numeric', ARRAY['pace']) || ' AS pace, '
             || pg_temp.ai_expr(r.table_schema, r.table_name, 't', 'numeric', ARRAY['ortg']) || ' AS ortg, '
             || pg_temp.ai_expr(r.table_schema, r.table_name, 't', 'numeric', ARRAY['drtg']) || ' AS drtg, '
@@ -1157,7 +1157,8 @@ BEGIN
             || pg_temp.ai_expr(r.table_schema, r.table_name, 't', 'numeric', ARRAY['astpergame']) || ' AS ast_per_game, '
             || 'coalesce('
             || pg_temp.ai_expr('Anagrafiche', team_table, 'tr', 'text', ARRAY['idglobal','globalid'])
-            || ', ' || quote_literal(league_key) || ' || ' || pg_temp.ai_expr('Anagrafiche', team_table, 'tr', 'text', ARRAY['id']) || ') AS team_global_id, '
+            || ', ' || quote_literal(league_key || ':') || ' || ' || pg_temp.ai_expr('Anagrafiche', team_table, 'tr', 'text', ARRAY['id'])
+            || ', ' || quote_literal(league_key || ':') || ' || ' || team_local_expr || ') AS team_global_id, '
             || pg_temp.ai_expr('Anagrafiche', team_table, 'tr', 'text', ARRAY['teamname','name','shortname']) || ' AS team_name, '
             || pg_temp.ai_expr('Anagrafiche', team_table, 'tr', 'text', ARRAY['shortname','short_name']) || ' AS short_name '
             || 'FROM "' || replace(r.table_schema,'"','""') || '"."' || replace(r.table_name,'"','""') || '" t '
@@ -1370,7 +1371,7 @@ BEGIN
             || ' AS team_id, '
             || 'coalesce('
             || pg_temp.ai_expr('Anagrafiche',r.table_name,'t','text',ARRAY['idglobal','globalid'])
-            || ', ' || quote_literal(league_key) || ' || ' ||
+            || ', ' || quote_literal(league_key || ':') || ' || ' ||
             pg_temp.ai_expr('Anagrafiche',r.table_name,'t','text',ARRAY['id'])
             || ') AS global_id, '
             || pg_temp.ai_expr('Anagrafiche',r.table_name,'t','text',ARRAY['id']) || ' AS source_team_id, '
