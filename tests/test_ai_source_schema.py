@@ -70,6 +70,20 @@ def test_competition_schema_keeps_tot_separate_from_rs():
     assert "when 'regular season' then 'rs'" in sql
 
 
+def test_ai_source_assigns_configured_league_tiers_and_reconciles_unique_team_identity():
+    sql = SOURCE_SQL.read_text(encoding="utf-8").lower()
+    assert "when 'el' then 1" in sql
+    assert "when 'ec' then 1" in sql
+    assert "when 'esp1' then 2" in sql
+    assert "when 'lit1' then 2" in sql
+    assert "when 'ita2' then 3" in sql
+    assert "1::integer as tier" not in sql
+    assert "1::integer as league_tier" not in sql
+    assert "having count(distinct r.team_id) = 1" in sql
+    assert 'update "ai_source"."playercompetitionstats" s' in sql
+    assert "coalesce(r.direct_team_global_id, r.fallback_team_global_id) is null" in sql
+
+
 def test_ai_source_does_not_own_simulation_feeds():
     sql = SOURCE_SQL.read_text(encoding="utf-8").lower()
     assert "c.relname like 'simulation%'" not in sql
