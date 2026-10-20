@@ -30,10 +30,11 @@ def classify_transition(
     source_tier: Any = None,
     target_tier: Any = None,
 ) -> str:
-    """Classify team, league and competition transitions.
+    """Classify team/league transitions without treating statistic views as competitions.
 
-    Omitting competition preserves the original four-class contract. Explicit
-    competition values distinguish regular-season/playoff/cup transitions.
+    The competition arguments remain for API compatibility, but their values may
+    be statistical views or phases (HOME, AWAY, RS, TOT, PO, etc.). They cannot
+    establish a real competition change without an independent competition ID.
     Unknown team identity fails closed rather than assuming a same-team move.
     """
     values = (source_team_id, target_team_id, source_league_id, target_league_id)
@@ -41,26 +42,15 @@ def classify_transition(
         return SCENARIO_UNKNOWN
     same_team = str(source_team_id) == str(target_team_id)
     same_league = str(source_league_id).strip().upper() == str(target_league_id).strip().upper()
-    competition_known = source_competition is not None and target_competition is not None
-    if competition_known:
-        same_competition = (
-            str(source_competition).strip().upper()
-            == str(target_competition).strip().upper()
-        )
-    else:
-        same_competition = True
+    # A differing statistic-view code is not an independent competition identity.
     if same_team and same_league:
-        scenario = SCENARIO_SAME_TEAM if same_competition else "competition_change_same_team_same_league"
+        scenario = SCENARIO_SAME_TEAM
     elif not same_team and same_league:
-        scenario = SCENARIO_TEAM_CHANGE if same_competition else "team_and_competition_change_same_league"
+        scenario = SCENARIO_TEAM_CHANGE
     elif same_team and not same_league:
-        scenario = SCENARIO_LEAGUE_CHANGE if same_competition else "league_and_competition_change_same_team"
+        scenario = SCENARIO_LEAGUE_CHANGE
     else:
-        scenario = (
-            SCENARIO_TEAM_AND_LEAGUE_CHANGE
-            if same_competition
-            else "team_league_and_competition_change"
-        )
+        scenario = SCENARIO_TEAM_AND_LEAGUE_CHANGE
 
     # League changes can be split by tier direction where authoritative tier
     # metadata exists. Lower tier number means a stronger competition tier.
@@ -76,6 +66,44 @@ def classify_transition(
         except (TypeError, ValueError):
             pass
     return scenario
+
+
+def _calibration_support(frame: pd.DataFrame) -> dict[str, int | None]:
+    rows = int(len(frame))
+    unique_players = (
+        int(frame["player_global_id"].nunique(dropna=True))
+        if "player_global_id" in frame.columns else None
+    )
+    transition_columns = ["player_global_id", "target_season"]
+    target_columns = [
+        "player_global_id", "target_season", "target_league", "target_competition"
+    ]
+    transitions = (
+        int(frame[transition_columns].dropna(subset=transition_columns).drop_duplicates().shape[0])
+        if all(column in frame.columns for column in transition_columns) else None
+    )
+    target_contexts = (
+        int(frame[target_columns].dropna(subset=target_columns).drop_duplicates().shape[0])
+        if all(column in frame.columns for column in target_columns) else None
+    )
+    return {
+        "rows_evaluated": rows,
+        "unique_players": unique_players,
+        "unique_player_season_transitions": transitions,
+        "unique_target_contexts": target_contexts,
+    }
+
+
+def _player_balanced_weights(frame: pd.DataFrame) -> np.ndarray:
+    """Prevent players with multiple target contexts in one season dominating calibration."""
+    if not {"player_global_id", "target_season"}.issubset(frame.columns) or frame.empty:
+        return np.ones(len(frame), dtype=float)
+    counts = frame.groupby(
+        ["player_global_id", "target_season"], dropna=False
+    )["target_season"].transform("size").to_numpy(dtype=float)
+    weights = 1.0 / np.maximum(counts, 1.0)
+    average = float(np.mean(weights))
+    return weights / average if average > 0 else np.ones(len(frame), dtype=float)
 
 
 @dataclass
@@ -103,9 +131,11 @@ class BBRatingScenarioCalibrator:
         return league_key + "::" + str(scenario)
 
     @staticmethod
-    def _fit_model(x: np.ndarray, y: np.ndarray) -> IsotonicRegression:
+    def _fit_model(
+        x: np.ndarray, y: np.ndarray, sample_weight: np.ndarray | None = None
+    ) -> IsotonicRegression:
         model = IsotonicRegression(y_min=1.0, y_max=100.0, out_of_bounds="clip")
-        model.fit(x, y)
+        model.fit(x, y, sample_weight=sample_weight)
         return model
 
     def fit(self, records: pd.DataFrame, prediction_col: str = "predicted_bb_rating",
@@ -124,10 +154,14 @@ class BBRatingScenarioCalibrator:
         if frame.empty:
             raise ValueError("No valid BB-Rating calibration rows in the 1-100 range")
 
+        frame_weights = _player_balanced_weights(frame)
         self._models = {
             "*::global": _Calibrator(
-                self._fit_model(frame[prediction_col].to_numpy(float),
-                                frame[target_col].to_numpy(float)), len(frame))
+                self._fit_model(
+                    frame[prediction_col].to_numpy(float),
+                    frame[target_col].to_numpy(float),
+                    sample_weight=frame_weights,
+                ), len(frame))
         }
         groups_report = []
         for columns in ([scenario_col],
@@ -142,16 +176,38 @@ class BBRatingScenarioCalibrator:
                 else:
                     key = self._key(str(values[1]), values[0])
                 n = len(group)
-                fitted = n >= self.min_samples and group[prediction_col].nunique() >= 2
+                support = _calibration_support(group)
+                effective_support = (
+                    support["unique_players"]
+                    if support["unique_players"] is not None else n
+                )
+                fitted = (
+                    int(effective_support) >= self.min_samples
+                    and group[prediction_col].nunique() >= 2
+                )
                 if fitted:
                     self._models[key] = _Calibrator(
-                        self._fit_model(group[prediction_col].to_numpy(float),
-                                        group[target_col].to_numpy(float)), n)
-                groups_report.append({"key": key, "n_samples": int(n), "fitted": fitted})
+                        self._fit_model(
+                            group[prediction_col].to_numpy(float),
+                            group[target_col].to_numpy(float),
+                            sample_weight=_player_balanced_weights(group),
+                        ), n)
+                groups_report.append({
+                    "key": key,
+                    "n_samples": int(n),
+                    **support,
+                    "support_unit": "unique_players" if support["unique_players"] is not None else "rows",
+                    "fitted": fitted,
+                })
         self._fitted = True
         self.fit_report = {
             "method": "isotonic_oof_bb_rating", "scale": [1, 100],
-            "n_samples": int(len(frame)), "min_samples": self.min_samples,
+            "n_samples": int(len(frame)),
+            **_calibration_support(frame),
+            "min_samples": self.min_samples,
+            "min_group_support_unit": (
+                "unique_players" if "player_global_id" in frame.columns else "rows"
+            ),
             "fallback_order": ["destination_league+scenario", "scenario", "global"],
             "groups": groups_report,
         }
