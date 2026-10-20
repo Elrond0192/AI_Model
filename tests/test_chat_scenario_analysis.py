@@ -639,6 +639,27 @@ def test_player_intelligence_composes_shooting_and_defensive_evidence_bundles():
     }
 
 
+def test_player_intelligence_expands_team_usage_and_keeps_counterfactual_explicit():
+    engine = _engine()
+    team_usage = engine.evaluate(
+        {"scenario": "player_intelligence", "season": 2024, "competition": "RS",
+         "parameters": {"question_key": "team_usage"}},
+        [1], [], 10, None,
+    )
+    assert set(team_usage["result"]["analyses"]) == {
+        "role_analysis", "performance_decomposition", "team_usage_analysis",
+        "metric_explanation", "model_evidence",
+    }
+
+    counterfactual = engine.evaluate(
+        {"scenario": "player_intelligence", "season": 2024, "competition": "RS",
+         "parameters": {"question_key": "team_counterfactual"}},
+        [1], [], 10, None,
+    )
+    assert set(counterfactual["result"]["analyses"]) == {"player_team", "model_evidence"}
+    assert counterfactual["result"]["analyses"]["player_team"]["available"] is False
+
+
 def test_player_intelligence_composes_causal_team_effect_as_observational():
     result = _engine().evaluate(
         {"scenario": "player_intelligence", "season": 2024, "competition": "RS",
