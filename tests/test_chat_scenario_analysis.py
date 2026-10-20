@@ -578,7 +578,7 @@ def test_causal_team_effect_uses_canonical_bb_rating_and_controls_role_minutes_u
     assert lineup["outcome"] == "observed_team_net_rating"
     assert lineup["is_causal"] is False
     assert lineup["seasons_compared"] == 2
-    assert lineup["player_lineup_possessions"] == 300
+    assert lineup["player_lineup_possessions"] == 600
     assert lineup["other_lineup_possessions"] == 300
     assert lineup["net_rating_with_player"] == 1.0
     assert lineup["net_rating_without_player"] == 0.0
