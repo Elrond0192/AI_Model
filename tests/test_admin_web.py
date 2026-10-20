@@ -377,10 +377,10 @@ def test_helpers_and_static_assets(monkeypatch, tmp_path):
     future_page_start = html.index('<template id="page-future-performance">')
     future_page_end = html.index("</template>", future_page_start)
     future_page = html[future_page_start:future_page_end]
-    assert 'class="page-title-with-icon"' in future_page
-    assert '<svg class="future-performance-icon-svg"' in future_page
-    assert 'viewBox="0 0 24 24"' in future_page
-    assert ".page-title-icon" in css
+    assert "<h1>Player Future Performance</h1>" in future_page
+    assert 'class="page-title-with-icon"' not in future_page
+    assert 'future-performance-icon-svg' not in future_page
+    assert ".page-title-icon" not in css
 
     sidebar_start = html.index('<button class="nav-item" data-page="future-performance">')
     sidebar_end = html.index("</button>", sidebar_start)
@@ -400,7 +400,7 @@ def test_helpers_and_static_assets(monkeypatch, tmp_path):
     assert "Forecast statistico" in html[future_label_end:future_label_end + 80]
     assert "future-performance-overview-icon" not in html
     assert ".dashboard-section-eyebrow svg" in css
-    assert 'href="/assets/app.css?v=2.6.3"' in html
+    assert 'href="/assets/app.css?v=2.6.4"' in html
     # Phosphor files live under STATIC_ROOT/assets/phosphor, while STATIC_ROOT is mounted at /assets.
     assert 'href="/assets/assets/phosphor/regular/style.css"' in html
     assert 'href="/assets/assets/phosphor/fill/style.css"' in html
