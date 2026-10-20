@@ -81,6 +81,18 @@ For season-over-season questions such as `change_vs_last_season`, the multi-cont
 
 Chat V3 should therefore report the comparison explicitly per league (for example, "in ITA1 ... while in EL ...") whenever more than one context has a valid consecutive-season series. Metrics from different leagues must never be merged into a single season comparison.
 
+When the canonical BB-Rating engine exposes a component breakdown, the
+`performance_decomposition` result and its `season_comparison` also include
+`bb_rating_contribution_decomposition`. This compares the arithmetic
+contributions of scored metrics and dimensions between the two seasons, plus
+the integer-rounding residual. Chat should prefer the readable
+`display_name` labels, describe only the largest positive/negative component
+deltas, and explicitly frame them as a mathematical score decomposition, not
+as causes of a player's real-world performance change. Since percentiles are
+relative to each season's own peer population and missing inputs can change
+effective weights, component deltas may also reflect changes in the comparison
+context. The scoring formula and versioned calibration are not changed.
+
 ## Final boundary
 
 The exact **causal team-effect claim** remains unavailable, but Chat V3 can now answer the user-facing question with an observational attribution. A statement such as “Team X caused this player to perform worse” is not supported; instead the response reports the player’s observed rating, the team-context association, observed team switches, and the remaining causal limitation.
