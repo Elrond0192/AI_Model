@@ -109,7 +109,8 @@ def _player_balanced_weights(frame: pd.DataFrame) -> np.ndarray:
 @dataclass
 class _Calibrator:
     model: IsotonicRegression
-    n_samples: int
+    n_samples: int  # raw calibration rows
+    unique_players: int | None = None
 
 
 class BBRatingScenarioCalibrator:
@@ -155,13 +156,14 @@ class BBRatingScenarioCalibrator:
             raise ValueError("No valid BB-Rating calibration rows in the 1-100 range")
 
         frame_weights = _player_balanced_weights(frame)
+        global_support = _calibration_support(frame)
         self._models = {
             "*::global": _Calibrator(
                 self._fit_model(
                     frame[prediction_col].to_numpy(float),
                     frame[target_col].to_numpy(float),
                     sample_weight=frame_weights,
-                ), len(frame))
+                ), len(frame), global_support["unique_players"])
         }
         groups_report = []
         for columns in ([scenario_col],
@@ -191,7 +193,7 @@ class BBRatingScenarioCalibrator:
                             group[prediction_col].to_numpy(float),
                             group[target_col].to_numpy(float),
                             sample_weight=_player_balanced_weights(group),
-                        ), n)
+                        ), n, support["unique_players"])
                 groups_report.append({
                     "key": key,
                     "n_samples": int(n),
@@ -226,9 +228,21 @@ class BBRatingScenarioCalibrator:
             fitted = self._models.get(key)
             if fitted is not None:
                 score = float(np.clip(fitted.model.predict([value])[0], 1, 100))
-                return {"predicted_bb_rating": score, "calibration_level": level,
-                        "calibration_samples": fitted.n_samples, "scenario": scenario,
-                        "target_league_id": target_league_id}
+                effective_samples = (
+                    fitted.unique_players
+                    if fitted.unique_players is not None else fitted.n_samples
+                )
+                return {
+                    "predicted_bb_rating": score,
+                    # Keep the legacy field, but its unit is now independent
+                    # players whenever canonical identity is available.
+                    "calibration_samples": int(effective_samples),
+                    "calibration_unique_players": fitted.unique_players,
+                    "calibration_rows": int(fitted.n_samples),
+                    "calibration_level": level,
+                    "scenario": scenario,
+                    "target_league_id": target_league_id,
+                }
         raise RuntimeError("Global BB-Rating calibration is unavailable")
 
     def to_dict(self) -> dict[str, Any]:
@@ -238,7 +252,8 @@ class BBRatingScenarioCalibrator:
                 "min_samples": self.min_samples,
                 "models": {key: {"x_thresholds": item.model.X_thresholds_.tolist(),
                                  "y_thresholds": item.model.y_thresholds_.tolist(),
-                                 "n_samples": item.n_samples}
+                                 "n_samples": item.n_samples,
+                                 "unique_players": item.unique_players}
                            for key, item in self._models.items()},
                 "fit_report": self.fit_report}
 
@@ -252,8 +267,11 @@ class BBRatingScenarioCalibrator:
             y = np.asarray(item["y_thresholds"], dtype=float)
             if len(x) < 2 or len(x) != len(y):
                 raise ValueError("Invalid isotonic thresholds for " + str(key))
-            instance._models[str(key)] = _Calibrator(instance._fit_model(x, y),
-                                                       int(item["n_samples"]))
+            instance._models[str(key)] = _Calibrator(
+                instance._fit_model(x, y),
+                int(item["n_samples"]),
+                int(item["unique_players"]) if item.get("unique_players") is not None else None,
+            )
         if "*::global" not in instance._models:
             raise ValueError("Calibration artifact has no global fallback")
         instance._fitted = True
