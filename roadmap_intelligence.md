@@ -38,7 +38,7 @@ Questa roadmap distingue l'esistenza del codice dalla disponibilità effettiva d
 
 ### 4. Sorgenti Simulation e Scenario serving
 - `ai_scenario_serving.sql` ora possiede il DDL delle tabelle `Simulation*`, invece di aspettarsi che siano state create da un bootstrap separato.
-- È stato aggiunto `AI_Source.RefreshSimulationSources(league_key, season)` per ricostruire i feed sorgente partendo da `Pbp.{LEAGUE}` filtered by `Season`, dalle anagrafiche canoniche e, quando disponibile, da `Analisi.AdvancedStats_Lineups_Quarter_{LEAGUE}`.
+- È stato aggiunto `AI_Source.RefreshSimulationSources(league_key, season)` per ricostruire i feed sorgente partendo da `Pbp.{LEAGUE}`, filtrata per `Season`, dalle anagrafiche canoniche e, quando disponibile, da `Analisi.AdvancedStats_Lineups_Quarter_{LEAGUE}`.
 - Il refresh stagionale richiama la procedura Simulation una volta per lega/stagione prima di aggiornare i contesti `Scenario*`.
 - `SimulationPbpEvents` salva esposizioni PBP e assegna probabilisticamente gli eventi offensivi ai giocatori della lineup avversaria; la difesa individuale **non è osservata direttamente** dal feed PBP.
 - `SimulationLineupStints` privilegia le statistiche di quintetto AdvancedStats; se non sono utilizzabili, usa aggregati derivati dalle lineup nel PBP.
@@ -118,6 +118,13 @@ Per le stagioni storiche, ripetere la chiamata per ogni anno per cui sono presen
 - Applicare le SQL al database effettivo, controllare conteggi e log, poi ricostruire/restartare l'API soltanto secondo la normale procedura di rilascio.
 - Eseguire uno smoke test API e chat con un giocatore e una lega reali.
 - Registrare in questa roadmap data, commit, stato CI e risultato del controllo dati dopo ogni deploy.
+
+## Verifica automatizzata del codice
+
+- La pipeline PostgreSQL esegue un fixture con `Analisi.AdvancedStats_Clutch_ITA1` e `Pbp.ITA1` e richiama `RefreshContextSeasonal(2025)`.
+- Il controllo end-to-end verifica il trasferimento dei campi clutch verso `PlayerCompetitionStats`, il conteggio PBP, la presenza di righe Simulation per eventi/lineup/shot e il popolamento delle tabelle `ScenarioLineupStats`, `ScenarioShotProfiles` e `ScenarioDefenderMatchups`.
+- Al commit `f5ec39e8c5b45f1f058a31229d58b169a7c47fe9`, la verifica PostgreSQL e il test suite Python 3.11 risultano superati; il test Python 3.12 è ancora in esecuzione nell'ultima lettura dello stato CI.
+- Questi sono test con database e dati sintetici, non una verifica dei conteggi nel database di produzione. La SQL di produzione e i refresh live restano da applicare ed eseguire.
 
 ## Verifiche e limiti da non dimenticare
 
