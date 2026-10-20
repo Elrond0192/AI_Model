@@ -365,6 +365,8 @@ def test_api_player_endpoint():
     assert payload["competition_tier_label"] == "National first division"
     assert payload["peer_group"]["definition"] == "league+season+phase"
     assert payload["metrics"]["USG%"]["percentile"] is not None
+    assert payload["rating_composition"]["method"] == "weighted_contextual_percentile_components_v1"
+    assert payload["rating_composition"]["effective_weight_total"] == pytest.approx(1.0)
 
     assert payload["history"] == [{"season": 2025, "bb_rating": payload["bb_rating"]}]
 
