@@ -968,6 +968,7 @@ class ChatScenarioEngine:
             return weighted, possessions
 
         by_season = []
+        matched_groups = []
         for (year, team_id), context in frame.groupby(["_year", "_team_id"], dropna=True):
             with_player = context[context["_has_player"]]
             without_player = context[~context["_has_player"]]
@@ -975,6 +976,7 @@ class ChatScenarioEngine:
             without_net, without_possessions = summarize(without_player)
             if with_net is None or without_net is None:
                 continue
+            matched_groups.append(context)
             by_season.append({
                 "season": int(year),
                 "team": self._team_name(int(team_id)),
@@ -993,10 +995,14 @@ class ChatScenarioEngine:
                 "reason": "The same-team-season data does not contain valid lineup samples both with and without the player.",
             }
 
+        # Pool only team-season groups that have both lineup conditions. Otherwise
+        # the aggregate would mix unmatched seasons into a comparison whose
+        # per-season evidence had correctly excluded them.
+        matched_frame = pd.concat(matched_groups, ignore_index=True)
         with_possessions = sum(row["player_lineup_possessions"] for row in by_season)
         without_possessions = sum(row["other_lineup_possessions"] for row in by_season)
-        with_net, _ = summarize(frame[frame["_has_player"]])
-        without_net, _ = summarize(frame[~frame["_has_player"]])
+        with_net, _ = summarize(matched_frame[matched_frame["_has_player"]])
+        without_net, _ = summarize(matched_frame[~matched_frame["_has_player"]])
         adequately_supported = (
             len(by_season) >= 2
             and with_possessions >= 100
