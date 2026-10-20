@@ -141,6 +141,28 @@ def test_player_intelligence_attribution_loads_only_bounded_lineup_feed(monkeypa
 
 
 
+def test_missing_optional_lineup_feed_degrades_to_empty_evidence(monkeypatch):
+    monkeypatch.setattr(loader, "get_engine", lambda url=None: _Engine())
+    monkeypatch.setattr(loader, "_scenario_cache", {})
+
+    def fail_read_sql(statement, engine, params):
+        raise RuntimeError('permission denied for relation "ScenarioLineupStats"')
+
+    monkeypatch.setattr(loader.pd, "read_sql", fail_read_sql)
+    result = loader.load_scenario_feeds(
+        "player_intelligence_team_attribution",
+        player_ids=[11],
+        team_ids=[33],
+        league_keys=["EL"],
+        season=2025,
+        competition="RS",
+    )
+    assert result["lineup_stints"].empty
+    assert list(result["lineup_stints"].columns) == list(
+        loader._OPTIONAL_COLUMNS["lineup_stints"]
+    )
+
+
 def test_lineup_feed_scope_uses_recent_player_teams_in_requested_league():
     from basketball_ai.api.routes.scenarios_v2 import _lineup_feed_scope
 
