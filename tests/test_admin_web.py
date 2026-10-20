@@ -372,6 +372,18 @@ def test_helpers_and_static_assets(monkeypatch, tmp_path):
     html = (admin.STATIC_ROOT / "index.html").read_text(encoding="utf-8")
     css = (admin.STATIC_ROOT / "app.css").read_text(encoding="utf-8")
     js = (admin.STATIC_ROOT / "app.js").read_text(encoding="utf-8")
+    enter_start = js.index("async function enterBackOffice(user){")
+    enter_end = js.index("\\nfunction updateClock()", enter_start)
+    enter_body = js[enter_start:enter_end]
+    assert enter_body.index("await navigate('overview')") < enter_body.index("api('/admin-api/auto-load'")
+    assert "keepAlive:true" in enter_body
+    api_start = js.index("async function api(path,options={}){")
+    api_end = js.index("\\nfunction showLogin()", api_start)
+    api_body = js[api_start:api_end]
+    assert "const {keepAlive=false,...requestOptions}=options;" in api_body
+    assert "if(!keepAlive)App.controllers.add(controller);" in api_body
+    assert "if(!requestOptions.signal&&!keepAlive)fetchOptions.signal=controller.signal;" in api_body
+    assert 'href="/assets/app.js?v=2.6.1"' in html
     assert "Attività modello" in html
     assert "Salute del sistema" in html
     future_page_start = html.index('<template id="page-future-performance">')
