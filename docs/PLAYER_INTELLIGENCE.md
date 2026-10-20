@@ -64,8 +64,8 @@ The `player_intelligence` scenario now composes the appropriate analysis layers 
 - `regression_risk` → regression risk
 - `potential` → potential synthesis + age trajectory when team context is available
 - `team_counterfactual` → player-in-team scenario
-- `shot_profile` → shooting decomposition
-- `defensive_reason` → defensive decomposition
+- `shot_profile` → season-over-season performance decomposition + shooting decomposition + metric explanation
+- `defensive_reason` → performance decomposition + observed role analysis + defensive decomposition + metric explanation
 - `clutch_value` → clutch analysis
 - `causal_team_effect` → team-context association + observed team-switch analysis
 
