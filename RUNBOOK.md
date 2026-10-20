@@ -46,6 +46,26 @@ HAVING count(*) > 1;
 
 Both duplicate queries must return zero rows. Re-run `ai_source_full.sql` after league/schema/competition ingestion changes.
 
+After both source and serving contracts are installed, rebuild training/scenario and
+Simulation feeds for every season needed by Player Intelligence:
+
+```sql
+CALL "AI_Source"."RefreshContextSeasonal"(2026);
+
+SELECT "LeagueKey", "Season", "Status",
+       "PbpRows", "PbpEventRows", "LineupRows",
+       "ShotProfileRows", "PlayTypeRows", "Details"
+FROM "AI_Source"."SimulationSourceRefreshState"
+WHERE "Season" = 2026
+ORDER BY "LeagueKey";
+```
+
+Repeat the call for each historical season required by the analysis. A `partial`
+status may be correct when raw PBP lacks a tactical play-type taxonomy; a missing
+taxonomy must not be replaced with fabricated play labels. The clutch metrics are
+read independently from `Analisi.AdvancedStats_Clutch_{LEAGUE}` during
+`ai_source_full.sql` and do not depend on the Simulation refresh.
+
 ## Operations through the GUI
 
 Start the custom admin service:
