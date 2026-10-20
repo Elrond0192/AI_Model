@@ -511,13 +511,61 @@ def test_player_intelligence_rejects_unknown_question_key():
         )
 
 
-def test_decomposition():
-    result = _engine().evaluate({"scenario": "performance_decomposition", "season": 2024, "competition": "RS"}, [1], [], 10, None)
-    assert result["result"]["previous_season"] == 2023
-    assert result["result"]["current_season"] == 2024
-    assert set(result["result"]["deltas"]) == {"volume", "efficiency", "role", "impact"}
-    assert result["result"]["deltas"]["volume"]["points"] == pytest.approx(1.0)
-    assert result["result"]["deltas"]["impact"]["rating"] == pytest.approx(0.2)
+def test_decomposition_uses_canonical_bb_rating_and_rate_adjusted_production():
+    result = _engine().evaluate(
+        {"scenario": "performance_decomposition", "season": 2024, "competition": "RS"},
+        [1], [], 10, None,
+    )
+    payload = result["result"]
+    assert payload["previous_season"] == 2023
+    assert payload["current_season"] == 2024
+    assert payload["current_season_status"] == "complete"
+    assert payload["is_provisional"] is False
+    assert set(payload["deltas"]) == {"volume", "efficiency", "role", "impact"}
+    assert payload["deltas"]["volume"]["points"] == pytest.approx(1.0)
+    # Native statistical rating must not leak through the decomposition payload.
+    assert "rating" not in payload["deltas"]["impact"]
+    assert "rating" not in payload["previous"]
+    assert "rating" not in payload["current"]
+    assert payload["previous_bb_rating"] == 70
+    assert payload["current_bb_rating"] == 72
+    assert payload["bb_rating_delta"] == 2
+    assert payload["rate_adjusted_production"]["unit"] == "per_36_minutes"
+    assert payload["rate_adjusted_production"]["previous"]["points_per36"] == pytest.approx(14.667)
+    assert payload["rate_adjusted_production"]["current"]["points_per36"] == pytest.approx(15.429)
+    assert payload["interpretation"]["causal_attribution"] == "not_identified"
+
+
+def test_decomposition_marks_current_calendar_season_provisional():
+    engine = _engine()
+    data = engine.data
+    current_year = int(pd.Timestamp.now().year)
+    player_rows = data["player_stats"]
+    target_mask = (
+        (player_rows["player_id"] == 1)
+        & (player_rows["league_id"] == 10)
+        & (player_rows["competition"].astype(str).str.upper() == "RS")
+    )
+    base_rows = player_rows[target_mask].copy()
+    data["player_stats"] = player_rows.loc[~target_mask].copy()
+    previous_row = base_rows[base_rows["season"].astype(int) == 2023].iloc[0].to_dict()
+    current_row = base_rows[base_rows["season"].astype(int) == 2024].iloc[0].to_dict()
+    previous_row["season"] = current_year - 1
+    current_row["season"] = current_year
+    current_row["minutes_per_game"] = 35.0
+    current_row["points"] = 14.0
+    data["player_stats"] = pd.concat(
+        [data["player_stats"], pd.DataFrame([previous_row, current_row])],
+        ignore_index=True,
+    )
+    result = engine.evaluate(
+        {"scenario": "performance_decomposition", "season": current_year, "competition": "RS"},
+        [1], [], 10, None,
+    )
+    payload = result["result"]
+    assert payload["current_season"] == current_year
+    assert payload["current_season_status"] == "in_progress"
+    assert payload["is_provisional"] is True
 
 
 
