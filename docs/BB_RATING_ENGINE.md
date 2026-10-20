@@ -30,6 +30,33 @@ The current weights are explicit in basketball_ai/bb_rating/engine.py. They are
 a versioned product contract and should be recalibrated only after real-data
 validation.
 
+## Score composition and historical comparison
+
+Each BB-Rating result now includes `rating_composition`. It records the
+composite percentile, the score before integer rounding, the effective weight
+of each available scoring metric, and each component's contribution relative
+to the neutral 50th-percentile reference (50.5 points on the 1–100 scale).
+Dimension contributions are aggregated from those same metric components.
+
+For a two-season comparison, `bb_rating_contribution_decomposition` compares
+the corresponding component contributions and reports:
+- component and dimension deltas in score points;
+- each season's contextual percentile and effective metric weight;
+- the difference between the unrounded score change and the displayed integer
+  score change caused by rounding.
+
+The component deltas add up to the difference between the two unrounded
+BB-Rating values, up to the precision retained in the response. The displayed
+integer delta can differ by a rounding residual. This is an exact accounting
+of the existing scoring formula, not a causal explanation of on-court
+performance. Contextual percentiles are computed separately inside each
+league/season/competition population, and effective weights are renormalized
+when scoring inputs are missing; either can affect the between-season
+component deltas.
+
+This addition changes the evidence returned by the engine, not BB-Rating v1.9's
+score formula, weights, calibration, or 1–100 scale.
+
 ## Contextual peer population
 
 The primary percentile population is:
