@@ -7,9 +7,12 @@ estimates.
 
 ## Optional possession contract
 
-The strict forecasting service depends only on the six canonical physical tables
-created by `ai_source_full.sql`. Simulation/causal feeds are owned by
-`ai_scenario_serving.sql` and are loaded independently:
+The strict forecasting service depends only on the canonical physical tables
+created by `ai_source_full.sql`. Simulation feeds and serving tables are owned by
+`ai_scenario_serving.sql`. After both SQL contracts have been installed,
+`RefreshContextSeasonal(season)` rebuilds Simulation inputs once per league-season
+and then refreshes the indexed Scenario/Training aggregates. The process records
+a per-league-season outcome in `AI_Source.SimulationSourceRefreshState`.
 
 | Serving table | Required fields | Purpose |
 |---|---|---|
@@ -69,3 +72,30 @@ metrics are unavailable. Traditional box-score proxies cannot fully identify
 tactical roles such as screen-setting, off-ball movement, switch defense or
 pick-and-roll coverage; those need play-by-play, tracking or lineup evidence
 before being presented as directly measured.
+
+ 
+## Source refresh and interpretation limits
+
+`AI_Source.RefreshSimulationSources(league_key, season)` reads
+`Pbp.{LEAGUE}_{SEASON}`, canonical player/team identity mappings and, when
+available, `Analisi.AdvancedStats_Lineups_Quarter_{LEAGUE}`. The seasonal refresh
+calls it before producing `Scenario*` tables. Inspect
+`AI_Source.SimulationSourceRefreshState` to distinguish `available`,
+`partial` and `unavailable`; a successful procedure call alone does not mean
+every optional feed has data.
+
+- Defensive player matchups are probabilistic exposures derived from the opposing
+  five-player lineup unless the source explicitly provides an observed defender
+  assignment. They are not direct tracking labels.
+- When PBP has no shot coordinates, shot profiles use `unknown_two_point` and
+  `unknown_three_point`. No specific shot location is inferred.
+- Tactical play type statistics are populated only when the source contains a
+  separate, recognized tactical classification. PBP event codes such as
+  `2FGM`, `3FGA` and `TOV` are not themselves play-type labels, so this feed
+  can legitimately remain empty and the state be `partial`.
+- `SimulationCausalPanel` is schema-only until the repository defines and
+  validates a causal treatment/control design. Do not populate it with simple
+  pre/post deltas.
+- Clutch totals do not rely on Simulation: they are sourced by
+  `ai_source_full.sql` from `Analisi.AdvancedStats_Clutch_{LEAGUE}` into
+  `AI_Source.PlayerCompetitionStats`.
