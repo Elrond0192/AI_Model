@@ -28,6 +28,10 @@ def test_player_intelligence_capability_registry():
     assert by_key["regression_risk"]["status"] == "available"
     assert by_key["causal_team_effect"]["status"] == "partial"
     assert "causal_identification" in by_key["causal_team_effect"]["missing_analyses"]
+    assert "teammate_lineup_effects" in by_key["causal_team_effect"]["missing_analyses"]
+    assert "canonical_bb_rating_1_100" in by_key["causal_team_effect"]["evidence"]
+    assert "minutes" in by_key["causal_team_effect"]["evidence"]
+    assert "observed_role" in by_key["causal_team_effect"]["evidence"]
 
 
 def test_registry_is_metadata_only():
