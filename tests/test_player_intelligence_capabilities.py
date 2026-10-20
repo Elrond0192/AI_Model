@@ -25,6 +25,12 @@ def test_player_intelligence_capability_registry():
     assert "metric_explanation" not in by_key["why_performing"]["missing_analyses"]
     assert by_key["current_role"]["status"] == "available"
     assert by_key["stability"]["status"] == "available"
+    assert by_key["shot_profile"]["analyses"] == [
+        "performance_decomposition", "shooting_decomposition", "metric_explanation"
+    ]
+    assert by_key["defensive_reason"]["analyses"] == [
+        "performance_decomposition", "role_analysis", "defensive_decomposition", "metric_explanation"
+    ]
     assert by_key["regression_risk"]["status"] == "available"
     assert by_key["causal_team_effect"]["status"] == "partial"
     assert "causal_identification" in by_key["causal_team_effect"]["missing_analyses"]
