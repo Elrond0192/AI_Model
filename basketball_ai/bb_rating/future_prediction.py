@@ -326,6 +326,27 @@ def _player_season_weights(frame: pd.DataFrame) -> np.ndarray:
     return weights / mean_weight if mean_weight > 0 else np.ones(len(frame), dtype=float)
 
 
+def _weighted_quantile(values: np.ndarray, quantile: float, sample_weight: np.ndarray) -> float:
+    """Weighted empirical quantile so repeated contexts do not dominate residual intervals."""
+    numeric_values = np.asarray(values, dtype=float)
+    weights = np.asarray(sample_weight, dtype=float)
+    if numeric_values.shape != weights.shape:
+        raise ValueError("Weighted quantile values and weights must have the same shape")
+    valid = np.isfinite(numeric_values) & np.isfinite(weights) & (weights > 0)
+    if not np.any(valid):
+        raise ValueError("Weighted quantile requires finite values with positive weights")
+    numeric_values = numeric_values[valid]
+    weights = weights[valid]
+    order = np.argsort(numeric_values, kind="stable")
+    numeric_values, weights = numeric_values[order], weights[order]
+    cumulative_midpoints = np.cumsum(weights) - 0.5 * weights
+    quantile_position = float(np.clip(quantile, 0.0, 1.0)) * float(weights.sum())
+    return float(np.interp(
+        quantile_position, cumulative_midpoints, numeric_values,
+        left=float(numeric_values[0]), right=float(numeric_values[-1]),
+    ))
+
+
 def _build_scenario_policy_maps(
     frame: pd.DataFrame,
     predictions: np.ndarray,
@@ -801,8 +822,8 @@ class BBRatingFuturePredictionModel:
             "unique_player_season_transitions": int(
                 global_interval_support["unique_player_season_transitions"] or 0
             ),
-            "low": float(np.quantile(residual, 0.10)),
-            "high": float(np.quantile(residual, 0.90)),
+            "low": _weighted_quantile(residual, 0.10, _player_season_weights(oof)),
+            "high": _weighted_quantile(residual, 0.90, _player_season_weights(oof)),
         }}
         for (league, scenario), group in oof.assign(_residual=residual).groupby(
             ["target_league", "scenario"], sort=False
@@ -819,8 +840,12 @@ class BBRatingFuturePredictionModel:
                     "unique_player_season_transitions": int(
                         interval_support["unique_player_season_transitions"] or 0
                     ),
-                    "low": float(group["_residual"].quantile(0.10)),
-                    "high": float(group["_residual"].quantile(0.90)),
+                    "low": _weighted_quantile(
+                        group["_residual"].to_numpy(float), 0.10, _player_season_weights(group)
+                    ),
+                    "high": _weighted_quantile(
+                        group["_residual"].to_numpy(float), 0.90, _player_season_weights(group)
+                    ),
                 }
 
         actual = oof["observed_bb_rating"].to_numpy(float)
@@ -1110,6 +1135,19 @@ class BBRatingFuturePredictionModel:
         else:
             calibrated_level = calibrated["calibration_level"]
             calibration_samples = int(calibrated["calibration_samples"])
+        calibration_rows = (
+            int(calibrated.get("calibration_rows", calibration_samples))
+            if prediction_method != "context_baseline_fallback" else 0
+        )
+        calibration_unique_players = (
+            calibrated.get("calibration_unique_players")
+            if prediction_method != "context_baseline_fallback" else None
+        )
+        interval_rows = int(interval["n"])
+        interval_unique_players = interval.get("unique_players")
+        interval_effective_samples = (
+            int(interval_unique_players) if interval_unique_players is not None else interval_rows
+        )
         baseline_score = _context_baseline(features, means) if means else None
         return {
             "predicted_bb_rating": round(float(np.clip(score, 1, 100)), 1),
@@ -1123,7 +1161,11 @@ class BBRatingFuturePredictionModel:
             "confidence_high_100": round(float(np.clip(score + interval["high"], 1, 100)), 1),
             "calibration_level": calibrated_level,
             "calibration_samples": calibration_samples,
-            "interval_samples": int(interval["n"]),
+            "calibration_unique_players": calibration_unique_players,
+            "calibration_rows": calibration_rows,
+            "interval_samples": interval_effective_samples,
+            "interval_unique_players": interval_unique_players,
+            "interval_rows": interval_rows,
             "scenario": scenario,
             "source_bb_rating": round(float(features["source_bb_rating"]), 1) if pd.notna(features.get("source_bb_rating")) else None,
             "bb_rating_version": BB_RATING_VERSION,
