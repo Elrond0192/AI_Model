@@ -1008,7 +1008,9 @@ BEGIN
              SELECT r.*,
                     row_number() OVER (
                         PARTITION BY r.player_global_id, r.league_key, r.season, r.competition
-                        ORDER BY CASE WHEN r.source_team_id IS NULL THEN 0 ELSE 1 END,
+                        ORDER BY
+                                 CASE WHEN coalesce(r.direct_team_global_id, r.fallback_team_global_id) IS NULL THEN 1 ELSE 0 END,
+                                 CASE WHEN r.source_team_id IS NULL OR btrim(r.source_team_id) = '' THEN 1 ELSE 0 END,
                                  coalesce(r.games, 0) DESC,
                                  r.source_team_id NULLS LAST
                     ) AS rn
@@ -1488,6 +1490,36 @@ deduped AS (
 SELECT player_id, team_id, season, role, jersey_number
 FROM deduped;
 
+-- Repair only unambiguous missing player-team assignments. A team is inferred
+-- only when the same player has exactly one roster relation for that season
+-- within the player's league and the team has matching season-level statistics.
+-- Multi-team seasons remain NULL rather than being guessed.
+WITH unique_roster_teams AS (
+    SELECT
+        s.player_id,
+        s.league_id,
+        s.season,
+        min(r.team_id) AS team_id
+    FROM "AI_Source"."PlayerCompetitionStats" s
+    JOIN "AI_Source"."TeamPlayerRelations" r
+      ON r.player_id = s.player_id
+     AND r.season = s.season
+    JOIN "AI_Source"."TeamCompetitionStats" t
+      ON t.team_id = r.team_id
+     AND t.league_id = s.league_id
+     AND t.season = s.season
+    WHERE s.team_id IS NULL
+    GROUP BY s.player_id, s.league_id, s.season
+    HAVING count(DISTINCT r.team_id) = 1
+)
+UPDATE "AI_Source"."PlayerCompetitionStats" s
+SET team_id = u.team_id
+FROM unique_roster_teams u
+WHERE s.player_id = u.player_id
+  AND s.league_id = u.league_id
+  AND s.season = u.season
+  AND s.team_id IS NULL;
+
 -- ---------------------------------------------------------------------------
 -- Players — latest registry state + latest known historical relation.
 -- ---------------------------------------------------------------------------
@@ -1585,7 +1617,21 @@ SELECT
     coalesce(s.three_point_attempt_rate,0.35) AS three_point_attempt_rate,
     coalesce(s.assists_per_game,20.0) AS assists_per_game,
     coalesce(s.star_player_usage,0.25) AS star_player_usage,
-    1::integer AS league_tier,
+    CASE upper(btrim(r.league_key))
+        WHEN 'EL' THEN 1
+        WHEN 'EC' THEN 1
+        WHEN 'ESP1' THEN 2
+        WHEN 'FRA1' THEN 2
+        WHEN 'GER1' THEN 2
+        WHEN 'GRC1' THEN 2
+        WHEN 'ISR1' THEN 2
+        WHEN 'ITA1' THEN 2
+        WHEN 'LIT1' THEN 2
+        WHEN 'TUR1' THEN 2
+        WHEN 'BEL1' THEN 2
+        WHEN 'ITA2' THEN 3
+        ELSE NULL::integer
+    END AS league_tier,
     coalesce(s.short_name,r.short_name,'') AS short_name,
     coalesce(
         s.net_rtg,
@@ -1649,7 +1695,21 @@ SELECT
         WHEN k.league_key LIKE 'POR%' THEN 'PT'
         ELSE regexp_replace(k.league_key,'[0-9]+$','')
     END AS country,
-    1::integer AS tier,
+    CASE upper(btrim(k.league_key))
+        WHEN 'EL' THEN 1
+        WHEN 'EC' THEN 1
+        WHEN 'ESP1' THEN 2
+        WHEN 'FRA1' THEN 2
+        WHEN 'GER1' THEN 2
+        WHEN 'GRC1' THEN 2
+        WHEN 'ISR1' THEN 2
+        WHEN 'ITA1' THEN 2
+        WHEN 'LIT1' THEN 2
+        WHEN 'TUR1' THEN 2
+        WHEN 'BEL1' THEN 2
+        WHEN 'ITA2' THEN 3
+        ELSE NULL::integer
+    END AS tier,
     1.0::double precision AS competitiveness_score,
     coalesce(ta.avg_pace,75.0) AS avg_pace,
     coalesce(ta.avg_offensive_rating,110.0) AS avg_offensive_rating,
