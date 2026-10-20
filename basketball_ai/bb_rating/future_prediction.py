@@ -64,15 +64,21 @@ def _team_global_map(data: dict[str, Any]) -> dict[tuple[str, str, int], str]:
     frame = data.get("team_season_stats", pd.DataFrame())
     if frame is None or frame.empty:
         return {}
-    result: dict[tuple[str, str, int], str] = {}
+    observed: dict[tuple[str, str, int], set[str]] = {}
     for row in frame.to_dict("records"):
         year = _year(row.get("season"))
         team = _clean(row.get("team_id"))
         league = _clean(row.get("league_id"))
         global_id = _clean(row.get("global_id"))
         if year is not None and team and league and global_id:
-            result[(team, league, year)] = global_id
-    return result
+            observed.setdefault((team, league, year), set()).add(global_id)
+    # A local team/league/season key that maps to multiple global IDs is
+    # ambiguous and must not be used to infer continuity or a transfer.
+    return {
+        key: next(iter(global_ids))
+        for key, global_ids in observed.items()
+        if len(global_ids) == 1
+    }
 
 
 def _target_league_tier(data: dict[str, Any], league_key: str) -> Any:
@@ -937,8 +943,10 @@ class BBRatingFuturePredictionModel:
         walk_forward_target_seasons = sorted(int(value) for value in oof["target_season"].unique())
         # OOF predictions from a single held-out season are not sufficient to
         # establish temporal generalisation, even when their row count is large.
+        overall_unique_players = int(overall_metrics.get("unique_players") or 0)
         promotion_gate_passed = bool(
             len(walk_forward_target_seasons) >= 3
+            and overall_unique_players >= 40
             and mae_model < mae_baseline
             and not segment_regressions
         )
@@ -1015,12 +1023,13 @@ class BBRatingFuturePredictionModel:
             "walk_forward_target_seasons": walk_forward_target_seasons,
             "walk_forward_fold_count": int(len(walk_forward_target_seasons)),
             "minimum_walk_forward_target_seasons": 3,
+            "minimum_oof_unique_players": 40,
             "minimum_supported_segment_samples": 40,
             "minimum_supported_segment_players": 40,
             "segment_support_unit": "unique player_global_id values; rows are reported separately",
             "pairing_policy": "one primary source context per player-target-season-league-competition; source and target statistical context codes must match",
             "team_identity_policy": "only resolved global team IDs establish team continuity; local fallback is not treated as verified",
-            "promotion_gate": "the player-season-balanced temporally nested serving policy must beat baseline overall, have at least 3 OOF target seasons, and keep supported source-league, destination-league, transition-scenario, destination-league-scenario and source-destination-scenario cohorts within 10 percent plus 0.25 points of baseline; cohort support requires 40 distinct players; unvalidated or regressing contexts use the contextual baseline",
+            "promotion_gate": "the player-season-balanced temporally nested serving policy must beat baseline overall, have at least 3 OOF target seasons and at least 40 distinct OOF players, and keep supported source-league, destination-league, transition-scenario, destination-league-scenario and source-destination-scenario cohorts within 10 percent plus 0.25 points of baseline; cohort support requires 40 distinct players; unvalidated or regressing contexts use the contextual baseline",
             "scenario_metrics": by_scenario,
             "source_league_metrics": by_source,
             "destination_league_metrics": by_destination,
