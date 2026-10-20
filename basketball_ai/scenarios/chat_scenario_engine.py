@@ -2556,12 +2556,11 @@ class ChatScenarioEngine:
             {
                 "potential",
                 "regression_risk",
-                "team_counterfactual",
                 "prediction",
                 "bb_rating_prediction",
                 "future_performance",
             } & set(requested_keys)
-        )
+        ) or ("team_counterfactual" in requested_keys and bool(teams))
 
         if self.bb_rating_engine is not None:
             try:
