@@ -2965,11 +2965,16 @@ class ChatScenarioEngine:
             "real_improvement": ("performance_decomposition", "metric_explanation"),
             "current_role": ("role_analysis",),
             "role_fit": ("role_analysis", "performance_decomposition"),
-            "team_usage": ("team_usage_analysis",),
+            "team_usage": (
+                "role_analysis",
+                "performance_decomposition",
+                "team_usage_analysis",
+                "metric_explanation",
+            ),
             "stability": ("performance_stability",),
             "potential": ("potential_synthesis", "age_trajectory"),
             "regression_risk": ("regression_risk",),
-            "team_counterfactual": ("player_team", "compatibility"),
+            "team_counterfactual": ("player_team",),
             "shot_profile": (
                 "performance_decomposition",
                 "shooting_decomposition",
