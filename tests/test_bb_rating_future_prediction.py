@@ -6,6 +6,8 @@ from basketball_ai.bb_rating.future_prediction import (
     _team_context_features,
     _team_context_index,
     _target_league_tier,
+    _team_global_map,
+    _team_identity,
 )
 from basketball_ai.bb_rating.prediction_scenarios import classify_transition
 
@@ -80,16 +82,91 @@ def test_target_league_tier_uses_local_registry_over_stale_db_values():
     assert _target_league_tier(data, "ITA2") == 3
 
 
-def test_competition_phase_transitions_are_distinguished():
+def test_ambiguous_local_team_mapping_is_not_treated_as_verified_identity():
+    history = pd.DataFrame([
+        {"team_id": 7, "league_id": 1, "season": 2024, "global_id": "TEAM-A"},
+        {"team_id": 7, "league_id": 1, "season": 2024, "global_id": "TEAM-B"},
+    ])
+    team_map = _team_global_map({"team_season_stats": history})
+
+    assert team_map == {}
+    assert _team_identity(
+        pd.Series({"team_id": 7, "league_id": 1, "season": 2024}), team_map
+    ) is None
+
+
+def test_statistical_phase_codes_do_not_create_competition_transitions():
     assert classify_transition("A", "A", "ITA1", "ITA1", "RS", "PO") == (
-        "competition_change_same_team_same_league"
+        "same_team_same_league"
     )
-    assert classify_transition("A", "B", "ITA1", "ITA1", "RS", "CUP") == (
-        "team_and_competition_change_same_league"
+    assert classify_transition("A", "B", "ITA1", "ITA1", "RS", "HOME") == (
+        "team_change_same_league"
     )
-    assert classify_transition("A", "B", "ITA1", "EL", "RS", "PO") == (
-        "team_league_and_competition_change"
+    assert classify_transition("A", "B", "ITA1", "EL", "AWAY", "TOT", 3, 1) == (
+        "team_and_league_change_tier_up"
     )
+
+
+def test_build_records_pairs_only_compatible_contexts_and_one_origin_per_target(monkeypatch):
+    from types import SimpleNamespace
+    import basketball_ai.bb_rating.future_prediction as future_prediction_module
+
+    rows = [
+        {"player_id": 1, "player_global_id": "P1", "league_id": 1, "league_key": "ITA1",
+         "season": 2022, "competition": "RS", "team_id": 10, "games_played": 20,
+         "points_per_game": 12.0},
+        {"player_id": 1, "player_global_id": "P1", "league_id": 1, "league_key": "ITA1",
+         "season": 2022, "competition": "HOME", "team_id": 10, "games_played": 18,
+         "points_per_game": 11.0},
+        {"player_id": 1, "player_global_id": "P1", "league_id": 1, "league_key": "ITA1",
+         "season": 2023, "competition": "RS", "team_id": 10, "games_played": 10,
+         "points_per_game": 13.0},
+        {"player_id": 1, "player_global_id": "P1", "league_id": 2, "league_key": "EC",
+         "season": 2023, "competition": "RS", "team_id": 20, "games_played": 12,
+         "points_per_game": 14.0},
+        {"player_id": 1, "player_global_id": "P1", "league_id": 1, "league_key": "ITA1",
+         "season": 2023, "competition": "HOME", "team_id": 10, "games_played": 8,
+         "points_per_game": 12.0},
+        {"player_id": 1, "player_global_id": "P1", "league_id": 2, "league_key": "EC",
+         "season": 2023, "competition": "HOME", "team_id": 20, "games_played": 9,
+         "points_per_game": 13.0},
+        # Latest-season sentinel: target year 2023 remains eligible for the backtest.
+        {"player_id": 1, "player_global_id": "P1", "league_id": 1, "league_key": "ITA1",
+         "season": 2024, "competition": "RS", "team_id": 10, "games_played": 10,
+         "points_per_game": 12.5},
+    ]
+    stats = pd.DataFrame(rows)
+
+    class FakeEngine:
+        def __init__(self, _stats, _players, _leagues):
+            self.frame = stats.copy()
+
+        def rate_player(self, _player_global_id, *, league, season, phase):
+            return SimpleNamespace(score=50 + (int(season) % 5) + (league == "EC"))
+
+    monkeypatch.setattr(future_prediction_module, "BBRatingEngine", FakeEngine)
+    data = {
+        "players": pd.DataFrame(),
+        "player_stats": stats,
+        "team_season_stats": pd.DataFrame(),
+        "leagues": pd.DataFrame(),
+    }
+    records = BBRatingFuturePredictionModel()._build_records(data)
+
+    # Only forecastable statistical contexts survive; HOME splits cannot be target rows.
+    assert len(records) == 2
+    assert records["target_competition"].eq("RS").all()
+    assert not records.duplicated(
+        ["player_global_id", "target_season", "target_league", "target_competition"]
+    ).any()
+    assert (records["source_competition"] == records["target_competition"]).all()
+    assert records["source_team"].eq("").all()
+    assert records["target_team"].eq("").all()
+    assert records["scenario"].eq("unknown").all()
+    ec_rs = records[
+        (records["target_league"] == "EC") & (records["target_competition"] == "RS")
+    ].iloc[0]
+    assert ec_rs["source_league"] == "ITA1"
 
 
 def test_direct_bb_rating_model_trains_oof_predicts_and_roundtrips(tmp_path):
@@ -119,6 +196,17 @@ def test_direct_bb_rating_model_trains_oof_predicts_and_roundtrips(tmp_path):
     assert 1 <= prediction["predicted_bb_rating"] <= 100
     assert 1 <= prediction["confidence_low_100"] <= prediction["confidence_high_100"] <= 100
     assert prediction["target_scale"] == "BB-Rating 1-100"
+
+    with pytest.raises(ValueError, match="not configured for BB-Rating forecasts"):
+        model.predict_from_data(
+            data, player_global_id="P1", source_season=2022,
+            target_league="ITA1", target_competition="HOME",
+        )
+    with pytest.raises(ValueError, match="statistical contexts must match"):
+        model.predict_from_data(
+            data, player_global_id="P1", source_season=2022,
+            target_league="ITA1", source_competition="RS", target_competition="PO",
+        )
 
     model.save(tmp_path)
     loaded = BBRatingFuturePredictionModel.load(tmp_path)

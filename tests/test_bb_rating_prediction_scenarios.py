@@ -87,6 +87,39 @@ def test_calibration_rejects_missing_columns_and_empty_valid_rows():
 
 
 
+def test_calibration_group_support_counts_unique_players_not_repeated_rows():
+    rows = []
+    for index in range(40):
+        prediction = 20.0 + index * 1.5
+        rows.append({
+            "predicted_bb_rating": min(99.0, prediction),
+            "observed_bb_rating": min(100.0, prediction + 5.0),
+            "scenario": "transfer",
+            "target_league_id": "EL",
+            "target_league": "EL",
+            "target_competition": "RS",
+            "player_global_id": f"P{index % 2}",
+            "target_season": 2020 + index // 2,
+        })
+    calibrator = BBRatingScenarioCalibrator(min_samples=5)
+    report = calibrator.fit(pd.DataFrame(rows))
+
+    assert report["n_samples"] == 40
+    assert report["unique_players"] == 2
+    assert report["unique_player_season_transitions"] == 40
+    groups = [item for item in report["groups"] if item["key"] in {"*::transfer", "EL::transfer"}]
+    assert len(groups) == 2
+    assert all(item["n_samples"] == 40 for item in groups)
+    assert all(item["unique_players"] == 2 for item in groups)
+    assert all(item["fitted"] is False for item in groups)
+
+    prediction = calibrator.predict(50.0, scenario="transfer", target_league_id="EL")
+    assert prediction["calibration_level"] == "global"
+    assert prediction["calibration_samples"] == 2
+    assert prediction["calibration_unique_players"] == 2
+    assert prediction["calibration_rows"] == 40
+
+
 def test_tier_transition_is_part_of_league_change_scenario():
     assert classify_transition("A", "B", "ITA1", "EL", "RS", "RS", 3, 1) == (
         "team_and_league_change_tier_up"

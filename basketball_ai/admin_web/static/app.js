@@ -412,11 +412,18 @@ async function renderModelReleases(){
   $('#release-bb-rating').innerHTML=fmtRelease(models['bb-rating']||{});
   $('#release-future-performance').innerHTML=fmtRelease(models['future-performance']||{});
   $('#bb-rating-prediction-release').innerHTML=fmtRelease(release);
+  const support=job.output?.oof_support||{};
   const outputRows=job.output?[
-    ['OOF samples',job.output.oof_samples??'—'],
-    ['MAE modello',fmt(job.output.mae)],
+    ['Righe OOF valutate',job.output.oof_samples??'—'],
+    ['Giocatori distinti OOF',support.unique_players??'—'],
+    ['Transizioni giocatore-stagione',support.unique_player_season_transitions??'—'],
+    ['Contesti target unici',support.unique_target_contexts??'—'],
+    ['MAE modello calibrato',fmt(job.output.mae_calibrated_model??job.output.mae)],
+    ['MAE policy finale (dopo fallback)',fmt(job.output.mae_after_scenario_fallback??job.output.mae)],
     ['MAE baseline',fmt(job.output.baseline_mae)],
     ['RMSE',fmt(job.output.rmse)],
+    ['Coppie target duplicate',job.output.duplicate_target_context_pairs??'—'],
+    ['Righe con identità team irrisolta',job.output.unresolved_team_identity_rows??'—'],
     ['Stagioni OOF',(job.output.walk_forward_target_seasons||job.output.target_seasons||[]).join(', ')||'—'],
     ['Gate qualità',job.status==='complete'?'SUPERATO':job.output.promotion_gate_passed===false?'NON SUPERATO':'—'],
     ['Gruppi oltre soglia',job.output.segment_regression_count??'—'],
@@ -425,7 +432,7 @@ async function renderModelReleases(){
   const outputMarkup=job.output
     ?'<div class="summary-list">'+outputRows.map(([a,b])=>'<div class="summary-row"><span>'+esc(a)+'</span><strong>'+esc(b??'—')+'</strong></div>').join('')+'</div>'+
       ((job.output.gate_failures||[]).length?'<div class="job-message"><strong>Cause del rifiuto:</strong> '+esc(job.output.gate_failures.join(' · '))+'</div>':'')+
-      ((job.output.segment_regressions||[]).length?'<div class="summary-list"><div class="summary-row"><span>Segmenti con regressione (dettaglio)</span><strong>'+esc(job.output.segment_regression_count||job.output.segment_regressions.length)+'</strong></div>'+job.output.segment_regressions.map(s=>'<div class="summary-row"><span>'+esc((s.dimension||'segmento')+' · '+(s.group||'—')+' (n='+String(s.n??'—')+')')+'</span><strong>MAE '+esc(fmt(s.mae))+' / baseline '+esc(fmt(s.baseline_mae))+'</strong></div>').join('')+'</div>':'')
+      ((job.output.segment_regressions||[]).length?'<div class="summary-list"><div class="summary-row"><span>Segmenti con regressione (dettaglio)</span><strong>'+esc(job.output.segment_regression_count||job.output.segment_regressions.length)+'</strong></div>'+job.output.segment_regressions.map(s=>'<div class="summary-row"><span>'+esc((s.dimension||'segmento')+' · '+(s.group||'—')+' (righe='+String(s.rows_evaluated??s.n??'—')+', giocatori='+String(s.unique_players??'—')+')')+'</span><strong>MAE '+esc(fmt(s.mae))+' / baseline '+esc(fmt(s.baseline_mae))+'</strong></div>').join('')+'</div>':'')
     :'';
   $('#bb-rating-prediction-job').innerHTML='<div class="job-head"><div><div class="job-status">'+esc(job.stage||'Ready')+'</div><div class="job-message">'+esc(job.error||job.message||'Nessun training eseguito.')+'</div></div><span class="registry-badge '+(['running','queued'].includes(job.status)?'candidate':'')+'">'+esc(job.status||'idle')+'</span></div>'+
     outputMarkup+

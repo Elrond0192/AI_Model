@@ -64,6 +64,17 @@ def validate_artifact(model: str, directory: str | Path) -> dict[str, Any]:
             return {"valid": False, "reason": "BB-Rating engine or feature version metadata is missing"}
         if int(artifact.get("oof_samples") or 0) < 500:
             return {"valid": False, "reason": "Direct BB-Rating model requires at least 500 walk-forward OOF rows"}
+        if artifact.get("feature_version") == "bb-rating-direct-target-v3-context-compatible":
+            support = artifact.get("oof_support") or {}
+            if not support:
+                return {"valid": False, "reason": "Context-compatible BB Prediction release is missing effective OOF support metrics"}
+            minimum_players = int(artifact.get("minimum_oof_unique_players") or 40)
+            if int(support.get("unique_players") or 0) < minimum_players:
+                return {"valid": False, "reason": f"Direct BB-Rating model requires at least {minimum_players} distinct OOF players"}
+            if int(artifact.get("duplicate_target_context_pairs") or 0) != 0:
+                return {"valid": False, "reason": "Direct BB-Rating model contains duplicate target-context pairs"}
+            if int(support.get("unique_target_contexts") or 0) != int(artifact.get("oof_samples") or 0):
+                return {"valid": False, "reason": "OOF rows do not match unique target-context support"}
         if not artifact.get("promotion_gate_passed"):
             return {"valid": False, "reason": "Walk-forward baseline or supported-segment regression gate failed"}
         for required_file in ("bb_rating_future_model.joblib", "calibration.json"):
@@ -93,7 +104,13 @@ def validate_artifact(model: str, directory: str | Path) -> dict[str, Any]:
         "seasons": (artifact.get("dataset") or {}).get("target_seasons") or (artifact.get("dataset") or {}).get("seasons") or artifact.get("training_target_seasons") or artifact.get("target_seasons") or artifact.get("seasons") or [],
         "validation": artifact.get("validation") or artifact.get("backtest") or ({"oof_mae_after_calibration": artifact.get("oof_mae_after_calibration"), "oof_rmse_after_calibration": artifact.get("oof_rmse_after_calibration"), "oof_baseline_mae": artifact.get("oof_baseline_mae"), "scenario_metrics": artifact.get("scenario_metrics"), "destination_league_metrics": artifact.get("destination_league_metrics"), "destination_league_scenario_metrics": artifact.get("destination_league_scenario_metrics")} if model == "bb-rating-prediction" else {}),
         "oof_samples": artifact.get("oof_samples") if model == "bb-rating-prediction" else None,
+        "training_support": artifact.get("training_support") if model == "bb-rating-prediction" else None,
+        "oof_support": artifact.get("oof_support") if model == "bb-rating-prediction" else None,
+        "calibration_support": artifact.get("calibration_support") if model == "bb-rating-prediction" else None,
+        "duplicate_target_context_pairs": artifact.get("duplicate_target_context_pairs") if model == "bb-rating-prediction" else None,
+        "unresolved_team_identity_rows": artifact.get("unresolved_team_identity_rows") if model == "bb-rating-prediction" else None,
         "oof_mae_after_calibration": artifact.get("oof_mae_after_calibration") if model == "bb-rating-prediction" else None,
+        "oof_mae_after_scenario_fallback": artifact.get("oof_mae_after_scenario_fallback") if model == "bb-rating-prediction" else None,
         "oof_rmse_after_calibration": artifact.get("oof_rmse_after_calibration") if model == "bb-rating-prediction" else None,
         "oof_baseline_mae": artifact.get("oof_baseline_mae") if model == "bb-rating-prediction" else None,
         "scenario_metrics": artifact.get("scenario_metrics") if model == "bb-rating-prediction" else None,
