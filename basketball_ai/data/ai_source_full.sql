@@ -395,6 +395,28 @@ DECLARE
     clutch_ast_expr text;
     clutch_net_expr text;
     clutch_efg_expr text;
+    clutch_fg2m_expr text;
+    clutch_fg2a_expr text;
+    clutch_fg3m_expr text;
+    clutch_fg3a_expr text;
+    clutch_ftm_expr text;
+    clutch_fta_expr text;
+    clutch_assists_expr text;
+    clutch_orb_expr text;
+    clutch_drb_expr text;
+    clutch_stl_expr text;
+    clutch_blk_expr text;
+    clutch_tov_expr text;
+    clutch_fg_pct_expr text;
+    clutch_fg2_pct_expr text;
+    clutch_fg3_pct_expr text;
+    clutch_ft_pct_expr text;
+    clutch_ftr_expr text;
+    clutch_three_par_expr text;
+    clutch_ortg_expr text;
+    clutch_drtg_expr text;
+    clutch_team_id_expr text;
+    clutch_clutchness_rating_expr text;
     games_started_expr text;
     starter_pct_expr text;
     scoring_eff_expr text;
@@ -455,6 +477,30 @@ BEGIN
         clutch_ast_expr := pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['asttotovratio', 'clutchasttotov']);
         clutch_net_expr := pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['clutchnetrtg']);
         clutch_efg_expr := pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['clutchefgpct']);
+        -- Only clutch-prefixed source columns are accepted from the player table;
+        -- otherwise the join below reads AdvanceStats_Clutch_<LEAGUE>.
+        clutch_fg2m_expr := pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['clutchfg2m']);
+        clutch_fg2a_expr := pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['clutchfg2a']);
+        clutch_fg3m_expr := pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['clutchfg3m']);
+        clutch_fg3a_expr := pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['clutchfg3a']);
+        clutch_ftm_expr := pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['clutchftm']);
+        clutch_fta_expr := pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['clutchfta']);
+        clutch_assists_expr := pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['clutchast']);
+        clutch_orb_expr := pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['clutchorb']);
+        clutch_drb_expr := pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['clutchdrb']);
+        clutch_stl_expr := pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['clutchstl']);
+        clutch_blk_expr := pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['clutchblk']);
+        clutch_tov_expr := pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['clutchtov']);
+        clutch_fg_pct_expr := pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['clutchfgpct']);
+        clutch_fg2_pct_expr := pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['clutchfg2pct']);
+        clutch_fg3_pct_expr := pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['clutchfg3pct']);
+        clutch_ft_pct_expr := pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['clutchftpct']);
+        clutch_ftr_expr := pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['clutchftr']);
+        clutch_three_par_expr := pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['clutchthreepar']);
+        clutch_ortg_expr := pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['clutchortg']);
+        clutch_drtg_expr := pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['clutchdrtg']);
+        clutch_team_id_expr := pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'text', ARRAY['clutchteamid']);
+        clutch_clutchness_rating_expr := pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'text', ARRAY['clutchclutchnessrating']);
 
         games_expr := pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['games', 'gamesplayed']);
         games_started_expr := pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['gamesstarted', 'games_started', 'starts']);
@@ -715,6 +761,28 @@ BEGIN
             OR pg_temp.ai_find_column(r.table_schema, r.table_name, ARRAY['asttotovratio','clutchasttotov']) IS NULL
             OR pg_temp.ai_find_column(r.table_schema, r.table_name, ARRAY['clutchnetrtg']) IS NULL
             OR pg_temp.ai_find_column(r.table_schema, r.table_name, ARRAY['clutchefgpct']) IS NULL
+            OR pg_temp.ai_find_column(r.table_schema, r.table_name, ARRAY['clutchfg2m']) IS NULL
+            OR pg_temp.ai_find_column(r.table_schema, r.table_name, ARRAY['clutchfg2a']) IS NULL
+            OR pg_temp.ai_find_column(r.table_schema, r.table_name, ARRAY['clutchfg3m']) IS NULL
+            OR pg_temp.ai_find_column(r.table_schema, r.table_name, ARRAY['clutchfg3a']) IS NULL
+            OR pg_temp.ai_find_column(r.table_schema, r.table_name, ARRAY['clutchftm']) IS NULL
+            OR pg_temp.ai_find_column(r.table_schema, r.table_name, ARRAY['clutchfta']) IS NULL
+            OR pg_temp.ai_find_column(r.table_schema, r.table_name, ARRAY['clutchast']) IS NULL
+            OR pg_temp.ai_find_column(r.table_schema, r.table_name, ARRAY['clutchorb']) IS NULL
+            OR pg_temp.ai_find_column(r.table_schema, r.table_name, ARRAY['clutchdrb']) IS NULL
+            OR pg_temp.ai_find_column(r.table_schema, r.table_name, ARRAY['clutchstl']) IS NULL
+            OR pg_temp.ai_find_column(r.table_schema, r.table_name, ARRAY['clutchblk']) IS NULL
+            OR pg_temp.ai_find_column(r.table_schema, r.table_name, ARRAY['clutchtov']) IS NULL
+            OR pg_temp.ai_find_column(r.table_schema, r.table_name, ARRAY['clutchfgpct']) IS NULL
+            OR pg_temp.ai_find_column(r.table_schema, r.table_name, ARRAY['clutchfg2pct']) IS NULL
+            OR pg_temp.ai_find_column(r.table_schema, r.table_name, ARRAY['clutchfg3pct']) IS NULL
+            OR pg_temp.ai_find_column(r.table_schema, r.table_name, ARRAY['clutchftpct']) IS NULL
+            OR pg_temp.ai_find_column(r.table_schema, r.table_name, ARRAY['clutchftr']) IS NULL
+            OR pg_temp.ai_find_column(r.table_schema, r.table_name, ARRAY['clutchthreepar']) IS NULL
+            OR pg_temp.ai_find_column(r.table_schema, r.table_name, ARRAY['clutchortg']) IS NULL
+            OR pg_temp.ai_find_column(r.table_schema, r.table_name, ARRAY['clutchdrtg']) IS NULL
+            OR pg_temp.ai_find_column(r.table_schema, r.table_name, ARRAY['clutchteamid']) IS NULL
+            OR pg_temp.ai_find_column(r.table_schema, r.table_name, ARRAY['clutchclutchnessrating']) IS NULL
         ) THEN
             opt_table := 'AdvancedStats_Clutch_' || league_key;
             IF EXISTS (
@@ -728,7 +796,29 @@ BEGIN
                         SELECT DISTINCT ON (season, source_player_id, competition)
                                season, source_player_id, competition,
                                clutch_games, clutch_pts, clutch_ts_pct,
-                               clutch_ast_to_tov, clutch_net_rtg, clutch_efg_pct
+                               clutch_ast_to_tov, clutch_net_rtg, clutch_efg_pct,
+                               clutch_fg2m,
+                               clutch_fg2a,
+                               clutch_fg3m,
+                               clutch_fg3a,
+                               clutch_ftm,
+                               clutch_fta,
+                               clutch_ast,
+                               clutch_orb,
+                               clutch_drb,
+                               clutch_stl,
+                               clutch_blk,
+                               clutch_tov,
+                               clutch_fg_pct,
+                               clutch_fg2_pct,
+                               clutch_fg3_pct,
+                               clutch_ft_pct,
+                               clutch_ftr,
+                               clutch_three_par,
+                               clutch_ortg,
+                               clutch_drtg,
+                               clutch_team_id,
+                               clutch_clutchness_rating
                         FROM (
                             SELECT
                                 %1$s AS season,
@@ -739,7 +829,29 @@ BEGIN
                                 %6$s AS clutch_ts_pct,
                                 %7$s AS clutch_ast_to_tov,
                                 %8$s AS clutch_net_rtg,
-                                %9$s AS clutch_efg_pct
+                                %9$s AS clutch_efg_pct,
+                                %14$s AS clutch_fg2m,
+                                %15$s AS clutch_fg2a,
+                                %16$s AS clutch_fg3m,
+                                %17$s AS clutch_fg3a,
+                                %18$s AS clutch_ftm,
+                                %19$s AS clutch_fta,
+                                %20$s AS clutch_ast,
+                                %21$s AS clutch_orb,
+                                %22$s AS clutch_drb,
+                                %23$s AS clutch_stl,
+                                %24$s AS clutch_blk,
+                                %25$s AS clutch_tov,
+                                %26$s AS clutch_fg_pct,
+                                %27$s AS clutch_fg2_pct,
+                                %28$s AS clutch_fg3_pct,
+                                %29$s AS clutch_ft_pct,
+                                %30$s AS clutch_ftr,
+                                %31$s AS clutch_three_par,
+                                %32$s AS clutch_ortg,
+                                %33$s AS clutch_drtg,
+                                %34$s AS clutch_team_id,
+                                %35$s AS clutch_clutchness_rating
                             FROM "Analisi".%10$I cl0
                             WHERE %1$s IS NOT NULL AND %2$s IS NOT NULL
                         ) q
@@ -758,7 +870,29 @@ BEGIN
                     pg_temp.ai_expr('Analisi', opt_table, 'cl0', 'numeric', ARRAY['clutchnetrtg','netrtg']),
                     pg_temp.ai_expr('Analisi', opt_table, 'cl0', 'numeric', ARRAY['clutchefgpct','efgpct']),
                     opt_table,
-                    season_expr, player_local_expr, comp_expr
+                    season_expr, player_local_expr, comp_expr,
+                    pg_temp.ai_expr('Analisi', opt_table, 'cl0', 'numeric', ARRAY['fg2m']),
+                    pg_temp.ai_expr('Analisi', opt_table, 'cl0', 'numeric', ARRAY['fg2a']),
+                    pg_temp.ai_expr('Analisi', opt_table, 'cl0', 'numeric', ARRAY['fg3m']),
+                    pg_temp.ai_expr('Analisi', opt_table, 'cl0', 'numeric', ARRAY['fg3a']),
+                    pg_temp.ai_expr('Analisi', opt_table, 'cl0', 'numeric', ARRAY['ftm']),
+                    pg_temp.ai_expr('Analisi', opt_table, 'cl0', 'numeric', ARRAY['fta']),
+                    pg_temp.ai_expr('Analisi', opt_table, 'cl0', 'numeric', ARRAY['ast']),
+                    pg_temp.ai_expr('Analisi', opt_table, 'cl0', 'numeric', ARRAY['orb']),
+                    pg_temp.ai_expr('Analisi', opt_table, 'cl0', 'numeric', ARRAY['drb']),
+                    pg_temp.ai_expr('Analisi', opt_table, 'cl0', 'numeric', ARRAY['stl']),
+                    pg_temp.ai_expr('Analisi', opt_table, 'cl0', 'numeric', ARRAY['blk']),
+                    pg_temp.ai_expr('Analisi', opt_table, 'cl0', 'numeric', ARRAY['tov']),
+                    pg_temp.ai_expr('Analisi', opt_table, 'cl0', 'numeric', ARRAY['fgpct']),
+                    pg_temp.ai_expr('Analisi', opt_table, 'cl0', 'numeric', ARRAY['fg2pct']),
+                    pg_temp.ai_expr('Analisi', opt_table, 'cl0', 'numeric', ARRAY['fg3pct']),
+                    pg_temp.ai_expr('Analisi', opt_table, 'cl0', 'numeric', ARRAY['ftpct']),
+                    pg_temp.ai_expr('Analisi', opt_table, 'cl0', 'numeric', ARRAY['ftr']),
+                    pg_temp.ai_expr('Analisi', opt_table, 'cl0', 'numeric', ARRAY['threepar']),
+                    pg_temp.ai_expr('Analisi', opt_table, 'cl0', 'numeric', ARRAY['ortg']),
+                    pg_temp.ai_expr('Analisi', opt_table, 'cl0', 'numeric', ARRAY['drtg']),
+                    pg_temp.ai_expr('Analisi', opt_table, 'cl0', 'text', ARRAY['teamid']),
+                    pg_temp.ai_expr('Analisi', opt_table, 'cl0', 'text', ARRAY['clutchnessrating'])
                 );
                 clutch_games_expr := 'coalesce(' || clutch_games_expr || ', cl.clutch_games)';
                 clutch_pts_expr := 'coalesce(' || clutch_pts_expr || ', cl.clutch_pts)';
@@ -766,6 +900,28 @@ BEGIN
                 clutch_ast_expr := 'coalesce(' || clutch_ast_expr || ', cl.clutch_ast_to_tov)';
                 clutch_net_expr := 'coalesce(' || clutch_net_expr || ', cl.clutch_net_rtg)';
                 clutch_efg_expr := 'coalesce(' || clutch_efg_expr || ', cl.clutch_efg_pct)';
+                clutch_fg2m_expr := 'coalesce(' || clutch_fg2m_expr || ', cl.clutch_fg2m)';
+                clutch_fg2a_expr := 'coalesce(' || clutch_fg2a_expr || ', cl.clutch_fg2a)';
+                clutch_fg3m_expr := 'coalesce(' || clutch_fg3m_expr || ', cl.clutch_fg3m)';
+                clutch_fg3a_expr := 'coalesce(' || clutch_fg3a_expr || ', cl.clutch_fg3a)';
+                clutch_ftm_expr := 'coalesce(' || clutch_ftm_expr || ', cl.clutch_ftm)';
+                clutch_fta_expr := 'coalesce(' || clutch_fta_expr || ', cl.clutch_fta)';
+                clutch_assists_expr := 'coalesce(' || clutch_assists_expr || ', cl.clutch_ast)';
+                clutch_orb_expr := 'coalesce(' || clutch_orb_expr || ', cl.clutch_orb)';
+                clutch_drb_expr := 'coalesce(' || clutch_drb_expr || ', cl.clutch_drb)';
+                clutch_stl_expr := 'coalesce(' || clutch_stl_expr || ', cl.clutch_stl)';
+                clutch_blk_expr := 'coalesce(' || clutch_blk_expr || ', cl.clutch_blk)';
+                clutch_tov_expr := 'coalesce(' || clutch_tov_expr || ', cl.clutch_tov)';
+                clutch_fg_pct_expr := 'coalesce(' || clutch_fg_pct_expr || ', cl.clutch_fg_pct)';
+                clutch_fg2_pct_expr := 'coalesce(' || clutch_fg2_pct_expr || ', cl.clutch_fg2_pct)';
+                clutch_fg3_pct_expr := 'coalesce(' || clutch_fg3_pct_expr || ', cl.clutch_fg3_pct)';
+                clutch_ft_pct_expr := 'coalesce(' || clutch_ft_pct_expr || ', cl.clutch_ft_pct)';
+                clutch_ftr_expr := 'coalesce(' || clutch_ftr_expr || ', cl.clutch_ftr)';
+                clutch_three_par_expr := 'coalesce(' || clutch_three_par_expr || ', cl.clutch_three_par)';
+                clutch_ortg_expr := 'coalesce(' || clutch_ortg_expr || ', cl.clutch_ortg)';
+                clutch_drtg_expr := 'coalesce(' || clutch_drtg_expr || ', cl.clutch_drtg)';
+                clutch_team_id_expr := 'coalesce(' || clutch_team_id_expr || ', cl.clutch_team_id)';
+                clutch_clutchness_rating_expr := 'coalesce(' || clutch_clutchness_rating_expr || ', cl.clutch_clutchness_rating)';
             END IF;
         END IF;
 
@@ -933,6 +1089,28 @@ BEGIN
             || clutch_ast_expr || ' AS clutch_ast_to_tov, '
             || clutch_net_expr || ' AS clutch_net_rtg, '
             || clutch_efg_expr || ' AS clutch_efg_pct, '
+            || clutch_fg2m_expr || ' AS clutch_fg2m, '
+            || clutch_fg2a_expr || ' AS clutch_fg2a, '
+            || clutch_fg3m_expr || ' AS clutch_fg3m, '
+            || clutch_fg3a_expr || ' AS clutch_fg3a, '
+            || clutch_ftm_expr || ' AS clutch_ftm, '
+            || clutch_fta_expr || ' AS clutch_fta, '
+            || clutch_assists_expr || ' AS clutch_ast, '
+            || clutch_orb_expr || ' AS clutch_orb, '
+            || clutch_drb_expr || ' AS clutch_drb, '
+            || clutch_stl_expr || ' AS clutch_stl, '
+            || clutch_blk_expr || ' AS clutch_blk, '
+            || clutch_tov_expr || ' AS clutch_tov, '
+            || clutch_fg_pct_expr || ' AS clutch_fg_pct, '
+            || clutch_fg2_pct_expr || ' AS clutch_fg2_pct, '
+            || clutch_fg3_pct_expr || ' AS clutch_fg3_pct, '
+            || clutch_ft_pct_expr || ' AS clutch_ft_pct, '
+            || clutch_ftr_expr || ' AS clutch_ftr, '
+            || clutch_three_par_expr || ' AS clutch_three_par, '
+            || clutch_ortg_expr || ' AS clutch_ortg, '
+            || clutch_drtg_expr || ' AS clutch_drtg, '
+            || clutch_team_id_expr || ' AS clutch_team_id, '
+            || clutch_clutchness_rating_expr || ' AS clutch_clutchness_rating, '
             || ortg_on_expr || ' AS ortg_on, '
             || ortg_off_expr || ' AS ortg_off, '
             || ortg_diff_expr || ' AS ortg_diff '
@@ -998,7 +1176,7 @@ BEGIN
     END LOOP;
 
     IF body = '' THEN
-        body := 'SELECT NULL::text AS league_key, NULL::integer AS season, NULL::text AS source_player_id, NULL::text AS source_team_id, NULL::text AS player_global_id, NULL::text AS direct_team_global_id, NULL::text AS fallback_team_global_id, NULL::text AS competition, NULL::double precision AS games, NULL::double precision AS games_started, NULL::double precision AS starter_pct, NULL::double precision AS minutes_total, NULL::double precision AS points_total, NULL::double precision AS rebounds_total, NULL::double precision AS offensive_rebounds_total, NULL::double precision AS defensive_rebounds_total, NULL::double precision AS assists_total, NULL::double precision AS steals_total, NULL::double precision AS blocks_total, NULL::double precision AS turnovers_total, NULL::double precision AS fouls_total, NULL::double precision AS fg_pct, NULL::double precision AS three_point_pct, NULL::double precision AS ft_pct, NULL::double precision AS plus_minus, NULL::double precision AS per, NULL::double precision AS ts_pct, NULL::double precision AS usg_pct, NULL::double precision AS bpm, NULL::double precision AS vorp, NULL::double precision AS win_shares, NULL::double precision AS ast_ratio, NULL::double precision AS reb_pct, NULL::double precision AS rating_source, NULL::double precision AS ortg, NULL::double precision AS drtg, NULL::double precision AS net_rtg, NULL::text AS ruolo_offensivo, NULL::text AS ruolo_difensivo, NULL::text AS ruolo_combinato, NULL::double precision AS on_net_rtg, NULL::double precision AS off_net_rtg, NULL::double precision AS net_rtg_diff, NULL::double precision AS spm, NULL::double precision AS obpm, NULL::double precision AS dbpm, NULL::double precision AS gm_sc, NULL::double precision AS fic, NULL::double precision AS ows, NULL::double precision AS dws, NULL::double precision AS raptor_off, NULL::double precision AS raptor_def, NULL::double precision AS raptor_total, NULL::double precision AS lebron_off, NULL::double precision AS lebron_def, NULL::double precision AS lebron_total, NULL::double precision AS scoring_efficiency, NULL::double precision AS ppsa, NULL::double precision AS two_point_pct, NULL::double precision AS tov_pct, NULL::double precision AS ast_pct, NULL::double precision AS stl_pct, NULL::double precision AS blk_pct, NULL::double precision AS orb_pct, NULL::double precision AS drb_pct, NULL::double precision AS three_par, NULL::double precision AS true_usg_pct, NULL::double precision AS foul_drawing_rate, NULL::double precision AS rf_per_game, NULL::double precision AS hustle_index, NULL::double precision AS pts_per_40, NULL::double precision AS ast_per_40, NULL::double precision AS tr_per_40, NULL::double precision AS stl_per_40, NULL::double precision AS blk_per_40, NULL::double precision AS clutch_games, NULL::double precision AS clutch_pts, NULL::double precision AS clutch_ts_pct, NULL::double precision AS clutch_ast_to_tov, NULL::double precision AS clutch_net_rtg, NULL::double precision AS clutch_efg_pct, NULL::double precision AS ortg_on, NULL::double precision AS ortg_off, NULL::double precision AS ortg_diff WHERE false';
+        body := 'SELECT NULL::text AS league_key, NULL::integer AS season, NULL::text AS source_player_id, NULL::text AS source_team_id, NULL::text AS player_global_id, NULL::text AS direct_team_global_id, NULL::text AS fallback_team_global_id, NULL::text AS competition, NULL::double precision AS games, NULL::double precision AS games_started, NULL::double precision AS starter_pct, NULL::double precision AS minutes_total, NULL::double precision AS points_total, NULL::double precision AS rebounds_total, NULL::double precision AS offensive_rebounds_total, NULL::double precision AS defensive_rebounds_total, NULL::double precision AS assists_total, NULL::double precision AS steals_total, NULL::double precision AS blocks_total, NULL::double precision AS turnovers_total, NULL::double precision AS fouls_total, NULL::double precision AS fg_pct, NULL::double precision AS three_point_pct, NULL::double precision AS ft_pct, NULL::double precision AS plus_minus, NULL::double precision AS per, NULL::double precision AS ts_pct, NULL::double precision AS usg_pct, NULL::double precision AS bpm, NULL::double precision AS vorp, NULL::double precision AS win_shares, NULL::double precision AS ast_ratio, NULL::double precision AS reb_pct, NULL::double precision AS rating_source, NULL::double precision AS ortg, NULL::double precision AS drtg, NULL::double precision AS net_rtg, NULL::text AS ruolo_offensivo, NULL::text AS ruolo_difensivo, NULL::text AS ruolo_combinato, NULL::double precision AS on_net_rtg, NULL::double precision AS off_net_rtg, NULL::double precision AS net_rtg_diff, NULL::double precision AS spm, NULL::double precision AS obpm, NULL::double precision AS dbpm, NULL::double precision AS gm_sc, NULL::double precision AS fic, NULL::double precision AS ows, NULL::double precision AS dws, NULL::double precision AS raptor_off, NULL::double precision AS raptor_def, NULL::double precision AS raptor_total, NULL::double precision AS lebron_off, NULL::double precision AS lebron_def, NULL::double precision AS lebron_total, NULL::double precision AS scoring_efficiency, NULL::double precision AS ppsa, NULL::double precision AS two_point_pct, NULL::double precision AS tov_pct, NULL::double precision AS ast_pct, NULL::double precision AS stl_pct, NULL::double precision AS blk_pct, NULL::double precision AS orb_pct, NULL::double precision AS drb_pct, NULL::double precision AS three_par, NULL::double precision AS true_usg_pct, NULL::double precision AS foul_drawing_rate, NULL::double precision AS rf_per_game, NULL::double precision AS hustle_index, NULL::double precision AS pts_per_40, NULL::double precision AS ast_per_40, NULL::double precision AS tr_per_40, NULL::double precision AS stl_per_40, NULL::double precision AS blk_per_40, NULL::double precision AS clutch_games, NULL::double precision AS clutch_pts, NULL::double precision AS clutch_ts_pct, NULL::double precision AS clutch_ast_to_tov, NULL::double precision AS clutch_net_rtg, NULL::double precision AS clutch_efg_pct, NULL::double precision AS clutch_fg2m, NULL::double precision AS clutch_fg2a, NULL::double precision AS clutch_fg3m, NULL::double precision AS clutch_fg3a, NULL::double precision AS clutch_ftm, NULL::double precision AS clutch_fta, NULL::double precision AS clutch_ast, NULL::double precision AS clutch_orb, NULL::double precision AS clutch_drb, NULL::double precision AS clutch_stl, NULL::double precision AS clutch_blk, NULL::double precision AS clutch_tov, NULL::double precision AS clutch_fg_pct, NULL::double precision AS clutch_fg2_pct, NULL::double precision AS clutch_fg3_pct, NULL::double precision AS clutch_ft_pct, NULL::double precision AS clutch_ftr, NULL::double precision AS clutch_three_par, NULL::double precision AS clutch_ortg, NULL::double precision AS clutch_drtg, NULL::text AS clutch_team_id, NULL::text AS clutch_clutchness_rating, NULL::double precision AS ortg_on, NULL::double precision AS ortg_off, NULL::double precision AS ortg_diff WHERE false';
     END IF;
 
     EXECUTE
@@ -1078,6 +1256,28 @@ BEGIN
              coalesce(clutch_ast_to_tov,0) AS clutch_ast_to_tov,
              coalesce(clutch_net_rtg,0) AS clutch_net_rtg,
              coalesce(clutch_efg_pct,0) AS clutch_efg_pct,
+             clutch_fg2m AS clutch_fg2m,
+             clutch_fg2a AS clutch_fg2a,
+             clutch_fg3m AS clutch_fg3m,
+             clutch_fg3a AS clutch_fg3a,
+             clutch_ftm AS clutch_ftm,
+             clutch_fta AS clutch_fta,
+             clutch_ast AS clutch_ast,
+             clutch_orb AS clutch_orb,
+             clutch_drb AS clutch_drb,
+             clutch_stl AS clutch_stl,
+             clutch_blk AS clutch_blk,
+             clutch_tov AS clutch_tov,
+             clutch_fg_pct AS clutch_fg_pct,
+             clutch_fg2_pct AS clutch_fg2_pct,
+             clutch_fg3_pct AS clutch_fg3_pct,
+             clutch_ft_pct AS clutch_ft_pct,
+             clutch_ftr AS clutch_ftr,
+             clutch_three_par AS clutch_three_par,
+             clutch_ortg AS clutch_ortg,
+             clutch_drtg AS clutch_drtg,
+             clutch_team_id AS clutch_team_id,
+             clutch_clutchness_rating AS clutch_clutchness_rating,
              coalesce(ortg_on,0) AS ortg_on,
              coalesce(ortg_off,0) AS ortg_off,
              coalesce(ortg_diff,0) AS ortg_diff,
