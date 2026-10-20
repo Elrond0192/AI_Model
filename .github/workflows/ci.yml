@@ -259,6 +259,82 @@ jobs:
           $$;
           SQL
 
+      - name: Rebuild PBP, lineup, scenario and clutch sources end-to-end
+        env:
+          PGPASSWORD: postgres
+        run: |
+          set -euo pipefail
+          psql -h 127.0.0.1 -U postgres -d ai_model_test -v ON_ERROR_STOP=1 <<'SQL'
+          CALL "AI_Source"."RefreshContextSeasonal"(2025);
+
+          DO $$
+          DECLARE
+            clutch_games double precision;
+            clutch_points double precision;
+            clutch_grade text;
+            sim_status text;
+            pbp_rows bigint;
+            pbp_event_rows bigint;
+            lineup_rows bigint;
+            shot_rows bigint;
+            tactical_rows bigint;
+            scenario_lineup_rows bigint;
+            scenario_shot_rows bigint;
+            scenario_matchup_rows bigint;
+          BEGIN
+            SELECT clutch_games, clutch_pts, clutch_clutchness_rating
+              INTO clutch_games, clutch_points, clutch_grade
+              FROM "AI_Source"."PlayerCompetitionStats"
+             WHERE league_key='ITA1' AND season=2025
+               AND competition='RS' AND global_id='P_GLOBAL';
+            IF clutch_games IS DISTINCT FROM 6.0
+               OR clutch_points IS DISTINCT FROM 12.0
+               OR clutch_grade IS DISTINCT FROM 'B' THEN
+              RAISE EXCEPTION 'AdvancedStats_Clutch projection mismatch: games %, points %, grade %',
+                clutch_games, clutch_points, clutch_grade;
+            END IF;
+
+            SELECT "Status", "PbpRows", "PbpEventRows", "LineupRows",
+                   "ShotProfileRows", "PlayTypeRows"
+              INTO sim_status, pbp_rows, pbp_event_rows, lineup_rows, shot_rows, tactical_rows
+              FROM "AI_Source"."SimulationSourceRefreshState"
+             WHERE "LeagueKey"='ITA1' AND "Season"=2025;
+            IF NOT FOUND THEN
+              RAISE EXCEPTION 'SimulationSourceRefreshState is missing ITA1/2025';
+            END IF;
+            IF sim_status <> 'partial' OR pbp_rows <> 3
+               OR pbp_event_rows <= 0 OR lineup_rows <= 0 OR shot_rows <= 0
+               OR tactical_rows <> 0 THEN
+              RAISE EXCEPTION 'Unexpected Simulation feed state: status %, PBP %, events %, lineups %, shots %, play-types %',
+                sim_status, pbp_rows, pbp_event_rows, lineup_rows, shot_rows, tactical_rows;
+            END IF;
+
+            SELECT count(*) INTO scenario_lineup_rows
+              FROM "AI_Source"."ScenarioLineupStats"
+             WHERE league_key='ITA1' AND season=2025 AND competition='RS';
+            SELECT count(*) INTO scenario_shot_rows
+              FROM "AI_Source"."ScenarioShotProfiles"
+             WHERE league_key='ITA1' AND season=2025 AND competition='RS';
+            SELECT count(*) INTO scenario_matchup_rows
+              FROM "AI_Source"."ScenarioDefenderMatchups"
+             WHERE league_key='ITA1' AND season=2025 AND competition='RS';
+            IF scenario_lineup_rows <= 0 OR scenario_shot_rows <= 0 OR scenario_matchup_rows <= 0 THEN
+              RAISE EXCEPTION 'Scenario serving tables remained empty: lineups %, shots %, matchups %',
+                scenario_lineup_rows, scenario_shot_rows, scenario_matchup_rows;
+            END IF;
+
+            IF EXISTS (
+              SELECT 1
+                FROM "AI_Source"."SimulationShotProfiles"
+               WHERE league_key='ITA1' AND season=2025
+                 AND zone NOT IN ('unknown_two_point','unknown_three_point')
+            ) THEN
+              RAISE EXCEPTION 'Fixture has no coordinates; unobserved shot zones must not be invented';
+            END IF;
+          END
+          $$;
+          SQL
+
   lint:
     name: Lint (ruff + flake8)
     runs-on: ubuntu-latest
