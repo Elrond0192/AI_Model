@@ -841,6 +841,183 @@ class ChatScenarioEngine:
             "limitations": ["This reports observed clutch aggregates. Possession-level last-five-minute simulations require PBP clock and score fields for the requested competition."],
         }
 
+    def _team_lineup_context_association(
+        self,
+        player_id: int,
+        player_rows: pd.DataFrame,
+        season: int,
+        competition: str,
+        source_league: int,
+    ) -> dict[str, Any]:
+        """Compare observed team Net Rating in lineups with/without a player.
+
+        This is a descriptive on-court association, not an estimate of the
+        player's causal contribution. Comparisons are scoped to the same team,
+        league context, season and competition to reduce obvious context mixing.
+        """
+        stints = self.data.get("lineup_stints")
+        empty_result = {
+            "status": "unavailable",
+            "method": "within_team_season_lineup_presence_association",
+            "outcome": "observed_team_net_rating",
+            "is_causal": False,
+            "seasons_compared": 0,
+            "player_lineup_possessions": 0.0,
+            "other_lineup_possessions": 0.0,
+            "net_rating_with_player": None,
+            "net_rating_without_player": None,
+            "difference": None,
+            "by_season": [],
+        }
+        if not isinstance(stints, pd.DataFrame) or stints.empty:
+            return {**empty_result, "reason": "Lineup stint data is unavailable for this context."}
+
+        required = {"player_ids", "team_id", "season", "competition", "possessions", "net_rtg"}
+        missing = sorted(required - set(stints.columns))
+        if missing:
+            return {
+                **empty_result,
+                "reason": "Lineup feed is missing required fields: " + ", ".join(missing),
+            }
+        if player_rows.empty or "team_id" not in player_rows.columns:
+            return {**empty_result, "reason": "Player team-season history is unavailable."}
+
+        scoped_player_rows = player_rows.copy()
+        if "_year" not in scoped_player_rows.columns:
+            scoped_player_rows["_year"] = scoped_player_rows["season"].map(_year)
+        scoped_player_rows["_team_id"] = scoped_player_rows["team_id"].map(_to_int)
+        scoped_player_rows = scoped_player_rows[
+            (scoped_player_rows["_year"] >= max(2000, int(season) - 3))
+            & (scoped_player_rows["_year"] <= int(season))
+            & scoped_player_rows["_team_id"].notna()
+        ].copy()
+        if "league_id" in scoped_player_rows.columns:
+            scoped_player_rows = scoped_player_rows[
+                scoped_player_rows["league_id"].map(_to_int) == _to_int(source_league)
+            ]
+        if "competition" in scoped_player_rows.columns:
+            scoped_player_rows = scoped_player_rows[
+                scoped_player_rows["competition"].map(normalize_competition) == competition
+            ]
+        contexts = {
+            (int(row["_year"]), int(row["_team_id"]))
+            for row in scoped_player_rows.to_dict("records")
+            if row.get("_year") is not None and row.get("_team_id") is not None
+        }
+        if not contexts:
+            return {**empty_result, "reason": "No matching player team-season contexts were found."}
+
+        frame = stints.copy()
+        frame["_year"] = frame["season"].map(_year)
+        frame["_team_id"] = frame["team_id"].map(_to_int)
+        frame["_competition"] = frame["competition"].map(normalize_competition)
+        frame = frame[
+            (frame["_year"] >= max(2000, int(season) - 3))
+            & (frame["_year"] <= int(season))
+            & (frame["_competition"] == competition)
+        ].copy()
+        if "league_key" in frame.columns and "league_key" in scoped_player_rows.columns:
+            keys = {
+                str(value).strip()
+                for value in scoped_player_rows["league_key"].dropna().tolist()
+                if str(value).strip()
+            }
+            if keys:
+                frame = frame[frame["league_key"].astype(str).str.strip().isin(keys)].copy()
+        frame = frame[
+            [
+                (int(year), int(team_id)) in contexts
+                if year is not None and team_id is not None else False
+                for year, team_id in zip(frame["_year"], frame["_team_id"])
+            ]
+        ].copy()
+        if frame.empty:
+            return {**empty_result, "reason": "No lineup stints match the player's observed team-season contexts."}
+
+        def lineup_ids(value: Any) -> set[int]:
+            if isinstance(value, (list, tuple, set)):
+                raw_values = value
+            elif value is None or (isinstance(value, float) and math.isnan(value)):
+                return set()
+            else:
+                raw_values = str(value).strip().strip("[](){}").replace(" ", "").split(",")
+            found = set()
+            for raw in raw_values:
+                parsed = _to_int(raw)
+                if parsed is not None:
+                    found.add(int(parsed))
+            return found
+
+        frame["_has_player"] = frame["player_ids"].map(
+            lambda value: int(player_id) in lineup_ids(value)
+        )
+        frame["_possessions"] = pd.to_numeric(frame["possessions"], errors="coerce")
+        frame["_net_rtg"] = pd.to_numeric(frame["net_rtg"], errors="coerce")
+        frame = frame[
+            frame["_possessions"].gt(0)
+            & frame["_net_rtg"].map(lambda value: math.isfinite(_finite(value, np.nan)))
+        ].copy()
+        if frame.empty:
+            return {**empty_result, "reason": "Matching lineup stints have no valid possessions and Net Rating."}
+
+        def summarize(group: pd.DataFrame) -> tuple[float | None, float]:
+            possessions = float(group["_possessions"].sum()) if not group.empty else 0.0
+            if possessions <= 0:
+                return None, 0.0
+            weighted = float((group["_net_rtg"] * group["_possessions"]).sum() / possessions)
+            return weighted, possessions
+
+        by_season = []
+        for (year, team_id), context in frame.groupby(["_year", "_team_id"], dropna=True):
+            with_player = context[context["_has_player"]]
+            without_player = context[~context["_has_player"]]
+            with_net, with_possessions = summarize(with_player)
+            without_net, without_possessions = summarize(without_player)
+            if with_net is None or without_net is None:
+                continue
+            by_season.append({
+                "season": int(year),
+                "team": self._team_name(int(team_id)),
+                "net_rating_with_player": round(with_net, 3),
+                "net_rating_without_player": round(without_net, 3),
+                "difference": round(with_net - without_net, 3),
+                "player_lineup_possessions": round(with_possessions, 2),
+                "other_lineup_possessions": round(without_possessions, 2),
+                "lineups_with_player": int(len(with_player)),
+                "lineups_without_player": int(len(without_player)),
+            })
+        if not by_season:
+            return {
+                **empty_result,
+                "status": "insufficient_evidence",
+                "reason": "The same-team-season data does not contain valid lineup samples both with and without the player.",
+            }
+
+        with_possessions = sum(row["player_lineup_possessions"] for row in by_season)
+        without_possessions = sum(row["other_lineup_possessions"] for row in by_season)
+        with_net, _ = summarize(frame[frame["_has_player"]])
+        without_net, _ = summarize(frame[~frame["_has_player"]])
+        adequately_supported = (
+            len(by_season) >= 2
+            and with_possessions >= 100
+            and without_possessions >= 100
+        )
+        return {
+            **empty_result,
+            "status": "exploratory_observational_association" if adequately_supported else "insufficient_evidence",
+            "reason": None if adequately_supported else (
+                "Reliable summary requires at least two matched seasons and at least 100 possessions "
+                "in both lineup groups; the per-season observations are shown without a pooled conclusion."
+            ),
+            "seasons_compared": len(by_season),
+            "player_lineup_possessions": round(with_possessions, 2),
+            "other_lineup_possessions": round(without_possessions, 2),
+            "net_rating_with_player": round(with_net, 3) if adequately_supported and with_net is not None else None,
+            "net_rating_without_player": round(without_net, 3) if adequately_supported and without_net is not None else None,
+            "difference": round(with_net - without_net, 3) if adequately_supported and with_net is not None and without_net is not None else None,
+            "by_season": sorted(by_season, key=lambda row: row["season"]),
+        }
+
     def _causal_team_effect(self, spec, players, teams, source_league, target_league):
         """Measure BB-Rating association with team context; do not claim causality."""
         del teams, target_league
@@ -1084,6 +1261,10 @@ class ChatScenarioEngine:
                 })
             previous = row
 
+        lineup_context_association = self._team_lineup_context_association(
+            player_id, player_rows, season, competition, source_league
+        )
+
         latest = history.iloc[-1]
         if correlation is None:
             association_label = "insufficient_evidence"
@@ -1098,6 +1279,7 @@ class ChatScenarioEngine:
             "L'associazione è calcolata sul BB-Rating canonico 1-100; non misura un effetto causale della squadra.",
             "Il confronto aggiustato è esplorativo e controlla andamento temporale, minuti, utilizzo e ruolo osservato soltanto quando i dati consentono una stima stabile.",
             "Compagni, quintetti, allenatore, infortuni, calendario, cambi di lega e selezione del campione possono ancora confondere l'associazione.",
+            "Il confronto tra lineup con e senza il giocatore misura il Net Rating di squadra osservato nei quintetti, non il BB-Rating del giocatore né il suo contributo causale.",
             "L'effetto causale resta non identificato senza un controfattuale difendibile e un controllo esplicito dei confondenti.",
         ]
         if len(switches) < 2:
@@ -1141,12 +1323,21 @@ class ChatScenarioEngine:
                     "role": str(latest["role"]),
                 },
                 "team_switches": switches[-8:],
+                "lineup_context_association": lineup_context_association,
                 "observations": int(len(history)),
                 "excluded_seasons_without_canonical_bb_rating": sorted(set(unavailable_bb_rating_seasons)),
             },
             "evidence": [
                 {"type": "within_player_team_seasons", "count": int(len(history))},
                 {"type": "observed_team_switches", "count": int(len(switches))},
+                {
+                    "type": "team_lineup_possessions_with_player",
+                    "count": lineup_context_association.get("player_lineup_possessions", 0.0),
+                },
+                {
+                    "type": "team_lineup_possessions_without_player",
+                    "count": lineup_context_association.get("other_lineup_possessions", 0.0),
+                },
             ],
             "support": {
                 "method": "within_player_observational_bb_rating_team_context",
