@@ -491,4 +491,3 @@ input:focus,select:focus,textarea:focus{border-color:#4e7fc5!important;box-shado
 .nav-icon svg{display:inline-block;vertical-align:-3px}
 .dashboard-v2 .dashboard-section-eyebrow{display:flex;align-items:center;gap:5px}
 .dashboard-v2 .dashboard-section-eyebrow i{font-size:11px;line-height:1;color:#83bcff}
-.dashboard-v2 .dashboard-section-eyebrow svg{display:inline-block;width:12px;height:12px;flex:0 0 auto;vertical-align:middle;color:#83bcff}
