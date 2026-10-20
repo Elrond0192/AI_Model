@@ -12,7 +12,9 @@ Future Performance model.
 
 The registry is exposed at:
 
-`GET /api/v2/player-intelligence/capabilities`
+`GET /api/v2/player-intelligence/capabilities` (metadata contract v1.1).
+
+For attribution capabilities, the registry includes `required_data`, `optional_data` and `minimum_evidence`. These describe source dependencies and numeric support gates; they do not claim that a source is populated in every requested league/season. Runtime responses must still report `unavailable` or `insufficient_evidence` when the requested context lacks data.
 
 ## Implemented analysis layers
 
