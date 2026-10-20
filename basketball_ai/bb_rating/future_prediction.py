@@ -786,10 +786,15 @@ class BBRatingFuturePredictionModel:
         oof["calibrated_bb_rating"] = np.clip(nested_policy_predictions, 1, 100)
         self.calibrator = BBRatingScenarioCalibrator(min_samples=40)
         oof["target_league_id"] = oof["target_league"].astype(str)
-        self.calibrator.fit(oof)
+        calibration_support_report = self.calibrator.fit(oof)
         residual = oof["observed_bb_rating"].to_numpy(float) - nested_policy_predictions
+        global_interval_support = _support_counts(oof)
         self.residual_intervals = {"global": {
             "n": int(len(residual)),
+            "unique_players": int(global_interval_support["unique_players"] or 0),
+            "unique_player_season_transitions": int(
+                global_interval_support["unique_player_season_transitions"] or 0
+            ),
             "low": float(np.quantile(residual, 0.10)),
             "high": float(np.quantile(residual, 0.90)),
         }}
@@ -964,6 +969,7 @@ class BBRatingFuturePredictionModel:
             "oof_samples": int(len(oof)),
             "training_support": _support_counts(records),
             "oof_support": _support_counts(oof),
+            "calibration_support": calibration_support_report,
             "duplicate_target_context_pairs": int(records.duplicated(
                 subset=["player_global_id", "target_season", "target_league", "target_competition"]
             ).sum()),
@@ -997,7 +1003,9 @@ class BBRatingFuturePredictionModel:
                 np.square(calibrated_oof - actual), weights=weighted_oof
             ))),
             "oof_baseline_mae": mae_baseline,
-            "oof_baseline_rmse": float(np.sqrt(mean_squared_error(actual, baseline))),
+            "oof_baseline_rmse": float(np.sqrt(np.average(
+                np.square(actual - baseline), weights=weighted_oof
+            ))),
             "promotion_gate_passed": promotion_gate_passed,
             "segment_regressions": segment_regressions,
             "under_supported_segments": under_supported_segments,
