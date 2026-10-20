@@ -842,26 +842,39 @@ class ChatScenarioEngine:
         }
 
     def _causal_team_effect(self, spec, players, teams, source_league, target_league):
-        """Estimate team-context association without claiming causal identification.
-
-        The question is intentionally answered as an observational attribution:
-        we compare a player's own rating across team-season observations and
-        quantify whether changes in team context move with changes in the player's
-        observed rating. A causal effect is never produced by this method.
-        """
+        """Measure BB-Rating association with team context; do not claim causality."""
         del teams, target_league
         if not players:
             raise ValueError("player is required")
         if source_league is None:
             raise ValueError("league context is required")
+        if self.bb_rating_engine is None:
+            raise ValueError("Canonical BB-Rating history is unavailable for this analysis")
 
         season = int(spec["season"])
         competition = normalize_competition(spec["competition"])
-        player_rows = self._player_rows(players[0], source_league, competition, season)
+        player_id = _to_int(players[0])
+        player_rows = self._player_rows(player_id, source_league, competition, season)
         if player_rows.empty:
             raise ValueError("No player history is available for the requested team-effect context")
         if "team_id" not in player_rows.columns:
             raise ValueError("Player team history is unavailable for the requested context")
+
+        player_meta = (self.data.get("player_dict", {}) or {}).get(player_id, {})
+        global_id = str(player_meta.get("global_id", "")).strip() if isinstance(player_meta, dict) else ""
+        players_frame = self.data.get("players", pd.DataFrame())
+        if not global_id and isinstance(players_frame, pd.DataFrame) and not players_frame.empty:
+            if {"id", "global_id"}.issubset(players_frame.columns):
+                identity_row = players_frame[players_frame["id"].map(_to_int) == player_id]
+                if not identity_row.empty:
+                    global_id = str(identity_row.iloc[0].get("global_id", "")).strip()
+        if not global_id and "global_id" in player_rows.columns:
+            ids = player_rows["global_id"].dropna().astype(str).str.strip()
+            ids = ids[ids != ""]
+            if not ids.empty:
+                global_id = ids.iloc[0]
+        if not global_id:
+            raise ValueError("Canonical player identity is unavailable for BB-Rating history")
 
         team_stats = self.data.get("team_season_stats", pd.DataFrame()).copy()
         if team_stats.empty or "team_id" not in team_stats.columns:
@@ -884,6 +897,7 @@ class ChatScenarioEngine:
             "pace",
         )
         records = []
+        unavailable_bb_rating_seasons = []
         for row in player_rows.to_dict("records"):
             year = int(row["_year"])
             team_id = _to_int(row.get("team_id"))
@@ -900,9 +914,9 @@ class ChatScenarioEngine:
             if all(not math.isfinite(value) for value in values.values()):
                 continue
 
-            # Convert team context to within-league-year percentiles. Offensive
-            # efficiency, creation and spacing are positive; defensive rating is
-            # inverted; pace is treated as a style dimension around league median.
+            # Relative team style/performance index, measured among teams in the
+            # same league and season. It is an association feature, not a causal
+            # estimate and not an estimate of the effect of acquiring this player.
             peers = team_stats[team_stats["_year"] == year]
 
             def pct(metric, value):
@@ -919,40 +933,148 @@ class ChatScenarioEngine:
             pace_fit = 0.5
             if not pace_values.empty and math.isfinite(values["pace"]):
                 scale = float(pace_values.std(ddof=0)) or 1.0
-                pace_fit = float(np.clip(1.0 - abs(values["pace"] - float(pace_values.median())) / (2.0 * scale), 0.0, 1.0))
+                pace_fit = float(np.clip(
+                    1.0 - abs(values["pace"] - float(pace_values.median())) / (2.0 * scale),
+                    0.0, 1.0,
+                ))
             context_score = float(np.clip(
                 offense * 0.30 + defense * 0.30 + creation * 0.15 + spacing * 0.15 + pace_fit * 0.10,
                 0.0, 1.0,
             ))
-            rating = _finite(row.get("rating"), np.nan)
-            if math.isfinite(rating):
-                records.append({
-                    "season": year,
-                    "team_id": team_id,
-                    "team": self._team_name(team_id),
-                    "rating": rating,
-                    "team_context_score": context_score,
-                })
+
+            # Never use the native source-statistics "rating" here. Every
+            # player outcome in this analysis must come from the canonical
+            # contextual BB-Rating engine on its public 1-100 scale.
+            bb_rating = self._bb_rating_for_season(
+                global_id, source_league, year, competition
+            )
+            if bb_rating is None:
+                unavailable_bb_rating_seasons.append(year)
+                continue
+
+            minutes = _finite(row.get("minutes_per_game"), np.nan)
+            usage = _ratio(row.get("usg_pct"), np.nan)
+            role_value = (
+                row.get("ruolo_combinato")
+                or row.get("role")
+                or row.get("position")
+                or (player_meta.get("position") if isinstance(player_meta, dict) else None)
+                or "unknown"
+            )
+            role = str(role_value).strip() or "unknown"
+            records.append({
+                "season": year,
+                "team_id": team_id,
+                "team": self._team_name(team_id),
+                "bb_rating": int(bb_rating),
+                "team_context_score": context_score,
+                "minutes_per_game": minutes if math.isfinite(minutes) else np.nan,
+                "usg_pct": usage if math.isfinite(usage) else np.nan,
+                "role": role,
+            })
 
         if not records:
-            raise ValueError("Team context is unavailable for the player's observed history")
+            raise ValueError(
+                "Canonical BB-Rating and matching team context are unavailable for the player's observed history"
+            )
 
         history = pd.DataFrame(records).sort_values(["season", "team_id"]).reset_index(drop=True)
         correlation = None
-        if len(history) >= 3 and history["rating"].nunique() >= 2 and history["team_context_score"].nunique() >= 2:
-            correlation = float(history["rating"].corr(history["team_context_score"]))
+        if (
+            len(history) >= 3
+            and history["bb_rating"].nunique() >= 2
+            and history["team_context_score"].nunique() >= 2
+        ):
+            correlation = float(history["bb_rating"].corr(history["team_context_score"]))
+
+        # Exploratory partial association: remove the linear association of
+        # season, minutes, usage and observed role from both BB-Rating and team
+        # context. Do not return a coefficient when the available history cannot
+        # support this adjustment (too few observations or a degenerate residual).
+        control_columns = ["season", "minutes_per_game", "usg_pct"]
+        adjusted_history = history.dropna(
+            subset=["bb_rating", "team_context_score", "minutes_per_game", "usg_pct"]
+        ).copy()
+        adjusted_association = {
+            "status": "insufficient_history",
+            "label": "insufficient_evidence",
+            "partial_correlation": None,
+            "observations": int(len(adjusted_history)),
+            "controls": ["season trend", "minutes per game", "usage", "observed role"],
+        }
+        if len(adjusted_history) >= 6:
+            role_dummies = pd.get_dummies(
+                adjusted_history["role"].fillna("unknown").astype(str),
+                prefix="role",
+                drop_first=True,
+                dtype=float,
+            )
+            numeric_controls = adjusted_history[control_columns].astype(float).copy()
+            numeric_controls["season"] = (
+                numeric_controls["season"] - float(numeric_controls["season"].mean())
+            )
+            control_frame = pd.concat(
+                [numeric_controls.reset_index(drop=True), role_dummies.reset_index(drop=True)],
+                axis=1,
+            )
+            design = np.column_stack([
+                np.ones(len(control_frame)),
+                control_frame.to_numpy(dtype=float),
+            ])
+            if len(adjusted_history) >= max(8, design.shape[1] + 3):
+                bb_values = adjusted_history["bb_rating"].to_numpy(dtype=float)
+                context_values = adjusted_history["team_context_score"].to_numpy(dtype=float)
+                bb_residual = bb_values - design @ np.linalg.lstsq(design, bb_values, rcond=None)[0]
+                context_residual = context_values - design @ np.linalg.lstsq(design, context_values, rcond=None)[0]
+                if np.std(bb_residual) > 1e-9 and np.std(context_residual) > 1e-9:
+                    partial_corr = float(np.corrcoef(bb_residual, context_residual)[0, 1])
+                    adjusted_label = (
+                        "positive_association" if partial_corr >= 0.35
+                        else "negative_association" if partial_corr <= -0.35
+                        else "weak_or_mixed_association"
+                    )
+                    adjusted_association.update({
+                        "status": "exploratory_adjusted_association",
+                        "label": adjusted_label,
+                        "partial_correlation": round(partial_corr, 3),
+                    })
+                else:
+                    adjusted_association["status"] = "degenerate_residual"
+                    adjusted_association["label"] = "insufficient_evidence"
 
         switches = []
         previous = None
         for row in history.sort_values("season").to_dict("records"):
             if previous is not None and row["team_id"] != previous["team_id"]:
+                minutes_before = previous.get("minutes_per_game")
+                minutes_after = row.get("minutes_per_game")
+                usage_before = previous.get("usg_pct")
+                usage_after = row.get("usg_pct")
+                role_before, role_after = previous.get("role"), row.get("role")
                 switches.append({
-                    "from_season": previous["season"],
-                    "to_season": row["season"],
-                    "from_team": previous["team"],
-                    "to_team": row["team"],
-                    "rating_change": round(row["rating"] - previous["rating"], 3),
-                    "team_context_change": round(row["team_context_score"] - previous["team_context_score"], 3),
+                    "from_season": int(previous["season"]),
+                    "to_season": int(row["season"]),
+                    "from_team": str(previous["team"]),
+                    "to_team": str(row["team"]),
+                    "bb_rating_change": int(row["bb_rating"]) - int(previous["bb_rating"]),
+                    "team_context_change": round(
+                        float(row["team_context_score"]) - float(previous["team_context_score"]), 4
+                    ),
+                    "minutes_per_game_change": (
+                        round(float(minutes_after) - float(minutes_before), 2)
+                        if math.isfinite(_finite(minutes_before, np.nan))
+                        and math.isfinite(_finite(minutes_after, np.nan)
+                        else None
+                    ),
+                    "usage_change_percentage_points": (
+                        round((float(usage_after) - float(usage_before)) * 100.0, 2)
+                        if math.isfinite(_finite(usage_before, np.nan))
+                        and math.isfinite(_finite(usage_after, np.nan))
+                        else None
+                    ),
+                    "role_before": role_before,
+                    "role_after": role_after,
+                    "role_changed": role_before != role_after,
                 })
             previous = row
 
@@ -967,12 +1089,21 @@ class ChatScenarioEngine:
             association_label = "weak_or_mixed_association"
 
         limitations = [
-            "Questa analisi misura un'associazione osservata, non un effetto causale della squadra sul giocatore.",
-            "Il contesto squadra può essere confuso con ruolo, compagni, allenatore, infortuni, calendario e selezione del campione.",
-            "L'identificazione causale resta non disponibile senza un controfattuale e un controllo esplicito dei confondenti.",
+            "L'associazione è calcolata sul BB-Rating canonico 1-100; non misura un effetto causale della squadra.",
+            "Il confronto aggiustato è esplorativo e controlla andamento temporale, minuti, utilizzo e ruolo osservato soltanto quando i dati consentono una stima stabile.",
+            "Compagni, quintetti, allenatore, infortuni, calendario, cambi di lega e selezione del campione possono ancora confondere l'associazione.",
+            "L'effetto causale resta non identificato senza un controfattuale difendibile e un controllo esplicito dei confondenti.",
         ]
         if len(switches) < 2:
-            limitations.append("Ci sono pochi cambi di squadra osservati per separare meglio l'effetto del contesto dalla variabilità individuale.")
+            limitations.append(
+                "Ci sono pochi cambi di squadra osservati per distinguere con affidabilità il contesto dalla variabilità individuale."
+            )
+        if unavailable_bb_rating_seasons:
+            limitations.append(
+                "BB-Rating canonico non disponibile per alcune stagioni: "
+                + ", ".join(str(year) for year in sorted(set(unavailable_bb_rating_seasons)))
+                + ". Queste stagioni sono state escluse, senza ripiegare sul rating statistico sorgente."
+            )
 
         return {
             "result": {
@@ -984,23 +1115,35 @@ class ChatScenarioEngine:
                 "causal_effect": None,
                 "association": {
                     "label": association_label,
-                    "rating_vs_team_context_correlation": round(correlation, 3) if correlation is not None else None,
+                    "bb_rating_vs_team_context_correlation": round(correlation, 3) if correlation is not None else None,
+                    "observations": int(len(history)),
+                    "adjusted": adjusted_association,
                 },
                 "current_context": {
                     "team": str(latest["team"]),
                     "season": int(latest["season"]),
-                    "rating": round(float(latest["rating"]), 3),
-                    "team_context_score": round(float(latest["team_context_score"]), 3),
+                    "bb_rating": int(latest["bb_rating"]),
+                    "team_context_score": round(float(latest["team_context_score"]), 4),
+                    "minutes_per_game": (
+                        round(float(latest["minutes_per_game"]), 2)
+                        if math.isfinite(_finite(latest.get("minutes_per_game"), np.nan)) else None
+                    ),
+                    "usg_pct": (
+                        round(float(latest["usg_pct"]) * 100.0, 2)
+                        if math.isfinite(_finite(latest.get("usg_pct"), np.nan)) else None
+                    ),
+                    "role": str(latest["role"]),
                 },
                 "team_switches": switches[-8:],
                 "observations": int(len(history)),
+                "excluded_seasons_without_canonical_bb_rating": sorted(set(unavailable_bb_rating_seasons)),
             },
             "evidence": [
                 {"type": "within_player_team_seasons", "count": int(len(history))},
                 {"type": "observed_team_switches", "count": int(len(switches))},
             ],
             "support": {
-                "method": "within_player_observational_team_context",
+                "method": "within_player_observational_bb_rating_team_context",
                 "samples": int(len(history)),
                 "confidence": _confidence(len(history)),
             },
