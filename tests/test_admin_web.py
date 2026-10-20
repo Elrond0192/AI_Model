@@ -392,15 +392,16 @@ def test_helpers_and_static_assets(monkeypatch, tmp_path):
     system_health_label_start = html.index('<div class="eyebrow dashboard-section-eyebrow"><i class="ph ph-heartbeat"')
     system_health_label_end = html.index("</div>", system_health_label_start)
     assert "SYSTEM HEALTH" in html[system_health_label_start:system_health_label_end]
-    future_marker = html.index("FUTURE PERFORMANCE", html.index("dashboard-bottom-cards"))
-    future_label_start = html.rfind('<div class="eyebrow dashboard-section-eyebrow">', 0, future_marker)
-    future_label_end = html.index("</div>", future_marker)
+    future_label_start = html.index('<div class="eyebrow">FUTURE PERFORMANCE</div>', html.index("dashboard-bottom-cards"))
+    future_label_end = html.index("</div>", future_label_start)
     future_label = html[future_label_start:future_label_end]
-    assert '<svg viewBox="0 0 24 24"' in future_label
+    assert "<svg" not in future_label
+    assert "<i " not in future_label
     assert "Forecast statistico" in html[future_label_end:future_label_end + 80]
     assert "future-performance-overview-icon" not in html
-    assert ".dashboard-section-eyebrow svg" in css
-    assert 'href="/assets/app.css?v=2.6.4"' in html
+    assert ".dashboard-v2 .dashboard-section-eyebrow i" in css
+    assert ".dashboard-v2 .dashboard-section-eyebrow svg" not in css
+    assert 'href="/assets/app.css?v=2.6.5"' in html
     # Phosphor files live under STATIC_ROOT/assets/phosphor, while STATIC_ROOT is mounted at /assets.
     assert 'href="/assets/assets/phosphor/regular/style.css"' in html
     assert 'href="/assets/assets/phosphor/fill/style.css"' in html
