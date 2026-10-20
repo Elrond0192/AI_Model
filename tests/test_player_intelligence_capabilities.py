@@ -59,5 +59,5 @@ def test_registry_is_metadata_only():
     assert capability is not None
     assert capability.status == "available"
     assert capability.analyses == ("player_team", "model_evidence")
-    assert capability.limitation and "non un effetto causale" in capability.limitation
+    assert capability.limitation and "effetto causale certo" in capability.limitation
     assert "squadra target esplicita" in capability.limitation
