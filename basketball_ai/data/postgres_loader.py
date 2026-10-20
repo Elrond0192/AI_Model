@@ -572,7 +572,14 @@ def load_scenario_feeds(
             f'SELECT {columns} FROM "{schema}"."{view}" WHERE '
             + " AND ".join(predicates)
         )
-        return pd.read_sql(statement, engine, params=params)
+        try:
+            return pd.read_sql(statement, engine, params=params)
+        except Exception:
+            # These feeds are explicitly optional. Missing tables/columns or a
+            # runtime role without SELECT should degrade this evidence layer to
+            # unavailable, not fail the entire Player Intelligence response.
+            # The caller must retain an explicit unavailable/insufficient status.
+            return pd.DataFrame(columns=_OPTIONAL_COLUMNS[feed])
 
     engine = get_engine(url)
     try:
