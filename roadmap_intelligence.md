@@ -123,8 +123,9 @@ Per le stagioni storiche, ripetere la chiamata per ogni anno per cui sono presen
 
 - La pipeline PostgreSQL esegue un fixture con `Analisi.AdvancedStats_Clutch_ITA1` e `Pbp.ITA1` e richiama `RefreshContextSeasonal(2025)`.
 - Il controllo end-to-end verifica il trasferimento dei campi clutch verso `PlayerCompetitionStats`, il conteggio PBP, la presenza di righe Simulation per eventi/lineup/shot e il popolamento delle tabelle `ScenarioLineupStats`, `ScenarioShotProfiles` e `ScenarioDefenderMatchups`.
-- Al commit `f5ec39e8c5b45f1f058a31229d58b169a7c47fe9`, la verifica PostgreSQL e il test suite Python 3.11 risultano superati; il test Python 3.12 è ancora in esecuzione nell'ultima lettura dello stato CI.
-- Questi sono test con database e dati sintetici, non una verifica dei conteggi nel database di produzione. La SQL di produzione e i refresh live restano da applicare ed eseguire.
+- Al commit `f5ec39e8c5b45f1f058a31229d58b169a7c47fe9`, la verifica PostgreSQL end-to-end, i test Python 3.11/3.12, lint e security audit risultano superati. Il build Docker era ancora in esecuzione nell'ultima lettura.
+- Il test PostgreSQL usa dati sintetici, ma verifica realmente il join clutch, `RefreshContextSeasonal(2025)`, lo stato per lega/stagione e il popolamento delle tabelle `Scenario*`. Non sostituisce una verifica dei conteggi nel database di produzione.
+- La SQL di produzione e i refresh live restano da applicare ed eseguire.
 
 ## Verifiche e limiti da non dimenticare
 
