@@ -77,7 +77,7 @@ before being presented as directly measured.
 ## Source refresh and interpretation limits
 
 `AI_Source.RefreshSimulationSources(league_key, season)` reads
-`Pbp.{LEAGUE}_{SEASON}`, canonical player/team identity mappings and, when
+`Pbp.{LEAGUE}` filtered by `Season`, canonical player/team identity mappings and, when
 available, `Analisi.AdvancedStats_Lineups_Quarter_{LEAGUE}`. The seasonal refresh
 calls it before producing `Scenario*` tables. Inspect
 `AI_Source.SimulationSourceRefreshState` to distinguish `available`,
