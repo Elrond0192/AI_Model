@@ -14,17 +14,19 @@ The native statistical rating (0-10) is not a BB-Rating label and is never the t
 
 The model uses an expanding walk-forward evaluation by target season. Each fold trains only on target seasons earlier than its test season. Calibration for OOF evaluation is itself temporal: a target-season fold can use only calibration rows from earlier OOF target seasons. The final serving calibrator is then fit on the complete OOF record set.
 
-## Scenario coverage
+## Scenario coverage and pairing rules
 
-The model stores and evaluates source and destination league, team, competition/phase, and competition tier. It distinguishes:
-- same team, league and competition;
-- team change within the same league and competition;
-- league change, with or without team change;
-- regular-season ↔ playoff ↔ cup/other competition changes, including combined team/league/phase changes;
-- promotion/tier-up, relegation/tier-down and same-tier league transfers when authoritative tier metadata exists;
-- unknown or missing context, which uses explicit calibration fallback rather than guessing a same-team transfer.
+The model stores source and destination league, resolved team identity, target statistical context and competition tier. Codes such as `HOME`, `AWAY`, `RS`, `TOT`, `PO` and `FINAL` can represent statistical views/phases; they are not treated as an independent competition identifier. Without an authoritative competition ID separate from these codes, the model does not infer a competition change from their text.
 
-Scenario calibration first attempts destination league + scenario, then scenario-only, then global. Sparse groups are not fitted. Returned predictions expose the selected calibration level and sample count.
+Training constructs at most one record for each player + target season + destination league + target context. A source row must have the same statistical-context code as the target row. If the destination league also exists in the source season, that source row is preferred; otherwise a single deterministic source context is selected by usage (games, minutes, then league key). This avoids the many-to-many cross-product and repeated weighting of one target context against multiple source contexts.
+
+Scenarios describe only what the available identity data can support:
+- same resolved team and league;
+- team change within a league, only when both team global IDs resolve;
+- league change, with or without team change, split by authoritative tier direction when available;
+- unknown/uncertain when either team identity is unresolved, which uses the safe fallback rather than interpreting local IDs as stable identities.
+
+Scenario calibration first attempts destination league + scenario, then scenario-only, then global. Cohort calibration requires at least 40 distinct players when canonical player IDs are available (40 rows is not sufficient); reports also expose rows evaluated, players, player-season transitions and unique target contexts. MAE/RMSE and training/calibration weights balance each player-season across its target contexts. Returned metadata keeps row volume separate from effective support.
 
 ## Baselines and release gate
 
@@ -32,7 +34,7 @@ The walk-forward report includes MAE, RMSE, bias and calibration error overall a
 - source BB-Rating persistence when source and destination league/competition contexts match;
 - otherwise the destination league + competition historical mean from the training fold, falling back to destination league mean and then the fold-wide mean.
 
-The CLI does not save a candidate unless calibrated walk-forward MAE beats this baseline overall and no supported scenario/destination cohort (at least 40 OOF rows) regresses by more than 10% plus 0.25 BB-Rating points. This is a minimum gate, not proof that every scenario is reliable. Before promoting a release, inspect per-scenario/per-league sample sizes and metrics, especially combined transfers, new leagues, playoffs/cups and tier changes. Under-supported cohorts must remain clearly labelled and must not be treated as equally reliable.
+The CLI does not save a candidate unless the player-season-balanced walk-forward MAE beats this baseline overall, at least three OOF target seasons are available, and no supported scenario/destination cohort (at least 40 distinct players) regresses by more than 10% plus 0.25 BB-Rating points. The 40-player threshold is unchanged; it is now measured on independent player identities instead of raw rows. This is a minimum gate, not proof that every scenario is reliable. Before promoting a release, inspect per-scenario/per-league row counts, unique players, player-season transitions, unique target contexts and metrics. Under-supported cohorts remain clearly labelled and do not count as adequately validated.
 
 ## Train a candidate
 
