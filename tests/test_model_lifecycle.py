@@ -145,6 +145,57 @@ def test_bb_rating_prediction_candidate_requires_oof_gate_and_can_promote(tmp_pa
     assert not candidate.exists()
 
 
+def test_context_compatible_prediction_candidate_requires_distinct_oof_players(tmp_path: Path):
+    candidate = tmp_path / "candidates" / "bb-rating-prediction" / "candidate-context-v3"
+    _bb_rating_prediction_artifact(candidate)
+    metadata_path = candidate / "metadata.json"
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    metadata["model_version"] = "1.2.0"
+    metadata["feature_version"] = "bb-rating-direct-target-v3-context-compatible"
+    metadata["oof_support"] = {
+        "rows_evaluated": 600,
+        "unique_players": 9,
+        "unique_player_season_transitions": 45,
+        "unique_target_contexts": 600,
+        "rows_per_target_context": 1.0,
+    }
+    metadata["training_support"] = metadata["oof_support"]
+    metadata["calibration_support"] = metadata["oof_support"]
+    metadata["duplicate_target_context_pairs"] = 0
+    metadata["minimum_oof_unique_players"] = 40
+    metadata["unresolved_team_identity_rows"] = 120
+    metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+
+    result = validate_artifact("bb-rating-prediction", candidate)
+
+    assert result["valid"] is False
+    assert "distinct OOF players" in result["reason"]
+
+
+def test_context_compatible_prediction_candidate_rejects_duplicate_target_contexts(tmp_path: Path):
+    candidate = tmp_path / "candidates" / "bb-rating-prediction" / "candidate-duplicate-targets"
+    _bb_rating_prediction_artifact(candidate)
+    metadata_path = candidate / "metadata.json"
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    metadata["model_version"] = "1.2.0"
+    metadata["feature_version"] = "bb-rating-direct-target-v3-context-compatible"
+    metadata["oof_support"] = {
+        "rows_evaluated": 600,
+        "unique_players": 100,
+        "unique_player_season_transitions": 500,
+        "unique_target_contexts": 599,
+        "rows_per_target_context": 1.002,
+    }
+    metadata["duplicate_target_context_pairs"] = 1
+    metadata["minimum_oof_unique_players"] = 40
+    metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+
+    result = validate_artifact("bb-rating-prediction", candidate)
+
+    assert result["valid"] is False
+    assert "duplicate target-context pairs" in result["reason"]
+
+
 def test_bb_rating_prediction_candidate_fails_without_baseline_gate(tmp_path: Path):
     candidate = tmp_path / "candidates" / "bb-rating-prediction" / "candidate-bad"
     _bb_rating_prediction_artifact(candidate)
