@@ -500,7 +500,7 @@ BEGIN
         clutch_ortg_expr := pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['clutchortg']);
         clutch_drtg_expr := pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['clutchdrtg']);
         clutch_team_id_expr := pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'text', ARRAY['clutchteamid']);
-        clutch_clutchness_rating_expr := pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'text', ARRAY['clutchclutchnessrating']);
+        clutch_clutchness_rating_expr := pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'text', ARRAY['clutchnessrating']);
 
         games_expr := pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['games', 'gamesplayed']);
         games_started_expr := pg_temp.ai_expr(r.table_schema, r.table_name, 's', 'numeric', ARRAY['gamesstarted', 'games_started', 'starts']);
@@ -782,7 +782,7 @@ BEGIN
             OR pg_temp.ai_find_column(r.table_schema, r.table_name, ARRAY['clutchortg']) IS NULL
             OR pg_temp.ai_find_column(r.table_schema, r.table_name, ARRAY['clutchdrtg']) IS NULL
             OR pg_temp.ai_find_column(r.table_schema, r.table_name, ARRAY['clutchteamid']) IS NULL
-            OR pg_temp.ai_find_column(r.table_schema, r.table_name, ARRAY['clutchclutchnessrating']) IS NULL
+            OR pg_temp.ai_find_column(r.table_schema, r.table_name, ARRAY['clutchnessrating']) IS NULL
         ) THEN
             opt_table := 'AdvancedStats_Clutch_' || league_key;
             IF EXISTS (
