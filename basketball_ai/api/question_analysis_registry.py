@@ -76,8 +76,8 @@ QUESTION_CAPABILITIES: tuple[QuestionCapability, ...] = (
         question="La squadra lo sta utilizzando bene?",
         status="available",
         analyses=("role_analysis", "performance_decomposition", "team_usage_analysis", "metric_explanation", "model_evidence"),
-        evidence=("team_style", "role", "compatibility", "performance_gap"),
-        limitation="Il fit descrive compatibilità; non dimostra un effetto causale dell'utilizzo.",
+        evidence=("team_style", "role_and_usage_changes", "team_context", "performance_decomposition"),
+        limitation="La valutazione richiede un contesto squadra-stagione risolvibile; descrive l'allineamento osservato e non dimostra che l'utilizzo abbia causato il rendimento.",
     ),
     QuestionCapability(
         key="stability",
@@ -107,7 +107,7 @@ QUESTION_CAPABILITIES: tuple[QuestionCapability, ...] = (
         status="available",
         analyses=("player_team", "model_evidence"),
         evidence=("team_fit", "what_if_prediction"),
-        limitation="La stima è uno scenario controfattuale modellato, non un effetto causale certo.",
+        limitation="Richiede una squadra target esplicita e un contesto storico valido per la stagione richiesta. Se la lega cambia, il player-team scenario usa la transizione storica cross-league; non è un effetto causale certo e non va interpretato come BB-Rating osservato.",
     ),
     QuestionCapability(
         key="performance_attribution",
