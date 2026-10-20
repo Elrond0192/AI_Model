@@ -26,13 +26,17 @@ def test_player_intelligence_capability_registry():
     assert by_key["current_role"]["status"] == "available"
     assert by_key["stability"]["status"] == "available"
     assert by_key["shot_profile"]["analyses"] == [
-        "performance_decomposition", "shooting_decomposition", "metric_explanation"
+        "performance_decomposition", "shooting_decomposition", "metric_explanation", "model_evidence"
     ]
     assert by_key["defensive_reason"]["analyses"] == [
-        "performance_decomposition", "role_analysis", "defensive_decomposition", "metric_explanation"
+        "performance_decomposition", "role_analysis", "defensive_decomposition", "metric_explanation", "model_evidence"
     ]
     assert by_key["regression_risk"]["status"] == "available"
     assert by_key["causal_team_effect"]["status"] == "partial"
+    assert by_key["team_usage"]["analyses"] == [
+        "role_analysis", "performance_decomposition", "team_usage_analysis",
+        "metric_explanation", "model_evidence",
+    ]
     assert "causal_identification" in by_key["causal_team_effect"]["missing_analyses"]
     assert "causal_teammate_effect_attribution" in by_key["causal_team_effect"]["missing_analyses"]
     assert "canonical_bb_rating_1_100" in by_key["causal_team_effect"]["evidence"]
@@ -54,6 +58,6 @@ def test_registry_is_metadata_only():
     capability = get_capability("team_counterfactual")
     assert capability is not None
     assert capability.status == "available"
-    assert "player_team" in capability.analyses
-    assert "league_transfer" in capability.analyses
+    assert capability.analyses == ("player_team", "model_evidence")
     assert capability.limitation and "non un effetto causale" in capability.limitation
+    assert "squadra target esplicita" in capability.limitation
