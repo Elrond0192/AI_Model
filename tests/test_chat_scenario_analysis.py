@@ -599,6 +599,21 @@ def test_causal_team_effect_uses_canonical_bb_rating_and_controls_role_minutes_u
     assert result["support"]["method"] == "within_player_observational_bb_rating_team_context"
     assert any("effetto causale" in item for item in result["limitations"])
 
+    # Missing optional lineup data must not suppress the core team/BB-Rating analysis.
+    result_without_lineups = ChatScenarioEngine(
+        SimpleNamespace(),
+        {**data, "lineup_stints": pd.DataFrame()},
+        bb_rating_engine=CanonicalBBRating(),
+    ).evaluate(
+        {"scenario": "causal_team_effect", "season": 2024, "competition": "RS"},
+        [1], [], 10, None,
+    )
+    absent_lineup = result_without_lineups["result"]["lineup_context_association"]
+    assert absent_lineup["status"] == "unavailable"
+    assert absent_lineup["is_causal"] is False
+    assert absent_lineup["teammate_associations"] == []
+    assert result_without_lineups["result"]["causal_effect"] is None
+
 
 def test_player_intelligence_composes_causal_team_effect_as_observational():
     result = _engine().evaluate(
