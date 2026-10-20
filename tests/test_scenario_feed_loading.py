@@ -137,4 +137,25 @@ def test_player_intelligence_attribution_loads_only_bounded_lineup_feed(monkeypa
     assert "league_key IN" in sql
     assert params["season_min"] == 2022
     assert params["season_max"] == 2025
-    assert not result["lineup_stints"].empty
+    assert list(result["lineup_stints"].columns) == list(loader._OPTIONAL_COLUMNS["lineup_stints"])
+
+
+
+def test_lineup_feed_scope_uses_recent_player_teams_in_requested_league():
+    from basketball_ai.api.routes.scenarios_v2 import _lineup_feed_scope
+
+    data = {
+        "player_stats": pd.DataFrame([
+            {"player_id": 11, "team_id": 101, "league_id": 10, "season": 2021, "competition": "RS"},
+            {"player_id": 11, "team_id": 102, "league_id": 10, "season": 2024, "competition": "RS"},
+            {"player_id": 11, "team_id": 103, "league_id": 10, "season": 2020, "competition": "RS"},
+            {"player_id": 11, "team_id": 201, "league_id": 20, "season": 2024, "competition": "RS"},
+            {"player_id": 12, "team_id": 301, "league_id": 10, "season": 2024, "competition": "RS"},
+            {"player_id": 11, "team_id": 401, "league_id": 10, "season": 2024, "competition": "PO"},
+        ])
+    }
+
+    scoped = _lineup_feed_scope(
+        data, [11], [999], source_league_id=10, season=2024, competition="RS"
+    )
+    assert scoped == [101, 102, 999]
