@@ -1063,7 +1063,7 @@ class ChatScenarioEngine:
                     "minutes_per_game_change": (
                         round(float(minutes_after) - float(minutes_before), 2)
                         if math.isfinite(_finite(minutes_before, np.nan))
-                        and math.isfinite(_finite(minutes_after, np.nan)
+                        and math.isfinite(_finite(minutes_after, np.nan))
                         else None
                     ),
                     "usage_change_percentage_points": (
