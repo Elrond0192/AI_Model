@@ -639,16 +639,30 @@ class ChatScenarioEngine:
 
         player_meta = self.data.get("player_dict", {}).get(_to_int(players[0]), {})
         global_id = str(player_meta.get("global_id", "")) if isinstance(player_meta, dict) else ""
-        previous_bb_rating = self._bb_rating_for_season(
+        previous_bb_rating_detail = self._bb_rating_detail_for_season(
             global_id, source_league, previous_year, competition
         )
-        current_bb_rating = self._bb_rating_for_season(
+        current_bb_rating_detail = self._bb_rating_detail_for_season(
             global_id, source_league, current_year, competition
+        )
+        previous_bb_rating = (
+            int(previous_bb_rating_detail["score"])
+            if isinstance(previous_bb_rating_detail, dict) else None
+        )
+        current_bb_rating = (
+            int(current_bb_rating_detail["score"])
+            if isinstance(current_bb_rating_detail, dict) else None
         )
         bb_rating_delta = (
             current_bb_rating - previous_bb_rating
             if previous_bb_rating is not None and current_bb_rating is not None
             else None
+        )
+        bb_rating_contribution_decomposition = _bb_rating_contribution_decomposition(
+            previous_bb_rating_detail,
+            current_bb_rating_detail,
+            previous_year,
+            current_year,
         )
 
         if abs(minutes_delta) > 1.5 and abs(points_delta) > 0:
@@ -709,6 +723,11 @@ class ChatScenarioEngine:
                 "previous_bb_rating": previous_bb_rating,
                 "current_bb_rating": current_bb_rating,
                 "bb_rating_delta": bb_rating_delta,
+                "bb_rating_contribution_decomposition": (
+                    bb_rating_contribution_decomposition
+                    if bb_rating_contribution_decomposition is not None
+                    else {"available": False}
+                ),
                 "interpretation": {
                     "volume": volume_interpretation,
                     "efficiency": efficiency_interpretation,
