@@ -1325,9 +1325,29 @@ class ChatScenarioEngine:
                 })
             previous = row
 
-        lineup_context_association = self._team_lineup_context_association(
-            player_id, player_rows, season, competition, source_league
-        )
+        try:
+            lineup_context_association = self._team_lineup_context_association(
+                player_id, player_rows, season, competition, source_league
+            )
+        except (ValueError, KeyError, TypeError, IndexError) as exc:
+            # Optional lineup evidence must never take down the core BB-Rating
+            # and team-context attribution answer when a source league is sparse
+            # or the optional feed has an unexpected schema.
+            lineup_context_association = {
+                "status": "unavailable",
+                "method": "within_team_season_lineup_presence_association",
+                "outcome": "observed_team_net_rating",
+                "is_causal": False,
+                "seasons_compared": 0,
+                "player_lineup_possessions": 0.0,
+                "other_lineup_possessions": 0.0,
+                "net_rating_with_player": None,
+                "net_rating_without_player": None,
+                "difference": None,
+                "by_season": [],
+                "teammate_associations": [],
+                "reason": f"Optional lineup evidence could not be evaluated: {str(exc)[:240]}",
+            }
 
         latest = history.iloc[-1]
         if correlation is None:
