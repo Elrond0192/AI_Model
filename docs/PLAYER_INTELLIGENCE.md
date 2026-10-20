@@ -31,7 +31,7 @@ For season-over-season comparisons, the public rating is always the canonical BB
 ## Still intentionally limited
 
 - **performance_attribution** combines season-over-season decomposition, role/usage changes, team-style alignment and observed team-context association. It is deliberately **partial**: it does not isolate individual teammate/lineup effects or prove causality.
-- **causal_team_effect** is now partially answerable: it measures the observed association between a player’s team context and his own rating across team-season observations, including team switches when available. The causal effect itself remains unavailable because explicit identification, confounder control and a defensible counterfactual design are still missing.
+- **causal_team_effect** is partially answerable: the outcome is the canonical observed BB-Rating (1–100), never the source-statistics rating. It measures association between team context and BB-Rating across player-season observations, reports BB-Rating changes at team switches, and shows changes in minutes, usage and role. When enough history exists, it also computes an exploratory partial correlation after controlling for season trend, minutes, usage and observed role; otherwise it marks the adjusted result as insufficient rather than fabricating one. The causal effect itself remains unavailable because teammate/lineup effects, remaining confounders and a defensible counterfactual design are not identified.
 - **potential_synthesis** does not replace the dedicated Prediction/Future Performance models.
 - **team_counterfactual** remains a fit/scenario estimate, not a causal statement.
 
