@@ -38,6 +38,7 @@ from basketball_ai.models.strict_production import (
 )
 from basketball_ai.scenarios.advanced_simulation_engine import AdvancedSimulationEngine
 from basketball_ai.scenarios.provenance import build_scenario_provenance
+from basketball_ai.scenarios.causal_attribution import estimate_team_switch_att
 
 _PLAYER_METRICS = (
     "rating", "games_played", "minutes_per_game", "points", "rebounds", "assists",
@@ -1165,6 +1166,142 @@ class ChatScenarioEngine:
             "by_season": sorted(by_season, key=lambda row: row["season"]),
             "teammate_associations": teammate_associations,
         }
+
+    def _build_team_switch_causal_panel(self, source_league, competition, through_season):
+        """Build one latest completed transition per canonical player identity.
+
+        The outcome is always the canonical BB-Rating, never the source rating.
+        Current-calendar-year seasons are conservatively excluded as potentially
+        in progress. Treatment is an observed team switch between adjacent
+        completed seasons; this is observational cohort evidence, not a
+        player-specific counterfactual.
+        """
+        frame = self.data.get("player_stats", pd.DataFrame()).copy()
+        empty = pd.DataFrame()
+        required = {"player_id", "season", "league_id", "competition", "team_id"}
+        if frame.empty or not required.issubset(frame.columns):
+            return empty
+        frame["_year"] = frame["season"].map(_year)
+        frame["_league_int"] = frame["league_id"].map(_to_int)
+        frame["_comp"] = frame["competition"].map(normalize_competition)
+        completed_cutoff = min(int(through_season), int(pd.Timestamp.utcnow().year) - 1)
+        frame = frame[
+            (frame["_league_int"] == _to_int(source_league))
+            & (frame["_comp"] == normalize_competition(competition))
+            & (frame["_year"] <= completed_cutoff)
+        ].copy()
+        if frame.empty:
+            return empty
+
+        players_frame = self.data.get("players", pd.DataFrame())
+        if isinstance(players_frame, pd.DataFrame) and {"id", "global_id"}.issubset(players_frame.columns):
+            canonical = players_frame[["id", "global_id", "birth_date", "age"] if "birth_date" in players_frame.columns and "age" in players_frame.columns else ["id", "global_id"]].copy()
+            canonical["id"] = canonical["id"].map(_to_int)
+            canonical["global_id"] = canonical["global_id"].fillna("").astype(str).str.strip()
+            canonical = canonical[(canonical["id"].notna()) & (canonical["global_id"] != "")].drop_duplicates("id", keep="last")
+            identity_map = canonical.set_index("id")["global_id"]
+            frame["_global_id"] = frame["player_id"].map(_to_int).map(identity_map)
+            meta_by_id = canonical.set_index("id").to_dict("index")
+        elif "global_id" in frame.columns:
+            frame["_global_id"] = frame["global_id"].fillna("").astype(str).str.strip()
+            meta_by_id = {}
+        else:
+            return empty
+        frame = frame[frame["_global_id"].fillna("").astype(str).str.strip() != ""].copy()
+        frame["_team_int"] = frame["team_id"].map(_to_int)
+        if frame.empty:
+            return empty
+
+        # Collapse legacy/canonical duplicate IDs and multi-row duplicates to one
+        # observed player-season, preferring the row with the greatest minutes.
+        if "minutes_per_game" in frame.columns:
+            frame["_minutes_sort"] = pd.to_numeric(frame["minutes_per_game"], errors="coerce").fillna(-1)
+            frame = frame.sort_values(["_global_id", "_year", "_minutes_sort"], kind="stable")
+        else:
+            frame = frame.sort_values(["_global_id", "_year"], kind="stable")
+        frame = frame.drop_duplicates(["_global_id", "_year"], keep="last")
+
+        team_stats = self.data.get("team_season_stats", pd.DataFrame()).copy()
+        if team_stats.empty or not {"team_id", "season", "league_id", "competition"}.issubset(team_stats.columns):
+            return empty
+        team_stats["_year"] = team_stats["season"].map(_year)
+        team_stats["_team_int"] = team_stats["team_id"].map(_to_int)
+        team_stats["_league_int"] = team_stats["league_id"].map(_to_int)
+        team_stats["_comp"] = team_stats["competition"].map(normalize_competition)
+        team_stats = team_stats[
+            (team_stats["_league_int"] == _to_int(source_league))
+            & (team_stats["_comp"] == normalize_competition(competition))
+            & (team_stats["_year"] <= completed_cutoff)
+        ].copy()
+
+        def team_strength(team_id, year):
+            candidates = team_stats[
+                (team_stats["_team_int"] == team_id) & (team_stats["_year"] == year)
+            ]
+            if candidates.empty:
+                return np.nan
+            team = candidates.iloc[-1]
+            net = _finite(team.get("net_rtg"), np.nan)
+            if math.isfinite(net):
+                return net
+            off = _finite(team.get("offensive_rating"), np.nan)
+            defense = _finite(team.get("defensive_rating"), np.nan)
+            return off - defense if math.isfinite(off) and math.isfinite(defense) else np.nan
+
+        def player_age(row, player_id, year):
+            direct = _finite(row.get("age"), np.nan)
+            if math.isfinite(direct) and 15 <= direct <= 60:
+                return direct
+            meta = meta_by_id.get(_to_int(player_id), {}) if isinstance(meta_by_id, dict) else {}
+            direct = _finite(meta.get("age"), np.nan) if isinstance(meta, dict) else np.nan
+            if math.isfinite(direct) and 15 <= direct <= 60:
+                return direct
+            birth = meta.get("birth_date") if isinstance(meta, dict) else None
+            try:
+                birth_year = pd.to_datetime(birth, errors="raise").year
+                age = float(year - birth_year)
+                return age if 15 <= age <= 60 else np.nan
+            except (TypeError, ValueError, OverflowError):
+                return np.nan
+
+        records = []
+        for global_id, group in frame.groupby("_global_id", sort=False):
+            group = group.sort_values("_year", kind="stable").reset_index(drop=True)
+            transitions = []
+            for idx in range(1, len(group)):
+                before = group.iloc[idx - 1]
+                after = group.iloc[idx]
+                year_before, year_after = int(before["_year"]), int(after["_year"])
+                if year_after != year_before + 1:
+                    continue
+                team_before, team_after = _to_int(before.get("_team_int")), _to_int(after.get("_team_int"))
+                if team_before is None or team_after is None:
+                    continue
+                bb_before = self._bb_rating_for_season(str(global_id), source_league, year_before, competition)
+                bb_after = self._bb_rating_for_season(str(global_id), source_league, year_after, competition)
+                if bb_before is None or bb_after is None:
+                    continue
+                minutes = _finite(before.get("minutes_per_game"), np.nan)
+                usage = _ratio(before.get("usg_pct"), np.nan)
+                records.append({
+                    "global_id": str(global_id),
+                    "transition_season": year_after,
+                    "treatment": int(team_before != team_after),
+                    "outcome": float(bb_after),
+                    "baseline_bb_rating": float(bb_before),
+                    "minutes_pre": minutes,
+                    "usage_pre": usage,
+                    "age_pre": player_age(before, _to_int(before.get("player_id")), year_before),
+                    "team_strength_pre": team_strength(team_before, year_before),
+                })
+                transitions.append(year_after)
+            # Keep one transition per canonical identity to avoid repeated-player
+            # pseudo-replication in the cohort estimator.
+        if not records:
+            return empty
+        panel = pd.DataFrame(records).sort_values(["global_id", "transition_season"], kind="stable")
+        panel = panel.drop_duplicates("global_id", keep="last").reset_index(drop=True)
+        return panel
 
     def _causal_team_effect(self, spec, players, teams, source_league, target_league):
         """Measure BB-Rating association with team context; do not claim causality."""
