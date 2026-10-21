@@ -10,6 +10,52 @@ CREATE TABLE IF NOT EXISTS "AI_Source"."TrainingPlayerCompetitionStats"
     AS SELECT * FROM "AI_Source"."PlayerCompetitionStats" WITH NO DATA;
 CREATE TABLE IF NOT EXISTS "AI_Source"."TrainingTeamCompetitionStats"
     AS SELECT * FROM "AI_Source"."TeamCompetitionStats" WITH NO DATA;
+
+-- CREATE TABLE IF NOT EXISTS does not evolve an existing physical table when
+-- ai_source_full.sql adds columns to the canonical views. Add newly projected
+-- columns while preserving the already refreshed historical partitions.
+DO $sync_training_serving_columns$
+DECLARE
+    relation_map record;
+    source_column record;
+BEGIN
+    FOR relation_map IN
+        SELECT *
+          FROM (VALUES
+              ('TrainingPlayerCompetitionStats', 'PlayerCompetitionStats'),
+              ('TrainingTeamCompetitionStats', 'TeamCompetitionStats')
+          ) AS source_pairs(target_table, source_relation)
+    LOOP
+        FOR source_column IN
+            SELECT source.attname,
+                   format_type(source.atttypid, source.atttypmod) AS column_type
+              FROM pg_catalog.pg_attribute source
+             WHERE source.attrelid = to_regclass(
+                       format('%I.%I', 'AI_Source', relation_map.source_relation)
+                   )
+               AND source.attnum > 0
+               AND NOT source.attisdropped
+               AND NOT EXISTS (
+                   SELECT 1
+                     FROM pg_catalog.pg_attribute target
+                    WHERE target.attrelid = to_regclass(
+                              format('%I.%I', 'AI_Source', relation_map.target_table)
+                          )
+                      AND target.attname = source.attname
+                      AND target.attnum > 0
+                      AND NOT target.attisdropped
+               )
+             ORDER BY source.attnum
+        LOOP
+            EXECUTE format(
+                'ALTER TABLE %I.%I ADD COLUMN %I %s',
+                'AI_Source', relation_map.target_table,
+                source_column.attname, source_column.column_type
+            );
+        END LOOP;
+    END LOOP;
+END;
+$sync_training_serving_columns$;
 CREATE UNIQUE INDEX IF NOT EXISTS ux_training_player_context
     ON "AI_Source"."TrainingPlayerCompetitionStats"
        (player_id, league_id, season, competition);
@@ -970,29 +1016,73 @@ CREATE OR REPLACE PROCEDURE "AI_Source"."RefreshTrainingServing"(
     p_competition text
 )
 LANGUAGE plpgsql
-AS $$
-DECLARE normalized_competition text := upper(btrim(p_competition));
+AS $
+DECLARE
+    normalized_competition text := upper(btrim(p_competition));
+    v_player_columns text;
+    v_team_columns text;
 BEGIN
     IF p_league_key IS NULL OR p_season IS NULL OR normalized_competition = '' THEN
         RAISE EXCEPTION 'league_key, season and competition are required';
     END IF;
+
+    -- Build projection lists from the canonical source relation, not SELECT *.
+    -- Existing physical stores may contain old columns in a different order.
+    SELECT string_agg(format('%I', source.attname), ', ' ORDER BY source.attnum)
+      INTO v_player_columns
+      FROM pg_catalog.pg_attribute source
+     WHERE source.attrelid = to_regclass('"AI_Source"."PlayerCompetitionStats"')
+       AND source.attnum > 0
+       AND NOT source.attisdropped
+       AND EXISTS (
+           SELECT 1
+             FROM pg_catalog.pg_attribute target
+            WHERE target.attrelid = to_regclass('"AI_Source"."TrainingPlayerCompetitionStats"')
+              AND target.attname = source.attname
+              AND target.attnum > 0
+              AND NOT target.attisdropped
+       );
+
+    SELECT string_agg(format('%I', source.attname), ', ' ORDER BY source.attnum)
+      INTO v_team_columns
+      FROM pg_catalog.pg_attribute source
+     WHERE source.attrelid = to_regclass('"AI_Source"."TeamCompetitionStats"')
+       AND source.attnum > 0
+       AND NOT source.attisdropped
+       AND EXISTS (
+           SELECT 1
+             FROM pg_catalog.pg_attribute target
+            WHERE target.attrelid = to_regclass('"AI_Source"."TrainingTeamCompetitionStats"')
+              AND target.attname = source.attname
+              AND target.attnum > 0
+              AND NOT target.attisdropped
+       );
+
+    IF v_player_columns IS NULL OR v_team_columns IS NULL THEN
+        RAISE EXCEPTION 'Training serving schema does not match canonical AI_Source statistics';
+    END IF;
+
     DELETE FROM "AI_Source"."TrainingPlayerCompetitionStats"
      WHERE league_key = p_league_key AND season = p_season
-       AND competition = normalized_competition;
-    INSERT INTO "AI_Source"."TrainingPlayerCompetitionStats"
-    SELECT * FROM "AI_Source"."PlayerCompetitionStats"
-     WHERE league_key = p_league_key AND season = p_season
        AND upper(competition) = normalized_competition;
+    EXECUTE format(
+        'INSERT INTO "AI_Source"."TrainingPlayerCompetitionStats" (%1$s)
+         SELECT %1$s FROM "AI_Source"."PlayerCompetitionStats"
+          WHERE league_key = $1 AND season = $2 AND upper(competition) = $3',
+        v_player_columns
+    ) USING p_league_key, p_season, normalized_competition;
 
     DELETE FROM "AI_Source"."TrainingTeamCompetitionStats"
      WHERE league_key = p_league_key AND season = p_season
-       AND competition = normalized_competition;
-    INSERT INTO "AI_Source"."TrainingTeamCompetitionStats"
-    SELECT * FROM "AI_Source"."TeamCompetitionStats"
-     WHERE league_key = p_league_key AND season = p_season
        AND upper(competition) = normalized_competition;
+    EXECUTE format(
+        'INSERT INTO "AI_Source"."TrainingTeamCompetitionStats" (%1$s)
+         SELECT %1$s FROM "AI_Source"."TeamCompetitionStats"
+          WHERE league_key = $1 AND season = $2 AND upper(competition) = $3',
+        v_team_columns
+    ) USING p_league_key, p_season, normalized_competition;
 END;
-$$;
+$;
 
 -- Canonical ETL entry point: refresh every league and every competition for a
 -- season from the current canonical AI_Source statistical tables. Callers use
