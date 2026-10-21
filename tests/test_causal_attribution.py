@@ -23,6 +23,7 @@ def _panel(n=240, seed=19):
         "age_pre": age,
         "team_strength_pre": strength,
         "transition_season": rng.integers(2018, 2026, n),
+        "role_pre": rng.choice(["G", "F", "C"], n),
     })
 
 
