@@ -1195,7 +1195,7 @@ class ChatScenarioEngine:
 
         players_frame = self.data.get("players", pd.DataFrame())
         if isinstance(players_frame, pd.DataFrame) and {"id", "global_id"}.issubset(players_frame.columns):
-            canonical_columns = ["id", "global_id"] + [column for column in ("birth_date", "age") if column in players_frame.columns]
+            canonical_columns = ["id", "global_id"] + [column for column in ("birth_date", "age", "position") if column in players_frame.columns]
             canonical = players_frame[canonical_columns].copy()
             canonical["id"] = canonical["id"].map(_to_int)
             canonical["global_id"] = canonical["global_id"].fillna("").astype(str).str.strip()
@@ -1296,6 +1296,16 @@ class ChatScenarioEngine:
                     "usage_pre": usage,
                     "age_pre": player_age(before, _to_int(before.get("player_id")), year_before),
                     "team_strength_pre": team_strength(team_before, year_before),
+                    "role_pre": next((
+                        str(value).strip()
+                        for value in (
+                            before.get("ruolo_combinato"),
+                            before.get("role"),
+                            before.get("position"),
+                            (meta_by_id.get(_to_int(before.get("player_id")), {}) or {}).get("position"),
+                        )
+                        if value is not None and not pd.isna(value) and str(value).strip()
+                    ), "unknown"),
                 })
                 transitions.append(year_after)
             # Keep one transition per canonical identity to avoid repeated-player
