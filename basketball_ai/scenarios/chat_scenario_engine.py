@@ -1270,7 +1270,7 @@ class ChatScenarioEngine:
         records = []
         for global_id, group in frame.groupby("_global_id", sort=False):
             group = group.sort_values("_year", kind="stable").reset_index(drop=True)
-            transitions = []
+            candidate_pairs = []
             for idx in range(1, len(group)):
                 before = group.iloc[idx - 1]
                 after = group.iloc[idx]
@@ -1280,36 +1280,42 @@ class ChatScenarioEngine:
                 team_before, team_after = _to_int(before.get("_team_int")), _to_int(after.get("_team_int"))
                 if team_before is None or team_after is None:
                     continue
-                bb_before = self._bb_rating_for_season(str(global_id), source_league, year_before, competition)
-                bb_after = self._bb_rating_for_season(str(global_id), source_league, year_after, competition)
-                if bb_before is None or bb_after is None:
-                    continue
-                minutes = _finite(before.get("minutes_per_game"), np.nan)
-                usage = _ratio(before.get("usg_pct"), np.nan)
-                records.append({
-                    "global_id": str(global_id),
-                    "transition_season": year_after,
-                    "treatment": int(team_before != team_after),
-                    "outcome": float(bb_after),
-                    "baseline_bb_rating": float(bb_before),
-                    "minutes_pre": minutes,
-                    "usage_pre": usage,
-                    "age_pre": player_age(before, _to_int(before.get("player_id")), year_before),
-                    "team_strength_pre": team_strength(team_before, year_before),
-                    "role_pre": next((
-                        str(value).strip()
-                        for value in (
-                            before.get("ruolo_combinato"),
-                            before.get("role"),
-                            before.get("position"),
-                            (meta_by_id.get(_to_int(before.get("player_id")), {}) or {}).get("position"),
-                        )
-                        if value is not None and not pd.isna(value) and str(value).strip()
-                    ), "unknown"),
-                })
-                transitions.append(year_after)
-            # Keep one transition per canonical identity to avoid repeated-player
-            # pseudo-replication in the cohort estimator.
+                candidate_pairs.append((before, after, year_before, year_after, team_before, team_after))
+            if not candidate_pairs:
+                continue
+            # Only score the latest valid transition for each player. Calling
+            # the canonical rating engine for every historical pair would repeat
+            # expensive work while the estimator accepts one row per identity.
+            before, after, year_before, year_after, team_before, team_after = candidate_pairs[-1]
+            bb_before = self._bb_rating_for_season(str(global_id), source_league, year_before, competition)
+            bb_after = self._bb_rating_for_season(str(global_id), source_league, year_after, competition)
+            if bb_before is None or bb_after is None:
+                continue
+            minutes = _finite(before.get("minutes_per_game"), np.nan)
+            usage = _ratio(before.get("usg_pct"), np.nan)
+            meta = meta_by_id.get(_to_int(before.get("player_id")), {}) if isinstance(meta_by_id, dict) else {}
+            role_value = next((
+                str(value).strip()
+                for value in (
+                    before.get("ruolo_combinato"),
+                    before.get("role"),
+                    before.get("position"),
+                    meta.get("position") if isinstance(meta, dict) else None,
+                )
+                if value is not None and not pd.isna(value) and str(value).strip()
+            ), "unknown")
+            records.append({
+                "global_id": str(global_id),
+                "transition_season": year_after,
+                "treatment": int(team_before != team_after),
+                "outcome": float(bb_after),
+                "baseline_bb_rating": float(bb_before),
+                "minutes_pre": minutes,
+                "usage_pre": usage,
+                "age_pre": player_age(before, _to_int(before.get("player_id")), year_before),
+                "team_strength_pre": team_strength(team_before, year_before),
+                "role_pre": role_value,
+            })
         if not records:
             return empty
         panel = pd.DataFrame(records).sort_values(["global_id", "transition_season"], kind="stable")
