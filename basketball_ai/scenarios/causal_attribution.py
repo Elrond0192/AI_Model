@@ -45,6 +45,22 @@ def _smd(x_t: np.ndarray, x_c: np.ndarray) -> float:
     return abs(delta / pooled) if pooled > 1e-9 else (0.0 if abs(delta) < 1e-9 else math.inf)
 
 
+def _weighted_smd(x_t: np.ndarray, x_c: np.ndarray, w_t: np.ndarray, w_c: np.ndarray) -> float:
+    if not len(x_t) or not len(x_c):
+        return math.inf
+    w_t = np.asarray(w_t, dtype=float)
+    w_c = np.asarray(w_c, dtype=float)
+    w_t = w_t / max(float(w_t.sum()), 1e-12)
+    w_c = w_c / max(float(w_c.sum()), 1e-12)
+    mean_t = float(np.sum(w_t * x_t))
+    mean_c = float(np.sum(w_c * x_c))
+    var_t = float(np.sum(w_t * (x_t - mean_t) ** 2))
+    var_c = float(np.sum(w_c * (x_c - mean_c) ** 2))
+    pooled = math.sqrt((var_t + var_c) / 2.0)
+    delta = abs(mean_t - mean_c)
+    return delta / pooled if pooled > 1e-9 else (0.0 if delta < 1e-9 else math.inf)
+
+
 def estimate_team_switch_att(panel: pd.DataFrame) -> dict[str, Any]:
     """Estimate a cohort-level team-switch ATT using propensity and outcome
     nuisance models on a single transition per canonical player. Strict support gates
@@ -119,7 +135,7 @@ def estimate_team_switch_att(panel: pd.DataFrame) -> dict[str, Any]:
         for idx, name in enumerate(covariates):
             balance_before[name] = round(_smd(x_original[t_original == 1, idx],
                                                x_original[t_original == 0, idx]), 3)
-            balance_after[name] = round(_smd(x_scaled[t == 1, idx], x_scaled[t == 0, idx]), 3)
+            balance_after[name] = round(_weighted_smd(x_scaled[t == 1, idx], x_scaled[t == 0, idx], np.ones(nt), control_weights), 3)
         max_smd = max(balance_after.values()) if balance_after else math.inf
         if max_smd > 0.25:
             return _unavailable("covariate_balance_failed", rows=len(frame), treated=nt, control=nc) | {
