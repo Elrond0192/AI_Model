@@ -58,7 +58,7 @@ def _weighted_smd(x_t: np.ndarray, x_c: np.ndarray, w_t: np.ndarray, w_c: np.nda
     var_c = float(np.sum(w_c * (x_c - mean_c) ** 2))
     pooled = math.sqrt((var_t + var_c) / 2.0)
     delta = abs(mean_t - mean_c)
-    return delta / pooled if pooled > 1e-9 else (0.0 if delta < 1e-9 else math.inf)
+    return delta / pooled if pooled > 1e-9 else (0.0 if delta < 1e-9 else 999.0)
 
 
 def estimate_team_switch_att(panel: pd.DataFrame) -> dict[str, Any]:
