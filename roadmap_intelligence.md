@@ -78,6 +78,13 @@ ORDER BY "LeagueKey";
 
 Per le stagioni storiche, ripetere la chiamata per ogni anno per cui sono presenti contesti canonici. Il refresh stagionale non va sostituito da una chiamata a una singola procedura legacy.
 
+### Nota di compatibilità dello schema Training (hotfix 2026-10-21)
+
+- Le tabelle fisiche `TrainingPlayerCompetitionStats` e `TrainingTeamCompetitionStats` possono sopravvivere a un aggiornamento delle viste canoniche; `CREATE TABLE IF NOT EXISTS` da solo non aggiunge le nuove colonne.
+- La versione aggiornata di `ai_scenario_serving.sql` aggiunge in modo incrementale le colonne canoniche mancanti e `RefreshTrainingServing` genera liste esplicite di colonne, evitando la dipendenza dall'ordine fisico.
+- Se il refresh fallisce con `INSERT has more expressions than target columns`, applicare di nuovo la versione aggiornata di `ai_scenario_serving.sql` e poi rilanciare `RefreshContextSeasonal(season)`. Se il rebuild canonico è già riuscito, non occorre rieseguire `ai_source_full.sql` soltanto per questo errore.
+- Lo stato del refresh 2025 resta da confermare dopo il nuovo tentativo; il commit del fix non implica che il database di produzione sia già stato aggiornato.
+
 ### P0 — Validare clutch su dati reali
 1. Controllare il numero di righe in `Analisi.AdvancedStats_Clutch_{LEAGUE}` per stagione e competizione.
 2. Dopo il rebuild di `ai_source_full.sql`, verificare che i valori non null di clutch siano arrivati in `AI_Source.PlayerCompetitionStats` e che il join per player/season/competition sia corretto.
