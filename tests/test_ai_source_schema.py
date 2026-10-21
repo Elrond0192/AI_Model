@@ -291,6 +291,17 @@ def test_scenario_serving_is_physical_indexed_and_incremental():
         assert f'create table if not exists "ai_source"."{table}"' in sql
     assert 'create or replace procedure "ai_source"."refreshscenarioserving"' in sql
     assert 'create or replace procedure "ai_source"."refreshtrainingserving"' in sql
+    assert "do $sync_training_serving_columns$" in sql
+    assert "format_type(source.atttypid, source.atttypmod)" in sql
+    training_proc = sql.split('create or replace procedure "ai_source"."refreshtrainingserving"', 1)[1].split(
+        'create or replace procedure "ai_source"."refreshcontextseasonal"', 1
+    )[0]
+    assert "v_player_columns text" in training_proc
+    assert "v_team_columns text" in training_proc
+    assert 'insert into "ai_source"."trainingplayercompetitionstats" (%1$s)' in training_proc
+    assert 'insert into "ai_source"."trainingteamcompetitionstats" (%1$s)' in training_proc
+    assert 'insert into "ai_source"."trainingplayercompetitionstats"\n    select *' not in training_proc
+    assert 'insert into "ai_source"."trainingteamcompetitionstats"\n    select *' not in training_proc
     assert "'hm_local_workers'" in sql
     assert 'create or replace procedure "ai_source"."refreshcontextseasonal"(p_season integer)' in sql
     assert '"ai_source"."refreshcontextseasonal"(integer)' in sql
