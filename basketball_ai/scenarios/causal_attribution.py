@@ -17,7 +17,7 @@ from sklearn.preprocessing import StandardScaler
 
 _REQUIRED = {
     "global_id", "treatment", "outcome", "baseline_bb_rating",
-    "minutes_pre", "usage_pre", "age_pre", "team_strength_pre", "transition_season",
+    "minutes_pre", "usage_pre", "age_pre", "team_strength_pre", "transition_season", "role_pre",
 }
 
 
@@ -75,12 +75,19 @@ def estimate_team_switch_att(panel: pd.DataFrame) -> dict[str, Any]:
     frame = panel.copy()
     frame["treatment"] = pd.to_numeric(frame["treatment"], errors="coerce")
     frame["outcome"] = pd.to_numeric(frame["outcome"], errors="coerce")
-    covariates = ["baseline_bb_rating", "minutes_pre", "usage_pre", "age_pre", "team_strength_pre", "transition_season"]
-    for col in covariates:
+    numeric_covariates = ["baseline_bb_rating", "minutes_pre", "usage_pre", "age_pre", "team_strength_pre", "transition_season"]
+    for col in numeric_covariates:
         frame[col] = pd.to_numeric(frame[col], errors="coerce")
+    frame["role_pre"] = frame["role_pre"].fillna("unknown").astype(str).str.strip().replace("", "unknown")
     frame = frame.replace([np.inf, -np.inf], np.nan).dropna(
-        subset=["global_id", "treatment", "outcome", *covariates]
+        subset=["global_id", "treatment", "outcome", *numeric_covariates]
     )
+    role_dummies = pd.get_dummies(frame["role_pre"], prefix="role", drop_first=True, dtype=float)
+    covariate_frame = pd.concat(
+        [frame[numeric_covariates].reset_index(drop=True), role_dummies.reset_index(drop=True)],
+        axis=1,
+    )
+    covariates = list(covariate_frame.columns)
     frame = frame[frame["treatment"].isin([0, 1])].drop_duplicates("global_id", keep="last")
     n = len(frame)
     t = frame["treatment"].to_numpy(dtype=int) if n else np.array([], dtype=int)
@@ -89,7 +96,7 @@ def estimate_team_switch_att(panel: pd.DataFrame) -> dict[str, Any]:
     if n < 60 or nt < 20 or nc < 20:
         return _unavailable("insufficient_treated_control_support", rows=n, treated=nt, control=nc)
 
-    x = frame[covariates].to_numpy(dtype=float)
+    x = covariate_frame.to_numpy(dtype=float)
     y = frame["outcome"].to_numpy(dtype=float)
     x_original = x.copy()
     t_original = t.copy()
@@ -117,7 +124,7 @@ def estimate_team_switch_att(panel: pd.DataFrame) -> dict[str, Any]:
         m0 = LinearRegression().fit(x_scaled[t == 0], y[t == 0])
         mu0 = m0.predict(x_scaled)
         p = np.clip(propensity, 0.05, 0.95)
-        # ATT doubly-robust score: average treated contrast plus weighted control residual.
+        # ATT doubly-robust score: treated outcome residual minus the propensity-weighted control residual.
         control_weights = p[t == 0] / (1.0 - p[t == 0])
         control_weights = control_weights / max(float(control_weights.mean()), 1e-12)
         control_residual = float(np.mean(control_weights * (y[t == 0] - mu0[t == 0])))
