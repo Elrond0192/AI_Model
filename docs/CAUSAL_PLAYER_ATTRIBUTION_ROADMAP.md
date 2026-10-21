@@ -17,9 +17,7 @@ confounders, overlap and identifying assumptions are defensible.
 
 ## Current data readiness
 
-The repository has a schema for `AI_Source.SimulationCausalPanel`, but the
-seasonal source-refresh design explicitly leaves it unpopulated until a causal
-design is specified. The existing `causal_effect` scenario can fall back to a
+The repository has a schema for AI_Source.SimulationCausalPanel, and the seasonal source-refresh design leaves it unpopulated. The first implemented estimator therefore builds an in-memory cohort from canonical player/team season sources rather than treating that schema-only table as evidence. This cohort is not yet a persisted, refresh-audited causal panel. The existing `causal_effect` scenario can fall back to a
 constructed next-season panel based on changes in minutes; this is not an
 acceptable source for team/teammate attribution and must not be reused as proof
 of the requested causal effect.
@@ -111,23 +109,21 @@ result is that the causal effect is not identified for that question.
 A capability can be operationally available while a specific player's result is
 `insufficient_evidence`; the endpoint must still say so for that query.
 
-## Implementation sequence
+## Implementation status
 
-1. Add a schema/versioned causal panel contract with canonical player/team
-   identities, treatment definition/date, outcome season, pre-treatment
-   covariates and source provenance. Validate panel uniqueness and temporal
-   ordering during refresh.
-2. Implement descriptive panel readiness/overlap/balance diagnostics first.
-3. Implement one estimand (recommended first: team-switch ATT on next completed
-   season BB-Rating) with a fixed comparison-cohort definition and out-of-time
-   tests.
-4. Add teammate exposure only after the data can define treatment before outcome
-   and avoid treating selected shared minutes as if randomized.
-5. Promote capability metadata only after the acceptance suite passes.
+- Implemented in basketball_ai/scenarios/causal_attribution.py: guarded cohort-level team-switch ATT using propensity and outcome models on pre-treatment BB-Rating, minutes, usage, age, team strength, role and transition season.
+- The in-memory builder uses canonical global player identity and the canonical BB-Rating engine only. It excludes the current calendar year as potentially in progress, requires adjacent completed seasons, and keeps one latest transition per player to avoid repeated-player pseudo-replication.
+- The estimator suppresses the estimate when treated/control counts, propensity overlap or weighted covariate balance fail. It returns diagnostics and an interval only when the gates pass. The estimate is explicitly cohort-level and conditional on observational assumptions.
+- This is an initial guarded estimator, not proof of causality and not a player-specific estimate. Its uncertainty calculation, calibration comparability, residual confounding and out-of-time/placebo performance still require validation against production data.
+
+## Remaining implementation sequence
+
+1. Persist a schema/versioned causal panel with canonical player/team identities, treatment date, outcome season, pre-treatment covariates, calibration release and source provenance; validate uniqueness and temporal ordering during refresh.
+2. Run rolling-origin/out-of-time, placebo, sensitivity and leave-one-team/season-out tests on real completed-season data with prespecified acceptance thresholds.
+3. Add teammate exposure only after treatment timing and selection are modeled without treating shared minutes as randomized.
+4. Promote causal_team_effect only after these tests pass. Until then its status remains partial.
 
 ## Immediate safety rule
 
-Until those gates pass, keep both capability statuses `partial`. Return the
-existing BB-Rating decomposition and observed associations, but explicitly say
-that the causal effect is not identified. Never call an observed difference
+The descriptive performance_attribution capability is now marked available because it is explicitly scoped to observed decomposition and associations, with causal claims excluded. Keep causal_team_effect marked partial. Return the existing BB-Rating decomposition and observed associations, and expose the cohort ATT only when its support and balance gates pass; explicitly state that this is not a player-specific causal effect and that causal identification remains conditional on observational assumptions. Never call an observed difference
 "caused by the team", "caused by the quintet" or "caused by a teammate".
