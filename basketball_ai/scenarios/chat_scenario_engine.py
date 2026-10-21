@@ -1597,20 +1597,33 @@ class ChatScenarioEngine:
             "identification": "unavailable",
             "reason": "causal_panel_not_built",
         }
-        try:
-            causal_panel = self._build_team_switch_causal_panel(
-                source_league, competition, season
-            )
-            cohort_switch_estimate = estimate_team_switch_att(causal_panel)
-        except (ValueError, KeyError, TypeError, IndexError, np.linalg.LinAlgError) as exc:
-            cohort_switch_estimate = {
-                "available": False,
-                "estimand": "average_treatment_effect_on_treated_team_switchers",
-                "effect_bb_rating_points": None,
-                "confidence_interval_95": None,
-                "identification": "unavailable",
-                "reason": "causal_panel_build_failed:" + str(exc)[:180],
-            }
+        parameters = spec.get("parameters", {}) or {}
+        raw_question_keys = parameters.get("question_keys")
+        if not isinstance(raw_question_keys, (list, tuple)):
+            raw_question_keys = [parameters.get("question_key", "")]
+        requested_question_keys = {str(key).strip().lower() for key in raw_question_keys}
+        causal_estimate_requested = (
+            str(spec.get("scenario", "")).strip().lower() == "causal_team_effect"
+            or "causal_team_effect" in requested_question_keys
+            or bool(parameters.get("include_cohort_team_switch_att", False))
+        )
+        if causal_estimate_requested:
+            try:
+                causal_panel = self._build_team_switch_causal_panel(
+                    source_league, competition, season
+                )
+                cohort_switch_estimate = estimate_team_switch_att(causal_panel)
+            except (ValueError, KeyError, TypeError, IndexError, np.linalg.LinAlgError) as exc:
+                cohort_switch_estimate = {
+                    "available": False,
+                    "estimand": "average_treatment_effect_on_treated_team_switchers",
+                    "effect_bb_rating_points": None,
+                    "confidence_interval_95": None,
+                    "identification": "unavailable",
+                    "reason": "causal_panel_build_failed:" + str(exc)[:180],
+                }
+        else:
+            cohort_switch_estimate["reason"] = "cohort_estimate_not_requested_for_descriptive_attribution"
 
         latest = history.iloc[-1]
         if correlation is None:
