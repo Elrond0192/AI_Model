@@ -37,6 +37,10 @@ For season-over-season comparisons, the public rating is always the canonical BB
 - **potential_synthesis** does not replace the dedicated Prediction/Future Performance models.
 - **team_counterfactual** is composed through `player_team`; that scenario internally delegates to the cross-league transition layer when the requested source and target leagues differ. It requires an explicit target team and usable historical target-team context. The common model-evidence layer may also expose BB Prediction/Future Performance when forward evidence is requested, but Future Performance itself is not conditioned on the target team. The counterfactual remains an estimate, not a causal statement.
 
+## Causal attribution readiness
+
+The implementation gate, proposed estimands, panel requirements, identification diagnostics and promotion criteria for `performance_attribution` / `causal_team_effect` are specified in [`CAUSAL_PLAYER_ATTRIBUTION_ROADMAP.md`](CAUSAL_PLAYER_ATTRIBUTION_ROADMAP.md). Keep both capabilities `partial` until the defined causal design is implemented and passes out-of-time, balance/overlap, placebo and sensitivity checks. The existing lineup comparisons remain descriptive and must not be presented as causal effects.
+
 ## Design rule
 
 A question must not be promoted from partial to available merely because a numeric estimate exists.
