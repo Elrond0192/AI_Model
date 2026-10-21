@@ -21,7 +21,8 @@ def _panel(n=240, seed=19):
         "minutes_pre": minutes,
         "usage_pre": usage,
         "age_pre": age,
-        "team_strength_pre": strength,\n        "transition_season": rng.integers(2018, 2026, n),
+        "team_strength_pre": strength,
+        "transition_season": rng.integers(2018, 2026, n),
     })
 
 
