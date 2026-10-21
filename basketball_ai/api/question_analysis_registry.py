@@ -111,19 +111,18 @@ QUESTION_CAPABILITIES: tuple[QuestionCapability, ...] = (
     ),
     QuestionCapability(
         key="performance_attribution",
-        question="Il cambiamento dipende dal giocatore, dal ruolo o dal contesto della squadra?",
-        status="partial",
+        question="Come si scompone il cambiamento tra rendimento individuale, ruolo e contesto osservato della squadra?",
+        status="available",
         analyses=(
             "performance_decomposition",
             "role_analysis",
             "team_usage_analysis",
-            "causal_team_effect",
             "lineup_context_association",
             "observed_teammate_lineup_associations",
             "metric_explanation",
             "model_evidence",
         ),
-        missing_analyses=("causal_teammate_effect_attribution", "causal_identification"),
+        missing_analyses=(),
         evidence=(
             "season_over_season_player_metrics",
             "role_and_usage_changes",
@@ -146,9 +145,7 @@ QUESTION_CAPABILITIES: tuple[QuestionCapability, ...] = (
             "Teammate comparison: at least 100 possessions in each teammate-presence group within a team-season",
         ),
         limitation=(
-            "La composizione distingue cambiamenti individuali, contesto squadra e Net Rating osservato "
-            "nei quintetti con/senza il giocatore. Non identifica da sola il contributo causale di compagni "
-            "o giocatore; selezione dei quintetti e confondenti restano rilevanti."
+            "Capacità descrittiva disponibile: distingue cambiamenti individuali, ruolo e contesto osservato, includendo il Net Rating dei quintetti quando i dati sono sufficienti. Non dimostra un effetto causale di squadra o compagni; per la domanda causale usare causal_team_effect, che resta parziale finché non supera la validazione d’identificazione."
         ),
     ),
     QuestionCapability(
