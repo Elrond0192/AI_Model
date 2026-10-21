@@ -2,8 +2,7 @@
 
 ## Decision
 
-Do **not** promote `performance_attribution` or `causal_team_effect` from
-`partial` to `available` yet. The current implementation can provide:
+The descriptive `performance_attribution` capability is now `available` within a narrowed scope: decomposition and observed associations only. Keep `causal_team_effect` `partial` until causal identification and production validation pass. The implementation can provide:
 - canonical BB-Rating (1–100) history and mathematical score decomposition;
 - observed changes in minutes, usage and role;
 - associations between player-season BB-Rating and observed team context;
@@ -89,25 +88,20 @@ This is a candidate design, not a guarantee that observational data identify
 the effect. If key confounders are unavailable or overlap fails, the correct
 result is that the causal effect is not identified for that question.
 
-## Requirements before capability status changes
+## Capability scope and promotion gates
 
-### `performance_attribution` can become `available` only when
-- the decomposition and team/role/lineup evidence paths have contract tests;
-- each evidence layer returns an explicit outcome, source, sample size and
-  unavailable/insufficient state;
-- the causal teammate/team component either passes its identification gates or
-  is clearly optional and the capability definition is narrowed to descriptive
-  attribution. Do not silently equate association with attribution.
+### `performance_attribution` — available, descriptive scope
+- The capability is limited to observed BB-Rating decomposition, role/usage changes, team-context associations and descriptive lineup/team-Net-Rating comparisons.
+- Each optional evidence layer must expose its outcome, source, sample size and unavailable/insufficient state.
+- It must never describe an observed association as a cause. Requests for causal language must also invoke `causal_team_effect`.
 
-### `causal_team_effect` can become `available` only when
-- the declared estimand and treatment/outcome timeline are implemented;
-- the panel is populated from canonical, refresh-audited source relations;
-- the causal estimator and all diagnostics above are implemented and tested;
-- out-of-time and placebo tests pass prespecified acceptance thresholds;
-- production responses expose the estimate only when all mandatory gates pass.
+### `causal_team_effect` — remains partial
+- The initial team-switch cohort ATT is implemented, but the panel is currently built in memory and is not yet persisted or refresh-audited.
+- The estimate is cohort-level, observational and conditional on assumptions; it is not a named player's causal effect.
+- Promotion requires a persisted canonical panel, validated uncertainty, out-of-time and placebo tests, sensitivity/leave-one-team-season-out checks, prespecified thresholds, and production contract tests.
+- Teammate-specific causal attribution remains unavailable until a defensible treatment/exposure and outcome design is implemented and validated.
 
-A capability can be operationally available while a specific player's result is
-`insufficient_evidence`; the endpoint must still say so for that query.
+A capability can be operationally available while a specific player's result is `insufficient_evidence`; the endpoint must still say so for that query.
 
 ## Implementation status
 
