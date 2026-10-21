@@ -49,6 +49,9 @@ def test_player_intelligence_capability_registry():
     assert "observed_role" in by_key["causal_team_effect"]["evidence"]
     assert "lineup_context_association" in by_key["causal_team_effect"]["analyses"]
     assert "within_team_season_lineup_net_rating" in by_key["causal_team_effect"]["evidence"]
+    assert by_key["performance_attribution"]["status"] == "available"
+    assert "causal_team_effect" not in by_key["performance_attribution"]["analyses"]
+    assert by_key["performance_attribution"]["missing_analyses"] == []
     assert "lineup_context_association" in by_key["performance_attribution"]["analyses"]
     assert "observed_teammate_lineup_associations" in by_key["performance_attribution"]["analyses"]
     assert "teammate_lineup_presence_within_player_minutes" in by_key["performance_attribution"]["evidence"]
