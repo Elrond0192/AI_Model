@@ -1195,12 +1195,15 @@ class ChatScenarioEngine:
 
         players_frame = self.data.get("players", pd.DataFrame())
         if isinstance(players_frame, pd.DataFrame) and {"id", "global_id"}.issubset(players_frame.columns):
-            canonical = players_frame[["id", "global_id", "birth_date", "age"] if "birth_date" in players_frame.columns and "age" in players_frame.columns else ["id", "global_id"]].copy()
+            canonical_columns = ["id", "global_id"] + [column for column in ("birth_date", "age") if column in players_frame.columns]
+            canonical = players_frame[canonical_columns].copy()
             canonical["id"] = canonical["id"].map(_to_int)
             canonical["global_id"] = canonical["global_id"].fillna("").astype(str).str.strip()
             canonical = canonical[(canonical["id"].notna()) & (canonical["global_id"] != "")].drop_duplicates("id", keep="last")
             identity_map = canonical.set_index("id")["global_id"]
             frame["_global_id"] = frame["player_id"].map(_to_int).map(identity_map)
+            if "global_id" in frame.columns:
+                frame["_global_id"] = frame["_global_id"].fillna(frame["global_id"].fillna("").astype(str).str.strip())
             meta_by_id = canonical.set_index("id").to_dict("index")
         elif "global_id" in frame.columns:
             frame["_global_id"] = frame["global_id"].fillna("").astype(str).str.strip()
