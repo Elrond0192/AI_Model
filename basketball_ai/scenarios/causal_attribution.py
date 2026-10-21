@@ -124,10 +124,12 @@ def estimate_team_switch_att(panel: pd.DataFrame) -> dict[str, Any]:
         effect = float(np.mean(y[t == 1] - mu0[t == 1]) - control_residual)
         # Influence-function interval; production claims remain conditional on
         # the stated no-unmeasured-confounding and positivity assumptions.
-        score = np.zeros(len(y), dtype=float)
-        score[t == 1] = y[t == 1] - mu0[t == 1]
-        score[t == 0] = -control_weights * (y[t == 0] - mu0[t == 0])
-        se = float(np.std(score, ddof=1) / math.sqrt(max(nt, 1)))
+        treated_residual = y[t == 1] - mu0[t == 1]
+        weighted_control_residual = control_weights * (y[t == 0] - mu0[t == 0])
+        se = math.sqrt(
+            (float(np.var(treated_residual, ddof=1)) / max(nt, 1) if nt > 1 else 0.0)
+            + (float(np.var(weighted_control_residual, ddof=1)) / max(nc, 1) if nc > 1 else 0.0)
+        )
         ci = [round(effect - 1.96 * se, 3), round(effect + 1.96 * se, 3)]
 
         balance_before = {}
