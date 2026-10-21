@@ -17,7 +17,7 @@ from sklearn.preprocessing import StandardScaler
 
 _REQUIRED = {
     "global_id", "treatment", "outcome", "baseline_bb_rating",
-    "minutes_pre", "usage_pre", "age_pre", "team_strength_pre",
+    "minutes_pre", "usage_pre", "age_pre", "team_strength_pre", "transition_season",
 }
 
 
@@ -59,7 +59,7 @@ def estimate_team_switch_att(panel: pd.DataFrame) -> dict[str, Any]:
     frame = panel.copy()
     frame["treatment"] = pd.to_numeric(frame["treatment"], errors="coerce")
     frame["outcome"] = pd.to_numeric(frame["outcome"], errors="coerce")
-    covariates = ["baseline_bb_rating", "minutes_pre", "usage_pre", "age_pre", "team_strength_pre"]
+    covariates = ["baseline_bb_rating", "minutes_pre", "usage_pre", "age_pre", "team_strength_pre", "transition_season"]
     for col in covariates:
         frame[col] = pd.to_numeric(frame[col], errors="coerce")
     frame = frame.replace([np.inf, -np.inf], np.nan).dropna(
