@@ -1570,6 +1570,29 @@ class ChatScenarioEngine:
                 "reason": f"Optional lineup evidence could not be evaluated: {str(exc)[:240]}",
             }
 
+        cohort_switch_estimate = {
+            "available": False,
+            "estimand": "average_treatment_effect_on_treated_team_switchers",
+            "effect_bb_rating_points": None,
+            "confidence_interval_95": None,
+            "identification": "unavailable",
+            "reason": "causal_panel_not_built",
+        }
+        try:
+            causal_panel = self._build_team_switch_causal_panel(
+                source_league, competition, season
+            )
+            cohort_switch_estimate = estimate_team_switch_att(causal_panel)
+        except (ValueError, KeyError, TypeError, IndexError, np.linalg.LinAlgError) as exc:
+            cohort_switch_estimate = {
+                "available": False,
+                "estimand": "average_treatment_effect_on_treated_team_switchers",
+                "effect_bb_rating_points": None,
+                "confidence_interval_95": None,
+                "identification": "unavailable",
+                "reason": "causal_panel_build_failed:" + str(exc)[:180],
+            }
+
         latest = history.iloc[-1]
         if correlation is None:
             association_label = "insufficient_evidence"
@@ -1588,6 +1611,16 @@ class ChatScenarioEngine:
             "Le differenze per compagno sono associazioni del Net Rating di squadra nei possessi condivisi rispetto a quelli senza quel compagno, non stime del valore individuale o di un effetto causale.",
             "L'effetto causale resta non identificato senza un controfattuale difendibile e un controllo esplicito dei confondenti.",
         ]
+        if cohort_switch_estimate.get("available"):
+            limitations.append(
+                "È disponibile una stima osservazionale media per una coorte di giocatori che cambiano squadra; non è una stima causale specifica per questo giocatore."
+            )
+        else:
+            limitations.append(
+                "La stima media di coorte per il cambio squadra non è esposta perché i requisiti di campione, sovrapposizione o bilanciamento non sono soddisfatti: "
+                + str(cohort_switch_estimate.get("reason", "evidenza insufficiente"))
+                + "."
+            )
         if len(switches) < 2:
             limitations.append(
                 "Ci sono pochi cambi di squadra osservati per distinguere con affidabilità il contesto dalla variabilità individuale."
@@ -1607,6 +1640,7 @@ class ChatScenarioEngine:
                 "through_season": season,
                 "causal_identification": "unavailable",
                 "causal_effect": None,
+                "team_switch_cohort_att": cohort_switch_estimate,
                 "association": {
                     "label": association_label,
                     "bb_rating_vs_team_context_correlation": round(correlation, 3) if correlation is not None else None,
