@@ -46,8 +46,8 @@ def _smd(x_t: np.ndarray, x_c: np.ndarray) -> float:
 
 
 def estimate_team_switch_att(panel: pd.DataFrame) -> dict[str, Any]:
-    """Estimate a cohort-level team-switch ATT using cross-fitted-style nuisance
-    models on a single transition per canonical player. Strict support gates
+    """Estimate a cohort-level team-switch ATT using propensity and outcome
+    nuisance models on a single transition per canonical player. Strict support gates
     prevent a numeric estimate when overlap or balance is inadequate.
     """
     if not isinstance(panel, pd.DataFrame) or panel.empty:
@@ -75,6 +75,8 @@ def estimate_team_switch_att(panel: pd.DataFrame) -> dict[str, Any]:
 
     x = frame[covariates].to_numpy(dtype=float)
     y = frame["outcome"].to_numpy(dtype=float)
+    x_original = x.copy()
+    t_original = t.copy()
     scaler = StandardScaler()
     x_scaled = scaler.fit_transform(x)
     try:
@@ -115,9 +117,8 @@ def estimate_team_switch_att(panel: pd.DataFrame) -> dict[str, Any]:
         balance_before = {}
         balance_after = {}
         for idx, name in enumerate(covariates):
-            col = x[:, idx]
-            balance_before[name] = round(_smd(col[panel.loc[frame.index, "treatment"].to_numpy(dtype=int) == 1] if False else col[t == 1],
-                                               col[t == 0]), 3)
+            balance_before[name] = round(_smd(x_original[t_original == 1, idx],
+                                               x_original[t_original == 0, idx]), 3)
             balance_after[name] = round(_smd(x_scaled[t == 1, idx], x_scaled[t == 0, idx]), 3)
         max_smd = max(balance_after.values()) if balance_after else math.inf
         if max_smd > 0.25:
