@@ -1016,7 +1016,7 @@ CREATE OR REPLACE PROCEDURE "AI_Source"."RefreshTrainingServing"(
     p_competition text
 )
 LANGUAGE plpgsql
-AS $
+AS $refresh_training$
 DECLARE
     normalized_competition text := upper(btrim(p_competition));
     v_player_columns text;
@@ -1082,7 +1082,7 @@ BEGIN
         v_team_columns
     ) USING p_league_key, p_season, normalized_competition;
 END;
-$;
+$refresh_training$;
 
 -- Canonical ETL entry point: refresh every league and every competition for a
 -- season from the current canonical AI_Source statistical tables. Callers use
