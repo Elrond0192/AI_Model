@@ -82,13 +82,13 @@ def estimate_team_switch_att(panel: pd.DataFrame) -> dict[str, Any]:
     frame = frame.replace([np.inf, -np.inf], np.nan).dropna(
         subset=["global_id", "treatment", "outcome", *numeric_covariates]
     )
+    frame = frame[frame["treatment"].isin([0, 1])].drop_duplicates("global_id", keep="last")
     role_dummies = pd.get_dummies(frame["role_pre"], prefix="role", drop_first=True, dtype=float)
     covariate_frame = pd.concat(
         [frame[numeric_covariates].reset_index(drop=True), role_dummies.reset_index(drop=True)],
         axis=1,
     )
     covariates = list(covariate_frame.columns)
-    frame = frame[frame["treatment"].isin([0, 1])].drop_duplicates("global_id", keep="last")
     n = len(frame)
     t = frame["treatment"].to_numpy(dtype=int) if n else np.array([], dtype=int)
     nt = int(t.sum())
