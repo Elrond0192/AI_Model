@@ -359,6 +359,7 @@ def test_player_intelligence_analysis_layers():
         "potential_synthesis",
         "shooting_decomposition",
         "defensive_decomposition",
+        "performance_attribution",
     ):
         players = [1]
         teams = [101] if scenario == "team_usage_analysis" else []
@@ -368,6 +369,12 @@ def test_player_intelligence_analysis_layers():
         )
         assert result["result"]["player"] == "Alpha"
         assert result["support"]["method"]
+        if scenario == "performance_attribution":
+            decomposition = result["result"]["observed_change_decomposition"]
+            assert decomposition["status"] == "available_descriptive"
+            assert decomposition["is_causal"] is False
+            assert decomposition["bb_rating_change_points"] is not None
+            assert "non assegna quote causali" in decomposition["interpretation"]
 
 
 def test_metric_explanation_uses_same_context_percentiles():
