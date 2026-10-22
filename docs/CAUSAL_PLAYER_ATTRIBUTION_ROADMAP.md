@@ -149,7 +149,7 @@ A capability can be operationally available while a specific player's result is 
 
 ### Teammate exposure support diagnostics
 
-The panel builder now resolves the pre-treatment team-strength covariate using the team's canonical global identity before falling back to numeric team ID. This addresses a possible identifier mismatch without replacing missing values with fabricated zeroes; refresh the persisted teammate panel after deployment and verify the missingness report before any causal interpretation.
+The panel builder resolves pre-treatment team strength using the team's canonical global identity before falling back to numeric team ID. For the strength metric it prefers the exact competition, then `TOT`/`RS`, and finally the latest available team-stat season not later than the pre-treatment season. It never reads a future team-season, and still leaves strength missing when no allowed source row exists. Refresh the persisted teammate panel after deployment and verify missingness before causal interpretation.
 
 The diagnostic also reports overlapping missing-value counts and percentages for baseline BB-Rating, pre-treatment minutes, usage, age, team strength, treatment, outcome and identities. These are intentionally overlapping counts, not additive row categories. A low complete-case rate must be diagnosed at field level before changing support thresholds or imputing covariates. The current panel treatment is same-team status in the outcome season; it does not, by itself, identify a newly acquired teammate or isolate an acquisition effect.
 
