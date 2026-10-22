@@ -2265,7 +2265,7 @@ def refresh_causal_panel(payload: CausalPanelRefreshPayload, user: dict[str, str
         active_profile = STATE.active_profile
     if not active_profile:
         raise HTTPException(status_code=400, detail="Seleziona prima un profilo PostgreSQL")
-    if not isinstance(data, dict) or not data.get("player_stats") is not None:
+    if not isinstance(data, dict) or data.get("player_stats") is None:
         raise HTTPException(status_code=409, detail="Carica prima i dati canonici da PostgreSQL")
     if payload.kind == "teammate_exposure" and not payload.teammate_global_id:
         raise HTTPException(status_code=400, detail="teammate_global_id è obbligatorio per teammate exposure")
