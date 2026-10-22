@@ -1524,13 +1524,18 @@ class ChatScenarioEngine:
             if rows.empty:
                 return np.nan
 
-            source_year = rows["_year"].max()
-            rows = rows[rows["_year"] == source_year]
             competition_key = normalize_competition(competition)
             preference = list(dict.fromkeys([competition_key, "TOT", "RS"]))
             preferred = rows[rows["_comp"].isin(preference)].copy()
             if preferred.empty:
                 return np.nan
+            source_year = preferred["_year"].max()
+            # A one-season lag is tolerable for a source with shifted/missing
+            # competition splits; older team context is too stale to stand in
+            # for a pre-treatment covariate and remains missing.
+            if source_year < year - 1:
+                return np.nan
+            preferred = preferred[preferred["_year"] == source_year].copy()
             preferred["_comp_priority"] = preferred["_comp"].map(
                 {key: index for index, key in enumerate(preference)}
             ).fillna(len(preference))
