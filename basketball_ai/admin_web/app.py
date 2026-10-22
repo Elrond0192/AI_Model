@@ -2942,6 +2942,58 @@ def _scheduler_engine():
     return get_engine(profile_url(profile))
 
 
+def _available_scheduled_contexts(engine) -> list[dict[str, str]]:
+    """Current league/competition coverage across canonical player and team stats."""
+    rows = pd.read_sql(text('''
+        SELECT DISTINCT upper(btrim(league_key)) AS league_key,
+                        upper(btrim(competition)) AS competition
+          FROM (
+                SELECT league_key, competition FROM "AI_Source"."PlayerCompetitionStats"
+                UNION
+                SELECT league_key, competition FROM "AI_Source"."TeamCompetitionStats"
+          ) AS contexts
+         WHERE NULLIF(btrim(league_key), '') IS NOT NULL
+           AND NULLIF(btrim(competition), '') IS NOT NULL
+         ORDER BY 1, 2
+    '''), engine)
+    return [
+        {"league_key": str(row["league_key"]).strip().upper(),
+         "competition": str(row["competition"]).strip().upper()}
+        for _, row in rows.iterrows()
+    ]
+
+
+def _resolve_scheduled_leagues(parameters: dict[str, Any], available_leagues: list[str]) -> list[str]:
+    # Backward compatibility for scheduled jobs saved with the old single-league UI.
+    if parameters.get("all_leagues"):
+        selected = available_leagues
+    elif parameters.get("leagues"):
+        selected = [str(value).strip().upper() for value in parameters["leagues"]]
+    elif parameters.get("league"):
+        selected = [str(parameters["league"]).strip().upper()]
+    else:
+        selected = available_leagues
+    unknown = sorted(set(selected) - set(available_leagues))
+    if unknown:
+        raise ValueError("Leghe non presenti nei dati canonici: " + ", ".join(unknown))
+    return sorted(set(selected))
+
+
+@app.get("/admin-api/scheduler/options")
+def scheduler_options(user: dict[str, str] = Depends(_operator)) -> dict[str, Any]:
+    del user
+    engine = _scheduler_engine()
+    try:
+        contexts = _available_scheduled_contexts(engine)
+        leagues = sorted({row["league_key"] for row in contexts})
+        competitions = sorted({row["competition"] for row in contexts})
+        return {"leagues": leagues, "competitions": competitions, "contexts": len(contexts)}
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="Impossibile leggere le leghe e le competizioni canoniche: " + _safe_error(exc)) from exc
+    finally:
+        engine.dispose()
+
+
 def _execute_scheduled_task(task_key: str, parameters: dict[str, Any], actor: str) -> tuple[str, dict[str, Any]]:
     if task_key in {"bb_prediction_training", "bb_rating_calibration", "future_performance_training"}:
         endpoint = {
@@ -2952,16 +3004,71 @@ def _execute_scheduled_task(task_key: str, parameters: dict[str, Any], actor: st
         response = endpoint({"username": actor, "role": "admin", "token": "scheduler"})
         return "submitted", {"message": response.get("message", "Job di training inviato"), "job": response.get("job", {})}
     engine = _scheduler_engine()
-    with engine.begin() as connection:
+    try:
         if task_key == "refresh_context_seasonal":
-            connection.execute(text('CALL "AI_Source"."RefreshContextSeasonal"(:season)'), {"season": int(parameters["season"])})
-        elif task_key == "refresh_simulation_sources":
-            connection.execute(text('CALL "AI_Source"."RefreshSimulationSources"(:league, :season)'), {"league": str(parameters["league"]).upper(), "season": int(parameters["season"])})
-        elif task_key == "refresh_scenario_serving":
-            connection.execute(text('CALL "AI_Source"."RefreshScenarioServing"(:league, :season, :competition)'), {"league": str(parameters["league"]).upper(), "season": int(parameters["season"]), "competition": str(parameters["competition"]).upper()})
-        elif task_key == "refresh_training_serving":
-            connection.execute(text('CALL "AI_Source"."RefreshTrainingServing"(:league, :season, :competition)'), {"league": str(parameters["league"]).upper(), "season": int(parameters["season"]), "competition": str(parameters["competition"]).upper()})
-    return "complete", {"message": "Procedura SQL completata", "task_key": task_key, "parameters": parameters}
+            # The SQL procedure discovers every league/competition for this season.
+            with engine.begin() as connection:
+                connection.execute(
+                    text('CALL "AI_Source"."RefreshContextSeasonal"(:season)'),
+                    {"season": int(parameters["season"])},
+                )
+            return "complete", {
+                "message": "RefreshContextSeasonal completato su tutte le leghe e competizioni",
+                "task_key": task_key,
+                "parameters": parameters,
+            }
+
+        contexts = _available_scheduled_contexts(engine)
+        available_leagues = sorted({item["league_key"] for item in contexts})
+        selected_leagues = _resolve_scheduled_leagues(parameters, available_leagues)
+        if not selected_leagues:
+            raise ValueError("Nessuna lega canonica disponibile per il refresh")
+
+        if task_key == "refresh_simulation_sources":
+            with engine.begin() as connection:
+                for league in selected_leagues:
+                    connection.execute(
+                        text('CALL "AI_Source"."RefreshSimulationSources"(:league, :season)'),
+                        {"league": league, "season": int(parameters["season"])},
+                    )
+            return "complete", {
+                "message": f"RefreshSimulationSources completato per {len(selected_leagues)} leghe",
+                "task_key": task_key,
+                "leagues": selected_leagues,
+                "season": int(parameters["season"]),
+            }
+
+        competition_filter = str(parameters["competition"]).upper() if parameters.get("competition") else None
+        selected_contexts = [
+            item for item in contexts
+            if item["league_key"] in selected_leagues
+            and (competition_filter is None or item["competition"] == competition_filter)
+        ]
+        if not selected_contexts:
+            raise ValueError("Nessuna competizione presente per le leghe selezionate")
+        procedure = (
+            '"AI_Source"."RefreshScenarioServing"'
+            if task_key == "refresh_scenario_serving"
+            else '"AI_Source"."RefreshTrainingServing"'
+        )
+        with engine.begin() as connection:
+            for item in selected_contexts:
+                connection.execute(
+                    text(f'CALL {procedure}(:league, :season, :competition)'),
+                    {
+                        "league": item["league_key"],
+                        "season": int(parameters["season"]),
+                        "competition": item["competition"],
+                    },
+                )
+        return "complete", {
+            "message": f"Refresh completato per {len(selected_contexts)} combinazioni lega/competizione",
+            "task_key": task_key,
+            "contexts": selected_contexts,
+            "season": int(parameters["season"]),
+        }
+    finally:
+        engine.dispose()
 
 
 def _run_due_scheduled_job() -> bool:
