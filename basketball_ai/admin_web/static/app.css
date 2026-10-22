@@ -512,6 +512,26 @@ input:focus,select:focus,textarea:focus{border-color:#4e7fc5!important;box-shado
 .schedule-league-option strong{font-size:12px;font-weight:500;line-height:1.2}
 .schedule-league-option small{display:none}
 .schedule-league-all{background:transparent;border:0;grid-column:auto}
+/* Scheduler recurrence controls and compact enable/disable switches. */
+#ai-jobs-schedule-form input[type="date"],
+#ai-jobs-schedule-form input[type="time"]{color-scheme:dark}
+.schedule-switch-field{display:flex;flex-direction:row;align-items:center;justify-content:space-between;gap:12px;min-height:42px}
+.schedule-switch{position:relative;display:inline-flex;flex:0 0 auto;align-items:center;justify-content:center;flex-direction:row;cursor:pointer}
+.schedule-switch input{position:absolute;width:1px;height:1px;padding:0;margin:0;opacity:0;border:0}
+.schedule-switch-track{position:relative;display:block;flex:0 0 36px;width:36px;height:20px;border:1px solid #456078;border-radius:999px;background:#26394b;transition:background .16s,border-color .16s}
+.schedule-switch-track::before{content:"";position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;background:#c8d5e2;transition:transform .16s,background .16s}
+.schedule-switch input:checked+.schedule-switch-track{background:#116bdb;border-color:#398bff}
+.schedule-switch input:checked+.schedule-switch-track::before{transform:translateX(16px);background:#fff}
+.schedule-switch input:focus-visible+.schedule-switch-track{outline:2px solid #75b2ff;outline-offset:3px}
+.schedule-switch input:disabled+.schedule-switch-track{opacity:.45;cursor:wait}
+.schedule-job-row{gap:16px;align-items:center}
+.schedule-job-row>span:first-child{flex:1;min-width:0;overflow-wrap:anywhere}
+.schedule-job-row>span:first-child small{display:inline-block;line-height:1.6}
+.schedule-job-actions{display:flex;align-items:center;justify-content:flex-end;gap:9px;white-space:nowrap}
+@media(max-width:720px){
+  .schedule-job-row{align-items:flex-start;flex-direction:column}
+  .schedule-job-actions{width:100%;justify-content:flex-start;flex-wrap:wrap}
+}
 #causal-refresh-result{white-space:pre-wrap;line-height:1.5;margin-top:12px}
 #causal-refresh-team-switch,#causal-refresh-teammate{min-height:40px}
 @media(max-width:720px){
