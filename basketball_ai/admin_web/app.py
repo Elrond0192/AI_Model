@@ -61,6 +61,7 @@ from basketball_ai.admin_web.model_lifecycle import (
 )
 from basketball_ai.bb_rating.engine import BBRatingEngine
 from basketball_ai.scenarios.chat_scenario_engine import ChatScenarioEngine
+from basketball_ai.scenarios.causal_attribution import estimate_teammate_exposure_att
 from basketball_ai.models.strict_production import StrictProductionEnsembleModel
 from basketball_ai.models.promote import (
     MAX_SEGMENT_REGRESSION_PCT,
@@ -150,6 +151,9 @@ STATE = AdminState()
 CAUSAL_REFRESH_LOCK = threading.RLock()
 CAUSAL_REFRESH_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="ai-admin-causal-refresh")
 CAUSAL_REFRESH_CANCEL_EVENT = threading.Event()
+CAUSAL_SUPPORT_REPORTS: dict[str, bytes] = {}
+CAUSAL_SUPPORT_DIAGNOSTIC_GROUP_LIMIT = 50
+
 CAUSAL_REFRESH_JOB: dict[str, Any] = {
     "status": "idle",
     "kind": None,
@@ -2365,6 +2369,363 @@ def refresh_causal_panel(payload: CausalPanelRefreshPayload, user: dict[str, str
     except Exception as exc:
         _audit(actor, "causal_panel_refresh_failed", payload.kind, str(exc))
         raise HTTPException(status_code=500, detail=f"Refresh pannello causale fallito: {exc}") from exc
+
+
+
+def _teammate_support_gate_status(row: dict[str, Any]) -> str:
+    """Apply raw sample/integrity gates before fitting a per-teammate estimator."""
+    if int(row.get("missing_focal_identity_rows", 0) or 0) > 0 or int(row.get("duplicate_focal_rows", 0) or 0) > 0:
+        return "identity_integrity_failed"
+    eligible = int(row.get("eligible_rows", 0) or 0)
+    treated = int(row.get("treated", 0) or 0)
+    control = int(row.get("control", 0) or 0)
+    if eligible < 60 or treated < 20 or control < 20:
+        return "insufficient_treated_control_support"
+    return "raw_support_passed_pending_diagnostics"
+
+
+def _build_teammate_support_diagnostics(active_profile: str) -> dict[str, Any]:
+    """Audit persisted teammate support per teammate × league × competition × season.
+
+    The aggregation runs in PostgreSQL to avoid loading millions of panel rows into
+    the admin process. Propensity and balance gates are evaluated only for groups
+    that first satisfy the existing minimum support and identity-integrity gates.
+    Effect estimates are deliberately not exposed by this diagnostic report.
+    """
+    engine = get_engine(profile_url(active_profile))
+    try:
+        with engine.connect() as connection:
+            persisted_rows = int(connection.execute(text(
+                'SELECT COUNT(*) FROM "AI_Source"."SimulationCausalPanel" '
+                "WHERE source_type = 'teammate_exposure'"
+            )).scalar_one())
+            aggregate_sql = text(
+                '''
+                WITH panel AS (
+                    SELECT
+                        NULLIF(BTRIM(CAST(global_id AS text)), '') AS global_id,
+                        NULLIF(BTRIM(CAST(teammate_global_id AS text)), '') AS teammate_global_id,
+                        UPPER(NULLIF(BTRIM(CAST(league_key AS text)), '')) AS league_key,
+                        UPPER(NULLIF(BTRIM(CAST(competition AS text)), '')) AS competition,
+                        transition_season,
+                        CASE
+                            WHEN BTRIM(CAST(treatment AS text)) IN ('0', '1')
+                            THEN CAST(treatment AS integer)
+                            ELSE NULL
+                        END AS treatment,
+                        next_outcome AS outcome,
+                        baseline_bb_rating,
+                        minutes_pre,
+                        usage_pre,
+                        age_pre,
+                        team_strength_pre,
+                        refreshed_at
+                    FROM "AI_Source"."SimulationCausalPanel"
+                    WHERE source_type = 'teammate_exposure'
+                ),
+                classified AS (
+                    SELECT *,
+                        COALESCE(
+                            global_id IS NOT NULL
+                            AND treatment IN (0, 1)
+                            AND outcome BETWEEN 1 AND 100
+                            AND baseline_bb_rating IS NOT NULL
+                            AND minutes_pre IS NOT NULL
+                            AND usage_pre IS NOT NULL
+                            AND age_pre IS NOT NULL
+                            AND team_strength_pre IS NOT NULL
+                            AND transition_season IS NOT NULL,
+                            FALSE
+                        ) AS model_row
+                    FROM panel
+                )
+                SELECT
+                    teammate_global_id,
+                    league_key,
+                    competition,
+                    transition_season,
+                    COUNT(*) AS panel_rows,
+                    COUNT(DISTINCT global_id) AS unique_focal_players,
+                    COUNT(*) FILTER (WHERE global_id IS NULL) AS missing_focal_identity_rows,
+                    COUNT(*) FILTER (WHERE global_id IS NOT NULL)
+                        - COUNT(DISTINCT global_id) AS duplicate_focal_rows,
+                    COUNT(*) FILTER (WHERE model_row) AS eligible_rows,
+                    COUNT(*) FILTER (WHERE model_row AND treatment = 1) AS treated,
+                    COUNT(*) FILTER (WHERE model_row AND treatment = 0) AS control,
+                    COUNT(*) FILTER (WHERE NOT model_row) AS excluded_complete_case_rows,
+                    COUNT(*) FILTER (WHERE treatment IS NULL) AS invalid_treatment_rows,
+                    MAX(refreshed_at) AS last_refresh
+                FROM classified
+                WHERE teammate_global_id IS NOT NULL
+                    AND league_key IS NOT NULL
+                    AND competition IS NOT NULL
+                    AND transition_season IS NOT NULL
+                GROUP BY teammate_global_id, league_key, competition, transition_season
+                ORDER BY
+                    COUNT(*) FILTER (WHERE model_row AND treatment = 1) DESC,
+                    COUNT(*) FILTER (WHERE model_row AND treatment = 0) DESC,
+                    teammate_global_id, league_key, competition, transition_season
+                '''
+            )
+            aggregate_rows = [
+                dict(row) for row in connection.execute(aggregate_sql).mappings().all()
+            ]
+            columns = [
+                "teammate_global_id", "league_key", "competition", "transition_season",
+                "panel_rows", "unique_focal_players", "missing_focal_identity_rows",
+                "duplicate_focal_rows", "eligible_rows", "treated", "control",
+                "excluded_complete_case_rows", "invalid_treatment_rows", "last_refresh",
+                "status", "diagnostics_evaluated", "diagnostics_reason",
+                "propensity_overlap_share", "max_abs_smd_after",
+            ]
+            if not aggregate_rows:
+                empty_csv = pd.DataFrame(columns=columns).to_csv(index=False).encode("utf-8-sig")
+                return {
+                    "summary": {
+                        "panel_rows": persisted_rows,
+                        "groups_total": 0,
+                        "groups_raw_support_passed": 0,
+                        "groups_diagnostics_evaluated": 0,
+                        "groups_not_evaluated_due_limit": 0,
+                        "groups_with_statistical_gates_passed": 0,
+                        "status_counts": {},
+                        "unclassified_panel_rows": persisted_rows,
+                        "interpretation": (
+                            "Nessun gruppo con identità, lega, competizione e stagione valide. "
+                            "Non è disponibile una stima causale."
+                        ),
+                        "best_supported_groups": [],
+                    },
+                    "csv_bytes": empty_csv,
+                }
+
+            report = pd.DataFrame(aggregate_rows)
+            for column in (
+                "panel_rows", "unique_focal_players", "missing_focal_identity_rows",
+                "duplicate_focal_rows", "eligible_rows", "treated", "control",
+                "excluded_complete_case_rows", "invalid_treatment_rows",
+            ):
+                report[column] = pd.to_numeric(report[column], errors="coerce").fillna(0).astype(int)
+            report["transition_season"] = pd.to_numeric(
+                report["transition_season"], errors="coerce"
+            ).fillna(0).astype(int)
+            report["diagnostics_evaluated"] = False
+            report["diagnostics_reason"] = ""
+            report["propensity_overlap_share"] = pd.NA
+            report["max_abs_smd_after"] = pd.NA
+            report["status"] = report.apply(
+                lambda row: _teammate_support_gate_status(row.to_dict()), axis=1
+            )
+
+            raw_candidates = report.index[
+                report["status"] == "raw_support_passed_pending_diagnostics"
+            ].tolist()
+            diagnostic_indices = raw_candidates[:CAUSAL_SUPPORT_DIAGNOSTIC_GROUP_LIMIT]
+            if diagnostic_indices:
+                selected = report.loc[diagnostic_indices, [
+                    "teammate_global_id", "league_key", "competition", "transition_season"
+                ]].to_dict("records")
+                value_rows: list[str] = []
+                params: dict[str, Any] = {}
+                for index, key in enumerate(selected):
+                    value_rows.append(
+                        f"(:teammate_{index}, :league_{index}, :competition_{index}, :season_{index})"
+                    )
+                    params[f"teammate_{index}"] = str(key["teammate_global_id"])
+                    params[f"league_{index}"] = str(key["league_key"])
+                    params[f"competition_{index}"] = str(key["competition"])
+                    params[f"season_{index}"] = int(key["transition_season"])
+                detail_sql = text(
+                    '''
+                    WITH selected(teammate_global_id, league_key, competition, transition_season) AS (
+                        VALUES ''' + ", ".join(value_rows) + '''
+                    )
+                    SELECT
+                        NULLIF(BTRIM(CAST(p.global_id AS text)), '') AS global_id,
+                        NULLIF(BTRIM(CAST(p.teammate_global_id AS text)), '') AS teammate_global_id,
+                        UPPER(BTRIM(CAST(p.league_key AS text))) AS league_key,
+                        UPPER(BTRIM(CAST(p.competition AS text))) AS competition,
+                        p.transition_season,
+                        CASE
+                            WHEN BTRIM(CAST(p.treatment AS text)) IN ('0', '1')
+                            THEN CAST(p.treatment AS integer)
+                            ELSE NULL
+                        END AS treatment,
+                        p.next_outcome AS outcome,
+                        p.baseline_bb_rating,
+                        p.minutes_pre,
+                        p.usage_pre,
+                        p.age_pre,
+                        p.team_strength_pre,
+                        p.role_pre
+                    FROM "AI_Source"."SimulationCausalPanel" p
+                    JOIN selected s
+                      ON NULLIF(BTRIM(CAST(p.teammate_global_id AS text)), '') = s.teammate_global_id
+                     AND UPPER(BTRIM(CAST(p.league_key AS text))) = s.league_key
+                     AND UPPER(BTRIM(CAST(p.competition AS text))) = s.competition
+                     AND p.transition_season = s.transition_season
+                    WHERE p.source_type = 'teammate_exposure'
+                    '''
+                )
+                detail_rows = [
+                    dict(row) for row in connection.execute(detail_sql, params).mappings().all()
+                ]
+                details = pd.DataFrame(detail_rows)
+                if not details.empty:
+                    detail_keys = [
+                        "teammate_global_id", "league_key", "competition", "transition_season"
+                    ]
+                    for index in diagnostic_indices:
+                        key = report.loc[index]
+                        mask = pd.Series(True, index=details.index)
+                        for column in detail_keys:
+                            if column == "transition_season":
+                                mask &= pd.to_numeric(details[column], errors="coerce") == int(key[column])
+                            else:
+                                mask &= details[column].astype(str) == str(key[column])
+                        group = details.loc[mask].copy()
+                        result = estimate_teammate_exposure_att(
+                            group, teammate_global_id=str(key["teammate_global_id"])
+                        )
+                        diagnostics = result.get("diagnostics") if isinstance(result.get("diagnostics"), dict) else {}
+                        if result.get("available"):
+                            status = "statistical_gates_passed_observational_only"
+                        else:
+                            status = str(result.get("reason") or "estimator_unavailable")
+                        report.at[index, "status"] = status
+                        report.at[index, "diagnostics_evaluated"] = True
+                        report.at[index, "diagnostics_reason"] = (
+                            "" if result.get("available") else status
+                        )
+                        overlap = diagnostics.get("propensity_overlap_share")
+                        max_smd = diagnostics.get("max_abs_smd_after")
+                        if overlap is not None:
+                            report.at[index, "propensity_overlap_share"] = float(overlap)
+                        if max_smd is not None:
+                            report.at[index, "max_abs_smd_after"] = float(max_smd)
+
+            for index in raw_candidates[CAUSAL_SUPPORT_DIAGNOSTIC_GROUP_LIMIT:]:
+                report.at[index, "status"] = "not_evaluated_diagnostic_limit"
+                report.at[index, "diagnostics_reason"] = "raw_support_passed_but_diagnostic_limit_reached"
+
+            report["diagnostics_evaluated"] = report["diagnostics_evaluated"].astype(bool)
+            report["last_refresh"] = report["last_refresh"].map(
+                lambda value: value.isoformat() if hasattr(value, "isoformat") else str(value or "")
+            )
+            status_counts = {
+                str(key): int(value)
+                for key, value in report["status"].value_counts(dropna=False).items()
+            }
+            raw_support_passed = len(raw_candidates)
+            evaluated = min(raw_support_passed, CAUSAL_SUPPORT_DIAGNOSTIC_GROUP_LIMIT)
+            gates_passed = int((report["status"] == "statistical_gates_passed_observational_only").sum())
+            grouped_rows = int(report["panel_rows"].sum())
+            excluded_rows = max(0, persisted_rows - grouped_rows)
+            best = report.sort_values(
+                ["treated", "eligible_rows", "control"],
+                ascending=[False, False, False],
+                kind="stable",
+            ).head(12)
+            best_groups = []
+            for row in best.to_dict("records"):
+                item = {
+                    key: (None if pd.isna(value) else value)
+                    for key, value in row.items()
+                    if key in {
+                        "teammate_global_id", "league_key", "competition", "transition_season",
+                        "panel_rows", "eligible_rows", "treated", "control", "status",
+                        "diagnostics_evaluated", "propensity_overlap_share", "max_abs_smd_after",
+                        "diagnostics_reason",
+                    }
+                }
+                best_groups.append(item)
+            latest_refresh = report["last_refresh"].replace("", pd.NA).dropna()
+            report_csv = report[columns].to_csv(index=False).encode("utf-8-sig")
+            return {
+                "summary": {
+                    "panel_rows": persisted_rows,
+                    "grouped_panel_rows": grouped_rows,
+                    "unclassified_panel_rows": excluded_rows,
+                    "groups_total": int(len(report)),
+                    "groups_with_identity_integrity_issues": int(
+                        report["status"].eq("identity_integrity_failed").sum()
+                    ),
+                    "groups_raw_support_passed": raw_support_passed,
+                    "groups_diagnostics_evaluated": evaluated,
+                    "groups_not_evaluated_due_limit": max(0, raw_support_passed - evaluated),
+                    "groups_with_statistical_gates_passed": gates_passed,
+                    "diagnostic_group_limit": CAUSAL_SUPPORT_DIAGNOSTIC_GROUP_LIMIT,
+                    "status_counts": status_counts,
+                    "total_eligible_complete_case_rows": int(report["eligible_rows"].sum()),
+                    "total_excluded_complete_case_rows": int(report["excluded_complete_case_rows"].sum()),
+                    "last_refresh": str(latest_refresh.max()) if not latest_refresh.empty else None,
+                    "interpretation": (
+                        "Il superamento dei gate statistici resta evidenza osservazionale: "
+                        "non dimostra un effetto causale. causal_team_effect resta partial fino a "
+                        "validazione temporale, placebo, sensibilità e confondimento non osservato."
+                    ),
+                    "best_supported_groups": best_groups,
+                },
+                "csv_bytes": report_csv,
+            }
+    finally:
+        engine.dispose()
+
+
+@app.post("/admin-api/causal-panels/teammate-support-diagnostics")
+def run_teammate_support_diagnostics(
+    user: dict[str, str] = Depends(_csrf),
+) -> dict[str, Any]:
+    """Audit teammate support by named identity and exact league/competition/season."""
+    with STATE.lock:
+        active_profile = STATE.active_profile
+    if not active_profile:
+        raise HTTPException(status_code=400, detail="Seleziona prima un profilo PostgreSQL")
+    try:
+        diagnostic = _build_teammate_support_diagnostics(active_profile)
+        summary = diagnostic.get("summary") or {}
+        report_id = uuid.uuid4().hex[:12]
+        report_bytes = diagnostic.get("csv_bytes", b"")
+        if isinstance(report_bytes, str):
+            report_bytes = report_bytes.encode("utf-8-sig")
+        if not isinstance(report_bytes, bytes):
+            raise RuntimeError("Il report CSV diagnostico non è valido")
+        # Keep only the latest report so repeated diagnostics cannot fill admin memory.
+        CAUSAL_SUPPORT_REPORTS.clear()
+        CAUSAL_SUPPORT_REPORTS[report_id] = report_bytes
+        _audit(
+            user["username"], "teammate_exposure_support_diagnostics", active_profile,
+            json.dumps(summary, ensure_ascii=False, default=str),
+        )
+        return {
+            "ok": True,
+            "report_id": report_id,
+            "download_url": f"/admin-api/causal-panels/teammate-support-diagnostics/{report_id}.csv",
+            "summary": summary,
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        _audit(user["username"], "teammate_exposure_support_diagnostics_failed", active_profile, _safe_error(exc))
+        raise HTTPException(status_code=500, detail=f"Diagnostica teammate exposure fallita: {_safe_error(exc)}") from exc
+
+
+@app.get("/admin-api/causal-panels/teammate-support-diagnostics/{report_id}.csv")
+def download_teammate_support_diagnostics_csv(
+    report_id: str, user: dict[str, str] = Depends(_operator)
+) -> Response:
+    """Download the latest authenticated teammate support report."""
+    del user
+    if not re.fullmatch(r"[0-9a-f]{12}", report_id):
+        raise HTTPException(status_code=404, detail="Report diagnostico non trovato")
+    report_bytes = CAUSAL_SUPPORT_REPORTS.get(report_id)
+    if report_bytes is None:
+        raise HTTPException(status_code=404, detail="Report diagnostico non più disponibile; riesegui la diagnostica")
+    return Response(
+        content=report_bytes,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="teammate_exposure_support_{report_id}.csv"'},
+    )
 
 
 
