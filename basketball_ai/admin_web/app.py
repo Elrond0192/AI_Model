@@ -2467,7 +2467,6 @@ def _causal_refresh_worker(job_id: str, kind: str, actor: str) -> None:
         if total_units == 0:
             raise RuntimeError("Nessun Global ID canonico disponibile per il refresh teammate exposure")
 
-        league_dict = data.get("league_dict", {}) or {}
         bb_engine = BBRatingEngine(data["player_stats"], data.get("players"), data.get("leagues"))
         scenario_engine = ChatScenarioEngine(StrictProductionEnsembleModel(), data, bb_rating_engine=bb_engine)
         database_engine = get_engine(profile_url(active_profile))
@@ -2540,7 +2539,7 @@ def _causal_refresh_worker(job_id: str, kind: str, actor: str) -> None:
             database_engine.dispose()
 
         final_status = "complete" if items_failed == 0 else ("partial" if items_written > 0 else "failed")
-        final = _causal_refresh_set_job(
+        _causal_refresh_set_job(
             status=final_status,
             stage="Completato" if final_status == "complete" else ("Completato con errori" if final_status == "partial" else "Fallito"),
             progress=100 if final_status in {"complete", "partial"} else int(round(completed_units * 100 / max(total_units, 1))),
