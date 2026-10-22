@@ -1610,14 +1610,27 @@ class ChatScenarioEngine:
                     value for value in active_teammate_ids
                     if value.casefold() == requested_teammate_id
                 ]
+            team_before = _nullable_int(before.get("_team_int"))
             for named_teammate_id in active_teammate_ids:
                 if named_teammate_id.casefold() == focal_global_id.casefold():
                     continue
+                teammate_team_before = team_by_global_year.get((named_teammate_id, before_year))
                 teammate_team_after = team_by_global_year.get((named_teammate_id, after_year))
+                # Exposure status must be observable before the outcome window.
+                # If the named player has no team row in the baseline season,
+                # this pair cannot establish whether the relationship is new.
+                if teammate_team_before is None or teammate_team_after is None:
+                    continue
+                was_teammate_before = team_before is not None and team_before == teammate_team_before
+                # Continuing teammate relationships are already exposed at
+                # baseline and must not be mislabeled as treatment initiations
+                # or mixed into the no-new-exposure control group.
+                if was_teammate_before:
+                    continue
                 records.append({
                     **common,
                     "teammate_global_id": named_teammate_id,
-                    "treatment": int(teammate_team_after is not None and team_after == teammate_team_after),
+                    "treatment": int(team_after == teammate_team_after),
                 })
         if not records:
             return pd.DataFrame()
