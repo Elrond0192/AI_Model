@@ -377,6 +377,12 @@ def test_helpers_and_static_assets(monkeypatch, tmp_path):
     enter_body = js[enter_start:enter_end]
     assert enter_body.index("void navigate('overview')") < enter_body.index("api('/admin-api/auto-load'")
     assert "if(App.user&&App.page==='overview')await navigate('overview')" in enter_body
+    assert 'data-page="ai-jobs"' in html
+    assert 'id="page-ai-jobs"' in html
+    assert "if(page==='ai-jobs')await renderAiJobs()" in js
+    assert "/admin-api/bb-rating-prediction/train" in js
+    assert "/admin-api/bb-rating/calibrate" in js
+    assert "/admin-api/future-performance/train" in js
     assert "keepAlive:true" in enter_body
     api_start = js.index("async function api(path,options={}){")
     api_end = js.index("function showLogin()", api_start)
