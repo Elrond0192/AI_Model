@@ -152,6 +152,7 @@ CAUSAL_REFRESH_LOCK = threading.RLock()
 CAUSAL_REFRESH_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="ai-admin-causal-refresh")
 CAUSAL_REFRESH_CANCEL_EVENT = threading.Event()
 CAUSAL_SUPPORT_REPORTS: dict[str, bytes] = {}
+CAUSAL_SUPPORT_DIAGNOSTICS_ACTIVE = False
 CAUSAL_SUPPORT_DIAGNOSTIC_GROUP_LIMIT = 50
 
 CAUSAL_REFRESH_JOB: dict[str, Any] = {
@@ -2324,6 +2325,9 @@ class CausalPanelRefreshPayload(BaseModel):
 @app.post("/admin-api/causal-panels/refresh")
 def refresh_causal_panel(payload: CausalPanelRefreshPayload, user: dict[str, str] = Depends(_csrf)) -> dict[str, Any]:
     """Explicitly refresh a causal evidence panel; never triggered by chat."""
+    with CAUSAL_REFRESH_LOCK:
+        if CAUSAL_SUPPORT_DIAGNOSTICS_ACTIVE:
+            raise HTTPException(status_code=409, detail="La diagnostica dei pannelli causali è in esecuzione.")
     actor = user["username"]
     with STATE.lock:
         data = STATE.data
@@ -2639,7 +2643,7 @@ def _build_teammate_support_diagnostics(active_profile: str) -> dict[str, Any]:
                     }
                 }
                 best_groups.append(item)
-            latest_refresh = report["last_refresh"].replace("", pd.NA).dropna()
+            latest_refresh = report.loc[report["last_refresh"].astype(str).str.strip().ne(""), "last_refresh"]
             report_csv = report[columns].to_csv(index=False).encode("utf-8-sig")
             return {
                 "summary": {
@@ -2677,9 +2681,18 @@ def run_teammate_support_diagnostics(
     user: dict[str, str] = Depends(_csrf),
 ) -> dict[str, Any]:
     """Audit teammate support by named identity and exact league/competition/season."""
+    global CAUSAL_SUPPORT_DIAGNOSTICS_ACTIVE
+    with CAUSAL_REFRESH_LOCK:
+        if CAUSAL_REFRESH_JOB.get("status") in {"queued", "running"}:
+            raise HTTPException(status_code=409, detail="Attendi la fine del refresh causale prima della diagnostica.")
+        if CAUSAL_SUPPORT_DIAGNOSTICS_ACTIVE:
+            raise HTTPException(status_code=409, detail="Una diagnostica teammate exposure è già in esecuzione.")
+        CAUSAL_SUPPORT_DIAGNOSTICS_ACTIVE = True
     with STATE.lock:
         active_profile = STATE.active_profile
     if not active_profile:
+        with CAUSAL_REFRESH_LOCK:
+            CAUSAL_SUPPORT_DIAGNOSTICS_ACTIVE = False
         raise HTTPException(status_code=400, detail="Seleziona prima un profilo PostgreSQL")
     try:
         diagnostic = _build_teammate_support_diagnostics(active_profile)
@@ -2708,6 +2721,9 @@ def run_teammate_support_diagnostics(
     except Exception as exc:
         _audit(user["username"], "teammate_exposure_support_diagnostics_failed", active_profile, _safe_error(exc))
         raise HTTPException(status_code=500, detail=f"Diagnostica teammate exposure fallita: {_safe_error(exc)}") from exc
+    finally:
+        with CAUSAL_REFRESH_LOCK:
+            CAUSAL_SUPPORT_DIAGNOSTICS_ACTIVE = False
 
 
 @app.get("/admin-api/causal-panels/teammate-support-diagnostics/{report_id}.csv")
@@ -2961,6 +2977,8 @@ def start_causal_panel_refresh_all(
     if not isinstance(data, dict) or not isinstance(data.get("player_stats"), pd.DataFrame) or data["player_stats"].empty:
         raise HTTPException(status_code=409, detail="Carica prima i dati canonici da PostgreSQL")
     with CAUSAL_REFRESH_LOCK:
+        if CAUSAL_SUPPORT_DIAGNOSTICS_ACTIVE:
+            raise HTTPException(status_code=409, detail="La diagnostica dei pannelli causali è in esecuzione.")
         if CAUSAL_REFRESH_JOB.get("status") in {"queued", "running"}:
             raise HTTPException(status_code=409, detail="Un refresh causale globale è già in esecuzione.")
         CAUSAL_REFRESH_CANCEL_EVENT.clear()
