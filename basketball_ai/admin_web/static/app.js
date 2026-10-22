@@ -741,6 +741,10 @@ $$('.nav-item').forEach(b=>b.addEventListener('click',()=>navigate(b.dataset.pag
 async function renderAiJobs(){
   const errorNode=$('#ai-jobs-error');
   const scheduleForm=$('#ai-jobs-schedule-form');
+  const intervalField=$('#ai-schedule-interval-field');
+  const intervalInput=scheduleForm?.interval_hours;
+  const dailyTimeField=$('#ai-schedule-daily-time-field');
+  const dailyTimeInput=scheduleForm?.daily_time;
   const leagueField=$('#ai-schedule-league-field');
   const leaguePicker=$('#ai-schedule-league-picker');
   const leagueToggle=$('#ai-schedule-league-toggle');
@@ -817,6 +821,11 @@ async function renderAiJobs(){
     const needsLeague=['refresh_simulation_sources','refresh_scenario_serving','refresh_training_serving'].includes(task);
     if(leagueField)leagueField.classList.toggle('hidden',!needsLeague);
     if(!needsLeague)setLeagueDropdownOpen(false);
+    const daily=scheduleForm?.schedule_mode.value==='daily';
+    if(intervalField)intervalField.classList.toggle('hidden',daily);
+    if(intervalInput)intervalInput.required=!daily;
+    if(dailyTimeField)dailyTimeField.classList.toggle('hidden',!daily);
+    if(dailyTimeInput)dailyTimeInput.required=daily;
   };
   const taskFields=()=>{
     const task=scheduleForm.task_key.value;
@@ -838,17 +847,30 @@ async function renderAiJobs(){
       const paramsSummary=leagueSummary?' · '+esc(leagueSummary)+compSummary:'';
       const status=job.last_status||'programmato';
       const error=job.last_error?' · '+esc(job.last_error):'';
-      return '<div class="summary-row"><span><strong>'+esc(job.name)+'</strong><br><small>'+esc(job.task_key)+' · ogni '+esc(Math.round(job.interval_minutes/60))+' h'+paramsSummary+' · prossimo: '+esc(job.next_run_at||'—')+error+'</small></span><span>'+esc(status)+' <button class="btn btn-secondary btn-small" data-toggle-schedule="'+job.job_id+'">'+(job.enabled?'Pausa':'Riprendi')+'</button> <button class="btn btn-danger btn-small" data-delete-schedule="'+job.job_id+'">Elimina</button></span></div>';
+      const cadence=job.schedule_mode==='daily'
+        ?'ogni giorno alle '+esc(String(job.daily_time||'—').slice(0,5))+' (Europe/Rome)'
+        :'ogni '+esc(Math.round(job.interval_minutes/60))+' h';
+      const dateFrom=job.start_date?' · dal '+esc(new Date(String(job.start_date).slice(0,10)+'T00:00:00').toLocaleDateString('it-IT')):'';
+      const dateTo=job.end_date?' · fino al '+esc(new Date(String(job.end_date).slice(0,10)+'T00:00:00').toLocaleDateString('it-IT')):'';
+      const next=job.next_run_at?new Date(job.next_run_at).toLocaleString('it-IT',{timeZone:'Europe/Rome'}):'—';
+      return '<div class="summary-row schedule-job-row"><span><strong>'+esc(job.name)+'</strong><br><small>'+esc(job.task_key)+' · '+cadence+dateFrom+dateTo+paramsSummary+' · prossimo: '+esc(next)+error+'</small></span><span class="schedule-job-actions"><strong>'+esc(status)+'</strong> <label class="schedule-switch" title="'+(job.enabled?'Disattiva pianificazione':'Attiva pianificazione')+'"><input type="checkbox" data-toggle-schedule="'+job.job_id+'" '+(job.enabled?'checked':'')+' aria-label="'+(job.enabled?'Disattiva':'Attiva')+' '+esc(job.name)+'"><span class="schedule-switch-track" aria-hidden="true"></span></label> <button class="btn btn-danger btn-small" data-delete-schedule="'+job.job_id+'">Elimina</button></span></div>';
     }).join('')||'<p class="microcopy">Nessuna pianificazione configurata.</p>';
     $('#ai-jobs-run-history').innerHTML=(data.runs||[]).map(run=>{
       const details=run.result&&typeof run.result==='object'?run.result:{};
       const count=details.contexts_total!==undefined?' · '+(details.contexts_completed||0)+'/'+details.contexts_total+' contesti':'';
       return '<div class="summary-row"><span>'+esc(run.task_key)+' · '+esc(run.started_at||'—')+count+'</span><strong>'+esc(run.status)+(run.error?' · '+esc(run.error):'')+'</strong></div>';
     }).join('')||'<p class="microcopy">Nessuna esecuzione registrata.</p>';
-    $$('[data-toggle-schedule]').forEach(button=>button.addEventListener('click',async()=>{
-      button.disabled=true;
-      try{await api('/admin-api/scheduler/jobs/'+button.dataset.toggleSchedule+'/toggle',{method:'POST',body:{}});await refreshSchedules();}
-      catch(e){toast(e.message,'error');button.disabled=false;}
+    $$('[data-toggle-schedule]').forEach(toggle=>toggle.addEventListener('change',async()=>{
+      const requested=toggle.checked;
+      toggle.disabled=true;
+      try{
+        await api('/admin-api/scheduler/jobs/'+toggle.dataset.toggleSchedule+'/toggle',{method:'POST',body:{}});
+        await refreshSchedules();
+      }catch(e){
+        toggle.checked=!requested;
+        toggle.disabled=false;
+        toast(e.message,'error');
+      }
     }));
     $$('[data-delete-schedule]').forEach(button=>button.addEventListener('click',async()=>{
       if(!confirm('Eliminare questa pianificazione?'))return;
@@ -860,10 +882,17 @@ async function renderAiJobs(){
   $('#ai-jobs-schedule-refresh')?.addEventListener('click',()=>refreshSchedules().catch(e=>toast(e.message,'error')));
   $('#ai-jobs-refresh')?.addEventListener('click',()=>Promise.all([refreshSchedules(),loadScheduleOptions(true)]).catch(e=>toast(e.message,'error')));
   scheduleForm?.task_key.addEventListener('change',syncScheduleFields);
+  scheduleForm?.schedule_mode.addEventListener('change',syncScheduleFields);
   scheduleForm?.addEventListener('submit',async event=>{
     event.preventDefault();
     const task=scheduleForm.task_key.value;
     const parameters=taskFields();
+    const scheduleMode=scheduleForm.schedule_mode.value;
+    const startDate=scheduleForm.start_date.value||null;
+    const endDate=scheduleForm.end_date.value||null;
+    if(scheduleMode==='daily'&&!scheduleForm.daily_time.value){toast('Seleziona l’orario giornaliero','error');return;}
+    if(startDate&&endDate&&endDate<startDate){toast('La data fine deve essere uguale o successiva alla data inizio','error');return;}
+    const intervalHours=Number(scheduleForm.interval_hours.value);
     if(['refresh_context_seasonal','refresh_simulation_sources','refresh_scenario_serving','refresh_training_serving'].includes(task)){
       if(!Number.isInteger(parameters.season)||parameters.season<2000||parameters.season>2100){toast('Seleziona una stagione valida','error');return;}
     }
@@ -875,7 +904,12 @@ async function renderAiJobs(){
     try{
       await api('/admin-api/scheduler/jobs',{method:'POST',body:{
         name:scheduleForm.name.value.trim(),task_key:task,
-        interval_minutes:Number(scheduleForm.interval_hours.value)*60,parameters
+        interval_minutes:scheduleMode==='daily'?1440:intervalHours*60,
+        schedule_mode:scheduleMode,
+        daily_time:scheduleMode==='daily'?scheduleForm.daily_time.value:null,
+        start_date:startDate,end_date:endDate,
+        enabled:scheduleForm.enabled.checked,
+        parameters
       }});
       toast('Pianificazione salvata');
       scheduleForm.reset();
