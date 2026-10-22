@@ -39,7 +39,10 @@ def check_current_contract() -> list[str]:
     changelog = read("CHANGELOG.md")
     contributor = read("CONTRIBUTING.md")
     causal = read("docs/CAUSAL_PLAYER_ATTRIBUTION_ROADMAP.md")
+    player_intelligence = read("docs/PLAYER_INTELLIGENCE.md")
+    simulation_guide = read("docs/SIMULATION_ENGINE.md")
     roadmap = read("roadmap_intelligence.md")
+    sql_contract = read("basketball_ai/data/ai_scenario_serving.sql")
     ui = read("basketball_ai/admin_web/static/index.html")
 
     required_scheduler_terms = {
@@ -92,6 +95,22 @@ def check_current_contract() -> list[str]:
     for phrase in stale_phrases:
         if phrase.lower() in causal.lower() or phrase.lower() in roadmap.lower():
             errors.append(f"Obsolete capability statement remains in roadmap: {phrase}")
+
+    if "Keep both capabilities `partial`" in player_intelligence:
+        errors.append(
+            "docs/PLAYER_INTELLIGENCE.md must distinguish descriptive availability "
+            "from the partial causal capability"
+        )
+    if "SimulationCausalPanel is refreshed separately by the explicit guarded Model Releases cohort-refresh action" not in sql_contract:
+        errors.append(
+            "SQL diagnostics must state that causal panels are refreshed separately "
+            "from the Simulation serving refresh"
+        )
+    if "manual" not in simulation_guide.lower() or "does not run from chat" not in simulation_guide:
+        errors.append(
+            "docs/SIMULATION_ENGINE.md must distinguish manual causal-panel refresh "
+            "from the recurring Simulation refresh"
+        )
 
     if "Operazioni dati della PR #76" in ui:
         errors.append("Remove the obsolete PR #76 implementation-label copy from the UI")
