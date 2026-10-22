@@ -16,7 +16,7 @@ confounders, overlap and identifying assumptions are defensible.
 
 ## Current data readiness
 
-The repository has a schema for AI_Source.SimulationCausalPanel, and the seasonal source-refresh design leaves it unpopulated. The first implemented estimator therefore builds an in-memory cohort from canonical player/team season sources rather than treating that schema-only table as evidence. This cohort is not yet a persisted, refresh-audited causal panel. The existing `causal_effect` scenario can fall back to a
+The `AI_Source.SimulationCausalPanel` contract now includes canonical focal-player identity, optional named-teammate identity, league/competition, pre-treatment BB-Rating, minutes, usage, age, team strength, role, transition season and refresh timestamp. An incremental migration preserves installations with the original schema-only table, and the data loader reads the expanded contract. The team-switch estimator builds an in-memory cohort from canonical player/team season sources. A separate guarded teammate-exposure cohort ATT estimator is implemented and wired to consume a persisted panel only when a named teammate is explicitly requested. The refresh job that produces and audits rows in this panel is still outstanding; the table must not be treated as populated merely because its schema exists. The existing `causal_effect` scenario can fall back to a
 constructed next-season panel based on changes in minutes; this is not an
 acceptable source for team/teammate attribution and must not be reused as proof
 of the requested causal effect.
