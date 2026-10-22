@@ -2510,7 +2510,7 @@ def start_causal_panel_refresh_all(
     if not isinstance(data, dict) or not isinstance(data.get("player_stats"), pd.DataFrame) or data["player_stats"].empty:
         raise HTTPException(status_code=409, detail="Carica prima i dati canonici da PostgreSQL")
     with CAUSAL_REFRESH_LOCK:
-        if CAUSAL_REFRESH_JOB.get("status") == "running":
+        if CAUSAL_REFRESH_JOB.get("status") in {"queued", "running"}:
             raise HTTPException(status_code=409, detail="Un refresh causale globale è già in esecuzione.")
         CAUSAL_REFRESH_JOB.update(
             status="queued", kind=payload.kind, stage="In coda", progress=0,
