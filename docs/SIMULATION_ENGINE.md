@@ -14,6 +14,16 @@ created by `ai_source_full.sql`. Simulation feeds and serving tables are owned b
 and then refreshes the indexed Scenario/Training aggregates. The process records
 a per-league-season outcome in `AI_Source.SimulationSourceRefreshState`.
 
+This SQL serving refresh does **not** build the observational causal cohort panel.
+The persisted `AI_Source.SimulationCausalPanel` is refreshed separately through
+the explicit **Model Releases → Refresh pannelli causali** operator actions, which
+rebuild team-switch or teammate-exposure cohorts across eligible completed
+league/competition contexts and record per-context status/counts. That action is
+manual, does not run from chat or the recurring scheduler, and does not train or
+promote a model. `causal_team_effect` remains partial until the empirical and
+production validation gates in [`CAUSAL_PLAYER_ATTRIBUTION_ROADMAP.md`](CAUSAL_PLAYER_ATTRIBUTION_ROADMAP.md)
+pass; panel presence alone is not causal evidence.
+
 | Serving table | Required fields | Purpose |
 |---|---|---|
 | `scenario_defender_matchups` | Indexed player-pair/context aggregates | Defensive assignment evidence without loading raw PBP |
