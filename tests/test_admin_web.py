@@ -588,6 +588,30 @@ def test_helpers_and_static_assets(monkeypatch, tmp_path):
     assert '"AI_Source"."AIModelScheduledJob"' in (Path(admin.__file__).parents[1] / "data" / "ai_scenario_serving.sql").read_text(encoding="utf-8")
     assert "/admin-api/scheduler/jobs" in js
     assert "refresh_context_seasonal" in js
+    jobs_start = html.index('<template id="page-ai-jobs">')
+    jobs_end = html.index("</template>", jobs_start)
+    jobs_page = html[jobs_start:jobs_end]
+    assert "<h1>Pianificazione</h1>" in jobs_page
+    assert "Pianificazione AI_Model" not in jobs_page
+    assert "BB Prediction Model" not in jobs_page
+    assert "Calibrazione BB-Rating" not in jobs_page
+    assert "Future Performance" not in jobs_page
+    assert "Pianificazioni ricorrenti" in jobs_page
+    assert 'id="ai-schedule-all-leagues"' in jobs_page
+    assert 'name="schedule_league"' in js
+    assert 'name="competition"' not in jobs_page
+    assert 'name="league"' not in jobs_page
+    assert "/admin-api/scheduler/options" in js
+    releases_start = html.index('<template id="page-model-releases">')
+    releases_end = html.index("</template>", releases_start)
+    releases_page = html[releases_start:releases_end]
+    assert 'id="causal-refresh-team-switch"' in releases_page
+    assert 'id="causal-refresh-teammate"' in releases_page
+    assert 'id="causal-refresh-league"' not in releases_page
+    assert 'id="causal-refresh-competition"' not in releases_page
+    assert 'id="causal-refresh-season"' not in releases_page
+    assert 'id="causal-refresh-teammate-id"' not in releases_page
+    assert "/admin-api/causal-panels/refresh-all" in js
 def test_bb_rating_status_reads_calibration_artifacts(monkeypatch, tmp_path):
     _reset_state()
     root = tmp_path / "models_saved"
