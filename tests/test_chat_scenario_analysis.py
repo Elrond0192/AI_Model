@@ -546,6 +546,25 @@ def test_teammate_exposure_resolves_team_strength_by_global_identity():
     assert set(panel.loc[panel["global_id"] == "PLAYER-1", "team_strength_pre"]) == {1.0}
 
 
+def test_teammate_exposure_uses_aggregate_team_context_without_future_leakage():
+    engine = _engine()
+    data = engine.data
+    data["players"]["global_id"] = data["players"]["id"].map(lambda value: f"PLAYER-{int(value)}")
+    data["team_season_stats"]["competition"] = "TOT"
+
+    panel = engine._build_teammate_exposure_causal_panel(10, "RS", 2024, None)
+    assert not panel.empty
+    assert panel["team_strength_pre"].notna().all()
+
+    # A later season cannot fill a missing pre-treatment team-strength value.
+    data["team_season_stats"] = data["team_season_stats"][
+        data["team_season_stats"]["season"].astype(int) > 2023
+    ].copy()
+    no_prior_strength = engine._build_teammate_exposure_causal_panel(10, "RS", 2024, None)
+    assert not no_prior_strength.empty
+    assert no_prior_strength["team_strength_pre"].isna().all()
+
+
 def test_causal_team_effect_uses_canonical_bb_rating_and_controls_role_minutes_usage():
     data = _analysis_data()
     for player_id, player in data["player_dict"].items():
