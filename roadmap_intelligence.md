@@ -141,7 +141,7 @@ Per le stagioni storiche, ripetere la chiamata per ogni anno per cui sono presen
 - Le tabelle `AdvancedStats_Clutch_{LEAGUE}` contengono aggregati clutch già calcolati; non richiedono la ricostruzione delle Simulation per essere usate da `clutch_analysis`.
 - `SimulationSourceRefreshState.Status = 'available'` indica che i feed previsti sono stati popolati per quel contesto, non che tutte le fonti di tracking tattico/difensivo esistano.
 - `SimulationPlayTypeStats` può legittimamente contenere zero righe in assenza di una classificazione tattica.
-- `SimulationCausalPanel` può essere aggiornata solo con le procedure di refresh osservazionale validate; prima di interpretarla controllare copertura, invarianti e audit. Il modello `causal_team_effect` resta parziale finché i gate scientifici non sono superati.
+- `SimulationCausalPanel` va aggiornata tramite gli entry point espliciti e guardati di refresh osservazionale; prima di interpretarla verificare copertura, invarianti e audit. Il modello `causal_team_effect` resta parziale finché i gate scientifici non sono superati.
 - Le modifiche SQL presenti su GitHub non equivalgono a dati già rigenerati in produzione: la verifica finale richiede l'esecuzione delle procedure nel database e controllo dei conteggi reali.
 
 ## Riferimenti implementativi
