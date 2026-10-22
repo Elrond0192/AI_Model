@@ -57,6 +57,9 @@ from basketball_ai.admin_web.model_lifecycle import (
     promote_model,
     rollback_model,
 )
+from basketball_ai.bb_rating.engine import BBRatingEngine
+from basketball_ai.scenarios.chat_scenario_engine import ChatScenarioEngine
+from basketball_ai.models.strict_production import StrictProductionEnsembleModel
 from basketball_ai.models.promote import (
     MAX_SEGMENT_REGRESSION_PCT,
     MIN_BACKTEST_SAMPLES,
@@ -2243,6 +2246,64 @@ def start_bb_rating_prediction(user: dict[str, str] = Depends(_csrf)) -> dict[st
     with STATE.lock:
         current = dict(STATE.bb_rating_prediction_job)
     return {"ok": True, "profile": active_profile, "job": current}
+
+
+class CausalPanelRefreshPayload(BaseModel):
+    kind: str = Field(pattern="^(team_switch|teammate_exposure)$")
+    league: str = Field(min_length=2, max_length=32, pattern=r"^[A-Za-z0-9_]+$")
+    competition: str = Field(default="RS", min_length=1, max_length=16, pattern=r"^[A-Za-z0-9_]+$")
+    through_season: int = Field(ge=2000, le=2100)
+    teammate_global_id: str | None = Field(default=None, min_length=1, max_length=128)
+
+
+@app.post("/admin-api/causal-panels/refresh")
+def refresh_causal_panel(payload: CausalPanelRefreshPayload, user: dict[str, str] = Depends(_csrf)) -> dict[str, Any]:
+    """Explicitly refresh a causal evidence panel; never triggered by chat."""
+    actor = user["username"]
+    with STATE.lock:
+        data = STATE.data
+        active_profile = STATE.active_profile
+    if not active_profile:
+        raise HTTPException(status_code=400, detail="Seleziona prima un profilo PostgreSQL")
+    if not isinstance(data, dict) or not data.get("player_stats") is not None:
+        raise HTTPException(status_code=409, detail="Carica prima i dati canonici da PostgreSQL")
+    if payload.kind == "teammate_exposure" and not payload.teammate_global_id:
+        raise HTTPException(status_code=400, detail="teammate_global_id è obbligatorio per teammate exposure")
+    league_dict = data.get("league_dict", {}) or {}
+    league_id = next(
+        (int(key) for key, value in league_dict.items()
+         if str(value.get("league_key", value.get("code", ""))).strip().upper() == payload.league.upper()),
+        None,
+    )
+    if league_id is None:
+        raise HTTPException(status_code=400, detail=f"Lega non presente nel dataset caricato: {payload.league}")
+    try:
+        bb_engine = BBRatingEngine(data["player_stats"], data.get("players"), data.get("leagues"))
+        scenario_engine = ChatScenarioEngine(StrictProductionEnsembleModel(), data, bb_rating_engine=bb_engine)
+        database_engine = get_engine(profile_url(active_profile))
+        if payload.kind == "team_switch":
+            result = scenario_engine.refresh_team_switch_causal_panel(
+                database_engine, source_league=league_id, competition=payload.competition,
+                through_season=payload.through_season,
+            )
+        else:
+            result = scenario_engine.refresh_teammate_exposure_causal_panel(
+                database_engine, source_league=league_id, competition=payload.competition,
+                through_season=payload.through_season, teammate_global_id=payload.teammate_global_id,
+            )
+        status = str(result.get("status", "unavailable"))
+        _audit(actor, "causal_panel_refresh", payload.kind, json.dumps({
+            "league": payload.league, "competition": payload.competition,
+            "through_season": payload.through_season, "result": result,
+        }, default=str))
+        return {"ok": status in {"complete", "written", "refreshed"}, "kind": payload.kind,
+                "league": payload.league.upper(), "competition": payload.competition.upper(),
+                "through_season": payload.through_season, **result}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        _audit(actor, "causal_panel_refresh_failed", payload.kind, str(exc))
+        raise HTTPException(status_code=500, detail=f"Refresh pannello causale fallito: {exc}") from exc
 
 
 @app.get("/admin-api/model-releases")
