@@ -491,3 +491,20 @@ input:focus,select:focus,textarea:focus{border-color:#4e7fc5!important;box-shado
 .nav-icon svg{display:inline-block;vertical-align:-3px}
 .dashboard-v2 .dashboard-section-eyebrow{display:flex;align-items:center;gap:5px}
 .dashboard-v2 .dashboard-section-eyebrow i{font-size:11px;line-height:1;color:#83bcff}
+
+/* All-context causal refresh and dynamic recurring-scheduler league picker. */
+.causal-refresh-panel .button-row{margin-top:16px;gap:10px}
+.causal-refresh-progress{white-space:pre-line;line-height:1.7;padding:12px 14px;border:1px solid #1c405e;border-radius:7px;background:#081a29;margin-top:15px;overflow-wrap:anywhere}
+.causal-refresh-progress[data-status="running"],.causal-refresh-progress[data-status="queued"]{border-color:#315d8b;color:#b7d7fb}
+.causal-refresh-progress[data-status="complete"]{border-color:#226145;color:#a4efbf}
+.causal-refresh-progress[data-status="partial"],.causal-refresh-progress[data-status="failed"]{border-color:#7e3046;color:#ffb4c0}
+.schedule-league-picker{min-width:0;border:1px solid #1e415f;border-radius:8px;padding:12px 14px;margin:0;background:#091d2d}
+.schedule-league-picker legend{padding:0 6px;color:#b9cad9;font-size:11px;font-weight:750}
+.schedule-league-all{display:flex;align-items:center;gap:8px;font-weight:750;margin:1px 0 10px}
+.schedule-league-options{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+.schedule-league-option{display:flex;align-items:center;gap:7px;min-width:0;padding:8px 9px;border:1px solid #1c405e;border-radius:6px;background:#0b2338;color:#c7d7e5;font-size:10px}
+.schedule-league-picker input[type="checkbox"]{width:14px;height:14px;accent-color:#2580ff;flex:0 0 auto}
+.schedule-league-picker .microcopy{line-height:1.6}
+.schedule-league-picker[hidden],.form-grid label[hidden]{display:none!important}
+@media(max-width:1180px){.schedule-league-options{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media(max-width:860px){.schedule-league-options{grid-template-columns:repeat(2,minmax(0,1fr))}.causal-refresh-panel .button-row>.btn{width:100%}}
