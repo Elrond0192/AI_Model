@@ -107,7 +107,7 @@ Model Releases causal refresh DML only on `AI_Source.SimulationCausalPanel`;
 canonical player/team facts remain read-only. If the console cannot preflight the
 schema/rights, it returns HTTP 503 with the PostgreSQL detail rather than a generic 500.
 
-The teammate-exposure builder resolves historical team strength by canonical team global identity first and numeric team ID second. After deploying that code, refresh `teammate_exposure` across all contexts before rerunning the missingness diagnostic; a prior panel is a persisted snapshot and is not updated just by rebuilding the code.
+The teammate-exposure builder resolves team strength by canonical team global identity first and numeric team ID second. For split competitions it prefers the exact context, then team `TOT`/`RS`, and can use the latest team-stat season that is not later than the pre-treatment season. It never falls forward. After deployment, refresh `teammate_exposure` across all contexts before rerunning missingness diagnostics; persisted rows are not updated merely by rebuilding code.
 
 The result also shows missingness by covariate. These percentages can overlap because one row can miss multiple fields; use them to locate attrition rather than summing them. The current `treatment` means the focal player and named player share a team in the outcome season, so the diagnostic does not yet estimate the effect of adding a new teammate.
 
