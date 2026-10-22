@@ -493,7 +493,7 @@ input:focus,select:focus,textarea:focus{border-color:#4e7fc5!important;box-shado
 .dashboard-v2 .dashboard-section-eyebrow i{font-size:11px;line-height:1;color:#83bcff}
 
 
-/* AI_Model planning: compact inline league selector with an expandable checkbox menu. */
+/* AI_Model planning: compact inline league selector with a simple checkbox list. */
 .schedule-league-field{min-width:0}
 .schedule-league-label{display:block;margin-bottom:7px;color:var(--text-muted,#9aa7b8);font-size:12px;font-weight:600}
 .schedule-league-picker{position:relative;min-width:0}
@@ -503,14 +503,15 @@ input:focus,select:focus,textarea:focus{border-color:#4e7fc5!important;box-shado
 .schedule-league-trigger span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .schedule-league-trigger i{flex:0 0 auto;color:#aeb9c7;font-size:15px;transition:transform .15s}
 .schedule-league-trigger[aria-expanded="true"] i{transform:rotate(180deg)}
-.schedule-league-options{position:absolute;top:calc(100% + 6px);left:0;z-index:100;width:min(360px,calc(100vw - 48px));max-height:300px;overflow-y:auto;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));align-items:start;gap:7px;padding:8px;border:1px solid #393c3f;border-radius:8px;background:#151719;box-shadow:0 12px 28px rgba(0,0,0,.38)}
-.schedule-league-option{display:flex;align-items:center;gap:9px;min-width:0;padding:9px 10px;border:1px solid #393c3f;border-radius:6px;background:#1b1d20;color:#edf0f2;cursor:pointer}
-.schedule-league-option input{appearance:auto;flex:0 0 16px;width:16px;height:16px;min-height:0;margin:0;padding:0;border:0!important;background:transparent!important;accent-color:#5793f7}
+.schedule-league-options{position:absolute;top:calc(100% + 6px);left:0;z-index:100;width:min(240px,calc(100vw - 40px));max-height:300px;overflow-y:auto;display:flex;flex-direction:column;align-items:stretch;gap:1px;padding:5px;border:1px solid #393c3f;border-radius:6px;background:#151719;box-shadow:0 12px 28px rgba(0,0,0,.38)}
+.schedule-league-option{display:flex;align-items:center;gap:7px;min-width:0;min-height:25px;padding:3px 5px;border:0;border-radius:3px;background:transparent;color:#edf0f2;cursor:pointer}
+.schedule-league-option:hover{background:#202733}
+.schedule-league-option input{appearance:auto;flex:0 0 14px;width:14px;height:14px;min-height:0;margin:0;padding:0;border:0!important;background:transparent!important;accent-color:#5793f7}
 .schedule-league-option input:disabled{opacity:.5}
-.schedule-league-option span{display:flex;flex-direction:column;gap:2px;min-width:0}
-.schedule-league-option strong{font-size:12px;font-weight:700}
-.schedule-league-option small{font-size:10px;line-height:1.35;color:#9aa7b8}
-.schedule-league-all{grid-column:1/-1;background:#202733;border-color:#42618d}
+.schedule-league-option span{display:flex;align-items:center;gap:5px;min-width:0}
+.schedule-league-option strong{font-size:12px;font-weight:500;line-height:1.2}
+.schedule-league-option small{display:none}
+.schedule-league-all{background:transparent;border:0;grid-column:auto}
 #causal-refresh-result{white-space:pre-wrap;line-height:1.5;margin-top:12px}
 #causal-refresh-team-switch,#causal-refresh-teammate{min-height:40px}
 @media(max-width:720px){
