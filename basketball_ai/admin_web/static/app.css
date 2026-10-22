@@ -515,6 +515,6 @@ input:focus,select:focus,textarea:focus{border-color:#4e7fc5!important;box-shado
 #causal-refresh-result{white-space:pre-wrap;line-height:1.5;margin-top:12px}
 #causal-refresh-team-switch,#causal-refresh-teammate{min-height:40px}
 @media(max-width:720px){
-  .schedule-league-options{width:min(100%,calc(100vw - 40px));grid-template-columns:repeat(2,minmax(0,1fr))}
-  .schedule-league-option{padding:8px}
+  .schedule-league-options{width:min(240px,calc(100vw - 40px))}
+  .schedule-league-option{padding:3px 5px}
 }
