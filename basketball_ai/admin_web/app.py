@@ -2389,12 +2389,13 @@ def _teammate_support_gate_status(row: dict[str, Any]) -> str:
 
 
 def _build_teammate_support_diagnostics(active_profile: str) -> dict[str, Any]:
-    """Audit persisted teammate support per teammate × league × competition × season.
+    """Audit teammate support pooled across transitions per teammate × league × competition.
 
-    The aggregation runs in PostgreSQL to avoid loading millions of panel rows into
-    the admin process. Propensity and balance gates are evaluated only for groups
-    that first satisfy the existing minimum support and identity-integrity gates.
-    Effect estimates are deliberately not exposed by this diagnostic report.
+    Per-season teams are smaller than the existing treated/control gates by design.
+    The pooled fit still uses transition season as a pre-specified covariate and relies
+    on one transition per focal global identity. The aggregation runs in PostgreSQL
+    to avoid loading millions of panel rows into the admin process. No effect estimate
+    is exposed by this diagnostic report.
     """
     engine = get_engine(profile_url(active_profile))
     try:
@@ -2491,7 +2492,9 @@ def _build_teammate_support_diagnostics(active_profile: str) -> dict[str, Any]:
                     teammate_global_id,
                     league_key,
                     competition,
-                    transition_season,
+                    COUNT(DISTINCT transition_season) AS transition_seasons,
+                    MIN(transition_season) AS first_transition_season,
+                    MAX(transition_season) AS last_transition_season,
                     COUNT(*) AS panel_rows,
                     COUNT(DISTINCT global_id) AS unique_focal_players,
                     COUNT(*) FILTER (WHERE global_id IS NULL) AS missing_focal_identity_rows,
@@ -2514,18 +2517,19 @@ def _build_teammate_support_diagnostics(active_profile: str) -> dict[str, Any]:
                     AND league_key IS NOT NULL
                     AND competition IS NOT NULL
                     AND transition_season IS NOT NULL
-                GROUP BY teammate_global_id, league_key, competition, transition_season
+                GROUP BY teammate_global_id, league_key, competition
                 ORDER BY
                     COUNT(*) FILTER (WHERE model_row AND treatment = 1) DESC,
                     COUNT(*) FILTER (WHERE model_row AND treatment = 0) DESC,
-                    teammate_global_id, league_key, competition, transition_season
+                    teammate_global_id, league_key, competition
                 '''
             )
             aggregate_rows = [
                 dict(row) for row in connection.execute(aggregate_sql).mappings().all()
             ]
             columns = [
-                "teammate_global_id", "league_key", "competition", "transition_season",
+                "teammate_global_id", "league_key", "competition",
+                "transition_seasons", "first_transition_season", "last_transition_season",
                 "panel_rows", "unique_focal_players", "missing_focal_identity_rows",
                 "duplicate_focal_rows", "eligible_rows", "treated", "control",
                 "excluded_complete_case_rows", "invalid_treatment_rows",
@@ -2566,9 +2570,8 @@ def _build_teammate_support_diagnostics(active_profile: str) -> dict[str, Any]:
                 "missing_team_strength_pre_rows", "invalid_outcome_rows",
             ):
                 report[column] = pd.to_numeric(report[column], errors="coerce").fillna(0).astype(int)
-            report["transition_season"] = pd.to_numeric(
-                report["transition_season"], errors="coerce"
-            ).fillna(0).astype(int)
+            for column in ("transition_seasons", "first_transition_season", "last_transition_season"):
+                report[column] = pd.to_numeric(report[column], errors="coerce").fillna(0).astype(int)
             report["diagnostics_evaluated"] = False
             report["diagnostics_reason"] = ""
             report["propensity_overlap_share"] = pd.NA
@@ -2583,21 +2586,20 @@ def _build_teammate_support_diagnostics(active_profile: str) -> dict[str, Any]:
             diagnostic_indices = raw_candidates[:CAUSAL_SUPPORT_DIAGNOSTIC_GROUP_LIMIT]
             if diagnostic_indices:
                 selected = report.loc[diagnostic_indices, [
-                    "teammate_global_id", "league_key", "competition", "transition_season"
+                    "teammate_global_id", "league_key", "competition"
                 ]].to_dict("records")
                 value_rows: list[str] = []
                 params: dict[str, Any] = {}
                 for index, key in enumerate(selected):
                     value_rows.append(
-                        f"(:teammate_{index}, :league_{index}, :competition_{index}, :season_{index})"
+                        f"(:teammate_{index}, :league_{index}, :competition_{index})"
                     )
                     params[f"teammate_{index}"] = str(key["teammate_global_id"])
                     params[f"league_{index}"] = str(key["league_key"])
                     params[f"competition_{index}"] = str(key["competition"])
-                    params[f"season_{index}"] = int(key["transition_season"])
                 detail_sql = text(
                     '''
-                    WITH selected(teammate_global_id, league_key, competition, transition_season) AS (
+                    WITH selected(teammate_global_id, league_key, competition) AS (
                         VALUES ''' + ", ".join(value_rows) + '''
                     )
                     SELECT
@@ -2623,7 +2625,6 @@ def _build_teammate_support_diagnostics(active_profile: str) -> dict[str, Any]:
                       ON NULLIF(BTRIM(CAST(p.teammate_global_id AS text)), '') = s.teammate_global_id
                      AND UPPER(BTRIM(CAST(p.league_key AS text))) = s.league_key
                      AND UPPER(BTRIM(CAST(p.competition AS text))) = s.competition
-                     AND p.transition_season = s.transition_season
                     WHERE p.source_type = 'teammate_exposure'
                     '''
                 )
@@ -2632,17 +2633,12 @@ def _build_teammate_support_diagnostics(active_profile: str) -> dict[str, Any]:
                 ]
                 details = pd.DataFrame(detail_rows)
                 if not details.empty:
-                    detail_keys = [
-                        "teammate_global_id", "league_key", "competition", "transition_season"
-                    ]
+                    detail_keys = ["teammate_global_id", "league_key", "competition"]
                     for index in diagnostic_indices:
                         key = report.loc[index]
                         mask = pd.Series(True, index=details.index)
                         for column in detail_keys:
-                            if column == "transition_season":
-                                mask &= pd.to_numeric(details[column], errors="coerce") == int(key[column])
-                            else:
-                                mask &= details[column].astype(str) == str(key[column])
+                            mask &= details[column].astype(str) == str(key[column])
                         group = details.loc[mask].copy()
                         result = estimate_teammate_exposure_att(
                             group, teammate_global_id=str(key["teammate_global_id"])
@@ -2692,7 +2688,8 @@ def _build_teammate_support_diagnostics(active_profile: str) -> dict[str, Any]:
                     key: (None if pd.isna(value) else value)
                     for key, value in row.items()
                     if key in {
-                        "teammate_global_id", "league_key", "competition", "transition_season",
+                        "teammate_global_id", "league_key", "competition",
+                        "transition_seasons", "first_transition_season", "last_transition_season",
                         "panel_rows", "eligible_rows", "treated", "control", "status",
                         "diagnostics_evaluated", "propensity_overlap_share", "max_abs_smd_after",
                         "diagnostics_reason",
