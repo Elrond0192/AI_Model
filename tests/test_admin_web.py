@@ -637,6 +637,8 @@ def test_helpers_and_static_assets(monkeypatch, tmp_path):
     assert "/admin-api/causal-panels/refresh-all" in js
     assert "/admin-api/causal-panels/teammate-support-diagnostics" in js
     assert "missingness_by_field" in js
+    assert "team_strength_missing_reasons" in js
+    assert "Motivi delle righe senza forza squadra pre-trattamento" in js
     assert "first_transition_season" in js
     assert "aggregando le transizioni per compagno/lega/competizione" in js
     assert "Valori mancanti/non validi per campo" in js
