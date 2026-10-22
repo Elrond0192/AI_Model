@@ -2403,6 +2403,50 @@ def _build_teammate_support_diagnostics(active_profile: str) -> dict[str, Any]:
                 'SELECT COUNT(*) FROM "AI_Source"."SimulationCausalPanel" '
                 "WHERE source_type = 'teammate_exposure'"
             )).scalar_one())
+            missingness_row = dict(connection.execute(text(
+                '''
+                SELECT
+                    COUNT(*) AS total_rows,
+                    COUNT(*) FILTER (WHERE NULLIF(BTRIM(CAST(global_id AS text)), '') IS NULL)
+                        AS missing_focal_identity_rows,
+                    COUNT(*) FILTER (WHERE NULLIF(BTRIM(CAST(teammate_global_id AS text)), '') IS NULL)
+                        AS missing_teammate_identity_rows,
+                    COUNT(*) FILTER (WHERE NULLIF(BTRIM(CAST(league_key AS text)), '') IS NULL)
+                        AS missing_league_rows,
+                    COUNT(*) FILTER (WHERE NULLIF(BTRIM(CAST(competition AS text)), '') IS NULL)
+                        AS missing_competition_rows,
+                    COUNT(*) FILTER (WHERE transition_season IS NULL)
+                        AS missing_transition_season_rows,
+                    COUNT(*) FILTER (WHERE treatment IS NULL OR BTRIM(CAST(treatment AS text)) NOT IN ('0', '1'))
+                        AS invalid_treatment_rows,
+                    COUNT(*) FILTER (WHERE next_outcome IS NULL OR NOT (next_outcome BETWEEN 1 AND 100))
+                        AS invalid_outcome_rows,
+                    COUNT(*) FILTER (WHERE baseline_bb_rating IS NULL)
+                        AS missing_baseline_bb_rating_rows,
+                    COUNT(*) FILTER (WHERE minutes_pre IS NULL)
+                        AS missing_minutes_pre_rows,
+                    COUNT(*) FILTER (WHERE usage_pre IS NULL)
+                        AS missing_usage_pre_rows,
+                    COUNT(*) FILTER (WHERE age_pre IS NULL)
+                        AS missing_age_pre_rows,
+                    COUNT(*) FILTER (WHERE team_strength_pre IS NULL)
+                        AS missing_team_strength_pre_rows,
+                    COUNT(*) FILTER (
+                        WHERE NULLIF(BTRIM(CAST(global_id AS text)), '') IS NOT NULL
+                          AND treatment IS NOT NULL
+                          AND BTRIM(CAST(treatment AS text)) IN ('0', '1')
+                          AND next_outcome BETWEEN 1 AND 100
+                          AND baseline_bb_rating IS NOT NULL
+                          AND minutes_pre IS NOT NULL
+                          AND usage_pre IS NOT NULL
+                          AND age_pre IS NOT NULL
+                          AND team_strength_pre IS NOT NULL
+                          AND transition_season IS NOT NULL
+                    ) AS complete_case_rows
+                FROM "AI_Source"."SimulationCausalPanel"
+                WHERE source_type = 'teammate_exposure'
+                '''
+            )).mappings().one())
             aggregate_sql = text(
                 '''
                 WITH panel AS (
@@ -2457,7 +2501,13 @@ def _build_teammate_support_diagnostics(active_profile: str) -> dict[str, Any]:
                     COUNT(*) FILTER (WHERE model_row AND treatment = 1) AS treated,
                     COUNT(*) FILTER (WHERE model_row AND treatment = 0) AS control,
                     COUNT(*) FILTER (WHERE NOT model_row) AS excluded_complete_case_rows,
-                    COUNT(*) FILTER (WHERE treatment IS NULL) AS invalid_treatment_rows,
+                    COUNT(*) FILTER (WHERE treatment IS NULL OR treatment NOT IN (0, 1)) AS invalid_treatment_rows,
+                    COUNT(*) FILTER (WHERE baseline_bb_rating IS NULL) AS missing_baseline_bb_rating_rows,
+                    COUNT(*) FILTER (WHERE minutes_pre IS NULL) AS missing_minutes_pre_rows,
+                    COUNT(*) FILTER (WHERE usage_pre IS NULL) AS missing_usage_pre_rows,
+                    COUNT(*) FILTER (WHERE age_pre IS NULL) AS missing_age_pre_rows,
+                    COUNT(*) FILTER (WHERE team_strength_pre IS NULL) AS missing_team_strength_pre_rows,
+                    COUNT(*) FILTER (WHERE outcome IS NULL OR NOT (outcome BETWEEN 1 AND 100)) AS invalid_outcome_rows,
                     MAX(refreshed_at) AS last_refresh
                 FROM classified
                 WHERE teammate_global_id IS NOT NULL
@@ -2478,7 +2528,10 @@ def _build_teammate_support_diagnostics(active_profile: str) -> dict[str, Any]:
                 "teammate_global_id", "league_key", "competition", "transition_season",
                 "panel_rows", "unique_focal_players", "missing_focal_identity_rows",
                 "duplicate_focal_rows", "eligible_rows", "treated", "control",
-                "excluded_complete_case_rows", "invalid_treatment_rows", "last_refresh",
+                "excluded_complete_case_rows", "invalid_treatment_rows",
+                "missing_baseline_bb_rating_rows", "missing_minutes_pre_rows",
+                "missing_usage_pre_rows", "missing_age_pre_rows",
+                "missing_team_strength_pre_rows", "invalid_outcome_rows", "last_refresh",
                 "status", "diagnostics_evaluated", "diagnostics_reason",
                 "propensity_overlap_share", "max_abs_smd_after",
             ]
@@ -2508,6 +2561,9 @@ def _build_teammate_support_diagnostics(active_profile: str) -> dict[str, Any]:
                 "panel_rows", "unique_focal_players", "missing_focal_identity_rows",
                 "duplicate_focal_rows", "eligible_rows", "treated", "control",
                 "excluded_complete_case_rows", "invalid_treatment_rows",
+                "missing_baseline_bb_rating_rows", "missing_minutes_pre_rows",
+                "missing_usage_pre_rows", "missing_age_pre_rows",
+                "missing_team_strength_pre_rows", "invalid_outcome_rows",
             ):
                 report[column] = pd.to_numeric(report[column], errors="coerce").fillna(0).astype(int)
             report["transition_season"] = pd.to_numeric(
@@ -2662,6 +2718,24 @@ def _build_teammate_support_diagnostics(active_profile: str) -> dict[str, Any]:
                     "status_counts": status_counts,
                     "total_eligible_complete_case_rows": int(report["eligible_rows"].sum()),
                     "total_excluded_complete_case_rows": int(report["excluded_complete_case_rows"].sum()),
+                    "missingness_by_field": {
+                        field: {
+                            "rows": int(missingness_row.get(field, 0) or 0),
+                            "percent": round(
+                                100.0 * int(missingness_row.get(field, 0) or 0)
+                                / max(int(missingness_row.get("total_rows", 0) or 0), 1),
+                                2,
+                            ),
+                        }
+                        for field in (
+                            "missing_focal_identity_rows", "missing_teammate_identity_rows",
+                            "missing_league_rows", "missing_competition_rows",
+                            "missing_transition_season_rows", "invalid_treatment_rows",
+                            "invalid_outcome_rows", "missing_baseline_bb_rating_rows",
+                            "missing_minutes_pre_rows", "missing_usage_pre_rows",
+                            "missing_age_pre_rows", "missing_team_strength_pre_rows",
+                        )
+                    },
                     "last_refresh": str(latest_refresh.max()) if not latest_refresh.empty else None,
                     "interpretation": (
                         "Il superamento dei gate statistici resta evidenza osservazionale: "
