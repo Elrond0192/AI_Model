@@ -383,6 +383,9 @@ def test_helpers_and_static_assets(monkeypatch, tmp_path):
     assert "/admin-api/bb-rating-prediction/train" in js
     assert "/admin-api/bb-rating/calibrate" in js
     assert "/admin-api/future-performance/train" in js
+    assert '"AI_Source"."AIModelScheduledJob"' in (Path(admin.__file__).parents[1] / "data" / "ai_scenario_serving.sql").read_text(encoding="utf-8")
+    assert "/admin-api/scheduler/jobs" in js
+    assert "refresh_context_seasonal" in js
     assert "keepAlive:true" in enter_body
     api_start = js.index("async function api(path,options={}){")
     api_end = js.index("function showLogin()", api_start)
