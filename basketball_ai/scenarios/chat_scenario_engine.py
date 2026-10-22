@@ -81,6 +81,38 @@ def _year(value: Any) -> int:
     return season_year(value)
 
 
+def _nullable_int(value: Any) -> int | None:
+    """Convert optional numeric identity values without calling int(pd.NA)."""
+    if value is None:
+        return None
+    if isinstance(value, str) and not value.strip():
+        return None
+    try:
+        if pd.isna(value):
+            return None
+    except (TypeError, ValueError):
+        pass
+    try:
+        return _to_int(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
+def _nullable_year(value: Any) -> int | None:
+    """Normalize a season only when present and parseable."""
+    if value is None:
+        return None
+    try:
+        if pd.isna(value):
+            return None
+    except (TypeError, ValueError):
+        pass
+    try:
+        return _year(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
 def _serialise(row: pd.Series | dict[str, Any], metrics: Iterable[str]) -> dict[str, Any]:
     source = row if isinstance(row, dict) else row.to_dict()
     out: dict[str, Any] = {}
@@ -1186,12 +1218,15 @@ class ChatScenarioEngine:
         required = {"player_id", "season", "league_id", "competition", "team_id"}
         if frame.empty or not required.issubset(frame.columns):
             return empty
-        frame["_year"] = frame["season"].map(_year)
-        frame["_league_int"] = frame["league_id"].map(_to_int)
+        frame["_year"] = frame["season"].map(_nullable_year)
+        frame["_league_int"] = frame["league_id"].map(_nullable_int)
         frame["_comp"] = frame["competition"].map(normalize_competition)
+        frame = frame[frame["_year"].notna() & frame["_league_int"].notna()].copy()
+        if frame.empty:
+            return empty
         completed_cutoff = min(int(through_season), int(pd.Timestamp.utcnow().year) - 1)
         frame = frame[
-            (frame["_league_int"] == _to_int(source_league))
+            (frame["_league_int"] == _nullable_int(source_league))
             & (frame["_comp"] == normalize_competition(competition))
             & (frame["_year"] <= completed_cutoff)
         ].copy()
@@ -1202,11 +1237,11 @@ class ChatScenarioEngine:
         if isinstance(players_frame, pd.DataFrame) and {"id", "global_id"}.issubset(players_frame.columns):
             canonical_columns = ["id", "global_id"] + [column for column in ("birth_date", "age", "position") if column in players_frame.columns]
             canonical = players_frame[canonical_columns].copy()
-            canonical["id"] = canonical["id"].map(_to_int)
+            canonical["id"] = canonical["id"].map(_nullable_int)
             canonical["global_id"] = canonical["global_id"].fillna("").astype(str).str.strip()
             canonical = canonical[(canonical["id"].notna()) & (canonical["global_id"] != "")].drop_duplicates("id", keep="last")
             identity_map = canonical.set_index("id")["global_id"]
-            frame["_global_id"] = frame["player_id"].map(_to_int).map(identity_map)
+            frame["_global_id"] = frame["player_id"].map(_nullable_int).map(identity_map)
             if "global_id" in frame.columns:
                 frame["_global_id"] = frame["_global_id"].fillna(frame["global_id"].fillna("").astype(str).str.strip())
             meta_by_id = canonical.set_index("id").to_dict("index")
@@ -1216,7 +1251,7 @@ class ChatScenarioEngine:
         else:
             return empty
         frame = frame[frame["_global_id"].fillna("").astype(str).str.strip() != ""].copy()
-        frame["_team_int"] = frame["team_id"].map(_to_int)
+        frame["_team_int"] = frame["team_id"].map(_nullable_int)
         if frame.empty:
             return empty
 
@@ -1232,12 +1267,18 @@ class ChatScenarioEngine:
         team_stats = self.data.get("team_season_stats", pd.DataFrame()).copy()
         if team_stats.empty or not {"team_id", "season", "league_id", "competition"}.issubset(team_stats.columns):
             return empty
-        team_stats["_year"] = team_stats["season"].map(_year)
-        team_stats["_team_int"] = team_stats["team_id"].map(_to_int)
-        team_stats["_league_int"] = team_stats["league_id"].map(_to_int)
+        team_stats["_year"] = team_stats["season"].map(_nullable_year)
+        team_stats["_team_int"] = team_stats["team_id"].map(_nullable_int)
+        team_stats["_league_int"] = team_stats["league_id"].map(_nullable_int)
         team_stats["_comp"] = team_stats["competition"].map(normalize_competition)
         team_stats = team_stats[
-            (team_stats["_league_int"] == _to_int(source_league))
+            team_stats["_year"].notna() & team_stats["_team_int"].notna()
+            & team_stats["_league_int"].notna()
+        ].copy()
+        if team_stats.empty:
+            return empty
+        team_stats = team_stats[
+            (team_stats["_league_int"] == _nullable_int(source_league))
             & (team_stats["_comp"] == normalize_competition(competition))
             & (team_stats["_year"] <= completed_cutoff)
         ].copy()
@@ -1260,7 +1301,7 @@ class ChatScenarioEngine:
             direct = _finite(row.get("age"), np.nan)
             if math.isfinite(direct) and 15 <= direct <= 60:
                 return direct
-            meta = meta_by_id.get(_to_int(player_id), {}) if isinstance(meta_by_id, dict) else {}
+            meta = meta_by_id.get(_nullable_int(player_id), {}) if isinstance(meta_by_id, dict) else {}
             direct = _finite(meta.get("age"), np.nan) if isinstance(meta, dict) else np.nan
             if math.isfinite(direct) and 15 <= direct <= 60:
                 return direct
@@ -1282,7 +1323,7 @@ class ChatScenarioEngine:
                 year_before, year_after = int(before["_year"]), int(after["_year"])
                 if year_after != year_before + 1:
                     continue
-                team_before, team_after = _to_int(before.get("_team_int")), _to_int(after.get("_team_int"))
+                team_before, team_after = _nullable_int(before.get("_team_int")), _nullable_int(after.get("_team_int"))
                 if team_before is None or team_after is None:
                     continue
                 candidate_pairs.append((before, after, year_before, year_after, team_before, team_after))
@@ -1298,7 +1339,7 @@ class ChatScenarioEngine:
                 continue
             minutes = _finite(before.get("minutes_per_game"), np.nan)
             usage = _ratio(before.get("usg_pct"), np.nan)
-            meta = meta_by_id.get(_to_int(before.get("player_id")), {}) if isinstance(meta_by_id, dict) else {}
+            meta = meta_by_id.get(_nullable_int(before.get("player_id")), {}) if isinstance(meta_by_id, dict) else {}
             role_value = next((
                 str(value).strip()
                 for value in (
@@ -1319,7 +1360,7 @@ class ChatScenarioEngine:
                 "baseline_bb_rating": float(bb_before),
                 "minutes_pre": minutes,
                 "usage_pre": usage,
-                "age_pre": player_age(before, _to_int(before.get("player_id")), year_before),
+                "age_pre": player_age(before, _nullable_int(before.get("player_id")), year_before),
                 "team_strength_pre": team_strength(team_before, year_before),
                 "role_pre": role_value,
             })
@@ -1376,23 +1417,26 @@ class ChatScenarioEngine:
         canonical = players_frame[["id", "global_id"] + [
             column for column in ("birth_date", "age", "position") if column in players_frame.columns
         ]].copy()
-        canonical["id"] = canonical["id"].map(_to_int)
+        canonical["id"] = canonical["id"].map(_nullable_int)
         canonical["global_id"] = canonical["global_id"].fillna("").astype(str).str.strip()
         canonical = canonical[(canonical["id"].notna()) & canonical["global_id"].ne("")].drop_duplicates("id")
         id_to_global = canonical.set_index("id")["global_id"]
         meta_by_id = canonical.set_index("id").to_dict("index")
 
-        frame["_year"] = frame["season"].map(_year)
-        frame["_league_int"] = frame["league_id"].map(_to_int)
+        frame["_year"] = frame["season"].map(_nullable_year)
+        frame["_league_int"] = frame["league_id"].map(_nullable_int)
         frame["_comp"] = frame["competition"].map(normalize_competition)
+        frame = frame[frame["_year"].notna() & frame["_league_int"].notna()].copy()
+        if frame.empty:
+            return pd.DataFrame()
         cutoff = min(int(through_season), int(pd.Timestamp.utcnow().year) - 1)
         frame = frame[
-            (frame["_league_int"] == _to_int(source_league))
+            (frame["_league_int"] == _nullable_int(source_league))
             & (frame["_comp"] == normalize_competition(competition))
             & (frame["_year"] <= cutoff)
         ].copy()
-        frame["_global_id"] = frame["player_id"].map(_to_int).map(id_to_global)
-        frame["_team_int"] = frame["team_id"].map(_to_int)
+        frame["_global_id"] = frame["player_id"].map(_nullable_int).map(id_to_global)
+        frame["_team_int"] = frame["team_id"].map(_nullable_int)
         frame = frame[frame["_global_id"].fillna("").astype(str).ne("") & frame["_team_int"].notna()]
         frame = frame.sort_values(["_global_id", "_year"], kind="stable").drop_duplicates(
             ["_global_id", "_year"], keep="last"
@@ -1412,16 +1456,22 @@ class ChatScenarioEngine:
             return pd.DataFrame()
 
         team_by_global_year = {
-            (str(row["_global_id"]), int(row["_year"])): _to_int(row["_team_int"])
+            (str(row["_global_id"]), int(row["_year"])): _nullable_int(row["_team_int"])
             for row in frame.to_dict("records")
-            if pd.notna(row.get("_year")) and _to_int(row.get("_team_int")) is not None
+            if pd.notna(row.get("_year")) and _nullable_int(row.get("_team_int")) is not None
         }
-        team_stats["_year"] = team_stats["season"].map(_year)
-        team_stats["_team_int"] = team_stats["team_id"].map(_to_int)
-        team_stats["_league_int"] = team_stats["league_id"].map(_to_int)
+        team_stats["_year"] = team_stats["season"].map(_nullable_year)
+        team_stats["_team_int"] = team_stats["team_id"].map(_nullable_int)
+        team_stats["_league_int"] = team_stats["league_id"].map(_nullable_int)
         team_stats["_comp"] = team_stats["competition"].map(normalize_competition)
         team_stats = team_stats[
-            (team_stats["_league_int"] == _to_int(source_league))
+            team_stats["_year"].notna() & team_stats["_team_int"].notna()
+            & team_stats["_league_int"].notna()
+        ].copy()
+        if team_stats.empty:
+            return pd.DataFrame()
+        team_stats = team_stats[
+            (team_stats["_league_int"] == _nullable_int(source_league))
             & (team_stats["_comp"] == normalize_competition(competition))
             & (team_stats["_year"] <= cutoff)
         ]
@@ -1450,7 +1500,7 @@ class ChatScenarioEngine:
                 continue
             before, after = pairs[-1]
             before_year, after_year = int(before["_year"]), int(after["_year"])
-            team_after = _to_int(after.get("_team_int"))
+            team_after = _nullable_int(after.get("_team_int"))
             if team_after is None:
                 continue
             baseline = self._bb_rating_for_season(focal_global_id, source_league, before_year, competition)
@@ -1458,7 +1508,7 @@ class ChatScenarioEngine:
             if baseline is None or outcome is None:
                 continue
 
-            focal_id = _to_int(before.get("player_id"))
+            focal_id = _nullable_int(before.get("player_id"))
             meta = meta_by_id.get(focal_id, {})
             age = _finite(before.get("age"), np.nan)
             if not math.isfinite(age):
@@ -1481,7 +1531,7 @@ class ChatScenarioEngine:
                 "minutes_pre": _finite(before.get("minutes_per_game"), np.nan),
                 "usage_pre": _ratio(before.get("usg_pct"), np.nan),
                 "age_pre": age,
-                "team_strength_pre": team_strength(_to_int(before.get("_team_int")), before_year),
+                "team_strength_pre": team_strength(_nullable_int(before.get("_team_int")), before_year),
                 "role_pre": role,
             }
             for named_teammate_id in teammate_ids:

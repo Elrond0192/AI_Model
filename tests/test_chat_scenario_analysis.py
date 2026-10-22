@@ -1223,3 +1223,40 @@ def test_hoopmetrics_unknown_advanced_role_is_preserved_and_reported():
     assert mapped["unmapped_roles"] == [
         {"dimension": "offensive", "role": "NEW FUTURE ROLE"}
     ]
+
+
+
+def test_causal_panel_builders_skip_nullable_ids_and_seasons():
+    engine = _engine()
+    engine.data["players"]["global_id"] = engine.data["players"]["id"].map(
+        lambda value: f"PLAYER-{int(value)}"
+    )
+    engine.data["player_stats"]["global_id"] = engine.data["player_stats"]["player_id"].map(
+        lambda value: f"PLAYER-{int(value)}"
+    )
+
+    invalid_player = engine.data["player_stats"].iloc[0].copy()
+    invalid_player["player_id"] = pd.NA
+    invalid_player["season"] = 2025
+    invalid_player["global_id"] = "PLAYER-1"
+    engine.data["player_stats"] = pd.concat(
+        [engine.data["player_stats"], pd.DataFrame([invalid_player])],
+        ignore_index=True,
+    )
+
+    invalid_team = engine.data["team_season_stats"].iloc[0].copy()
+    invalid_team["team_id"] = pd.NA
+    invalid_team["league_id"] = pd.NA
+    invalid_team["season"] = pd.NA
+    engine.data["team_season_stats"] = pd.concat(
+        [engine.data["team_season_stats"], pd.DataFrame([invalid_team])],
+        ignore_index=True,
+    )
+
+    team_switch = engine._build_team_switch_causal_panel(10, "RS", 2024)
+    teammate = engine._build_teammate_exposure_causal_panel(10, "RS", 2024, None)
+
+    assert not team_switch.empty
+    assert not teammate.empty
+    assert team_switch["transition_season"].notna().all()
+    assert teammate["transition_season"].notna().all()

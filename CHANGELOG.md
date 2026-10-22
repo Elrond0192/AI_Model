@@ -7,6 +7,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 ### Fixed
+- Hardened team-switch and teammate-exposure cohort builders against nullable pandas IDs and missing/unparseable season values. Invalid rows are excluded before integer conversion; usable transitions in the same context continue to be processed.
 - Fixed `refresh_context_seasonal` PostgreSQL permission failures by granting the configured runtime roles DML only on the physical derived Simulation/Training/Scenario serving tables that the allow-listed refresh procedures rebuild. Canonical player/team facts and upstream PBP/anagraphic/analysis inputs remain read-only.
 - Fixed admin navigation after login: repeated `.nav-item`, `.admin-only` and `.jump` controls now use `querySelectorAll` before `forEach`, preventing a runtime TypeError from blocking the shell and menu. Bumped the JavaScript asset version to `2.6.9` and added a regression test.
 - Fixed the JavaScript syntax error that prevented the admin console scripts, including the login handler, from running; separated causal refresh button state from the existing job-state variable and bumped static asset cache versions.

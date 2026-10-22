@@ -117,7 +117,7 @@ result is that the causal effect is not identified for that question.
 
 ### `causal_team_effect` — remains partial
 - The guarded team-switch ATT and persisted-panel refresh path are implemented. The operator can refresh all eligible canonical contexts from Model Releases; the resulting cohort is observational, not a named player's causal effect.
-- The bulk refresh records per-context status/counts, exposes a 0–100 progress bar and allows cooperative operator cancellation at the next context boundary; it writes audit events and never promotes a model.
+- The bulk refresh records per-context status/counts, exposes a 0–100 progress bar and allows cooperative operator cancellation at the next context boundary; it writes audit events and never promotes a model. Causal cohort builders ignore null/unparseable season and local-ID values instead of raising on pandas `NA` values.
 - `ai_scenario_serving.sql` grants the configured runtime roles SELECT/INSERT/UPDATE/DELETE on `SimulationCausalPanel` for the guarded persistence path only. Apply that SQL with the schema owner after this release; canonical player/team statistics remain read-only.
 - Promotion requires validated uncertainty and calibration comparability, out-of-time and placebo tests, sensitivity/leave-one-team-season-out checks, prespecified thresholds, and production contract tests.
 - A guarded teammate-exposure estimator and bulk refresh path now exist, but teammate-specific causal attribution remains partial until its treatment/exposure design and estimates pass empirical validation. Do not represent implementation presence as validated causality.
