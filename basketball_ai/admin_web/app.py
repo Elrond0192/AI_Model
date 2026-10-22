@@ -141,6 +141,34 @@ class AdminState:
             thread_name_prefix="ai-admin-future-performance",
         )
     )
+    causal_refresh_job: dict[str, Any] = field(
+        default_factory=lambda: {
+            "job_id": None,
+            "kind": None,
+            "status": "idle",
+            "stage": "Ready",
+            "progress": 0,
+            "completed_units": 0,
+            "total_units": 0,
+            "contexts_completed": 0,
+            "contexts_total": 0,
+            "rows_written": 0,
+            "items_written": 0,
+            "items_skipped": 0,
+            "items_failed": 0,
+            "current_context": None,
+            "errors": [],
+            "started_at": None,
+            "finished_at": None,
+            "message": "Nessun refresh causale eseguito.",
+        }
+    )
+    causal_refresh_executor: ThreadPoolExecutor = field(
+        default_factory=lambda: ThreadPoolExecutor(
+            max_workers=1,
+            thread_name_prefix="ai-admin-causal-refresh",
+        )
+    )
 
 
 STATE = AdminState()
@@ -2304,6 +2332,283 @@ def refresh_causal_panel(payload: CausalPanelRefreshPayload, user: dict[str, str
     except Exception as exc:
         _audit(actor, "causal_panel_refresh_failed", payload.kind, str(exc))
         raise HTTPException(status_code=500, detail=f"Refresh pannello causale fallito: {exc}") from exc
+
+
+
+class CausalPanelRefreshAllPayload(BaseModel):
+    kind: str = Field(pattern="^(team_switch|teammate_exposure)$")
+
+
+def _causal_completed_contexts(data: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return the latest completed season for every league/competition in loaded canonical stats."""
+    frame = data.get("player_stats")
+    if not isinstance(frame, pd.DataFrame) or frame.empty:
+        raise HTTPException(status_code=409, detail="Carica prima i dati canonici da PostgreSQL")
+    required = {"league_id", "season", "competition"}
+    if not required.issubset(frame.columns):
+        raise HTTPException(status_code=409, detail="Il dataset canonico non contiene lega, stagione e competizione")
+
+    league_dict = data.get("league_dict", {}) or {}
+    league_keys: dict[int, str] = {}
+    for raw_id, row in league_dict.items():
+        if not isinstance(row, dict):
+            continue
+        league_id = _to_int(raw_id)
+        league_key = str(row.get("league_key", row.get("code", ""))).strip().upper()
+        if league_id is not None and league_key:
+            league_keys[league_id] = league_key
+
+    lifecycle = _season_lifecycle()
+    current_year = datetime.now(timezone.utc).year
+    stats = frame[["league_id", "season", "competition"]].copy()
+    stats["_league_id"] = stats["league_id"].map(_to_int)
+    stats["_season"] = pd.to_numeric(stats["season"], errors="coerce")
+    stats["_competition"] = stats["competition"].fillna("").astype(str).str.strip().str.upper()
+    stats = stats[
+        stats["_league_id"].notna()
+        & stats["_season"].notna()
+        & stats["_competition"].ne("")
+        & (stats["_season"] <= current_year - 1)
+    ].copy()
+    if stats.empty:
+        return []
+
+    def completed(season: int) -> bool:
+        marker = lifecycle.get(str(season))
+        if isinstance(marker, dict) and marker.get("status"):
+            return str(marker["status"]).strip().lower() == "complete"
+        # Historical seasons without an explicit lifecycle record are treated as
+        # completed; the current calendar year is excluded above regardless.
+        return season < current_year
+
+    stats["_season"] = stats["_season"].astype(int)
+    stats = stats[stats["_season"].map(completed)].copy()
+    contexts: dict[tuple[int, str], int] = {}
+    for row in stats.itertuples(index=False):
+        league_id = _to_int(getattr(row, "_league_id", None))
+        season = _to_int(getattr(row, "_season", None))
+        competition = str(getattr(row, "_competition", "")).strip().upper()
+        if league_id is None or season is None or not competition:
+            continue
+        league_key = league_keys.get(league_id)
+        if not league_key:
+            continue
+        key = (league_id, competition)
+        contexts[key] = max(contexts.get(key, 0), season)
+
+    return [
+        {"league_id": league_id, "league_key": league_keys[league_id], "competition": competition, "through_season": season}
+        for (league_id, competition), season in sorted(
+            contexts.items(),
+            key=lambda item: (league_keys.get(item[0][0], ""), item[0][1]),
+        )
+    ]
+
+
+def _causal_context_teammates(data: dict[str, Any], context: dict[str, Any]) -> list[str]:
+    """Resolve every canonical teammate identity observed in this league/competition."""
+    stats = data.get("player_stats")
+    players = data.get("players")
+    if not isinstance(stats, pd.DataFrame) or stats.empty or not isinstance(players, pd.DataFrame) or players.empty:
+        return []
+    if not {"player_id", "league_id", "season", "competition"}.issubset(stats.columns):
+        return []
+    if not {"id", "global_id"}.issubset(players.columns):
+        return []
+    scoped = stats[
+        stats["league_id"].map(_to_int).eq(_to_int(context["league_id"]))
+        & stats["competition"].fillna("").astype(str).str.strip().str.upper().eq(context["competition"])
+        & pd.to_numeric(stats["season"], errors="coerce").le(int(context["through_season"]))
+        & pd.to_numeric(stats["season"], errors="coerce").le(datetime.now(timezone.utc).year - 1)
+    ]
+    if scoped.empty:
+        return []
+    identities = players[["id", "global_id"]].copy()
+    identities["id"] = identities["id"].map(_to_int)
+    identities["global_id"] = identities["global_id"].fillna("").astype(str).str.strip()
+    identities = identities[identities["id"].notna() & identities["global_id"].ne("")]
+    player_ids = set(scoped["player_id"].map(_to_int).dropna().astype(int).tolist())
+    return sorted(set(identities.loc[identities["id"].isin(player_ids), "global_id"].astype(str).tolist()))
+
+
+def _causal_refresh_set_job(**updates: Any) -> dict[str, Any]:
+    with STATE.lock:
+        STATE.causal_refresh_job.update(updates)
+        return dict(STATE.causal_refresh_job)
+
+
+def _causal_refresh_worker(job_id: str, kind: str, actor: str) -> None:
+    started = time.monotonic()
+    with STATE.lock:
+        if STATE.causal_refresh_job.get("job_id") != job_id:
+            return
+        data = STATE.data
+        active_profile = STATE.active_profile
+    try:
+        contexts = _causal_completed_contexts(data or {})
+        if not contexts:
+            raise RuntimeError("Non sono state trovate coppie lega/competizione con stagioni completate da aggiornare")
+
+        context_units: list[tuple[dict[str, Any], str | None]] = []
+        if kind == "team_switch":
+            context_units = [(context, None) for context in contexts]
+        else:
+            for context in contexts:
+                for teammate_id in _causal_context_teammates(data or {}, context):
+                    context_units.append((context, teammate_id))
+
+        total_units = len(context_units)
+        _causal_refresh_set_job(
+            status="running", stage="Preparazione", progress=0,
+            total_units=total_units, contexts_total=len(contexts),
+            message="Refresh batch in esecuzione su tutte le leghe e competizioni disponibili.",
+            current_context=None,
+        )
+        if total_units == 0:
+            raise RuntimeError("Nessun Global ID canonico disponibile per il refresh teammate exposure")
+
+        league_dict = data.get("league_dict", {}) or {}
+        bb_engine = BBRatingEngine(data["player_stats"], data.get("players"), data.get("leagues"))
+        scenario_engine = ChatScenarioEngine(StrictProductionEnsembleModel(), data, bb_rating_engine=bb_engine)
+        database_engine = get_engine(profile_url(active_profile))
+        completed_units = items_written = items_skipped = items_failed = rows_written = contexts_completed = 0
+        errors: list[dict[str, Any]] = []
+        visited_contexts: set[tuple[str, str]] = set()
+        try:
+            for context, teammate_id in context_units:
+                league_key = context["league_key"]
+                competition = context["competition"]
+                season = context["through_season"]
+                context_label = f"{league_key} · {competition} · stagione {season}"
+                _causal_refresh_set_job(
+                    stage=("Team-switch" if kind == "team_switch" else "Teammate exposure"),
+                    current_context=context_label + (f" · {teammate_id}" if teammate_id else ""),
+                    message=f"Refresh in corso: {context_label}",
+                )
+                try:
+                    if kind == "team_switch":
+                        result = scenario_engine.refresh_team_switch_causal_panel(
+                            database_engine,
+                            source_league=int(context["league_id"]),
+                            competition=competition,
+                            through_season=int(season),
+                        )
+                    else:
+                        result = scenario_engine.refresh_teammate_exposure_causal_panel(
+                            database_engine,
+                            source_league=int(context["league_id"]),
+                            competition=competition,
+                            through_season=int(season),
+                            teammate_global_id=str(teammate_id),
+                        )
+                    result_status = str(result.get("status", "unavailable"))
+                    result_rows = int(result.get("rows", 0) or 0)
+                    if result_status in {"complete", "written", "refreshed"}:
+                        items_written += 1
+                        rows_written += result_rows
+                    elif result_status in {"failed", "error"}:
+                        items_failed += 1
+                        if len(errors) < 30:
+                            errors.append({"context": context_label, "teammate_global_id": teammate_id, "error": str(result.get("reason", result_status))[:240]})
+                    else:
+                        items_skipped += 1
+                except Exception as exc:
+                    items_failed += 1
+                    if len(errors) < 30:
+                        errors.append({"context": context_label, "teammate_global_id": teammate_id, "error": str(exc)[:240]})
+                    _audit(actor, "causal_panel_refresh_failed", kind, json.dumps({
+                        "league": league_key, "competition": competition, "season": season,
+                        "teammate_global_id": teammate_id, "error": str(exc)[:300],
+                    }, ensure_ascii=False))
+                completed_units += 1
+                context_key = (league_key, competition)
+                if context_key not in visited_contexts:
+                    visited_contexts.add(context_key)
+                    contexts_completed += 1
+                _causal_refresh_set_job(
+                    completed_units=completed_units,
+                    progress=int(round(completed_units * 100 / max(total_units, 1))),
+                    contexts_completed=contexts_completed,
+                    rows_written=rows_written,
+                    items_written=items_written,
+                    items_skipped=items_skipped,
+                    items_failed=items_failed,
+                    errors=errors,
+                    message=f"{completed_units}/{total_units} aggiornamenti elaborati · {rows_written} righe scritte.",
+                )
+        finally:
+            database_engine.dispose()
+
+        final_status = "complete" if items_failed == 0 else ("partial" if items_written > 0 else "failed")
+        final = _causal_refresh_set_job(
+            status=final_status,
+            stage="Completato" if final_status == "complete" else ("Completato con errori" if final_status == "partial" else "Fallito"),
+            progress=100 if final_status in {"complete", "partial"} else int(round(completed_units * 100 / max(total_units, 1))),
+            finished_at=_utcnow(),
+            current_context=None,
+            rows_written=rows_written,
+            items_written=items_written,
+            items_skipped=items_skipped,
+            items_failed=items_failed,
+            contexts_completed=contexts_completed,
+            errors=errors,
+            message=f"Refresh terminato: {items_written} pannelli aggiornati, {items_skipped} senza dati sufficienti, {items_failed} errori; {rows_written} righe scritte in {int(time.monotonic() - started)} s.",
+        )
+        _audit(actor, "causal_panel_refresh_all_finished", kind, json.dumps({
+            "status": final_status, "contexts": len(contexts), "items_written": items_written,
+            "items_skipped": items_skipped, "items_failed": items_failed, "rows_written": rows_written,
+        }, ensure_ascii=False))
+    except Exception as exc:
+        _causal_refresh_set_job(
+            status="failed", stage="Fallito", finished_at=_utcnow(), current_context=None,
+            error=str(exc)[:500], message="Refresh causale non riuscito: " + str(exc)[:400],
+        )
+        _audit(actor, "causal_panel_refresh_all_failed", kind, str(exc)[:500])
+
+
+@app.post("/admin-api/causal-panels/refresh-all")
+def start_causal_refresh_all(payload: CausalPanelRefreshAllPayload, user: dict[str, str] = Depends(_csrf)) -> dict[str, Any]:
+    """Start an all-league/all-competition causal data refresh; this never trains or promotes models."""
+    with STATE.lock:
+        active_profile = STATE.active_profile
+        data = STATE.data
+        current_status = STATE.causal_refresh_job.get("status")
+        if current_status in {"queued", "running"}:
+            raise HTTPException(status_code=409, detail="Un refresh causale è già in esecuzione")
+    if not active_profile:
+        raise HTTPException(status_code=400, detail="Seleziona prima un profilo PostgreSQL")
+    if not isinstance(data, dict) or data.get("player_stats") is None:
+        raise HTTPException(status_code=409, detail="Carica prima i dati canonici da PostgreSQL")
+    job_id = uuid.uuid4().hex
+    with STATE.lock:
+        STATE.causal_refresh_job = {
+            "job_id": job_id, "kind": payload.kind, "status": "queued", "stage": "In coda",
+            "progress": 0, "completed_units": 0, "total_units": 0, "contexts_completed": 0,
+            "contexts_total": 0, "rows_written": 0, "items_written": 0, "items_skipped": 0,
+            "items_failed": 0, "current_context": None, "errors": [], "started_at": _utcnow(),
+            "finished_at": None, "message": "Refresh causale messo in coda.",
+        }
+    STATE.causal_refresh_executor.submit(_causal_refresh_worker, job_id, payload.kind, user["username"])
+    _audit(user["username"], "causal_panel_refresh_all_started", payload.kind, json.dumps({"job_id": job_id}))
+    with STATE.lock:
+        return {"ok": True, "job": dict(STATE.causal_refresh_job)}
+
+
+@app.get("/admin-api/causal-panels/refresh-all")
+def current_causal_refresh(user: dict[str, str] = Depends(_operator)) -> dict[str, Any]:
+    del user
+    with STATE.lock:
+        return {"job": dict(STATE.causal_refresh_job)}
+
+
+@app.get("/admin-api/causal-panels/refresh-all/{job_id}")
+def causal_refresh_status(job_id: str, user: dict[str, str] = Depends(_operator)) -> dict[str, Any]:
+    del user
+    with STATE.lock:
+        job = dict(STATE.causal_refresh_job)
+    if job.get("job_id") != job_id:
+        raise HTTPException(status_code=404, detail="Refresh causale non trovato")
+    return {"job": job}
 
 
 @app.get("/admin-api/model-releases")
