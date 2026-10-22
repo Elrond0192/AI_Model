@@ -552,6 +552,31 @@ async function renderModelReleases(){
       const statusCounts=s.status_counts||{};
       const statuses=Object.entries(statusCounts).sort((a,b)=>b[1]-a[1]).map(([name,count])=>name+': '+count);
       if(statuses.length)lines.push('Esiti: '+statuses.join(' · '));
+      const missingness=s.missingness_by_field||{};
+      const missingnessLabels={
+        missing_baseline_bb_rating_rows:'BB-Rating baseline',
+        missing_minutes_pre_rows:'minuti pre-trattamento',
+        missing_usage_pre_rows:'usage pre-trattamento',
+        missing_age_pre_rows:'età',
+        missing_team_strength_pre_rows:'forza squadra pre-trattamento',
+        invalid_outcome_rows:'BB-Rating outcome non valido',
+        invalid_treatment_rows:'trattamento non valido',
+        missing_focal_identity_rows:'identità giocatore',
+        missing_teammate_identity_rows:'identità compagno',
+        missing_league_rows:'lega',
+        missing_competition_rows:'competizione',
+        missing_transition_season_rows:'stagione di transizione'
+      };
+      const missingnessTop=Object.entries(missingness)
+        .filter(([key,value])=>missingnessLabels[key]&&Number(value?.rows)>0)
+        .sort((a,b)=>Number(b[1]?.percent||0)-Number(a[1]?.percent||0))
+        .slice(0,8);
+      if(missingnessTop.length){
+        lines.push('Valori mancanti/non validi per campo (le percentuali si sovrappongono):');
+        missingnessTop.forEach(([key,value])=>{
+          lines.push('• '+missingnessLabels[key]+': '+Number(value.rows||0).toLocaleString('it-IT')+' ('+Number(value.percent||0).toFixed(2)+'%)');
+        });
+      }
       const best=s.best_supported_groups||[];
       if(best.length){
         lines.push('Gruppi con più trattati:');
