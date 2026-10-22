@@ -1444,16 +1444,11 @@ class ChatScenarioEngine:
         if frame.empty:
             return pd.DataFrame()
 
-        if teammate_global_id is None:
-            teammate_ids = sorted(frame["_global_id"].astype(str).unique().tolist())
-        else:
-            requested = str(teammate_global_id).strip().casefold()
-            teammate_ids = sorted({
-                str(value) for value in frame["_global_id"].dropna().tolist()
-                if str(value).strip().casefold() == requested
-            })
-        if not teammate_ids:
-            return pd.DataFrame()
+        requested_teammate_id = None
+        if teammate_global_id is not None:
+            requested_teammate_id = str(teammate_global_id).strip().casefold()
+            if not requested_teammate_id:
+                return pd.DataFrame()
 
         team_by_global_year = {
             (str(row["_global_id"]), int(row["_year"])): _nullable_int(row["_team_int"])
@@ -1534,7 +1529,22 @@ class ChatScenarioEngine:
                 "team_strength_pre": team_strength(_nullable_int(before.get("_team_int")), before_year),
                 "role_pre": role,
             }
-            for named_teammate_id in teammate_ids:
+            # Controls must be drawn only from players with observations in
+            # this transition's outcome season. Including every identity seen in
+            # any historical season creates artificial controls for inactive players.
+            active_teammate_ids = sorted(
+                str(value).strip()
+                for value in frame.loc[
+                    frame["_year"] == after_year, "_global_id"
+                ].dropna().unique().tolist()
+                if str(value).strip()
+            )
+            if requested_teammate_id is not None:
+                active_teammate_ids = [
+                    value for value in active_teammate_ids
+                    if value.casefold() == requested_teammate_id
+                ]
+            for named_teammate_id in active_teammate_ids:
                 if named_teammate_id.casefold() == focal_global_id.casefold():
                     continue
                 teammate_team_after = team_by_global_year.get((named_teammate_id, after_year))
