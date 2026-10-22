@@ -12,6 +12,7 @@ from typing import Any, Iterable
 
 import numpy as np
 import pandas as pd
+from sqlalchemy import text
 
 from basketball_ai.scenarios.scouting_archetypes import ARCHETYPE_METRICS
 from basketball_ai.scenarios.advanced_role_archetypes import map_advanced_roles
@@ -1666,7 +1667,44 @@ class ChatScenarioEngine:
             source_league, competition_key, int(through_season), teammate_global_id
         )
         if panel.empty:
-            return {"status": "not_written", "rows": 0, "reason": "no_supported_completed_teammate_transitions"}
+            # This refresh is authoritative for the context. Clear previously
+            # persisted rows when the corrected treatment definition produces no
+            # eligible cohort; leaving old rows would silently mix stale
+            # same-team status labels into the new exposure design.
+            teammate_filter = (
+                " AND teammate_global_id = CAST(:teammate_global_id AS text)"
+                if teammate_global_id is not None else ""
+            )
+            params = {
+                "source_type": "teammate_exposure",
+                "league_key": league_key,
+                "competition": competition_key,
+            }
+            if teammate_global_id is not None:
+                params["teammate_global_id"] = str(teammate_global_id).strip()
+            try:
+                with database_engine.begin() as connection:
+                    deleted = connection.execute(
+                        text(
+                            'DELETE FROM "AI_Source"."SimulationCausalPanel" '
+                            "WHERE source_type = :source_type "
+                            "AND league_key = :league_key "
+                            "AND competition = :competition"
+                            + teammate_filter
+                        ),
+                        params,
+                    )
+                return {
+                    "status": "refreshed",
+                    "rows": 0,
+                    "deleted_rows": max(0, int(getattr(deleted, "rowcount", 0) or 0)),
+                    "reason": "no_supported_completed_teammate_transitions",
+                }
+            except Exception as exc:
+                return {
+                    "status": "failed", "rows": 0,
+                    "reason": "empty_teammate_panel_cleanup_failed:" + str(exc)[:200],
+                }
         return persist_causal_panel(
             panel, database_engine, source_type="teammate_exposure",
             league_key=league_key, competition=competition_key,
