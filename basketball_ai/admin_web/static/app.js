@@ -742,23 +742,59 @@ async function renderAiJobs(){
   const errorNode=$('#ai-jobs-error');
   const scheduleForm=$('#ai-jobs-schedule-form');
   const leagueField=$('#ai-schedule-league-field');
+  const leaguePicker=$('#ai-schedule-league-picker');
+  const leagueToggle=$('#ai-schedule-league-toggle');
+  const leagueSummary=$('#ai-schedule-league-summary');
   const leagueOptions=$('#ai-schedule-league-options');
+
+  const setLeagueDropdownOpen=open=>{
+    if(!leagueOptions||!leagueToggle)return;
+    leagueOptions.classList.toggle('hidden',!open);
+    leagueToggle.setAttribute('aria-expanded',String(open));
+  };
+  leagueToggle?.addEventListener('click',()=>{
+    setLeagueDropdownOpen(leagueOptions.classList.contains('hidden'));
+  });
+  leaguePicker?.addEventListener('keydown',event=>{
+    if(event.key==='Escape'){
+      setLeagueDropdownOpen(false);
+      leagueToggle?.focus();
+    }
+  });
+  // Bind one delegated outside-click handler for all future mounts of this template.
+  if(!window.__aiScheduleLeagueOutsideClickBound){
+    document.addEventListener('click',event=>{
+      const picker=document.querySelector('#ai-schedule-league-picker');
+      const options=document.querySelector('#ai-schedule-league-options');
+      const toggle=document.querySelector('#ai-schedule-league-toggle');
+      if(picker&&!picker.contains(event.target)){
+        options?.classList.add('hidden');
+        toggle?.setAttribute('aria-expanded','false');
+      }
+    });
+    window.__aiScheduleLeagueOutsideClickBound=true;
+  }
 
   const selectedLeagues=()=>{
     const allBox=$('#ai-schedule-all-leagues');
     if(allBox?.checked)return ['ALL'];
-    return $$('input[name="schedule_league"]:checked',leagueOptions).map(input=>input.value);
+    return $('input[name="schedule_league"]:checked',leagueOptions).map(input=>input.value);
   };
   const syncLeagueSelection=()=>{
     const allBox=$('#ai-schedule-all-leagues');
     const boxes=$('input[name="schedule_league"]',leagueOptions);
     if(!allBox)return;
     boxes.forEach(input=>{input.disabled=allBox.checked;});
+    const selected=boxes.filter(input=>input.checked).map(input=>input.value);
+    if(leagueSummary){
+      leagueSummary.textContent=allBox.checked?'Tutte':selected.length===1?selected[0]:selected.length+' leghe selezionate';
+      if(!allBox.checked&&!selected.length)leagueSummary.textContent='Seleziona leghe';
+    }
   };
   const loadScheduleOptions=async(preserveSelection=false)=>{
     const previousSelection=preserveSelection?selectedLeagues():['ALL'];
     const data=await api('/admin-api/scheduler/options');
-    const leagues=(data.leagues||[]).map(value=>String(value).toUpperCase()).filter(Boolean);
+    const leagues=[...new Set((data.leagues||[]).map(value=>String(value).trim().toUpperCase()).filter(Boolean))].sort();
     if(!leagueOptions)return;
     const allSelected=previousSelection.includes('ALL')||previousSelection.length===0;
     leagueOptions.innerHTML=
@@ -766,11 +802,11 @@ async function renderAiJobs(){
       leagues.map(league=>'<label class="schedule-league-option"><input type="checkbox" name="schedule_league" value="'+esc(league)+'" '+(!allSelected&&previousSelection.includes(league)?'checked':'')+'> <span><strong>'+esc(league)+'</strong></span></label>').join('');
     $('#ai-schedule-all-leagues')?.addEventListener('change',()=>{
       if($('#ai-schedule-all-leagues')?.checked){
-        $$('input[name="schedule_league"]',leagueOptions).forEach(input=>{input.checked=false;});
+        $('input[name="schedule_league"]',leagueOptions).forEach(input=>{input.checked=false;});
       }
       syncLeagueSelection();
     });
-    $$('input[name="schedule_league"]',leagueOptions).forEach(input=>input.addEventListener('change',()=>{
+    $('input[name="schedule_league"]',leagueOptions).forEach(input=>input.addEventListener('change',()=>{
       if(input.checked&&$('#ai-schedule-all-leagues'))$('#ai-schedule-all-leagues').checked=false;
       syncLeagueSelection();
     }));
@@ -780,6 +816,7 @@ async function renderAiJobs(){
     const task=scheduleForm?.task_key.value||'';
     const needsLeague=['refresh_simulation_sources','refresh_scenario_serving','refresh_training_serving'].includes(task);
     if(leagueField)leagueField.classList.toggle('hidden',!needsLeague);
+    if(!needsLeague)setLeagueDropdownOpen(false);
   };
   const taskFields=()=>{
     const task=scheduleForm.task_key.value;
