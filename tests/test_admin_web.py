@@ -491,7 +491,7 @@ def test_helpers_and_static_assets(monkeypatch, tmp_path):
     assert "const {keepAlive=false,...requestOptions}=options;" in api_body
     assert "if(!keepAlive)App.controllers.add(controller);" in api_body
     assert "if(!requestOptions.signal&&!keepAlive)fetchOptions.signal=controller.signal;" in api_body
-    assert 'src="/assets/app.js?v=2.6.2"' in html
+    assert 'src="/assets/app.js?v=2.6.3"' in html
     assert 'class="dashboard-footer"' not in html
     assert "Stati e percentuali provengono dalle API operative." not in html
     assert "<footer>© AI Model Control Center v2.6.0</footer>" in html
@@ -524,7 +524,7 @@ def test_helpers_and_static_assets(monkeypatch, tmp_path):
     assert "future-performance-overview-icon" not in html
     assert ".dashboard-v2 .dashboard-section-eyebrow i" in css
     assert ".dashboard-v2 .dashboard-section-eyebrow svg" not in css
-    assert 'href="/assets/app.css?v=2.6.5"' in html
+    assert 'href="/assets/app.css?v=2.6.6"' in html
     # Phosphor files live under STATIC_ROOT/assets/phosphor, while STATIC_ROOT is mounted at /assets.
     assert 'href="/assets/assets/phosphor/regular/style.css"' in html
     assert 'href="/assets/assets/phosphor/fill/style.css"' in html
