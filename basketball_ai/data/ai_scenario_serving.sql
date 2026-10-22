@@ -911,7 +911,7 @@ BEGIN
         ELSE 'available'
     END;
     v_details := format(
-        'PBP rows=%s; probabilistic defender exposures=%s; lineup aggregates=%s; shot-profile rows=%s; tactical play-type rows=%s. Shot locations are unknown without coordinates. Tactical labels require a separate recognized source taxonomy. SimulationCausalPanel remains empty until a causal identification design is approved.',
+        'PBP rows=%s; probabilistic defender exposures=%s; lineup aggregates=%s; shot-profile rows=%s; tactical play-type rows=%s. Shot locations are unknown without coordinates. Tactical labels require a separate recognized source taxonomy. SimulationCausalPanel is refreshed separately by the explicit guarded Model Releases cohort-refresh action; this Simulation refresh does not populate the causal panel.',
         v_stage_rows, v_event_rows, v_lineup_rows, v_shot_rows, v_play_rows
     );
 
