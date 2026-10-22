@@ -16,10 +16,30 @@ confounders, overlap and identifying assumptions are defensible.
 
 ## Current data readiness
 
-The `AI_Source.SimulationCausalPanel` contract now includes canonical focal-player identity, optional named-teammate identity, league/competition, pre-treatment BB-Rating, minutes, usage, age, team strength, role, transition season and refresh timestamp. An incremental migration preserves installations with the original schema-only table, and the data loader reads the expanded contract. The team-switch estimator builds an in-memory cohort from canonical player/team season sources. A separate guarded teammate-exposure cohort ATT estimator is implemented and wired to consume a persisted panel only when a named teammate is explicitly requested. Explicit `refresh_team_switch_causal_panel(...)` and `refresh_teammate_exposure_causal_panel(...)` maintenance entry points now build completed adjacent-season cohorts and persist them through the canonical BB-Rating engine and atomic writer. They are not scheduled or run automatically by chat; production permissions, refresh orchestration, persisted-row audit and out-of-time/placebo/sensitivity validation still need to be wired and verified. The table must not be treated as populated merely because its schema exists. The existing `causal_effect` scenario can fall back to a
-constructed next-season panel based on changes in minutes; this is not an
-acceptable source for team/teammate attribution and must not be reused as proof
-of the requested causal effect.
+The `AI_Source.SimulationCausalPanel` contract stores canonical focal-player
+identity, optional named-teammate identity, league/competition, pre-treatment
+BB-Rating, minutes, usage, age, team strength, role, transition season and
+refresh timestamp. An incremental migration preserves installations with the
+original schema-only table, and the data loader reads the expanded contract.
+The guarded team-switch and teammate-exposure ATT estimators build completed
+adjacent-season cohorts and can persist them through the canonical BB-Rating
+engine and atomic writer.
+
+The **Model Releases** page exposes explicit bulk-refresh actions for team-switch
+and teammate-exposure panels. Each action discovers all canonical
+league/competition contexts with completed adjacent seasons, chooses the latest
+completed transition available per context, records per-context outcomes and
+row counts, and audits the start and completion/failure. This is a manual,
+operator-triggered maintenance workflow: it is not a chat side effect and is not
+one of the recurring scheduler task types. A panel must not be assumed populated
+because its schema exists; inspect the refresh status and persisted-row counts.
+
+The existing `causal_effect` scenario can fall back to a constructed next-season
+panel based on changes in minutes; that fallback is not an acceptable source
+for team/teammate attribution and must never be reused as proof of the requested
+causal effect. Production rollout still requires confirming SQL migration,
+database permissions, persisted panel coverage and row-level invariants in the
+target database.
 
 The current lineup source can support descriptive stint-level comparisons. It
 does not by itself provide a randomized assignment of teammates or lineups, and
@@ -96,10 +116,10 @@ result is that the causal effect is not identified for that question.
 - It must never describe an observed association as a cause. Requests for causal language must also invoke `causal_team_effect`.
 
 ### `causal_team_effect` — remains partial
-- The initial team-switch cohort ATT is implemented, but the panel is currently built in memory and is not yet persisted or refresh-audited.
-- The estimate is cohort-level, observational and conditional on assumptions; it is not a named player's causal effect.
-- Promotion requires a persisted canonical panel, validated uncertainty, out-of-time and placebo tests, sensitivity/leave-one-team-season-out checks, prespecified thresholds, and production contract tests.
-- Teammate-specific causal attribution remains unavailable until a defensible treatment/exposure and outcome design is implemented and validated.
+- The guarded team-switch ATT and persisted-panel refresh path are implemented. The operator can refresh all eligible canonical contexts from Model Releases; the resulting cohort is observational, not a named player's causal effect.
+- The bulk refresh records per-context status/counts and writes audit events, but production database migration/permissions, data coverage and row invariants still need to be checked in the deployment environment.
+- Promotion requires validated uncertainty and calibration comparability, out-of-time and placebo tests, sensitivity/leave-one-team-season-out checks, prespecified thresholds, and production contract tests.
+- A guarded teammate-exposure estimator and bulk refresh path now exist, but teammate-specific causal attribution remains partial until its treatment/exposure design and estimates pass empirical validation. Do not represent implementation presence as validated causality.
 
 A capability can be operationally available while a specific player's result is `insufficient_evidence`; the endpoint must still say so for that query.
 
@@ -111,12 +131,18 @@ A capability can be operationally available while a specific player's result is 
 - The estimator suppresses the estimate when treated/control counts, propensity overlap or weighted covariate balance fail. It returns diagnostics and an interval only when the gates pass. The estimate is explicitly cohort-level and conditional on observational assumptions.
 - This is an initial guarded estimator, not proof of causality and not a player-specific estimate. Its uncertainty calculation, calibration comparability, residual confounding and out-of-time/placebo performance still require validation against production data.
 
-## Remaining implementation sequence
+## Remaining validation sequence
 
-1. Persist a schema/versioned causal panel with canonical player/team identities, treatment date, outcome season, pre-treatment covariates, calibration release and source provenance; validate uniqueness and temporal ordering during refresh.
-2. Run rolling-origin/out-of-time, placebo, sensitivity and leave-one-team/season-out tests on real completed-season data with prespecified acceptance thresholds.
-3. Add teammate exposure only after treatment timing and selection are modeled without treating shared minutes as randomized.
-4. Promote causal_team_effect only after these tests pass. Until then its status remains partial.
+1. On the deployment database, apply/verify the incremental `SimulationCausalPanel`
+   migration and the required table/procedure permissions. Run both bulk refresh
+   actions and verify persisted rows, unique player transitions, temporal ordering,
+   per-context status and audit history.
+2. Run rolling-origin/out-of-time, placebo, sensitivity and leave-one-team/season-out
+   tests on real completed-season data with prespecified acceptance thresholds.
+3. Validate teammate exposure timing, selection and overlap; shared minutes and
+   lineup presence must not be treated as randomized assignment.
+4. Promote `causal_team_effect` beyond partial only after all empirical, uncertainty,
+   database-contract and production-readiness gates pass.
 
 ## Immediate safety rule
 
