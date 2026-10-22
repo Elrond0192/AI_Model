@@ -595,9 +595,12 @@ def test_helpers_and_static_assets(monkeypatch, tmp_path):
     jobs_page = html[jobs_start:jobs_end]
     assert "<h1>Pianificazione</h1>" in jobs_page
     assert "Pianificazione AI_Model" not in jobs_page
-    assert "BB Prediction Model" not in jobs_page
-    assert "Calibrazione BB-Rating" not in jobs_page
-    assert "Future Performance" not in jobs_page
+    assert '<h2>BB Prediction Model</h2>' not in jobs_page
+    assert '<h2>Calibrazione BB-Rating</h2>' not in jobs_page
+    assert '<h2>Future Performance</h2>' not in jobs_page
+    assert 'id="ai-job-prediction-run"' not in jobs_page
+    assert 'id="ai-job-rating-run"' not in jobs_page
+    assert 'id="ai-job-future-run"' not in jobs_page
     assert "Pianificazioni ricorrenti" in jobs_page
     assert 'id="ai-schedule-all-leagues"' in jobs_page
     assert 'name="schedule_league"' in js
