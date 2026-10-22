@@ -149,6 +149,9 @@ A capability can be operationally available while a specific player's result is 
 
 ### Teammate exposure support diagnostics
 
+The diagnostic also reports overlapping missing-value counts and percentages for baseline BB-Rating, pre-treatment minutes, usage, age, team strength, treatment, outcome and identities. These are intentionally overlapping counts, not additive row categories. A low complete-case rate must be diagnosed at field level before changing support thresholds or imputing covariates. The current panel treatment is same-team status in the outcome season; it does not, by itself, identify a newly acquired teammate or isolate an acquisition effect.
+
+
 - Model Releases now offers an explicit diagnostic of the persisted `teammate_exposure` panel grouped by `teammate_global_id × league_key × competition × transition_season`; it does not pool a named teammate across seasons to make a small cohort appear larger.
 - The report checks canonical focal identity integrity, complete-case covariates and the existing minimum gates (60 complete rows, at least 20 treated and 20 controls). Only groups that pass those raw gates proceed to propensity overlap and weighted-covariate-balance evaluation.
 - At most 50 raw-supported groups are fitted in one run to bound operational cost. Any raw-supported groups beyond that cap are explicitly marked not evaluated; the CSV is the audit detail. No effect estimate is published by this diagnostic.
