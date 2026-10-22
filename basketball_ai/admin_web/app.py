@@ -144,6 +144,22 @@ class AdminState:
 
 
 STATE = AdminState()
+
+CAUSAL_REFRESH_LOCK = threading.RLock()
+CAUSAL_REFRESH_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="ai-admin-causal-refresh")
+CAUSAL_REFRESH_JOB: dict[str, Any] = {
+    "status": "idle",
+    "kind": None,
+    "stage": "Ready",
+    "progress": 0,
+    "message": "Nessun refresh causale eseguito.",
+    "results": [],
+    "summary": None,
+    "error": None,
+    "started_at": None,
+    "finished_at": None,
+}
+
 app = FastAPI(title="AI Model Control Center", docs_url=None, redoc_url=None, openapi_url=None)
 app.mount("/assets", StaticFiles(directory=str(STATIC_ROOT)), name="assets")
 
@@ -2304,6 +2320,215 @@ def refresh_causal_panel(payload: CausalPanelRefreshPayload, user: dict[str, str
     except Exception as exc:
         _audit(actor, "causal_panel_refresh_failed", payload.kind, str(exc))
         raise HTTPException(status_code=500, detail=f"Refresh pannello causale fallito: {exc}") from exc
+
+
+
+class CausalPanelBulkRefreshPayload(BaseModel):
+    kind: str = Field(pattern="^(team_switch|teammate_exposure)$")
+
+
+def _causal_refresh_contexts(data: dict[str, Any]) -> list[dict[str, Any]]:
+    """Enumerate currently available league/competition pairs at their latest completed season."""
+    stats = data.get("player_stats")
+    required = {"league_id", "league_key", "competition", "season"}
+    if not isinstance(stats, pd.DataFrame) or stats.empty or not required.issubset(stats.columns):
+        raise RuntimeError("Il dataset canonico non contiene lega, stagione e competizione.")
+    frame = stats[list(required)].copy()
+    frame["league_id"] = frame["league_id"].map(_to_int)
+    frame["league_key"] = frame["league_key"].fillna("").astype(str).str.strip().str.upper()
+    frame["competition"] = frame["competition"].fillna("").astype(str).str.strip().str.upper()
+    frame["_year"] = pd.to_numeric(
+        frame["season"].astype(str).str.split("-").str[0], errors="coerce"
+    )
+    frame = frame[
+        frame["league_id"].notna()
+        & frame["league_key"].ne("")
+        & frame["competition"].ne("")
+        & frame["_year"].notna()
+    ].copy()
+    if frame.empty:
+        raise RuntimeError("Nessun contesto lega/competizione disponibile nel dataset.")
+
+    global_seasons = _seasons(data)
+    latest_observed = max(global_seasons) if global_seasons else None
+    lifecycle = _season_lifecycle()
+    contexts: list[dict[str, Any]] = []
+    for (league_id, league_key, competition), rows in frame.groupby(
+        ["league_id", "league_key", "competition"], sort=True
+    ):
+        seasons = sorted({int(value) for value in rows["_year"].tolist()})
+        if len(seasons) < 2:
+            continue
+        completed = []
+        for season in seasons:
+            status = str(lifecycle.get(str(season), {}).get("status", "unclassified")).strip().lower()
+            if status == "complete":
+                completed.append(season)
+            elif status in {"in_progress", "unclassified"} and latest_observed is not None and season < latest_observed:
+                # A newer observed season proves this context year is historical,
+                # even when a legacy lifecycle registry has not been backfilled.
+                completed.append(season)
+        if not completed:
+            continue
+        contexts.append({
+            "league_id": int(league_id),
+            "league": league_key,
+            "competition": competition,
+            "through_season": max(completed),
+        })
+    return contexts
+
+
+def _run_causal_panel_refresh_all(kind: str, actor: str, active_profile: str, data: dict[str, Any]) -> None:
+    started = _utcnow()
+    with CAUSAL_REFRESH_LOCK:
+        CAUSAL_REFRESH_JOB.update(
+            status="running", kind=kind, stage="Enumerazione contesti", progress=1,
+            message="Individuazione automatica di tutte le leghe e competizioni con stagioni completate…",
+            results=[], summary=None, error=None, started_at=started, finished_at=None,
+        )
+    database_engine = None
+    try:
+        contexts = _causal_refresh_contexts(data)
+        if not contexts:
+            raise RuntimeError("Non ci sono contesti con almeno due stagioni e una stagione completata.")
+        bb_engine = BBRatingEngine(data["player_stats"], data.get("players"), data.get("leagues"))
+        scenario_engine = ChatScenarioEngine(StrictProductionEnsembleModel(), data, bb_rating_engine=bb_engine)
+        database_engine = get_engine(profile_url(active_profile))
+        results: list[dict[str, Any]] = []
+        exceptions = 0
+        refreshed = 0
+        skipped = 0
+        total_rows = 0
+        with CAUSAL_REFRESH_LOCK:
+            CAUSAL_REFRESH_JOB.update(
+                stage="Refresh in corso", progress=2,
+                message=f"Contesti individuati: {len(contexts)}. Avvio refresh automatico.",
+            )
+        _audit(actor, "causal_panel_refresh_all_started", kind, json.dumps({"contexts": len(contexts)}))
+
+        for index, context in enumerate(contexts, start=1):
+            try:
+                if kind == "team_switch":
+                    result = scenario_engine.refresh_team_switch_causal_panel(
+                        database_engine,
+                        source_league=context["league_id"],
+                        competition=context["competition"],
+                        through_season=context["through_season"],
+                    )
+                else:
+                    result = scenario_engine.refresh_teammate_exposure_causal_panel(
+                        database_engine,
+                        source_league=context["league_id"],
+                        competition=context["competition"],
+                        through_season=context["through_season"],
+                        teammate_global_id=None,
+                    )
+                status = str(result.get("status", "unavailable"))
+                rows_written = int(result.get("rows", 0) or 0)
+                total_rows += rows_written
+                if status in {"complete", "written", "refreshed"}:
+                    refreshed += 1
+                else:
+                    skipped += 1
+                entry = {
+                    "league": context["league"],
+                    "competition": context["competition"],
+                    "through_season": context["through_season"],
+                    "status": status,
+                    "rows": rows_written,
+                    "reason": result.get("reason"),
+                }
+            except Exception as exc:
+                exceptions += 1
+                entry = {
+                    "league": context["league"],
+                    "competition": context["competition"],
+                    "through_season": context["through_season"],
+                    "status": "failed",
+                    "rows": 0,
+                    "reason": _safe_error(exc),
+                }
+            results.append(entry)
+            with CAUSAL_REFRESH_LOCK:
+                CAUSAL_REFRESH_JOB.update(
+                    progress=min(99, 2 + int(index / len(contexts) * 97)),
+                    stage=f"Contesto {index}/{len(contexts)}",
+                    message=f"{index}/{len(contexts)} contesti elaborati · {refreshed} aggiornati · {skipped} senza coorte utilizzabile · {exceptions} errori.",
+                    results=results[-250:],
+                    summary={
+                        "contexts_total": len(contexts),
+                        "contexts_refreshed": refreshed,
+                        "contexts_skipped": skipped,
+                        "contexts_failed": exceptions,
+                        "rows_written": total_rows,
+                    },
+                )
+
+        summary = {
+            "contexts_total": len(contexts),
+            "contexts_refreshed": refreshed,
+            "contexts_skipped": skipped,
+            "contexts_failed": exceptions,
+            "rows_written": total_rows,
+        }
+        final_status = "failed" if exceptions == len(contexts) else ("partial" if exceptions else "complete")
+        with CAUSAL_REFRESH_LOCK:
+            CAUSAL_REFRESH_JOB.update(
+                status=final_status, stage="Completato" if final_status == "complete" else "Terminato con anomalie",
+                progress=100, message=(
+                    f"Refresh concluso: {refreshed} contesti aggiornati, {skipped} senza coorte utilizzabile, "
+                    f"{exceptions} errori; {total_rows} righe scritte."
+                ), summary=summary, finished_at=_utcnow(),
+            )
+        _audit(actor, "causal_panel_refresh_all_finished", kind, json.dumps(summary))
+    except Exception as exc:
+        error = _safe_error(exc)
+        with CAUSAL_REFRESH_LOCK:
+            CAUSAL_REFRESH_JOB.update(
+                status="failed", stage="Errore", message="Refresh causale non completato.",
+                error=error, finished_at=_utcnow(),
+            )
+        _audit(actor, "causal_panel_refresh_all_failed", kind, error)
+    finally:
+        if database_engine is not None:
+            try:
+                database_engine.dispose()
+            except Exception:
+                pass
+
+
+@app.post("/admin-api/causal-panels/refresh-all")
+def start_causal_panel_refresh_all(
+    payload: CausalPanelBulkRefreshPayload, user: dict[str, str] = Depends(_csrf)
+) -> dict[str, Any]:
+    with STATE.lock:
+        data = STATE.data
+        active_profile = STATE.active_profile
+    if not active_profile:
+        raise HTTPException(status_code=400, detail="Seleziona prima un profilo PostgreSQL")
+    if not isinstance(data, dict) or not isinstance(data.get("player_stats"), pd.DataFrame) or data["player_stats"].empty:
+        raise HTTPException(status_code=409, detail="Carica prima i dati canonici da PostgreSQL")
+    with CAUSAL_REFRESH_LOCK:
+        if CAUSAL_REFRESH_JOB.get("status") == "running":
+            raise HTTPException(status_code=409, detail="Un refresh causale globale è già in esecuzione.")
+        CAUSAL_REFRESH_JOB.update(
+            status="queued", kind=payload.kind, stage="In coda", progress=0,
+            message="Refresh globale accodato.", results=[], summary=None, error=None,
+            started_at=_utcnow(), finished_at=None,
+        )
+        CAUSAL_REFRESH_EXECUTOR.submit(
+            _run_causal_panel_refresh_all, payload.kind, user["username"], active_profile, data
+        )
+        snapshot = json.loads(json.dumps(CAUSAL_REFRESH_JOB, default=str))
+    return {"ok": True, "job": snapshot}
+
+
+@app.get("/admin-api/causal-panels/refresh-all")
+def get_causal_panel_refresh_all(user: dict[str, str] = Depends(_operator)) -> dict[str, Any]:
+    del user
+    with CAUSAL_REFRESH_LOCK:
+        return json.loads(json.dumps(CAUSAL_REFRESH_JOB, default=str))
 
 
 @app.get("/admin-api/model-releases")
