@@ -343,6 +343,86 @@ def test_causal_panel_refresh_endpoint_uses_canonical_bb_rating_and_audit(monkey
     assert audit and audit[0][1] == "causal_panel_refresh"
 
 
+def test_causal_refresh_contexts_enumerate_all_league_competitions(monkeypatch):
+    data = {
+        "player_stats": pd.DataFrame([
+            {"league_id": 1, "league_key": "ITA1", "competition": "RS", "season": 2022},
+            {"league_id": 1, "league_key": "ITA1", "competition": "RS", "season": 2023},
+            {"league_id": 1, "league_key": "ITA1", "competition": "RS", "season": 2024},
+            {"league_id": 1, "league_key": "ITA1", "competition": "PO", "season": 2022},
+            {"league_id": 1, "league_key": "ITA1", "competition": "PO", "season": 2023},
+            {"league_id": 2, "league_key": "ITA2", "competition": "RS", "season": 2022},
+            {"league_id": 2, "league_key": "ITA2", "competition": "RS", "season": 2023},
+            {"league_id": 2, "league_key": "ITA2", "competition": "RS", "season": 2024},
+        ])
+    }
+    monkeypatch.setattr(admin, "_season_lifecycle", lambda: {
+        "2022": {"status": "complete"},
+        "2023": {"status": "complete"},
+        "2024": {"status": "in_progress"},
+    })
+
+    contexts = admin._causal_refresh_contexts(data)
+    actual = {(row["league"], row["competition"]): row["through_season"] for row in contexts}
+    assert actual == {("ITA1", "RS"): 2023, ("ITA1", "PO"): 2023, ("ITA2", "RS"): 2023}
+    assert len(contexts) == 3
+
+
+def test_schedule_validation_accepts_all_or_multiple_leagues_without_competition():
+    all_leagues = admin._validate_schedule_parameters(
+        "refresh_scenario_serving", {"season": 2025, "leagues": ["ALL"]}
+    )
+    assert all_leagues == {"season": 2025, "leagues": ["ALL"]}
+
+    selected = admin._validate_schedule_parameters(
+        "refresh_training_serving", {"season": "2024", "leagues": ["ita1", "ita2", "ITA1"]}
+    )
+    assert selected == {"season": 2024, "leagues": ["ITA1", "ITA2"]}
+    assert "competition" not in selected
+
+    with pytest.raises(HTTPException, match="Seleziona Tutte"):
+        admin._validate_schedule_parameters("refresh_scenario_serving", {"season": 2025})
+    with pytest.raises(HTTPException, match="'ALL' non può"):
+        admin._validate_schedule_parameters(
+            "refresh_training_serving", {"season": 2025, "leagues": ["ALL", "ITA1"]}
+        )
+
+
+def test_scheduled_refresh_expands_selected_leagues_to_every_available_competition(monkeypatch):
+    calls = []
+
+    class FakeConnection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+        def execute(self, statement, parameters):
+            calls.append((str(statement), dict(parameters)))
+
+    class FakeEngine:
+        def begin(self):
+            return FakeConnection()
+
+    engine = FakeEngine()
+    contexts = [("ITA1", "RS"), ("ITA1", "PO"), ("ITA2", "RS")]
+    monkeypatch.setattr(admin, "_scheduler_engine", lambda: engine)
+    monkeypatch.setattr(admin, "_available_source_contexts", lambda _: contexts)
+
+    status, result = admin._execute_scheduled_task(
+        "refresh_scenario_serving", {"season": 2025, "leagues": ["ITA1"]}, "admin"
+    )
+    assert status == "complete"
+    assert result["contexts_total"] == 2
+    assert result["contexts_completed"] == 2
+    assert result["contexts_failed"] == 0
+    assert {(row["league"], row["competition"]) for row in result["operations"]} == {
+        ("ITA1", "RS"), ("ITA1", "PO")
+    }
+    assert {parameters["competition"] for _, parameters in calls} == {"RS", "PO"}
+
+
 def test_model_release_buttons_use_node_list_and_cancel_jobs_are_exposed():
     static = Path(admin.STATIC_ROOT)
     js = (static / "app.js").read_text(encoding="utf-8")
