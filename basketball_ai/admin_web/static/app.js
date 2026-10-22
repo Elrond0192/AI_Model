@@ -480,10 +480,10 @@ async function renderModelReleases(){
   const showCausalJob=job=>{
     if(!causalResult||!job)return;
     if(causalProgress)causalProgress.innerHTML=progressMarkup(job);
-    const active=['queued','running'].includes(job.status);
+    const cancelAvailable=['queued','running'].includes(job.status);
     if(causalCancel){
-      causalCancel.classList.toggle('hidden',!active);
-      causalCancel.disabled=!active||!!job.cancel_requested;
+      causalCancel.classList.toggle('hidden',!cancelAvailable);
+      causalCancel.disabled=!cancelAvailable||!!job.cancel_requested;
       causalCancel.textContent=job.cancel_requested?'Interruzione richiesta…':'Interrompi refresh';
     }
     const lines=[job.message||'Refresh causale in attesa.'];

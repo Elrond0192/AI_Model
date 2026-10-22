@@ -1885,5 +1885,5 @@ def test_login_form_uses_post_and_versioned_assets():
     html = (static_root / "index.html").read_text(encoding="utf-8")
     js = (static_root / "app.js").read_text(encoding="utf-8")
     assert 'id="login-form" class="login-card" method="post" action="/admin-api/login"' in html
-    assert '/assets/app.js?v=2.6.7' in html
+    assert '/assets/app.js?v=2.6.8' in html
     assert "URLSearchParams(window.location.search).get('login')" in js
