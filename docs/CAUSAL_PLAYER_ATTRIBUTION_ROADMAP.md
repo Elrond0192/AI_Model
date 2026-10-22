@@ -107,6 +107,7 @@ A capability can be operationally available while a specific player's result is 
 
 - Implemented in basketball_ai/scenarios/causal_attribution.py: guarded cohort-level team-switch ATT using propensity and outcome models on pre-treatment BB-Rating, minutes, usage, age, team strength, role and transition season.
 - The in-memory builder uses canonical global player identity and the canonical BB-Rating engine only. It excludes the current calendar year as potentially in progress, requires adjacent completed seasons, and keeps one latest transition per player to avoid repeated-player pseudo-replication.
+- `performance_attribution` now includes an explicit adjacent-season descriptive decomposition: BB-Rating point change, team-context score change, minutes and usage changes, team switch and role change. It labels this as non-causal and does not assign percentages of responsibility to individual/team factors.
 - The estimator suppresses the estimate when treated/control counts, propensity overlap or weighted covariate balance fail. It returns diagnostics and an interval only when the gates pass. The estimate is explicitly cohort-level and conditional on observational assumptions.
 - This is an initial guarded estimator, not proof of causality and not a player-specific estimate. Its uncertainty calculation, calibration comparability, residual confounding and out-of-time/placebo performance still require validation against production data.
 
