@@ -1455,13 +1455,48 @@ class ChatScenarioEngine:
             for row in frame.to_dict("records")
             if pd.notna(row.get("_year")) and _nullable_int(row.get("_team_int")) is not None
         }
+
+        # Resolve the source team's canonical global identity once. In some
+        # populated deployments the player-stat and team-stat team_id values
+        # are not aligned even though both source rows carry the same global ID.
+        teams_frame = self.data.get("teams", pd.DataFrame()).copy()
+        team_global_by_id: dict[int, str] = {}
+        if not teams_frame.empty and {"id", "global_id"}.issubset(teams_frame.columns):
+            team_lookup = teams_frame[["id", "global_id"]].copy()
+            team_lookup["id"] = team_lookup["id"].map(_nullable_int)
+            team_lookup["global_id"] = team_lookup["global_id"].fillna("").astype(str).str.strip()
+            team_lookup = team_lookup[
+                team_lookup["id"].notna() & team_lookup["global_id"].ne("")
+            ].drop_duplicates("id", keep="last")
+            team_global_by_id = {
+                int(row["id"]): str(row["global_id"]).casefold()
+                for row in team_lookup.to_dict("records")
+            }
+        frame["_team_global_id"] = frame["_team_int"].map(team_global_by_id)
+        if "team_global_id" in frame.columns:
+            direct_team_global = frame["team_global_id"].fillna("").astype(str).str.strip()
+            frame["_team_global_id"] = direct_team_global.where(
+                direct_team_global.ne(""), frame["_team_global_id"]
+            ).str.casefold()
+
         team_stats["_year"] = team_stats["season"].map(_nullable_year)
         team_stats["_team_int"] = team_stats["team_id"].map(_nullable_int)
         team_stats["_league_int"] = team_stats["league_id"].map(_nullable_int)
         team_stats["_comp"] = team_stats["competition"].map(normalize_competition)
+        if "global_id" in team_stats.columns:
+            team_stats["_team_global_id"] = (
+                team_stats["global_id"].fillna("").astype(str).str.strip().str.casefold()
+            )
+        elif "team_global_id" in team_stats.columns:
+            team_stats["_team_global_id"] = (
+                team_stats["team_global_id"].fillna("").astype(str).str.strip().str.casefold()
+            )
+        else:
+            team_stats["_team_global_id"] = team_stats["_team_int"].map(team_global_by_id)
         team_stats = team_stats[
-            team_stats["_year"].notna() & team_stats["_team_int"].notna()
+            team_stats["_year"].notna()
             & team_stats["_league_int"].notna()
+            & (team_stats["_team_int"].notna() | team_stats["_team_global_id"].fillna("").ne(""))
         ].copy()
         if team_stats.empty:
             return pd.DataFrame()
@@ -1471,8 +1506,18 @@ class ChatScenarioEngine:
             & (team_stats["_year"] <= cutoff)
         ]
 
-        def team_strength(team_id, year):
-            rows = team_stats[(team_stats["_team_int"] == team_id) & (team_stats["_year"] == year)]
+        def team_strength(team_id, year, team_global_id=None):
+            year_rows = team_stats[team_stats["_year"] == year]
+            normalized_global = str(team_global_id or "").strip().casefold()
+            rows = pd.DataFrame()
+            if normalized_global and "_team_global_id" in year_rows.columns:
+                rows = year_rows[
+                    year_rows["_team_global_id"].fillna("").astype(str).str.casefold()
+                    == normalized_global
+                ]
+            # Preserve exact canonical-ID matching as a compatibility fallback.
+            if rows.empty and team_id is not None:
+                rows = year_rows[year_rows["_team_int"] == team_id]
             if rows.empty:
                 return np.nan
             row = rows.iloc[-1]
@@ -1526,7 +1571,11 @@ class ChatScenarioEngine:
                 "minutes_pre": _finite(before.get("minutes_per_game"), np.nan),
                 "usage_pre": _ratio(before.get("usg_pct"), np.nan),
                 "age_pre": age,
-                "team_strength_pre": team_strength(_nullable_int(before.get("_team_int")), before_year),
+                "team_strength_pre": team_strength(
+                    _nullable_int(before.get("_team_int")),
+                    before_year,
+                    before.get("_team_global_id"),
+                ),
                 "role_pre": role,
             }
             # Controls must be drawn only from players with observations in
