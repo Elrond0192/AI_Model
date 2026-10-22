@@ -96,7 +96,7 @@ def test_persist_causal_panel_rejects_native_rating_and_noncanonical_outcomes():
     panel = _panel(40)
     panel["league_key"] = "EL"
     panel["competition"] = "RS"
-    panel["outcome"] = 7.2
+    panel["outcome"] = 0.72
     rejected = persist_causal_panel(
         panel, None, source_type="team_switch", league_key="EL", competition="RS"
     )
