@@ -88,6 +88,7 @@ async function navigate(page){
   try{
     if(page==='overview')await renderOverview();
     if(page==='data')await renderData();
+    if(page==='ai-jobs')await renderAiJobs();
     if(page==='bb-rating')await renderBBRating();
     if(page==='future-performance')await renderFuturePerformancePage();
     if(page==='scenarios')await renderScenarios();
@@ -100,6 +101,52 @@ async function navigate(page){
 }
 function kpi(icon,label,value,sub='',tone=''){return `<div class="kpi-card"><div class="kpi-icon ${tone}">${icon}</div><div class="kpi-label">${esc(label)}</div><div class="kpi-value ${tone==='green'?'online':''}">${esc(value)}</div><div class="kpi-sub">${sub}</div></div>`;}
 function updateTop(o){$('#top-db').textContent=o.database||'not selected';$('#top-model').textContent=o.bb_rating_prediction?.loaded?shortId(o.bb_rating_prediction?.version||'BB Prediction'): 'BB Prediction pending';const bb=o.bb_rating||{};$('#top-bb-rating').textContent=bb.bb_rating_version?'v'+esc(bb.bb_rating_version):'—';$('#top-api').textContent=o.api?.online?'● V2':'● OFFLINE';$('#top-api').className=o.api?.online?'meta-ok':'';}
+
+async function renderAiJobs(){
+  const errorNode=$('#ai-jobs-error');
+  const renderJob=(selector,stateSelector,job,label)=>{
+    const status=String(job?.status||'idle').toLowerCase();
+    const state=$('#'+stateSelector);
+    if(state){state.textContent=status==='idle'?'Pronto':status==='running'?'In esecuzione':status==='queued'?'In coda':status==='complete'?'Completato':status==='failed'?'Errore':status==='cancelled'?'Annullato':status;state.className='status-badge '+(['running','queued'].includes(status)?'warning':status==='failed'?'danger':status==='complete'?'success':'');}
+    const node=$('#'+selector);
+    if(node)node.innerHTML=summaryRows([
+      ['Fase',job?.stage||'—'],
+      ['Avvio',job?.started_at||'—'],
+      ['Ultimo aggiornamento',job?.finished_at||'—'],
+      ['Dettaglio',job?.message||'Nessuna esecuzione registrata']
+    ])+(job?.error?'<p class="form-error">'+esc(job.error)+'</p>':'')+progressMarkup(job);
+    return {label,status,started_at:job?.started_at||null,finished_at:job?.finished_at||null,message:job?.message||'',error:job?.error||null};
+  };
+  const refresh=async()=>{
+    if(errorNode)errorNode.textContent='';
+    try{
+      const [prediction,rating,future]=await Promise.all([
+        api('/admin-api/bb-rating-prediction'),
+        api('/admin-api/bb-rating'),
+        api('/admin-api/future-performance')
+      ]);
+      const jobs=[
+        renderJob('ai-job-prediction-detail','ai-job-prediction-state',prediction.job||{},'BB Prediction Model'),
+        renderJob('ai-job-rating-detail','ai-job-rating-state',rating.job||{},'BB-Rating'),
+        renderJob('ai-job-future-detail','ai-job-future-state',future.job||{},'Future Performance')
+      ];
+      const history=$('#ai-jobs-history');
+      if(history)history.innerHTML=jobs.map(job=>'<div class="summary-row"><span>'+esc(job.label)+'</span><strong>'+esc(job.status)+' · '+esc(job.finished_at||job.started_at||'nessuna esecuzione')+'</strong></div>').join('');
+    }catch(e){if(errorNode)errorNode.textContent='Impossibile caricare lo stato dei job: '+e.message;}
+  };
+  const launch=async(buttonId,path,label)=>{
+    const button=$('#'+buttonId);if(!button)return;
+    button.disabled=true;
+    try{const result=await api(path,{method:'POST',body:{}});toast(result.message||label+' avviato');await refresh();}
+    catch(e){toast('Avvio '+label+' non riuscito: '+e.message,'error');}
+    finally{button.disabled=false;}
+  };
+  $('#ai-jobs-refresh')?.addEventListener('click',refresh);
+  $('#ai-job-prediction-run')?.addEventListener('click',()=>launch('ai-job-prediction-run','/admin-api/bb-rating-prediction/train','BB Prediction Model'));
+  $('#ai-job-rating-run')?.addEventListener('click',()=>launch('ai-job-rating-run','/admin-api/bb-rating/calibrate','calibrazione BB-Rating'));
+  $('#ai-job-future-run')?.addEventListener('click',()=>launch('ai-job-future-run','/admin-api/future-performance/train','Future Performance'));
+  await refresh();
+}
 
 async function renderOverview(){
   const [overviewResult, healthResult, predictionResult, bbRatingResult, futureResult] = await Promise.all([
