@@ -7,6 +7,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 ### Fixed
+- Removed the obsolete PR #76 implementation-label copy from Model Releases while
+  retaining a concise description of the causal-panel refresh action.
 - Fixed Model Releases promotion and rollback button binding: operate on the full
   button collection, and submit the exact validated candidate ID shown in the UI.
 - Populate release cutoff/season metadata from the schema used by BB-Rating and
@@ -19,9 +21,22 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   and clean up candidates that never produced their JSON artifact.
 
 ### Documentation
+- Added `docs/SCHEDULER.md` and synchronized README, RUNBOOK and Player
+  Intelligence/causal roadmaps with the current scheduler, causal-panel refresh
+  implementation and operational boundaries.
+- Added a release-documentation policy and automated checks: runtime/API/data
+  changes in a pull request must include documentation or changelog updates,
+  and CI checks for known stale capability statements.
 - Repository-wide Markdown audit: corrected the PostgreSQL installation order, replaced the obsolete `PlayerStats` references with the competition-preserving `PlayerCompetitionStats` contract, documented the current API route families and health/restart behavior, refreshed the first-prediction tutorial and architecture overview, and added the referenced WordPress/Chat V3 integration guide.
 
 ### Added
+- Persistent scheduler controls for recurring tasks: interval-in-hours or daily
+  local clock time (`Europe/Rome`), optional inclusive start/end dates, and
+  enable/disable switches. Existing schedules migrate as interval-based jobs.
+- Model Releases bulk refresh for persisted team-switch and teammate-exposure
+  observational cohorts across eligible canonical league/competition contexts,
+  with per-context result counts and audit events. These actions do not train or
+  promote models; `causal_team_effect` remains partial pending empirical gates.
 - Model Center cancellation for Prediction training, BB-Rating calibration,
   Future Performance training and Prediction 1–100 calibration. Cancellation
   is cooperative at safe checkpoints; incomplete candidates are removed and
