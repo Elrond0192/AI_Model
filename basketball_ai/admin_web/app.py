@@ -8,7 +8,8 @@ from __future__ import annotations
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import date, datetime, time as datetime_time, timedelta, timezone
+from zoneinfo import ZoneInfo
 import json
 import os
 import re
@@ -2798,6 +2799,10 @@ class ScheduleJobPayload(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     task_key: str = Field(pattern="^(refresh_context_seasonal|refresh_simulation_sources|refresh_scenario_serving|refresh_training_serving|bb_prediction_training|bb_rating_calibration|future_performance_training)$")
     interval_minutes: int = Field(ge=60, le=525600)
+    schedule_mode: str = Field(default="interval", pattern="^(interval|daily)$")
+    daily_time: datetime_time | None = None
+    start_date: date | None = None
+    end_date: date | None = None
     enabled: bool = True
     parameters: dict[str, Any] = Field(default_factory=dict)
 
@@ -2890,12 +2895,98 @@ def _scheduled_league_codes(parameters: dict[str, Any], engine) -> list[str]:
     return selected
 
 
+_SCHEDULER_SCHEMA_LOCK = threading.Lock()
+_SCHEDULER_SCHEMA_READY_PROFILES: set[str] = set()
+
+
+def _ensure_scheduler_schema(engine, profile_name: str) -> None:
+    """Idempotently add scheduling controls to databases created by older releases."""
+    if profile_name in _SCHEDULER_SCHEMA_READY_PROFILES:
+        return
+    with _SCHEDULER_SCHEMA_LOCK:
+        if profile_name in _SCHEDULER_SCHEMA_READY_PROFILES:
+            return
+        with engine.begin() as connection:
+            connection.execute(text('''
+                ALTER TABLE "AI_Source"."AIModelScheduledJob"
+                    ADD COLUMN IF NOT EXISTS schedule_mode text NOT NULL DEFAULT 'interval',
+                    ADD COLUMN IF NOT EXISTS daily_time time,
+                    ADD COLUMN IF NOT EXISTS timezone_name text NOT NULL DEFAULT 'Europe/Rome',
+                    ADD COLUMN IF NOT EXISTS start_date date,
+                    ADD COLUMN IF NOT EXISTS end_date date
+            '''))
+        _SCHEDULER_SCHEMA_READY_PROFILES.add(profile_name)
+
+
+def _coerce_schedule_date(value: Any) -> date | None:
+    if value is None or value == "":
+        return None
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    return date.fromisoformat(str(value)[:10])
+
+
+def _coerce_schedule_time(value: Any) -> datetime_time | None:
+    if value is None or value == "":
+        return None
+    if isinstance(value, datetime_time):
+        return value.replace(tzinfo=None)
+    return datetime_time.fromisoformat(str(value))
+
+
+def _next_scheduled_run(
+    now: datetime,
+    schedule_mode: str,
+    interval_minutes: int,
+    daily_time: Any = None,
+    start_date: Any = None,
+    end_date: Any = None,
+    timezone_name: str = "Europe/Rome",
+) -> datetime | None:
+    """Return the next UTC run time, honoring local clock time and optional inclusive dates."""
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    now_utc = now.astimezone(timezone.utc)
+    zone = ZoneInfo(timezone_name or "Europe/Rome")
+    local_now = now_utc.astimezone(zone)
+    starts = _coerce_schedule_date(start_date)
+    ends = _coerce_schedule_date(end_date)
+    if starts and ends and ends < starts:
+        raise ValueError("La data fine deve essere uguale o successiva alla data inizio.")
+    if ends and ends < local_now.date():
+        return None
+
+    if schedule_mode == "daily":
+        clock = _coerce_schedule_time(daily_time)
+        if clock is None:
+            raise ValueError("Seleziona l'orario giornaliero.")
+        run_date = max(local_now.date(), starts or local_now.date())
+        local_candidate = datetime.combine(run_date, clock).replace(tzinfo=zone)
+        if local_candidate <= local_now:
+            run_date += timedelta(days=1)
+            local_candidate = datetime.combine(run_date, clock).replace(tzinfo=zone)
+    elif schedule_mode == "interval":
+        local_candidate = (now_utc + timedelta(minutes=int(interval_minutes))).astimezone(zone)
+        if starts and local_candidate.date() < starts:
+            local_candidate = datetime.combine(starts, datetime_time.min).replace(tzinfo=zone)
+    else:
+        raise ValueError("Modalità di pianificazione non valida.")
+
+    if ends and local_candidate.date() > ends:
+        return None
+    return local_candidate.astimezone(timezone.utc)
+
+
 def _scheduler_engine():
     with STATE.lock:
         profile = STATE.active_profile
     if not profile:
         raise RuntimeError("Nessun profilo PostgreSQL selezionato")
-    return get_engine(profile_url(profile))
+    engine = get_engine(profile_url(profile))
+    _ensure_scheduler_schema(engine, str(profile))
+    return engine
 
 
 def _execute_scheduled_task(task_key: str, parameters: dict[str, Any], actor: str) -> tuple[str, dict[str, Any]]:
@@ -2993,10 +3084,20 @@ def _run_due_scheduled_job() -> bool:
     try:
         engine = _scheduler_engine()
         with engine.begin() as connection:
+            connection.execute(text('''
+                UPDATE "AI_Source"."AIModelScheduledJob"
+                   SET enabled = false, last_status = 'expired',
+                       last_error = 'Data fine della pianificazione trascorsa', updated_at = now()
+                 WHERE enabled AND end_date IS NOT NULL
+                   AND (now() AT TIME ZONE COALESCE(timezone_name, 'Europe/Rome'))::date > end_date
+            '''))
             row = connection.execute(text('''
-                SELECT job_id, name, task_key, parameters, interval_minutes, created_by
+                SELECT job_id, name, task_key, parameters, interval_minutes, created_by,
+                       schedule_mode, daily_time, timezone_name, start_date, end_date
                   FROM "AI_Source"."AIModelScheduledJob"
                  WHERE enabled AND next_run_at <= now()
+                   AND (start_date IS NULL OR (now() AT TIME ZONE COALESCE(timezone_name, 'Europe/Rome'))::date >= start_date)
+                   AND (end_date IS NULL OR (now() AT TIME ZONE COALESCE(timezone_name, 'Europe/Rome'))::date <= end_date)
                  ORDER BY next_run_at, job_id
                  FOR UPDATE SKIP LOCKED LIMIT 1
             ''')).mappings().first()
@@ -3008,12 +3109,26 @@ def _run_due_scheduled_job() -> bool:
                 VALUES (:job_id, :task_key, CAST(:parameters AS jsonb), 'running')
                 RETURNING run_id
             '''), {"job_id": row["job_id"], "task_key": row["task_key"], "parameters": json.dumps(params)}).scalar_one()
+            next_run_at = _next_scheduled_run(
+                datetime.now(timezone.utc),
+                str(row.get("schedule_mode") or "interval"),
+                int(row["interval_minutes"]),
+                row.get("daily_time"),
+                row.get("start_date"),
+                row.get("end_date"),
+                str(row.get("timezone_name") or "Europe/Rome"),
+            )
             connection.execute(text('''
                 UPDATE "AI_Source"."AIModelScheduledJob"
-                   SET next_run_at = now() + make_interval(mins => interval_minutes),
+                   SET next_run_at = COALESCE(:next_run_at, next_run_at),
+                       enabled = CASE WHEN :has_next_run THEN enabled ELSE false END,
                        last_run_at = now(), last_status = 'running', last_error = NULL, updated_at = now()
                  WHERE job_id = :job_id
-            '''), {"job_id": row["job_id"]})
+            '''), {
+                "job_id": row["job_id"],
+                "next_run_at": next_run_at,
+                "has_next_run": next_run_at is not None,
+            })
         try:
             status, result = _execute_scheduled_task(str(row["task_key"]), params, str(row["created_by"] or "scheduler"))
             error = None
@@ -3083,16 +3198,38 @@ def list_scheduled_jobs(user: dict[str, str] = Depends(_operator)) -> dict[str, 
 @app.post("/admin-api/scheduler/jobs")
 def create_scheduled_job(payload: ScheduleJobPayload, user: dict[str, str] = Depends(_csrf)) -> dict[str, Any]:
     parameters = _validate_schedule_parameters(payload.task_key, payload.parameters)
+    if payload.start_date and payload.end_date and payload.end_date < payload.start_date:
+        raise HTTPException(status_code=400, detail="La data fine deve essere uguale o successiva alla data inizio.")
+    if payload.schedule_mode == "daily" and payload.daily_time is None:
+        raise HTTPException(status_code=400, detail="Seleziona l'orario giornaliero.")
+    schedule_timezone = "Europe/Rome"
+    interval_minutes = 1440 if payload.schedule_mode == "daily" else payload.interval_minutes
+    try:
+        next_run_at = _next_scheduled_run(
+            datetime.now(timezone.utc), payload.schedule_mode, interval_minutes,
+            payload.daily_time, payload.start_date, payload.end_date, schedule_timezone,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if next_run_at is None:
+        raise HTTPException(status_code=400, detail="Non ci sono esecuzioni possibili nell'intervallo di date selezionato.")
     engine = _scheduler_engine()
     with engine.begin() as connection:
         row = connection.execute(text('''
             INSERT INTO "AI_Source"."AIModelScheduledJob"
-                (name, task_key, parameters, interval_minutes, enabled, next_run_at, created_by)
-            VALUES (:name, :task_key, CAST(:parameters AS jsonb), :interval_minutes, :enabled,
-                    now() + make_interval(mins => :interval_minutes), :created_by)
-            RETURNING job_id, name, task_key, parameters, interval_minutes, enabled, next_run_at
-        '''), {"name": payload.name, "task_key": payload.task_key, "parameters": json.dumps(parameters),
-               "interval_minutes": payload.interval_minutes, "enabled": payload.enabled, "created_by": user["username"]}).mappings().one()
+                (name, task_key, parameters, interval_minutes, schedule_mode, daily_time,
+                 timezone_name, start_date, end_date, enabled, next_run_at, created_by)
+            VALUES (:name, :task_key, CAST(:parameters AS jsonb), :interval_minutes, :schedule_mode,
+                    :daily_time, :timezone_name, :start_date, :end_date, :enabled, :next_run_at, :created_by)
+            RETURNING job_id, name, task_key, parameters, interval_minutes, schedule_mode, daily_time,
+                      timezone_name, start_date, end_date, enabled, next_run_at
+        '''), {
+            "name": payload.name, "task_key": payload.task_key, "parameters": json.dumps(parameters),
+            "interval_minutes": interval_minutes, "schedule_mode": payload.schedule_mode,
+            "daily_time": payload.daily_time if payload.schedule_mode == "daily" else None,
+            "timezone_name": schedule_timezone, "start_date": payload.start_date, "end_date": payload.end_date,
+            "enabled": payload.enabled, "next_run_at": next_run_at, "created_by": user["username"],
+        }).mappings().one()
     _audit(user["username"], "schedule_created", str(row["job_id"]), json.dumps(dict(row), default=str))
     return {"ok": True, "job": {key: (value.isoformat() if hasattr(value, "isoformat") else value) for key, value in dict(row).items()}}
 
@@ -3101,15 +3238,39 @@ def create_scheduled_job(payload: ScheduleJobPayload, user: dict[str, str] = Dep
 def toggle_scheduled_job(job_id: int, user: dict[str, str] = Depends(_csrf)) -> dict[str, Any]:
     engine = _scheduler_engine()
     with engine.begin() as connection:
-        row = connection.execute(text('''
-            UPDATE "AI_Source"."AIModelScheduledJob"
-               SET enabled = NOT enabled, updated_at=now(),
-                   next_run_at = CASE WHEN NOT enabled THEN now() + make_interval(mins => interval_minutes) ELSE next_run_at END
-             WHERE job_id=:job_id
-             RETURNING job_id, enabled
+        current = connection.execute(text('''
+            SELECT * FROM "AI_Source"."AIModelScheduledJob"
+             WHERE job_id = :job_id
+             FOR UPDATE
         '''), {"job_id": job_id}).mappings().first()
-    if not row:
-        raise HTTPException(status_code=404, detail="Pianificazione non trovata")
+        if not current:
+            raise HTTPException(status_code=404, detail="Pianificazione non trovata")
+        enable = not bool(current["enabled"])
+        if enable:
+            try:
+                next_run_at = _next_scheduled_run(
+                    datetime.now(timezone.utc), str(current.get("schedule_mode") or "interval"),
+                    int(current["interval_minutes"]), current.get("daily_time"),
+                    current.get("start_date"), current.get("end_date"),
+                    str(current.get("timezone_name") or "Europe/Rome"),
+                )
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            if next_run_at is None:
+                raise HTTPException(status_code=400, detail="La pianificazione è scaduta o non ha altre esecuzioni possibili.")
+            row = connection.execute(text('''
+                UPDATE "AI_Source"."AIModelScheduledJob"
+                   SET enabled = true, next_run_at = :next_run_at, last_error = NULL, updated_at = now()
+                 WHERE job_id = :job_id
+                 RETURNING job_id, enabled
+            '''), {"job_id": job_id, "next_run_at": next_run_at}).mappings().one()
+        else:
+            row = connection.execute(text('''
+                UPDATE "AI_Source"."AIModelScheduledJob"
+                   SET enabled = false, updated_at = now()
+                 WHERE job_id = :job_id
+                 RETURNING job_id, enabled
+            '''), {"job_id": job_id}).mappings().one()
     _audit(user["username"], "schedule_toggled", str(job_id), str(row["enabled"]))
     return {"ok": True, "job_id": job_id, "enabled": row["enabled"]}
 
