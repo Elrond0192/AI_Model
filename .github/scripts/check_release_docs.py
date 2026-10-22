@@ -53,7 +53,7 @@ def check_current_contract() -> list[str]:
         "activation switch": "activation switch",
         "seasonal refresh task": "refresh_context_seasonal",
         "model training boundary": "does not mean",
-        "causal refresh boundary": "not one of the recurring scheduler task types",
+        "causal refresh boundary": "**not** keys in the recurring scheduler",
     }
     for label, phrase in required_scheduler_terms.items():
         if phrase.lower() not in scheduler.lower():
