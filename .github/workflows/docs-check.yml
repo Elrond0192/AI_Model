@@ -1,0 +1,32 @@
+name: Release documentation consistency
+
+on:
+  pull_request:
+    branches: ["main"]
+  push:
+    branches: ["main"]
+
+permissions:
+  contents: read
+
+jobs:
+  docs-contract:
+    name: Documentation contract and freshness
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check documentation and stale capability claims
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            python .github/scripts/check_release_docs.py --base "$BASE_SHA" --head "$HEAD_SHA"
+          else
+            python .github/scripts/check_release_docs.py
+          fi
