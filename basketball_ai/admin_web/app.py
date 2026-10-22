@@ -2381,6 +2381,7 @@ def list_scheduled_jobs(user: dict[str, str] = Depends(_operator)) -> dict[str, 
     with engine.connect() as connection:
         jobs = connection.execute(text('SELECT * FROM "AI_Source"."AIModelScheduledJob" ORDER BY job_id')).mappings().all()
         runs = connection.execute(text('SELECT * FROM "AI_Source"."AIModelJobRun" ORDER BY started_at DESC LIMIT 100')).mappings().all()
+
     def serialise(row):
         return {key: (value.isoformat() if hasattr(value, "isoformat") else value) for key, value in dict(row).items()}
     return {"jobs": [serialise(row) for row in jobs], "runs": [serialise(row) for row in runs], "tasks": sorted(SCHEDULED_TASKS)}
