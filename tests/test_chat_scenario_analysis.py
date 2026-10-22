@@ -527,6 +527,25 @@ def test_teammate_exposure_panel_uses_canonical_bb_rating_and_roster_context():
     )
 
 
+def test_teammate_exposure_resolves_team_strength_by_global_identity():
+    engine = _engine()
+    data = engine.data
+    data["players"]["global_id"] = data["players"]["id"].map(lambda value: f"PLAYER-{int(value)}")
+    data["teams"]["global_id"] = data["teams"]["id"].map(lambda value: f"TEAM-{int(value)}")
+    data["team_season_stats"]["global_id"] = data["team_season_stats"]["team_id"].map(
+        lambda value: f"TEAM-{int(value)}"
+    )
+    # Simulate the source-ID drift that otherwise makes nearly every
+    # team_strength_pre value missing despite an exact canonical team identity.
+    data["team_season_stats"]["team_id"] = data["team_season_stats"]["team_id"] + 10000
+
+    panel = engine._build_teammate_exposure_causal_panel(10, "RS", 2024, None)
+
+    assert not panel.empty
+    assert panel["team_strength_pre"].notna().all()
+    assert set(panel.loc[panel["global_id"] == "PLAYER-1", "team_strength_pre"]) == {1.0}
+
+
 def test_causal_team_effect_uses_canonical_bb_rating_and_controls_role_minutes_usage():
     data = _analysis_data()
     for player_id, player in data["player_dict"].items():
