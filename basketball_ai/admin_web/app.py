@@ -2384,10 +2384,10 @@ def _causal_completed_contexts(data: dict[str, Any]) -> list[dict[str, Any]]:
     stats["_season"] = stats["_season"].astype(int)
     stats = stats[stats["_season"].map(completed)].copy()
     contexts: dict[tuple[int, str], int] = {}
-    for row in stats.itertuples(index=False):
-        league_id = _to_int(getattr(row, "_league_id", None))
-        season = _to_int(getattr(row, "_season", None))
-        competition = str(getattr(row, "_competition", "")).strip().upper()
+    for _, row in stats.iterrows():
+        league_id = _to_int(row.get("_league_id"))
+        season = _to_int(row.get("_season"))
+        competition = str(row.get("_competition", "")).strip().upper()
         if league_id is None or season is None or not competition:
             continue
         league_key = league_keys.get(league_id)
@@ -2884,9 +2884,9 @@ class ScheduleJobPayload(BaseModel):
 
 SCHEDULED_TASKS = {
     "refresh_context_seasonal": {"required": {"season"}, "allowed": {"season"}},
-    "refresh_simulation_sources": {"required": {"league", "season"}, "allowed": {"league", "season"}},
-    "refresh_scenario_serving": {"required": {"league", "season", "competition"}, "allowed": {"league", "season", "competition"}},
-    "refresh_training_serving": {"required": {"league", "season", "competition"}, "allowed": {"league", "season", "competition"}},
+    "refresh_simulation_sources": {"required": {"season"}, "allowed": {"season", "league", "leagues", "all_leagues"}},
+    "refresh_scenario_serving": {"required": {"season"}, "allowed": {"season", "league", "leagues", "all_leagues", "competition"}},
+    "refresh_training_serving": {"required": {"season"}, "allowed": {"season", "league", "leagues", "all_leagues", "competition"}},
     "bb_prediction_training": {"required": set(), "allowed": set()},
     "bb_rating_calibration": {"required": set(), "allowed": set()},
     "future_performance_training": {"required": set(), "allowed": set()},
@@ -2899,12 +2899,38 @@ def _validate_schedule_parameters(task_key: str, parameters: dict[str, Any]) -> 
         raise HTTPException(status_code=400, detail="Parametri non previsti per il job selezionato")
     if spec["required"] - set(parameters):
         raise HTTPException(status_code=400, detail="Parametri mancanti: " + ", ".join(sorted(spec["required"] - set(parameters))))
-    if "season" in parameters and not 2000 <= int(parameters["season"]) <= 2100:
-        raise HTTPException(status_code=400, detail="Stagione non valida")
-    if "league" in parameters and not re.fullmatch(r"[A-Za-z0-9_]{2,32}", str(parameters["league"])):
-        raise HTTPException(status_code=400, detail="Codice lega non valido")
-    if "competition" in parameters and not re.fullmatch(r"[A-Za-z0-9_]{1,16}", str(parameters["competition"])):
-        raise HTTPException(status_code=400, detail="Competizione non valida")
+    if "season" in parameters:
+        try:
+            season = int(parameters["season"])
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="Stagione non valida")
+        if not 2000 <= season <= 2100:
+            raise HTTPException(status_code=400, detail="Stagione non valida")
+        parameters["season"] = season
+    if "league" in parameters:
+        if not re.fullmatch(r"[A-Za-z0-9_]{2,32}", str(parameters["league"])):
+            raise HTTPException(status_code=400, detail="Codice lega non valido")
+        parameters["league"] = str(parameters["league"]).upper()
+    if "leagues" in parameters:
+        if not isinstance(parameters["leagues"], list) or not parameters["leagues"]:
+            raise HTTPException(status_code=400, detail="Seleziona almeno una lega oppure Tutte")
+        if len(parameters["leagues"]) > 100:
+            raise HTTPException(status_code=400, detail="Troppe leghe selezionate")
+        leagues = [str(value).strip().upper() for value in parameters["leagues"]]
+        if any(not re.fullmatch(r"[A-Za-z0-9_]{2,32}", value) for value in leagues):
+            raise HTTPException(status_code=400, detail="Codice lega non valido")
+        parameters["leagues"] = sorted(set(leagues))
+    if "all_leagues" in parameters and not isinstance(parameters["all_leagues"], bool):
+        raise HTTPException(status_code=400, detail="all_leagues deve essere booleano")
+    if parameters.get("all_leagues") and "leagues" in parameters:
+        raise HTTPException(status_code=400, detail="Usa Tutte oppure seleziona leghe singole, non entrambi")
+    if "competition" in parameters:
+        if not re.fullmatch(r"[A-Za-z0-9_]{1,16}", str(parameters["competition"])):
+            raise HTTPException(status_code=400, detail="Codice competizione non valido")
+        parameters["competition"] = str(parameters["competition"]).upper()
+    task_requires_league = task_key in {"refresh_simulation_sources", "refresh_scenario_serving", "refresh_training_serving"}
+    if task_requires_league and not parameters.get("all_leagues") and not parameters.get("leagues") and not parameters.get("league"):
+        parameters["all_leagues"] = True
     return parameters
 
 
