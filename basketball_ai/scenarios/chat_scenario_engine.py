@@ -1814,6 +1814,10 @@ class ChatScenarioEngine:
                     if "treatment" in teammate_panel.columns:
                         teammate_panel["treatment"] = pd.to_numeric(teammate_panel["treatment"], errors="coerce")
                     teammate_panel = teammate_panel[
+                        teammate_panel.get("source_type", pd.Series(index=teammate_panel.index, dtype=object))
+                        .astype(str).eq("teammate_exposure")
+                    ] if "source_type" in teammate_panel.columns else teammate_panel.iloc[0:0]
+                    teammate_panel = teammate_panel[
                         teammate_panel.get("league_key", pd.Series(index=teammate_panel.index, dtype=object))
                         .astype(str).str.upper().eq(str(self._league_key(source_league)).upper())
                     ] if "league_key" in teammate_panel.columns else teammate_panel.iloc[0:0]
