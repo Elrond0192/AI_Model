@@ -23,8 +23,9 @@ Questa roadmap distingue l'esistenza del codice dalla disponibilità effettiva d
 - Le comparazioni fra stagioni possono esporre BB-Rating precedente, corrente e variazione, tenendoli distinti dalle statistiche grezze.
 
 ### 2. Attribuzione del rendimento individuale e contesto squadra
-- `causal_team_effect` usa la cronologia BB-Rating canonica, cambi di squadra e variazioni di minuti, utilizzo e ruolo.
-- L'associazione aggiustata resta condizionata alla numerosità e alla non degenerazione dei dati.
+- `causal_team_effect` dispone di un ATT osservazionale a livello di coorte, con controlli di supporto, overlap e bilanciamento; resta `partial` finché le verifiche empiriche fuori campione non superano i gate.
+- I metodi di refresh persistono pannelli team-switch e teammate-exposure usando identità globali canoniche e outcome BB-Rating 1–100.
+- La pagina Model Releases espone refresh manuali globali per tutte le combinazioni lega/competizione con transizioni completate; ogni esecuzione riporta contesti aggiornati, saltati, falliti e righe scritte.
 - È stato aggiunto il confronto del Net Rating di squadra nelle lineup con/senza il giocatore, entro gli stessi contesti squadra-stagione quando possibile.
 - È stato aggiunto il confronto descrittivo per compagno: quintetti in cui il giocatore è affiancato dal compagno rispetto a quintetti in cui quel compagno non è presente.
 - L'evidenza di lineup è opzionale e il motore degrada a `unavailable`/`insufficient_evidence` senza interrompere l'intera analisi se il feed manca o non è leggibile.
@@ -44,7 +45,8 @@ Questa roadmap distingue l'esistenza del codice dalla disponibilità effettiva d
 - `SimulationLineupStints` privilegia le statistiche di quintetto AdvancedStats; se non sono utilizzabili, usa aggregati derivati dalle lineup nel PBP.
 - `SimulationShotProfiles` usa bucket `unknown_two_point` e `unknown_three_point` quando non ci sono coordinate o zone di tiro. Non inventa zone come ferro o angolo.
 - `SimulationPlayTypeStats` si popola soltanto se esiste un campo tattico separato che contiene effettivamente la tassonomia riconosciuta. I codici evento come `2FGM` e `TOV` non vengono rinominati in pick-and-roll o isolation.
-- `SimulationCausalPanel` è solo schema e rimane vuota finché non esiste un disegno causale difendibile.
+- `SimulationCausalPanel` ha ora un contratto persistente e viene popolata soltanto tramite gli espliciti refresh osservazionali di Model Releases; la presenza di righe non dimostra causalità e non rende `causal_team_effect` una capacità validata.
+- Il refresh dei pannelli causali è manuale e separato dallo scheduler ricorrente: non è eseguito da chat e non esegue training o promozioni.
 - `SimulationSourceRefreshState` registra lo stato e il conteggio delle righe per lega/stagione, così un feed mancante non appare come un refresh pienamente riuscito.
 
 ### 5. Composizione delle capacità
@@ -139,7 +141,7 @@ Per le stagioni storiche, ripetere la chiamata per ogni anno per cui sono presen
 - Le tabelle `AdvancedStats_Clutch_{LEAGUE}` contengono aggregati clutch già calcolati; non richiedono la ricostruzione delle Simulation per essere usate da `clutch_analysis`.
 - `SimulationSourceRefreshState.Status = 'available'` indica che i feed previsti sono stati popolati per quel contesto, non che tutte le fonti di tracking tattico/difensivo esistano.
 - `SimulationPlayTypeStats` può legittimamente contenere zero righe in assenza di una classificazione tattica.
-- `SimulationCausalPanel` deve restare vuota fino a un disegno causale approvato.
+- `SimulationCausalPanel` può essere aggiornata solo con le procedure di refresh osservazionale validate; prima di interpretarla controllare copertura, invarianti e audit. Il modello `causal_team_effect` resta parziale finché i gate scientifici non sono superati.
 - Le modifiche SQL presenti su GitHub non equivalgono a dati già rigenerati in produzione: la verifica finale richiede l'esecuzione delle procedure nel database e controllo dei conteggi reali.
 
 ## Riferimenti implementativi
