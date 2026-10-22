@@ -1,7 +1,10 @@
 import numpy as np
 import pandas as pd
 
-from basketball_ai.scenarios.causal_attribution import estimate_team_switch_att
+from basketball_ai.scenarios.causal_attribution import (
+    estimate_team_switch_att,
+    estimate_teammate_exposure_att,
+)
 
 
 def _panel(n=240, seed=19):
@@ -49,3 +52,30 @@ def test_team_switch_att_rejects_missing_covariates():
     result = estimate_team_switch_att(pd.DataFrame({"treatment": [0, 1], "outcome": [50, 60]}))
     assert result["available"] is False
     assert result["reason"].startswith("causal_panel_missing_columns")
+
+
+def test_teammate_exposure_att_requires_explicit_panel_contract():
+    panel = _panel(80)
+    panel["teammate_global_id"] = ["TEAMMATE-X"] * len(panel)
+    panel["league_key"] = "EL"
+    panel["competition"] = "RS"
+    result = estimate_teammate_exposure_att(panel, teammate_global_id="TEAMMATE-X")
+    assert result["estimand"] == "observational_teammate_exposure_ATT"
+    assert result["teammate_global_id"] == "TEAMMATE-X"
+    assert result["identification"] in {"observational_assumptions_required", "unavailable"}
+    assert any("not the named focal player's individual causal effect" in item for item in result["limitations"])
+
+
+def test_teammate_exposure_att_rejects_mixed_context_and_missing_teammate():
+    panel = _panel(80)
+    panel["teammate_global_id"] = ["TEAMMATE-X"] * len(panel)
+    panel["league_key"] = "EL"
+    panel["competition"] = "RS"
+    mixed = panel.copy()
+    mixed.loc[mixed.index[-1], "competition"] = "PO"
+    result = estimate_teammate_exposure_att(mixed, teammate_global_id="TEAMMATE-X")
+    assert result["available"] is False
+    assert result["reason"] == "teammate_panel_mixes_league_or_competition"
+    missing = estimate_teammate_exposure_att(panel, teammate_global_id="NO-SUCH-TEAMMATE")
+    assert missing["available"] is False
+    assert missing["reason"] == "named_teammate_not_in_panel"
