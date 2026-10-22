@@ -2884,8 +2884,8 @@ class ScheduleJobPayload(BaseModel):
 SCHEDULED_TASKS = {
     "refresh_context_seasonal": {"required": {"season"}, "allowed": {"season"}},
     "refresh_simulation_sources": {"required": {"season"}, "allowed": {"season", "league", "leagues", "all_leagues"}},
-    "refresh_scenario_serving": {"required": {"season"}, "allowed": {"season", "league", "leagues", "all_leagues", "competition"}},
-    "refresh_training_serving": {"required": {"season"}, "allowed": {"season", "league", "leagues", "all_leagues", "competition"}},
+    "refresh_scenario_serving": {"required": {"season"}, "allowed": {"season", "league", "leagues", "all_leagues"}},
+    "refresh_training_serving": {"required": {"season"}, "allowed": {"season", "league", "leagues", "all_leagues"}},
     "bb_prediction_training": {"required": set(), "allowed": set()},
     "bb_rating_calibration": {"required": set(), "allowed": set()},
     "future_performance_training": {"required": set(), "allowed": set()},
@@ -3037,11 +3037,11 @@ def _execute_scheduled_task(task_key: str, parameters: dict[str, Any], actor: st
                 "season": int(parameters["season"]),
             }
 
-        competition_filter = str(parameters["competition"]).upper() if parameters.get("competition") else None
+        # Competition is intentionally not configurable in recurring jobs:
+        # refresh every competition currently present for each selected league.
         selected_contexts = [
             item for item in contexts
             if item["league_key"] in selected_leagues
-            and (competition_filter is None or item["competition"] == competition_filter)
         ]
         if not selected_contexts:
             raise ValueError("Nessuna competizione presente per le leghe selezionate")
