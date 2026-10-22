@@ -340,6 +340,7 @@ def persist_causal_panel(
                 if_exists="append",
                 index=False,
                 method="multi",
+                chunksize=1000,
                 dtype={"details": JSONB},
             )
     except Exception as exc:
