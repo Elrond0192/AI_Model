@@ -1502,25 +1502,41 @@ class ChatScenarioEngine:
             return pd.DataFrame()
         team_stats = team_stats[
             (team_stats["_league_int"] == _nullable_int(source_league))
-            & (team_stats["_comp"] == normalize_competition(competition))
             & (team_stats["_year"] <= cutoff)
         ]
 
         def team_strength(team_id, year, team_global_id=None):
-            year_rows = team_stats[team_stats["_year"] == year]
+            # Strength is a pre-treatment team-level covariate, not a player
+            # split statistic. Prefer the exact player competition, then season
+            # total and regular season. If that team context is unavailable,
+            # only use the latest prior team-season; never look forward.
             normalized_global = str(team_global_id or "").strip().casefold()
             rows = pd.DataFrame()
-            if normalized_global and "_team_global_id" in year_rows.columns:
-                rows = year_rows[
-                    year_rows["_team_global_id"].fillna("").astype(str).str.casefold()
+            if normalized_global and "_team_global_id" in team_stats.columns:
+                rows = team_stats[
+                    team_stats["_team_global_id"].fillna("").astype(str).str.casefold()
                     == normalized_global
                 ]
             # Preserve exact canonical-ID matching as a compatibility fallback.
             if rows.empty and team_id is not None:
-                rows = year_rows[year_rows["_team_int"] == team_id]
+                rows = team_stats[team_stats["_team_int"] == team_id]
+            rows = rows[rows["_year"] <= year]
             if rows.empty:
                 return np.nan
-            row = rows.iloc[-1]
+
+            source_year = rows["_year"].max()
+            rows = rows[rows["_year"] == source_year]
+            competition_key = normalize_competition(competition)
+            preference = [competition_key, "TOT", "RS"]
+            preferred = rows[rows["_comp"].isin(preference)].copy()
+            if not preferred.empty:
+                preferred["_comp_priority"] = preferred["_comp"].map(
+                    {key: index for index, key in enumerate(preference)}
+                ).fillna(len(preference))
+                rows = preferred.sort_values(
+                    ["_comp_priority"], kind="stable"
+                )
+            row = rows.iloc[0]
             net = _finite(row.get("net_rtg"), np.nan)
             if math.isfinite(net):
                 return net
