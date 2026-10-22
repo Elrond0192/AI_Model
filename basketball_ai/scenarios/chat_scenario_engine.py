@@ -38,7 +38,10 @@ from basketball_ai.models.strict_production import (
 )
 from basketball_ai.scenarios.advanced_simulation_engine import AdvancedSimulationEngine
 from basketball_ai.scenarios.provenance import build_scenario_provenance
-from basketball_ai.scenarios.causal_attribution import estimate_team_switch_att
+from basketball_ai.scenarios.causal_attribution import (
+    estimate_team_switch_att,
+    estimate_teammate_exposure_att,
+)
 
 _PLAYER_METRICS = (
     "rating", "games_played", "minutes_per_game", "points", "rebounds", "assists",
@@ -1607,6 +1610,14 @@ class ChatScenarioEngine:
             or "causal_team_effect" in requested_question_keys
             or bool(parameters.get("include_cohort_team_switch_att", False))
         )
+        teammate_exposure_estimate = {
+            "available": False,
+            "estimand": "observational_teammate_exposure_ATT",
+            "effect_bb_rating_points": None,
+            "confidence_interval_95": None,
+            "identification": "unavailable",
+            "reason": "named_teammate_not_requested",
+        }
         if causal_estimate_requested:
             try:
                 causal_panel = self._build_team_switch_causal_panel(
@@ -1622,6 +1633,28 @@ class ChatScenarioEngine:
                     "identification": "unavailable",
                     "reason": "causal_panel_build_failed:" + str(exc)[:180],
                 }
+            teammate_global_id = str(parameters.get("teammate_global_id", "")).strip()
+            if teammate_global_id:
+                stored_panel = self.data.get("causal_panel", pd.DataFrame())
+                if isinstance(stored_panel, pd.DataFrame) and not stored_panel.empty:
+                    teammate_panel = stored_panel.copy()
+                    if "next_outcome" in teammate_panel.columns and "outcome" not in teammate_panel.columns:
+                        teammate_panel = teammate_panel.rename(columns={"next_outcome": "outcome"})
+                    if "treatment" in teammate_panel.columns:
+                        teammate_panel["treatment"] = pd.to_numeric(teammate_panel["treatment"], errors="coerce")
+                    teammate_panel = teammate_panel[
+                        teammate_panel.get("league_key", pd.Series(index=teammate_panel.index, dtype=object))
+                        .astype(str).str.upper().eq(str(self._league_key(source_league)).upper())
+                    ] if "league_key" in teammate_panel.columns else teammate_panel.iloc[0:0]
+                    teammate_panel = teammate_panel[
+                        teammate_panel.get("competition", pd.Series(index=teammate_panel.index, dtype=object))
+                        .astype(str).str.upper().eq(normalize_competition(competition))
+                    ] if "competition" in teammate_panel.columns else teammate_panel.iloc[0:0]
+                    teammate_exposure_estimate = estimate_teammate_exposure_att(
+                        teammate_panel, teammate_global_id=teammate_global_id
+                    )
+                else:
+                    teammate_exposure_estimate["reason"] = "persisted_teammate_panel_empty_or_unavailable"
         else:
             cohort_switch_estimate["reason"] = "cohort_estimate_not_requested_for_descriptive_attribution"
 
@@ -1708,6 +1741,7 @@ class ChatScenarioEngine:
                 "causal_identification": "unavailable",
                 "causal_effect": None,
                 "team_switch_cohort_att": cohort_switch_estimate,
+                "teammate_exposure_cohort_att": teammate_exposure_estimate,
                 "association": {
                     "label": association_label,
                     "bb_rating_vs_team_context_correlation": round(correlation, 3) if correlation is not None else None,
