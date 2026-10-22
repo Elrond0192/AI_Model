@@ -241,10 +241,15 @@
           </select></label>
           <label>Intervallo (ore)<input name="interval_hours" type="number" min="1" max="8760" value="24" required></label>
           <label>Stagione<input name="season" type="number" min="2000" max="2100" value="2025"></label>
-          <div id="ai-schedule-league-field" class="span-2 schedule-league-field">
-            <div class="schedule-league-heading"><strong>Leghe</strong><span class="microcopy">Seleziona Tutte per usare automaticamente le leghe attualmente presenti, oppure scegli una o più leghe.</span></div>
-            <div id="ai-schedule-league-options" class="schedule-league-options" aria-live="polite">
-              <label class="schedule-league-option schedule-league-all"><input id="ai-schedule-all-leagues" type="checkbox" checked> <span><strong>Tutte</strong><small>Tutte le leghe attualmente presenti</small></span></label>
+          <div id="ai-schedule-league-field" class="schedule-league-field">
+            <label class="schedule-league-label" for="ai-schedule-league-toggle">Leghe</label>
+            <div id="ai-schedule-league-picker" class="schedule-league-picker">
+              <button id="ai-schedule-league-toggle" class="schedule-league-trigger" type="button" aria-expanded="false" aria-controls="ai-schedule-league-options">
+                <span id="ai-schedule-league-summary">Tutte</span><i class="ph ph-caret-down" aria-hidden="true"></i>
+              </button>
+              <div id="ai-schedule-league-options" class="schedule-league-options hidden" role="group" aria-label="Seleziona una o più leghe" aria-live="polite">
+                <label class="schedule-league-option schedule-league-all"><input id="ai-schedule-all-leagues" type="checkbox" checked> <span><strong>Tutte</strong><small>Tutte le leghe attualmente presenti</small></span></label>
+              </div>
             </div>
           </div>
           <button type="submit" class="btn btn-primary span-2">Salva pianificazione</button>
