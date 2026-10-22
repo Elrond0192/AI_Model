@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+from datetime import date, datetime, time as datetime_time
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import pytest
@@ -1629,3 +1631,72 @@ def test_audit_settings_and_password(monkeypatch, tmp_path):
             _request(),
             {"username": "admin", "role": "admin", "token": "x"},
         )
+
+def test_daily_scheduler_runs_at_selected_rome_clock_time():
+    zone = ZoneInfo("Europe/Rome")
+    now = datetime(2026, 10, 22, 12, 30, tzinfo=zone)
+    next_run = admin._next_scheduled_run(
+        now, "daily", 1440, daily_time=datetime_time(2, 15),
+    )
+    assert next_run is not None
+    assert next_run.astimezone(zone) == datetime(2026, 10, 23, 2, 15, tzinfo=zone)
+
+
+def test_daily_scheduler_honors_optional_inclusive_start_and_end_dates():
+    zone = ZoneInfo("Europe/Rome")
+    now = datetime(2026, 10, 22, 12, 30, tzinfo=zone)
+    next_run = admin._next_scheduled_run(
+        now, "daily", 1440, daily_time=datetime_time(2, 15),
+        start_date=date(2026, 10, 24), end_date=date(2026, 10, 25),
+    )
+    assert next_run is not None
+    assert next_run.astimezone(zone) == datetime(2026, 10, 24, 2, 15, tzinfo=zone)
+
+    no_future_occurrence = admin._next_scheduled_run(
+        now, "daily", 1440, daily_time=datetime_time(2, 15),
+        end_date=date(2026, 10, 22),
+    )
+    assert no_future_occurrence is None
+
+
+def test_interval_scheduler_waits_until_optional_start_date():
+    zone = ZoneInfo("Europe/Rome")
+    now = datetime(2026, 10, 22, 10, 0, tzinfo=zone)
+    next_run = admin._next_scheduled_run(
+        now, "interval", 360, start_date=date(2026, 10, 24),
+    )
+    assert next_run is not None
+    assert next_run.astimezone(zone) == datetime(2026, 10, 24, 0, 0, tzinfo=zone)
+
+
+def test_schedule_payload_accepts_daily_time_and_optional_date_bounds():
+    payload = admin.ScheduleJobPayload.model_validate({
+        "name": "Nightly context refresh",
+        "task_key": "refresh_context_seasonal",
+        "interval_minutes": 1440,
+        "schedule_mode": "daily",
+        "daily_time": "02:30",
+        "start_date": "2026-10-24",
+        "end_date": "2026-11-30",
+        "enabled": True,
+        "parameters": {"season": 2026},
+    })
+    assert payload.schedule_mode == "daily"
+    assert payload.daily_time == datetime_time(2, 30)
+    assert payload.start_date == date(2026, 10, 24)
+    assert payload.end_date == date(2026, 11, 30)
+
+
+def test_scheduler_ui_has_calendar_fields_switch_and_no_pr76_copy():
+    static_root = Path(admin.__file__).with_name("static")
+    html = (static_root / "index.html").read_text(encoding="utf-8")
+    js = (static_root / "app.js").read_text(encoding="utf-8")
+    assert "Operazioni dati della PR #76" not in html
+    assert 'name="schedule_mode"' in html
+    assert 'name="daily_time"' in html
+    assert 'name="start_date" type="date"' in html
+    assert 'name="end_date" type="date"' in html
+    assert 'name="enabled" type="checkbox" checked' in html
+    assert "data-toggle-schedule" in js
+    assert "ogni giorno alle " in js
+
