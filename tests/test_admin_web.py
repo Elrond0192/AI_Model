@@ -1518,3 +1518,141 @@ def test_audit_settings_and_password(monkeypatch, tmp_path):
             _request(),
             {"username": "admin", "role": "admin", "token": "x"},
         )
+
+
+def test_causal_refresh_contexts_discovers_completed_league_competition_pairs(monkeypatch, tmp_path):
+    lifecycle_path = tmp_path / "season-lifecycle.json"
+    lifecycle_path.write_text(
+        json.dumps({"2024": {"status": "complete"}, "2025": {"status": "complete"}, "2026": {"status": "in_progress"}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(admin, "SEASON_LIFECYCLE_FILE", lifecycle_path)
+    data = {
+        "league_dict": {
+            10: {"league_key": "ITA1"},
+            20: {"league_key": "EL"},
+        },
+        "player_stats": pd.DataFrame([
+            {"league_id": 10, "season": 2024, "competition": "RS"},
+            {"league_id": 10, "season": 2025, "competition": "RS"},
+            {"league_id": 10, "season": 2026, "competition": "RS"},
+            {"league_id": 10, "season": 2024, "competition": "PO"},
+            {"league_id": 20, "season": 2024, "competition": "RS"},
+        ]),
+    }
+
+    contexts = admin._causal_completed_contexts(data)
+
+    assert contexts == [
+        {"league_id": 20, "league_key": "EL", "competition": "RS", "through_season": 2024},
+        {"league_id": 10, "league_key": "ITA1", "competition": "PO", "through_season": 2024},
+        {"league_id": 10, "league_key": "ITA1", "competition": "RS", "through_season": 2025},
+    ]
+
+
+def test_scheduler_parameters_support_all_or_multiple_leagues():
+    all_leagues = admin._validate_schedule_parameters(
+        "refresh_scenario_serving",
+        {"season": 2025, "all_leagues": True},
+    )
+    assert all_leagues == {"season": 2025, "all_leagues": True}
+
+    selected = admin._validate_schedule_parameters(
+        "refresh_training_serving",
+        {"season": 2025, "all_leagues": False, "leagues": ["ita1", "EL", "ita1"]},
+    )
+    assert selected == {"season": 2025, "all_leagues": False, "leagues": ["EL", "ITA1"]}
+
+    with pytest.raises(HTTPException):
+        admin._validate_schedule_parameters(
+            "refresh_training_serving",
+            {"season": 2025, "all_leagues": False, "leagues": []},
+        )
+
+
+def test_scheduled_serving_refresh_runs_every_present_competition(monkeypatch):
+    class FakeEngine:
+        def __init__(self):
+            self.calls = []
+            self.disposed = False
+
+        def begin(self):
+            return self
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+        def execute(self, statement, parameters):
+            self.calls.append((str(statement), dict(parameters)))
+
+        def dispose(self):
+            self.disposed = True
+
+    engine = FakeEngine()
+    contexts = [
+        {"league_key": "EL", "competition": "RS"},
+        {"league_key": "EL", "competition": "PO"},
+        {"league_key": "ITA1", "competition": "RS"},
+        {"league_key": "ITA1", "competition": "PO"},
+    ]
+    monkeypatch.setattr(admin, "_scheduler_engine", lambda: engine)
+    monkeypatch.setattr(admin, "_available_scheduled_contexts", lambda unused_engine: contexts)
+
+    status, result = admin._execute_scheduled_task(
+        "refresh_scenario_serving",
+        {"season": 2025, "all_leagues": True},
+        "admin",
+    )
+
+    assert status == "complete"
+    assert len(result["contexts"]) == 4
+    assert len(engine.calls) == 4
+    assert {call[1]["league"] for call in engine.calls} == {"EL", "ITA1"}
+    assert {call[1]["competition"] for call in engine.calls} == {"RS", "PO"}
+    assert engine.disposed is True
+
+
+def test_scheduled_serving_refresh_respects_multiple_selected_leagues(monkeypatch):
+    class FakeEngine:
+        def __init__(self):
+            self.calls = []
+
+        def begin(self):
+            return self
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+        def execute(self, statement, parameters):
+            self.calls.append((str(statement), dict(parameters)))
+
+        def dispose(self):
+            pass
+
+    engine = FakeEngine()
+    contexts = [
+        {"league_key": "EL", "competition": "RS"},
+        {"league_key": "EL", "competition": "PO"},
+        {"league_key": "ITA1", "competition": "RS"},
+        {"league_key": "ITA1", "competition": "PO"},
+        {"league_key": "ESP1", "competition": "RS"},
+    ]
+    monkeypatch.setattr(admin, "_scheduler_engine", lambda: engine)
+    monkeypatch.setattr(admin, "_available_scheduled_contexts", lambda unused_engine: contexts)
+
+    status, result = admin._execute_scheduled_task(
+        "refresh_training_serving",
+        {"season": 2025, "all_leagues": False, "leagues": ["ITA1", "EL"]},
+        "admin",
+    )
+
+    assert status == "complete"
+    assert len(result["contexts"]) == 4
+    assert {call[1]["league"] for call in engine.calls} == {"EL", "ITA1"}
+    assert all(call[1]["league"] != "ESP1" for call in engine.calls)
