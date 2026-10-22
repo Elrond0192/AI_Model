@@ -452,6 +452,29 @@ async function renderModelReleases(){
     catch(e){toast(e.message,'error');start.disabled=false;}
   };
   $('#model-releases-refresh').onclick=()=>renderModelReleases().catch(e=>toast(e.message,'error'));
+  const causalSeason=$('#causal-refresh-season');
+  if(causalSeason&&!causalSeason.value)causalSeason.value=String(new Date().getUTCFullYear()-1);
+  const runCausalRefresh=async(kind)=>{
+    const league=$('#causal-refresh-league').value.trim().toUpperCase();
+    const competition=$('#causal-refresh-competition').value.trim().toUpperCase();
+    const through_season=Number(causalSeason.value);
+    const teammate_global_id=$('#causal-refresh-teammate').value.trim();
+    if(!league||!competition||!Number.isInteger(through_season)){toast('Lega, competizione e stagione sono obbligatorie','error');return;}
+    if(kind==='teammate_exposure'&&!teammate_global_id){toast('Inserisci il Global ID canonico del compagno','error');return;}
+    const buttons=[$('#causal-refresh-team-switch'),$('#causal-refresh-teammate')];
+    buttons.forEach(button=>button.disabled=true);
+    const resultNode=$('#causal-refresh-result');
+    resultNode.textContent='Refresh in esecuzione…';
+    try{
+      const result=await api('/admin-api/causal-panels/refresh',{method:'POST',body:{kind,league,competition,through_season,teammate_global_id:kind==='teammate_exposure'?teammate_global_id:null}});
+      resultNode.textContent=JSON.stringify(result,null,2);
+      toast(result.status==='complete'?'Refresh pannello causale completato':'Refresh completato senza pannello utilizzabile',result.status==='complete'?'success':'error');
+    }catch(e){resultNode.textContent=e.message;toast('Refresh causale non riuscito: '+e.message,'error');}
+    finally{buttons.forEach(button=>button.disabled=false);}
+  };
+  $('#causal-refresh-team-switch')?.addEventListener('click',()=>runCausalRefresh('team_switch'));
+  $('#causal-refresh-teammate')?.addEventListener('click',()=>runCausalRefresh('teammate_exposure'));
+
   $$('.release-promote').forEach(button=>{
     const model=button.dataset.model;
     const item=models[model]||{};
