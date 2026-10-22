@@ -475,6 +475,25 @@ def test_teammate_exposure_panel_uses_canonical_bb_rating_and_roster_context():
     engine = _engine()
     engine.data["players"]["global_id"] = engine.data["players"]["id"].map(lambda value: f"PLAYER-{int(value)}")
 
+    # Beta joins Alpha's team in the outcome season. Delta remains on a third
+    # team as a never-shared control; Gamma was already Beta's teammate and
+    # must be excluded from a new-exposure risk set.
+    stats = engine.data["player_stats"]
+    stats.loc[(stats["player_id"] == 2) & (stats["season"].astype(int) == 2023), "team_id"] = 102
+    stats.loc[(stats["player_id"] == 2) & (stats["season"].astype(int) == 2024), "team_id"] = 101
+    stats.loc[stats["player_id"] == 4, "team_id"] = 103
+    engine.data["team_season_stats"] = pd.concat([
+        engine.data["team_season_stats"],
+        pd.DataFrame([
+            {"team_id": 103, "league_id": 10, "season": 2023, "competition": "RS",
+             "pace": 73.0, "offensive_rating": 111.0, "defensive_rating": 109.0,
+             "net_rtg": 2.0, "three_point_attempt_rate": .35, "assists_per_game": 20.0},
+            {"team_id": 103, "league_id": 10, "season": 2024, "competition": "RS",
+             "pace": 74.0, "offensive_rating": 112.0, "defensive_rating": 109.0,
+             "net_rtg": 3.0, "three_point_attempt_rate": .36, "assists_per_game": 21.0},
+        ]),
+    ], ignore_index=True)
+
     # A player with only an old historical row must not be included as a
     # control in later transition seasons.
     historical_only = engine.data["player_stats"].iloc[0].copy()
@@ -505,9 +524,11 @@ def test_teammate_exposure_panel_uses_canonical_bb_rating_and_roster_context():
     assert set(panel["league_key"]) == {"A"}
     assert set(panel["competition"]) == {"RS"}
     focal_alpha = panel[panel["global_id"] == "PLAYER-1"].iloc[0]
-    focal_gamma = panel[panel["global_id"] == "PLAYER-3"].iloc[0]
+    focal_delta = panel[panel["global_id"] == "PLAYER-4"].iloc[0]
     assert focal_alpha["treatment"] == 1
-    assert focal_gamma["treatment"] == 0
+    assert focal_delta["treatment"] == 0
+    # The continuing Beta/Gamma relationship is not treated as a new exposure.
+    assert "PLAYER-3" not in set(panel["global_id"])
     assert 1 <= focal_alpha["outcome"] <= 100
     assert "rating" not in panel.columns
 
