@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 import pandas as pd
 import pytest
 from fastapi import HTTPException, Response
+from fastapi.testclient import TestClient
 from starlette.requests import Request
 
 import basketball_ai.admin_web.app as admin
@@ -1843,3 +1844,46 @@ def test_scheduler_ui_has_calendar_fields_switch_and_no_pr76_copy():
     assert "data-toggle-schedule" in js
     assert "ogni giorno alle " in js
 
+
+
+def test_browser_login_form_post_never_puts_credentials_in_url(monkeypatch):
+    monkeypatch.setattr(admin, "check_credentials", lambda u, p: (True, {"role": "admin"}))
+    monkeypatch.setattr(admin, "create_session_token", lambda u, r, ttl_days: "browser-form-token")
+    client = TestClient(admin.app)
+
+    response = client.post(
+        "/admin-api/login",
+        data={"username": "Admin", "password": "private-test-password"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/"
+    assert "private-test-password" not in response.headers["location"]
+    assert "username=" not in response.headers["location"]
+    assert admin.SESSION_COOKIE in response.headers.get("set-cookie", "")
+
+
+def test_failed_browser_login_redirects_without_credentials(monkeypatch):
+    monkeypatch.setattr(admin, "check_credentials", lambda u, p: (False, {}))
+    client = TestClient(admin.app)
+
+    response = client.post(
+        "/admin-api/login",
+        data={"username": "test-user", "password": "private-test-password"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/?login=failed"
+    assert "test-user" not in response.headers["location"]
+    assert "private-test-password" not in response.headers["location"]
+
+
+def test_login_form_uses_post_and_versioned_assets():
+    static_root = Path(admin.__file__).with_name("static")
+    html = (static_root / "index.html").read_text(encoding="utf-8")
+    js = (static_root / "app.js").read_text(encoding="utf-8")
+    assert 'id="login-form" class="login-card" method="post" action="/admin-api/login"' in html
+    assert '/assets/app.js?v=2.6.7' in html
+    assert "URLSearchParams(window.location.search).get('login')" in js

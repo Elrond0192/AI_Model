@@ -21,13 +21,14 @@ import time
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request as URLRequest, urlopen
+from urllib.parse import parse_qs
 import uuid
 
 import pandas as pd
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy import text
 
 from basketball_ai.auth.auth import (
@@ -1785,20 +1786,61 @@ def index() -> HTMLResponse:
     )
 
 
-@app.post("/admin-api/login")
-def login(payload: LoginPayload) -> Response:
+def _login_response(payload: LoginPayload, *, browser_form: bool = False) -> Response:
+    """Validate credentials and issue the session; native form posts get a clean redirect."""
     ok, user = check_credentials(payload.username, payload.password)
     if not ok:
+        if browser_form:
+            # Never reflect form fields into the URL, including on failure.
+            return RedirectResponse(url="/?login=failed", status_code=303)
         raise HTTPException(status_code=401, detail="Credenziali non valide")
     username = payload.username.strip().lower()
     role = str(user.get("role", "viewer"))
     token = create_session_token(username, role, ttl_days=COOKIE_TTL_DAYS)
     csrf = secrets.token_urlsafe(32)
-    response = JSONResponse({"authenticated": True, "user": {"username": username, "role": role}})
+    if browser_form:
+        response: Response = RedirectResponse(url="/", status_code=303)
+    else:
+        response = JSONResponse({"authenticated": True, "user": {"username": username, "role": role}})
     max_age = COOKIE_TTL_DAYS * 86400
     response.set_cookie(SESSION_COOKIE, token, max_age=max_age, httponly=True, secure=COOKIE_SECURE, samesite="strict", path="/")
     response.set_cookie(CSRF_COOKIE, csrf, max_age=max_age, httponly=False, secure=COOKIE_SECURE, samesite="strict", path="/")
     return response
+
+
+def login(payload: LoginPayload) -> Response:
+    """JSON-login implementation retained for internal callers and API tests."""
+    return _login_response(payload)
+
+
+@app.post("/admin-api/login")
+async def login_endpoint(request: Request) -> Response:
+    """Accept JSON from the app and URL-encoded POST only as a safe no-JS fallback."""
+    content_type = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+    if content_type == "application/json":
+        try:
+            raw_payload = await request.json()
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            raise HTTPException(status_code=400, detail="Payload login non valido") from exc
+        try:
+            payload = LoginPayload.model_validate(raw_payload)
+        except ValidationError as exc:
+            raise HTTPException(status_code=422, detail="Payload login non valido") from exc
+        return _login_response(payload)
+
+    if content_type == "application/x-www-form-urlencoded":
+        raw_form = await request.body()
+        fields = parse_qs(raw_form.decode("utf-8", errors="replace"), keep_blank_values=True)
+        try:
+            payload = LoginPayload(
+                username=fields.get("username", [""])[0],
+                password=fields.get("password", [""])[0],
+            )
+        except ValidationError:
+            return RedirectResponse(url="/?login=failed", status_code=303)
+        return _login_response(payload, browser_form=True)
+
+    raise HTTPException(status_code=415, detail="Content-Type login non supportato")
 
 
 @app.get("/admin-api/session")

@@ -2,6 +2,13 @@ const App={user:null,page:'overview',overview:null,trainingTimer:null,bbRatingTi
 const $=(s,r=document)=>r.querySelector(s);const $$=(s,r=document)=>[...r.querySelectorAll(s)];
 const root=$('#page-root');
 
+// The browser-native POST fallback redirects invalid credentials to a clean URL.
+if(new URLSearchParams(window.location.search).get('login')==='failed'){
+  const loginRedirectError=$('#login-error');
+  if(loginRedirectError)loginRedirectError.textContent='Credenziali non valide';
+  window.history.replaceState(null,'',window.location.pathname);
+}
+
 function esc(v){return String(v??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));}
 function cookie(name){const p=document.cookie.split('; ').find(x=>x.startsWith(name+'='));return p?decodeURIComponent(p.split('=').slice(1).join('=')):'';}
 function fmt(v,d=3){if(v===null||v===undefined||v===''||Number.isNaN(Number(v)))return '—';return Number(v).toFixed(d);}

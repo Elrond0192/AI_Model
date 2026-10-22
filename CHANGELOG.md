@@ -7,6 +7,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 ### Fixed
+- Prevented login credentials from being submitted in URL query strings: the form now uses POST, the backend safely handles a native form POST fallback with clean redirects, and admin assets are cache-busted.
 - Added a BB Prediction Model-style progress bar and a cooperative stop control to
   the global causal-panel refresh. Cancellation stops at a safe context boundary;
   persistence permission failures are now counted as errors rather than missing cohorts.
