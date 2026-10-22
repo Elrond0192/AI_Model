@@ -4,6 +4,7 @@ import pandas as pd
 from basketball_ai.scenarios.causal_attribution import (
     estimate_team_switch_att,
     estimate_teammate_exposure_att,
+    persist_causal_panel,
 )
 
 
@@ -79,3 +80,25 @@ def test_teammate_exposure_att_rejects_mixed_context_and_missing_teammate():
     missing = estimate_teammate_exposure_att(panel, teammate_global_id="NO-SUCH-TEAMMATE")
     assert missing["available"] is False
     assert missing["reason"] == "named_teammate_not_in_panel"
+
+
+def test_persist_causal_panel_rejects_native_rating_and_noncanonical_outcomes():
+    panel = _panel(40)
+    panel["league_key"] = "EL"
+    panel["competition"] = "RS"
+    panel["rating"] = 7.2
+    rejected = persist_causal_panel(
+        panel, None, source_type="team_switch", league_key="EL", competition="RS"
+    )
+    assert rejected["status"] == "not_written"
+    assert rejected["reason"] == "native_rating_columns_forbidden_use_canonical_bb_rating"
+
+    panel = _panel(40)
+    panel["league_key"] = "EL"
+    panel["competition"] = "RS"
+    panel["outcome"] = 7.2
+    rejected = persist_causal_panel(
+        panel, None, source_type="team_switch", league_key="EL", competition="RS"
+    )
+    assert rejected["status"] == "not_written"
+    assert rejected["reason"] == "canonical_bb_rating_outcome_required"
