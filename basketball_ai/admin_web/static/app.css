@@ -512,6 +512,8 @@ input:focus,select:focus,textarea:focus{border-color:#4e7fc5!important;box-shado
 .schedule-league-option strong{font-size:12px;font-weight:500;line-height:1.2}
 .schedule-league-option small{display:none}
 .schedule-league-all{background:transparent;border:0;grid-column:auto}
+/* Keep Season and the compact league dropdown aligned as one row. */
+.schedule-season-league-row{grid-column:1/-1;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;align-items:start}
 /* Scheduler recurrence controls and compact enable/disable switches. */
 #ai-jobs-schedule-form input[type="date"],
 #ai-jobs-schedule-form input[type="time"]{color-scheme:dark}
@@ -529,6 +531,7 @@ input:focus,select:focus,textarea:focus{border-color:#4e7fc5!important;box-shado
 .schedule-job-row>span:first-child small{display:inline-block;line-height:1.6}
 .schedule-job-actions{display:flex;align-items:center;justify-content:flex-end;gap:9px;white-space:nowrap}
 @media(max-width:720px){
+  .schedule-season-league-row{grid-template-columns:minmax(0,1fr)}
   .schedule-job-row{align-items:flex-start;flex-direction:column}
   .schedule-job-actions{width:100%;justify-content:flex-start;flex-wrap:wrap}
 }
