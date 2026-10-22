@@ -122,6 +122,11 @@ promotion.
 Icons are Phosphor Icons, self-hosted under
 `static/assets/phosphor/` (regular + fill weights, woff2/woff only) —
 no external CDN calls, so the console keeps working fully offline/air-gapped.
+Recurring data/model jobs are configured in **Pianificazioni**. The scheduler
+supports hour intervals or a daily wall-clock time, optional inclusive start/end
+dates, and per-job activation switches; see
+[`docs/SCHEDULER.md`](docs/SCHEDULER.md) for supported tasks, migration behavior
+and operating guidance.
 
 Promotions and rollbacks initiated through the Control Center request an
 authenticated API restart and wait for `/health/ready` before reporting success.
@@ -249,11 +254,20 @@ When those source statistics have changed and are not yet reflected in
 `PlayerCompetitionStats` / `TeamCompetitionStats`, rebuild/apply
 `ai_source_full.sql` after ETL and then run the yearly refresh.
 
-The same seasonal hook is available to n8n/systemd/cron without embedding SQL:
+The seasonal hook can be invoked directly or scheduled from the Admin Control
+Center under **Pianificazioni**:
 
 ```bash
 python main.py --mode refresh-serving --database-profile production --season 2026
 ```
+
+For recurring use, prefer one `refresh_context_seasonal` job after the upstream
+ETL. It refreshes all canonical league/competition contexts for the selected
+season and already calls the lower-level Simulation, Training and Scenario
+refreshes; do not schedule those lower-level refreshes again for the same window
+without a specific reason. The scheduler supports either an interval in hours
+or a daily time in `Europe/Rome`, optional start/end dates, and an enabled switch.
+See [`docs/SCHEDULER.md`](docs/SCHEDULER.md) for the full contract.
 
 Run it after HoopmetricsEngine/AdvanceStats has committed all changed contexts
 for that season. Entity views reflect Anagrafiche changes immediately; create a
