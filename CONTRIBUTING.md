@@ -23,18 +23,27 @@ pre-commit install
 1. Create a feature branch from `main`.
 2. Keep production data access behind `"AI_Source"` canonical views.
 3. Add tests for model/data/API contract changes.
-4. Run:
+4. Update the relevant user/operator documentation and `CHANGELOG.md` in the same
+   release change. Scheduler behavior belongs in `docs/SCHEDULER.md`; database
+   contract changes belong in `DATA_CARD.md` and the relevant runbook/SQL notes.
+5. Run:
 
 ```bash
 pytest tests/ -q --tb=short
 ruff check basketball_ai/ --select E,F,W --ignore E501
+python .github/scripts/check_release_docs.py
 ```
 
-5. Build the Docker image before deployment-sensitive changes:
+6. Build the Docker image before deployment-sensitive changes:
 
 ```bash
 docker build -t basketball-ai:test .
 ```
+
+7. For pull requests that change runtime code, API/UX behavior or SQL/data
+   contracts, the documentation gate requires at least one relevant documentation
+   or changelog file in the PR diff. A code change is not release-ready merely
+   because its tests pass.
 
 ## Project boundaries
 
@@ -66,6 +75,25 @@ in WordPress Chat V3/Bax, not AI_Model.
   the same target season.
 - Use type hints on public Python APIs and structured logging in library code.
 - Do not weaken failed backtests/readiness into silent fallbacks.
+
+## Documentation and release policy
+
+Documentation is part of each release, not a cleanup task for later.
+
+- Update `README.md` for capability/architecture changes and `RUNBOOK.md` for
+  operational, deployment, recovery and scheduling changes.
+- Update the focused document under `docs/` when a model, API contract, scheduler
+  task or scenario changes. Keep `roadmap_intelligence.md` and the causal
+  attribution roadmap aligned with what is implemented versus what is validated.
+- Add a `CHANGELOG.md` entry under `[Unreleased]` for user-visible behavior,
+  bug fixes, data-contract/schema changes and operational procedure changes.
+- Never mark a capability as fully available only because code exists: explicitly
+  state validation gates, partial coverage, deployment/database prerequisites and
+  any manual steps still required.
+- Do not leave old behavior statements next to the new contract. Replace stale
+  claims in the same change; the documentation contract checker rejects known
+  contradictions and the PR documentation gate rejects implementation changes
+  without a docs/changelog update.
 
 ## PostgreSQL contract changes
 
