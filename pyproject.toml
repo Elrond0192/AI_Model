@@ -25,6 +25,7 @@ dependencies = [
     "SQLAlchemy>=2.0,<3",
     "psycopg[binary]>=3.2,<4",
     "python-dotenv>=1.0.0",
+    "tzdata>=2024.1",
     "argon2-cffi>=21.3.0",
 ]
 
