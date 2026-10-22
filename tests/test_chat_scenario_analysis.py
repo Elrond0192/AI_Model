@@ -605,6 +605,7 @@ def test_teammate_exposure_uses_aggregate_team_context_without_future_leakage():
     data = engine.data
     data["players"]["global_id"] = data["players"]["id"].map(lambda value: f"PLAYER-{int(value)}")
     data["team_season_stats"]["competition"] = "TOT"
+    original_team_stats = data["team_season_stats"].copy()
 
     panel = engine._build_teammate_exposure_causal_panel(10, "RS", 2024, None)
     assert not panel.empty
@@ -617,6 +618,15 @@ def test_teammate_exposure_uses_aggregate_team_context_without_future_leakage():
     no_prior_strength = engine._build_teammate_exposure_causal_panel(10, "RS", 2024, None)
     assert not no_prior_strength.empty
     assert no_prior_strength["team_strength_pre"].isna().all()
+
+    # A team-stat value more than one season old is also too stale to impute.
+    data["team_season_stats"] = original_team_stats[
+        original_team_stats["season"].astype(int) == 2023
+    ].copy()
+    data["team_season_stats"]["season"] = 2021
+    stale_strength = engine._build_teammate_exposure_causal_panel(10, "RS", 2024, None)
+    assert not stale_strength.empty
+    assert stale_strength["team_strength_pre"].isna().all()
 
 
 def test_causal_team_effect_uses_canonical_bb_rating_and_controls_role_minutes_usage():
