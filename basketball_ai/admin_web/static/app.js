@@ -755,20 +755,22 @@ async function renderAiJobs(){
     if(!allBox)return;
     boxes.forEach(input=>{input.disabled=allBox.checked;});
   };
-  const loadScheduleOptions=async()=>{
+  const loadScheduleOptions=async(preserveSelection=false)=>{
+    const previousSelection=preserveSelection?selectedLeagues():['ALL'];
     const data=await api('/admin-api/scheduler/options');
     const leagues=(data.leagues||[]).map(value=>String(value).toUpperCase()).filter(Boolean);
     if(!leagueOptions)return;
+    const allSelected=previousSelection.includes('ALL')||previousSelection.length===0;
     leagueOptions.innerHTML=
-      '<label class="schedule-league-option schedule-league-all"><input id="ai-schedule-all-leagues" type="checkbox" checked> <span><strong>Tutte</strong><small>Tutte le leghe attualmente presenti</small></span></label>'+
-      leagues.map(league=>'<label class="schedule-league-option"><input type="checkbox" name="schedule_league" value="'+esc(league)+'"> <span><strong>'+esc(league)+'</strong></span></label>').join('');
+      '<label class="schedule-league-option schedule-league-all"><input id="ai-schedule-all-leagues" type="checkbox" '+(allSelected?'checked':'')+'> <span><strong>Tutte</strong><small>Tutte le leghe attualmente presenti</small></span></label>'+
+      leagues.map(league=>'<label class="schedule-league-option"><input type="checkbox" name="schedule_league" value="'+esc(league)+'" '+(!allSelected&&previousSelection.includes(league)?'checked':'')+'> <span><strong>'+esc(league)+'</strong></span></label>').join('');
     $('#ai-schedule-all-leagues')?.addEventListener('change',()=>{
       if($('#ai-schedule-all-leagues')?.checked){
-        $('input[name="schedule_league"]',leagueOptions).forEach(input=>{input.checked=false;});
+        $$('input[name="schedule_league"]',leagueOptions).forEach(input=>{input.checked=false;});
       }
       syncLeagueSelection();
     });
-    $('input[name="schedule_league"]',leagueOptions).forEach(input=>input.addEventListener('change',()=>{
+    $$('input[name="schedule_league"]',leagueOptions).forEach(input=>input.addEventListener('change',()=>{
       if(input.checked&&$('#ai-schedule-all-leagues'))$('#ai-schedule-all-leagues').checked=false;
       syncLeagueSelection();
     }));
@@ -819,7 +821,7 @@ async function renderAiJobs(){
     }));
   };
   $('#ai-jobs-schedule-refresh')?.addEventListener('click',()=>refreshSchedules().catch(e=>toast(e.message,'error')));
-  $('#ai-jobs-refresh')?.addEventListener('click',()=>Promise.all([refreshSchedules(),loadScheduleOptions()]).catch(e=>toast(e.message,'error')));
+  $('#ai-jobs-refresh')?.addEventListener('click',()=>Promise.all([refreshSchedules(),loadScheduleOptions(true)]).catch(e=>toast(e.message,'error')));
   scheduleForm?.task_key.addEventListener('change',syncScheduleFields);
   scheduleForm?.addEventListener('submit',async event=>{
     event.preventDefault();
