@@ -107,6 +107,8 @@ Model Releases causal refresh DML only on `AI_Source.SimulationCausalPanel`;
 canonical player/team facts remain read-only. If the console cannot preflight the
 schema/rights, it returns HTTP 503 with the PostgreSQL detail rather than a generic 500.
 
+The same Model Releases section includes **Valida supporto teammate exposure**. Run it after the bulk `teammate_exposure` refresh to inspect support per named teammate × league × competition × transition season and download the CSV audit report. The diagnostic is read-only. It checks identity integrity and complete-case support first, then propensity overlap and weighted SMD for up to 50 eligible groups; groups above that limit are explicitly marked not evaluated. It does not promote or certify `causal_team_effect`.
+
 The Model Releases causal cohort refresh displays the same progress bar as BB
 Prediction Model and can be stopped with **Interrompi refresh**. Cancellation is
 cooperative: the in-flight league/competition context is allowed to finish, then
