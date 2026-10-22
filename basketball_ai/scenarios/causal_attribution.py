@@ -197,11 +197,12 @@ def estimate_teammate_exposure_att(
 ) -> dict[str, Any]:
     """Estimate an observational cohort ATT for a named teammate exposure.
 
-    Each row represents a focal player's transition to the next completed
-    season. Treatment must be encoded as 1 when the named teammate joined/shared
-    the focal player's team in the pre-defined exposure window, and 0 for a
-    comparable eligible control. Outcome must be canonical next-season BB-Rating
-    (1-100). This function deliberately refuses lineup Net Rating as an outcome.
+    Each row represents one focal player's latest adjacent completed-season
+    transition. Treatment is a newly observed shared-team relationship: the focal
+    player and named teammate were on different teams in the baseline season and
+    are on the same team in the outcome season. Continuing teammate relationships
+    and pairs without an observed teammate baseline team are excluded by the
+    builder. Outcome is canonical next-season BB-Rating (1-100).
     """
     required = _REQUIRED | {"teammate_global_id", "league_key", "competition"}
     if not isinstance(panel, pd.DataFrame) or panel.empty:
@@ -225,7 +226,7 @@ def estimate_teammate_exposure_att(
     # treatment definition and the result separate from team-switch ATT.
     result = estimate_team_switch_att(frame)
     result["estimand"] = "observational_teammate_exposure_ATT"
-    result["treatment"] = "predefined_named_teammate_exposure_between_completed_seasons"
+    result["treatment"] = "newly_observed_shared_team_relationship_between_completed_seasons"
     result["teammate_global_id"] = str(teammate_global_id) if teammate_global_id else None
     result["outcome"] = "next_observed_season_canonical_bb_rating_1_100"
     result["limitations"] = list(result.get("limitations", [])) + [
@@ -292,9 +293,15 @@ def persist_causal_panel(
         return {"status": "not_written", "rows": 0, "reason": "duplicate_player_transition"}
     frame["source_type"] = source_type.strip()
     frame["next_outcome"] = frame["outcome"].astype(float)
+    treatment_definition = (
+        "newly_observed_shared_team_relationship_between_completed_seasons"
+        if source_type.strip() == "teammate_exposure"
+        else "team_switch_between_adjacent_completed_seasons"
+    )
     frame["details"] = frame.apply(
         lambda row: json.dumps({
             "estimand": source_type.strip(),
+            "treatment_definition": treatment_definition,
             "identification": "observational_assumptions_required",
         }),
         axis=1,
