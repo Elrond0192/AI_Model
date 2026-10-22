@@ -499,6 +499,15 @@ def test_helpers_and_static_assets(monkeypatch, tmp_path):
 
 
 
+    assert 'data-page="ai-jobs"' in html
+    assert 'id="page-ai-jobs"' in html
+    assert "if(page==='ai-jobs')await renderAiJobs()" in js
+    assert "/admin-api/bb-rating-prediction/train" in js
+    assert "/admin-api/bb-rating/calibrate" in js
+    assert "/admin-api/future-performance/train" in js
+    assert '"AI_Source"."AIModelScheduledJob"' in (Path(admin.__file__).parents[1] / "data" / "ai_scenario_serving.sql").read_text(encoding="utf-8")
+    assert "/admin-api/scheduler/jobs" in js
+    assert "refresh_context_seasonal" in js
 def test_bb_rating_status_reads_calibration_artifacts(monkeypatch, tmp_path):
     _reset_state()
     root = tmp_path / "models_saved"

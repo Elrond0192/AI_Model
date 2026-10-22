@@ -1296,4 +1296,48 @@ BEGIN
 END;
 $grant_ai_source_serving$;
 
+
+-- Persistent scheduler for repeatable AI_Model jobs. One-time schema/diagnostic
+-- scripts are deliberately excluded; only idempotent refresh procedures and
+-- explicit model lifecycle tasks are schedulable.
+CREATE TABLE IF NOT EXISTS "AI_Source"."AIModelScheduledJob" (
+    job_id bigserial PRIMARY KEY,
+    name text NOT NULL,
+    task_key text NOT NULL CHECK (task_key IN (
+        'refresh_context_seasonal',
+        'refresh_simulation_sources',
+        'refresh_scenario_serving',
+        'refresh_training_serving',
+        'bb_prediction_training',
+        'bb_rating_calibration',
+        'future_performance_training'
+    )),
+    parameters jsonb NOT NULL DEFAULT '{}'::jsonb,
+    interval_minutes integer NOT NULL CHECK (interval_minutes >= 60),
+    enabled boolean NOT NULL DEFAULT true,
+    next_run_at timestamptz NOT NULL,
+    last_run_at timestamptz,
+    last_status text NOT NULL DEFAULT 'scheduled',
+    last_error text,
+    created_by text NOT NULL DEFAULT 'admin',
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS ix_ai_model_scheduled_job_due
+    ON "AI_Source"."AIModelScheduledJob" (enabled, next_run_at);
+
+CREATE TABLE IF NOT EXISTS "AI_Source"."AIModelJobRun" (
+    run_id bigserial PRIMARY KEY,
+    job_id bigint REFERENCES "AI_Source"."AIModelScheduledJob"(job_id) ON DELETE SET NULL,
+    task_key text NOT NULL,
+    parameters jsonb NOT NULL DEFAULT '{}'::jsonb,
+    status text NOT NULL CHECK (status IN ('running','complete','submitted','failed')),
+    started_at timestamptz NOT NULL DEFAULT now(),
+    finished_at timestamptz,
+    result jsonb,
+    error text
+);
+CREATE INDEX IF NOT EXISTS ix_ai_model_job_run_started
+    ON "AI_Source"."AIModelJobRun" (started_at DESC);
+
 COMMIT;
