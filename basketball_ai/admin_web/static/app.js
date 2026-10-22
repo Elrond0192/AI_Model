@@ -531,7 +531,7 @@ async function renderModelReleases(){
   const runTeammateSupportDiagnostics=async()=>{
     if(causalButtons.some(button=>button.disabled))return;
     causalButtons.forEach(button=>button.disabled=true);
-    if(causalTeammateDiagnosticsResult)causalTeammateDiagnosticsResult.textContent='Verifica supporto, overlap e bilanciamento per compagno/lega/competizione/stagione…';
+    if(causalTeammateDiagnosticsResult)causalTeammateDiagnosticsResult.textContent='Verifica supporto, overlap e bilanciamento aggregando le transizioni per compagno/lega/competizione…';
     if(causalTeammateDiagnosticsDownload){
       causalTeammateDiagnosticsDownload.classList.add('hidden');
       causalTeammateDiagnosticsDownload.href='#';
@@ -542,8 +542,8 @@ async function renderModelReleases(){
       const lines=[
         'Righe persistite: '+(s.panel_rows??0)+' · gruppi distinti: '+(s.groups_total??0),
         'Righe complete per il modello: '+(s.total_eligible_complete_case_rows??0)+' · righe escluse: '+(s.total_excluded_complete_case_rows??0),
-        'Gruppi con supporto grezzo sufficiente (≥60 righe, ≥20 trattati, ≥20 controlli): '+(s.groups_raw_support_passed??0),
-        'Gruppi con gate statistici superati: '+(s.groups_with_statistical_gates_passed??0)+' · diagnostiche eseguite: '+(s.groups_diagnostics_evaluated??0),
+        'Gruppi pooled con supporto grezzo sufficiente (≥60 righe, ≥20 trattati, ≥20 controlli): '+(s.groups_raw_support_passed??0),
+        'Gruppi pooled con gate statistici superati: '+(s.groups_with_statistical_gates_passed??0)+' · diagnostiche eseguite: '+(s.groups_diagnostics_evaluated??0),
         'Gruppi non valutati per limite operativo: '+(s.groups_not_evaluated_due_limit??0),
         'Gruppi con problemi di integrità delle identità: '+(s.groups_with_identity_integrity_issues??0),
         'Righe non classificabili per contesto incompleto: '+(s.unclassified_panel_rows??0),
@@ -581,7 +581,8 @@ async function renderModelReleases(){
       if(best.length){
         lines.push('Gruppi con più trattati:');
         best.slice(0,8).forEach(row=>{
-          let detail=String(row.teammate_global_id||'ID sconosciuto')+' · '+String(row.league_key||'?')+'/'+String(row.competition||'?')+' '+String(row.transition_season||'?');
+          let detail=String(row.teammate_global_id||'ID sconosciuto')+' · '+String(row.league_key||'?')+'/'+String(row.competition||'?');
+          detail+=' — stagioni '+(row.first_transition_season??'?')+'–'+(row.last_transition_season??'?')+' ('+(row.transition_seasons??0)+' in totale)';
           detail+=' — trattati '+(row.treated??0)+' / controlli '+(row.control??0)+' — '+String(row.status||'n/d');
           if(row.propensity_overlap_share!==null&&row.propensity_overlap_share!==undefined)detail+=' — overlap '+(Number(row.propensity_overlap_share)*100).toFixed(1)+'%';
           if(row.max_abs_smd_after!==null&&row.max_abs_smd_after!==undefined)detail+=' — max |SMD| '+Number(row.max_abs_smd_after).toFixed(3);
