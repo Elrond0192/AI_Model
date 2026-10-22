@@ -1626,6 +1626,41 @@ class ChatScenarioEngine:
             cohort_switch_estimate["reason"] = "cohort_estimate_not_requested_for_descriptive_attribution"
 
         latest = history.iloc[-1]
+        previous = history.iloc[-2] if len(history) >= 2 else None
+        observed_change_decomposition = {
+            "status": "available_descriptive" if previous is not None else "insufficient_history",
+            "method": "adjacent_observed_season_change_decomposition",
+            "is_causal": False,
+            "bb_rating_change_points": (
+                int(latest["bb_rating"]) - int(previous["bb_rating"])
+                if previous is not None else None
+            ),
+            "team_context_score_change": (
+                round(float(latest["team_context_score"]) - float(previous["team_context_score"]), 4)
+                if previous is not None else None
+            ),
+            "minutes_per_game_change": (
+                round(float(latest["minutes_per_game"]) - float(previous["minutes_per_game"]), 2)
+                if previous is not None
+                and math.isfinite(_finite(latest.get("minutes_per_game"), np.nan))
+                and math.isfinite(_finite(previous.get("minutes_per_game"), np.nan))
+                else None
+            ),
+            "usage_change_percentage_points": (
+                round((float(latest["usg_pct"]) - float(previous["usg_pct"])) * 100.0, 2)
+                if previous is not None
+                and math.isfinite(_finite(latest.get("usg_pct"), np.nan))
+                and math.isfinite(_finite(previous.get("usg_pct"), np.nan))
+                else None
+            ),
+            "team_changed": bool(latest["team_id"] != previous["team_id"]) if previous is not None else None,
+            "role_changed": bool(str(latest["role"]) != str(previous["role"])) if previous is not None else None,
+            "from_season": int(previous["season"]) if previous is not None else None,
+            "to_season": int(latest["season"]) if previous is not None else None,
+            "interpretation": (
+                "Descrive fattori osservati che cambiano insieme al BB-Rating; non assegna quote causali né percentuali di responsabilità."
+            ),
+        }
         if correlation is None:
             association_label = "insufficient_evidence"
         elif correlation >= 0.35:
@@ -1695,6 +1730,7 @@ class ChatScenarioEngine:
                     "role": str(latest["role"]),
                 },
                 "team_switches": switches[-8:],
+                "observed_change_decomposition": observed_change_decomposition,
                 "lineup_context_association": lineup_context_association,
                 "observations": int(len(history)),
                 "excluded_seasons_without_canonical_bb_rating": sorted(set(unavailable_bb_rating_seasons)),
