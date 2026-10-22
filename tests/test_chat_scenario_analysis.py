@@ -548,6 +548,49 @@ def test_teammate_exposure_panel_uses_canonical_bb_rating_and_roster_context():
     )
 
 
+def test_empty_teammate_refresh_clears_stale_context_rows():
+    engine = _engine()
+    engine.data["player_stats"] = pd.DataFrame()
+
+    class FakeConnection:
+        def __init__(self, parent):
+            self.parent = parent
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def execute(self, statement, parameters):
+            self.parent.statements.append((str(statement), dict(parameters)))
+            return SimpleNamespace(rowcount=7)
+
+    class FakeDatabaseEngine:
+        def __init__(self):
+            self.statements = []
+
+        def begin(self):
+            return FakeConnection(self)
+
+    database = FakeDatabaseEngine()
+    result = engine.refresh_teammate_exposure_causal_panel(
+        database, source_league=10, competition="RS",
+        through_season=2024, teammate_global_id=None,
+    )
+
+    assert result["status"] == "refreshed"
+    assert result["rows"] == 0
+    assert result["deleted_rows"] == 7
+    statement, parameters = database.statements[0]
+    assert 'DELETE FROM "AI_Source"."SimulationCausalPanel"' in statement
+    assert "source_type = :source_type" in statement
+    assert "teammate_global_id =" not in statement
+    assert parameters["source_type"] == "teammate_exposure"
+    assert parameters["league_key"] == "A"
+    assert parameters["competition"] == "RS"
+
+
 def test_teammate_exposure_estimator_accepts_pooled_seasons_without_player_repeats():
     from basketball_ai.scenarios.causal_attribution import estimate_teammate_exposure_att
 
