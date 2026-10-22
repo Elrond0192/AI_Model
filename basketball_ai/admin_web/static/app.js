@@ -574,7 +574,7 @@ async function renderModelReleases(){
         passed>0
           ? 'Diagnostica completata: alcuni gruppi superano i gate statistici, ma restano osservazionali.'
           : 'Diagnostica completata: nessun gruppo ha superato tutti i gate statistici.',
-        passed>0?'success':'error'
+        'success'
       );
     }catch(e){
       if(causalTeammateDiagnosticsResult)causalTeammateDiagnosticsResult.textContent='Diagnostica non riuscita: '+e.message;
