@@ -1354,4 +1354,53 @@ CREATE TABLE IF NOT EXISTS "AI_Source"."AIModelJobRun" (
 CREATE INDEX IF NOT EXISTS ix_ai_model_job_run_started
     ON "AI_Source"."AIModelJobRun" (started_at DESC);
 
+-- The runtime role may mutate scheduler metadata only. Canonical player/team
+-- statistics and other AI_Source tables remain read-only to the application.
+DO $grant_ai_model_scheduler$
+DECLARE
+    requested_role text := NULLIF(
+        btrim(current_setting('app.ai_source_read_role', true)),
+        ''
+    );
+    scheduler_role text;
+BEGIN
+    FOREACH scheduler_role IN ARRAY ARRAY[
+        'ai_model',
+        'hm_admin',
+        requested_role
+    ]
+    LOOP
+        CONTINUE WHEN scheduler_role IS NULL OR btrim(scheduler_role) = '';
+
+        IF EXISTS (
+            SELECT 1
+              FROM pg_catalog.pg_roles
+             WHERE rolname = scheduler_role
+        ) THEN
+            EXECUTE format(
+                'GRANT USAGE ON SCHEMA "AI_Source" TO %I',
+                scheduler_role
+            );
+            EXECUTE format(
+                'GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE
+                    "AI_Source"."AIModelScheduledJob",
+                    "AI_Source"."AIModelJobRun"
+                 TO %I',
+                scheduler_role
+            );
+            EXECUTE format(
+                'GRANT USAGE, SELECT ON SEQUENCE
+                    "AI_Source"."AIModelScheduledJob_job_id_seq",
+                    "AI_Source"."AIModelJobRun_run_id_seq"
+                 TO %I',
+                scheduler_role
+            );
+            RAISE NOTICE
+                'AI_Model scheduler table/sequence access granted to role %',
+                scheduler_role;
+        END IF;
+    END LOOP;
+END;
+$grant_ai_model_scheduler$;
+
 COMMIT;

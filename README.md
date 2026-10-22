@@ -97,7 +97,10 @@ GRANT SELECT ON ALL TABLES IN SCHEMA "AI_Source" TO ai_model;
 GRANT SELECT, INSERT, UPDATE ON ALL TABLES IN SCHEMA "AI" TO ai_model;
 ```
 
-Do not grant write access to source schemas and do not expose PostgreSQL 5432 publicly.
+Keep canonical source facts read-only and do not expose PostgreSQL 5432 publicly.
+The `ai_scenario_serving.sql` contract grants the runtime role narrowly scoped
+CRUD rights only to the two scheduler metadata tables and their sequences; do not
+replace these grants with schema-wide write access.
 
 ## 3. Docker -> PostgreSQL host
 

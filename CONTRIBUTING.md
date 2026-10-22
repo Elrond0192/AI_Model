@@ -67,8 +67,10 @@ in WordPress Chat V3/Bax, not AI_Model.
   sessions or audit databases.
 - No SQL Server/Azure SQL compatibility code in the production data layer.
 - No generic SQL endpoint.
-- Source BBallstat schemas are read-only to AI_Model; writes belong only in
-  schema `AI`.
+- Canonical BBallstat facts and statistics remain read-only to AI_Model. The only
+  runtime write exception inside `AI_Source` is scheduler metadata in
+  `AIModelScheduledJob` and `AIModelJobRun`, granted narrowly by
+  `ai_scenario_serving.sql`; model outputs belong in schema `AI`.
 - New league tables should be picked up by `ai_source_full.sql` without
   Python changes.
 - Preserve season chronology: a player must not have multiple training rows for

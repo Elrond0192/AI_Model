@@ -2895,27 +2895,28 @@ def _scheduled_league_codes(parameters: dict[str, Any], engine) -> list[str]:
     return selected
 
 
-_SCHEDULER_SCHEMA_LOCK = threading.Lock()
-_SCHEDULER_SCHEMA_READY_PROFILES: set[str] = set()
-
-
-def _ensure_scheduler_schema(engine, profile_name: str) -> None:
-    """Idempotently add scheduling controls to databases created by older releases."""
-    if profile_name in _SCHEDULER_SCHEMA_READY_PROFILES:
-        return
-    with _SCHEDULER_SCHEMA_LOCK:
-        if profile_name in _SCHEDULER_SCHEMA_READY_PROFILES:
-            return
-        with engine.begin() as connection:
-            connection.execute(text('''
-                ALTER TABLE "AI_Source"."AIModelScheduledJob"
-                    ADD COLUMN IF NOT EXISTS schedule_mode text NOT NULL DEFAULT 'interval',
-                    ADD COLUMN IF NOT EXISTS daily_time time,
-                    ADD COLUMN IF NOT EXISTS timezone_name text NOT NULL DEFAULT 'Europe/Rome',
-                    ADD COLUMN IF NOT EXISTS start_date date,
-                    ADD COLUMN IF NOT EXISTS end_date date
-            '''))
-        _SCHEDULER_SCHEMA_READY_PROFILES.add(profile_name)
+def _check_scheduler_database_contract(engine) -> None:
+    """Check scheduler/canonical access without running DDL as the app role."""
+    with engine.connect() as connection:
+        connection.execute(text('''
+            SELECT league_key, competition
+              FROM "AI_Source"."PlayerCompetitionStats"
+             LIMIT 0
+        '''))
+        connection.execute(text('''
+            SELECT job_id, name, task_key, parameters, interval_minutes,
+                   schedule_mode, daily_time, timezone_name, start_date, end_date,
+                   enabled, next_run_at, last_run_at, last_status, last_error,
+                   created_by, created_at, updated_at
+              FROM "AI_Source"."AIModelScheduledJob"
+             LIMIT 0
+        '''))
+        connection.execute(text('''
+            SELECT run_id, job_id, task_key, parameters, status,
+                   started_at, finished_at, result, error
+              FROM "AI_Source"."AIModelJobRun"
+             LIMIT 0
+        '''))
 
 
 def _coerce_schedule_date(value: Any) -> date | None:
@@ -2983,10 +2984,28 @@ def _scheduler_engine():
     with STATE.lock:
         profile = STATE.active_profile
     if not profile:
-        raise RuntimeError("Nessun profilo PostgreSQL selezionato")
-    engine = get_engine(profile_url(profile))
-    _ensure_scheduler_schema(engine, str(profile))
-    return engine
+        raise HTTPException(
+            status_code=503,
+            detail="Nessun profilo PostgreSQL selezionato. Seleziona e carica un profilo dalla pagina Data Sources.",
+        )
+    try:
+        engine = get_engine(profile_url(profile))
+        _check_scheduler_database_contract(engine)
+        return engine
+    except HTTPException:
+        raise
+    except Exception as exc:
+        detail = (
+            "Scheduler PostgreSQL non pronto. Verifica la connessione e i permessi di lettura "
+            "su \"AI_Source\".\"PlayerCompetitionStats\" e sulle tabelle dello scheduler. "
+            "Applica la migrazione e i grant eseguendo "
+            "basketball_ai/data/ai_scenario_serving.sql con il proprietario del database "
+            "(normalmente hm_admin). Il ruolo runtime deve poter leggere le due tabelle "
+            "scheduler e scrivere solo su \"AI_Source\".\"AIModelScheduledJob\" e "
+            "\"AI_Source\".\"AIModelJobRun\". Dettaglio PostgreSQL: "
+            f"{_safe_error(exc)}"
+        )
+        raise HTTPException(status_code=503, detail=detail) from exc
 
 
 def _execute_scheduled_task(task_key: str, parameters: dict[str, Any], actor: str) -> tuple[str, dict[str, Any]]:

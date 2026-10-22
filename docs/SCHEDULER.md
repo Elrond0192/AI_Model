@@ -80,11 +80,16 @@ The scheduler stores persistent jobs in
 `"AI_Source"."AIModelJobRun"`. Its schema is defined in
 `basketball_ai/data/ai_scenario_serving.sql`. The SQL file creates the columns
 for new installations and includes an idempotent `ALTER TABLE ... ADD COLUMN IF
-NOT EXISTS` migration. The admin scheduler also applies that migration when it
-first opens the selected PostgreSQL profile, so older installations receive
-`schedule_mode`, `daily_time`, `timezone_name`, `start_date` and `end_date`
-without deleting existing interval jobs. The selected database role must have
-permission to alter the scheduler table during this first initialization.
+NOT EXISTS` migration. The admin process does not perform schema DDL as the runtime role. After a release
+that changes this contract, reapply `basketball_ai/data/ai_scenario_serving.sql`
+as the PostgreSQL schema/table owner (normally `hm_admin`) so its idempotent
+migration adds `schedule_mode`, `daily_time`, `timezone_name`, `start_date`
+and `end_date` without deleting existing jobs. The same script grants
+`ai_model` (and the configured `app.ai_source_read_role`, when supplied)
+`SELECT/INSERT/UPDATE/DELETE` only on the two scheduler metadata tables, plus
+usage on their sequences; it does not grant write access to canonical statistics.
+The runtime preflights `PlayerCompetitionStats` and both scheduler tables and
+returns HTTP 503 with the PostgreSQL detail if the schema or grants are missing.
 
 The worker polls at a short interval and executes due jobs one at a time per
 worker process, using PostgreSQL row locking to avoid selecting the same job

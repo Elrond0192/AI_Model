@@ -230,6 +230,19 @@ def test_ai_source_grants_full_access_to_hm_local_workers_on_rebuild():
     assert 'alter default privileges in schema "ai_source" grant all privileges on sequences to hm_local_workers' in sql
 
 
+def test_scheduler_runtime_write_access_is_limited_to_scheduler_metadata():
+    sql = SERVING_SQL.read_text(encoding="utf-8").lower()
+    assert "do $grant_ai_model_scheduler$" in sql
+    assert "grant select, insert, update, delete on table" in sql
+    assert '"ai_source"."aimodelscheduledjob"' in sql
+    assert '"ai_source"."aimodeljobrun"' in sql
+    assert "grant usage, select on sequence" in sql
+    assert "'ai_model'" in sql
+    assert "requested_role" in sql
+    # The runtime role receives no blanket DML grant across AI_Source.
+    assert 'grant all privileges on all tables in schema "ai_source" to ai_model' not in sql
+
+
 def test_ai_source_uses_native_typed_columns_for_row_transforms():
     sql = SOURCE_SQL.read_text(encoding="utf-8").lower()
     assert "pg_temp.ai_expr" in sql

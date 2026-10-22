@@ -13,9 +13,10 @@ The admin console is a custom FastAPI + HTML/CSS/JS application; Streamlit is no
 ## First database setup
 
 ```bash
-psql -d YOUR_DATABASE -f basketball_ai/data/ai_source_full.sql
-psql -d YOUR_DATABASE -f basketball_ai/data/ai_scenario_serving.sql
-psql -d YOUR_DATABASE -f basketball_ai/data/ai_schema.sql
+# Run as the PostgreSQL schema owner (normally hm_admin); stop on the first error.
+psql -v ON_ERROR_STOP=1 -d YOUR_DATABASE -f basketball_ai/data/ai_source_full.sql
+psql -v ON_ERROR_STOP=1 -d YOUR_DATABASE -f basketball_ai/data/ai_scenario_serving.sql
+psql -v ON_ERROR_STOP=1 -d YOUR_DATABASE -f basketball_ai/data/ai_schema.sql
 # Optional, required when Metric Rating is enabled:
 psql -d YOUR_DATABASE -f basketball_ai/data/ai_metric_schema.sql
 ```
@@ -96,7 +97,13 @@ inclusive start/end dates selected from the calendar, and an enable/disable
 switch both on job creation and on each saved job. The end date is calendar-day
 inclusive; once it has passed the scheduler disables that job. See
 [`docs/SCHEDULER.md`](docs/SCHEDULER.md) for the complete task list and schema
-contract.
+contract. After a scheduler/schema release, reapply the SQL contract as the
+schema owner with
+`psql -v ON_ERROR_STOP=1 -d YOUR_DATABASE -f basketball_ai/data/ai_scenario_serving.sql`.
+The web process does not run DDL at request time: the script performs the
+idempotent migration and grants runtime DML only on the two scheduler metadata
+tables and their sequences. If the console cannot preflight the schema/rights,
+it returns HTTP 503 with the PostgreSQL detail rather than a generic 500.
 
 For routine nightly data refreshes, configure one
 `refresh_context_seasonal` / `AI_Source.RefreshContextSeasonal` task for the

@@ -1669,6 +1669,61 @@ def test_interval_scheduler_waits_until_optional_start_date():
     assert next_run.astimezone(zone) == datetime(2026, 10, 24, 0, 0, tzinfo=zone)
 
 
+def test_scheduler_database_contract_preflight_is_read_only():
+    statements = []
+
+    class FakeConnection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def execute(self, statement):
+            statements.append(str(statement))
+            return object()
+
+    class FakeEngine:
+        def connect(self):
+            return FakeConnection()
+
+    admin._check_scheduler_database_contract(FakeEngine())
+
+    combined = "\\n".join(statements).lower()
+    assert len(statements) == 3
+    assert 'from "ai_source"."playercompetitionstats"' in combined
+    assert 'from "ai_source"."aimodelscheduledjob"' in combined
+    assert 'from "ai_source"."aimodeljobrun"' in combined
+    assert "alter table" not in combined
+
+
+def test_scheduler_engine_returns_actionable_503_when_postgres_contract_is_unavailable(monkeypatch):
+    class BrokenConnection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def execute(self, _statement):
+            raise RuntimeError('permission denied for table "AIModelScheduledJob"')
+
+    class BrokenEngine:
+        def connect(self):
+            return BrokenConnection()
+
+    monkeypatch.setattr(admin.STATE, "active_profile", "production")
+    monkeypatch.setattr(admin, "profile_url", lambda _profile: "postgresql+psycopg://redacted")
+    monkeypatch.setattr(admin, "get_engine", lambda _url: BrokenEngine())
+
+    with pytest.raises(HTTPException) as exc:
+        admin._scheduler_engine()
+
+    assert exc.value.status_code == 503
+    assert "ai_scenario_serving.sql" in exc.value.detail
+    assert "permission denied" in exc.value.detail
+
+
 def test_schedule_payload_accepts_daily_time_and_optional_date_bounds():
     payload = admin.ScheduleJobPayload.model_validate({
         "name": "Nightly context refresh",

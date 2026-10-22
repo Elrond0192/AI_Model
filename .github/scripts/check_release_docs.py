@@ -43,6 +43,7 @@ def check_current_contract() -> list[str]:
     simulation_guide = read("docs/SIMULATION_ENGINE.md")
     roadmap = read("roadmap_intelligence.md")
     sql_contract = read("basketball_ai/data/ai_scenario_serving.sql")
+    admin_app = read("basketball_ai/admin_web/app.py")
     ui = read("basketball_ai/admin_web/static/index.html")
 
     required_scheduler_terms = {
@@ -54,6 +55,7 @@ def check_current_contract() -> list[str]:
         "seasonal refresh task": "refresh_context_seasonal",
         "model training boundary": "does not mean",
         "causal refresh boundary": "**not** keys in the recurring scheduler",
+        "migration ownership boundary": "does not perform schema DDL as the runtime role",
     }
     for label, phrase in required_scheduler_terms.items():
         if phrase.lower() not in scheduler.lower():
@@ -101,6 +103,21 @@ def check_current_contract() -> list[str]:
             "docs/PLAYER_INTELLIGENCE.md must distinguish descriptive availability "
             "from the partial causal capability"
         )
+    check_start = admin_app.find("def _check_scheduler_database_contract")
+    check_end = admin_app.find("def _coerce_schedule_date", check_start)
+    if check_start < 0 or check_end <= check_start:
+        errors.append("Scheduler must preflight database access without runtime DDL")
+    elif "ALTER TABLE" in admin_app[check_start:check_end]:
+        errors.append("Runtime scheduler contract preflight must not execute ALTER TABLE")
+
+    if (
+        "grant select, insert, update, delete on table" not in sql_contract.lower()
+        or '"AI_Source"."AIModelScheduledJob"' not in sql_contract
+        or '"AI_Source"."AIModelJobRun"' not in sql_contract
+        or "grant usage, select on sequence" not in sql_contract.lower()
+    ):
+        errors.append("Serving SQL must grant least-privilege scheduler table/sequence access")
+
     if "SimulationCausalPanel is refreshed separately by the explicit guarded Model Releases cohort-refresh action" not in sql_contract:
         errors.append(
             "SQL diagnostics must state that causal panels are refreshed separately "

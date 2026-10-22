@@ -7,6 +7,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 ### Fixed
+- Fixed scheduler HTTP 500s for restricted PostgreSQL runtime roles: the web
+  process now validates access without attempting privileged runtime `ALTER TABLE`
+  operations, and the serving SQL grants CRUD only on scheduler metadata tables
+  and their sequences. Missing schema/permissions now return an actionable HTTP 503.
 - Removed the obsolete PR #76 implementation-label copy from Model Releases while
   retaining a concise description of the causal-panel refresh action.
 - Fixed Model Releases promotion and rollback button binding: operate on the full
@@ -23,7 +27,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### Documentation
 - Added `docs/SCHEDULER.md` and synchronized README, RUNBOOK and Player
   Intelligence/causal roadmaps with the current scheduler, causal-panel refresh
-  implementation and operational boundaries.
+  implementation and operational boundaries. Updated scheduler migration
+  ownership and least-privilege runtime permissions guidance.
 - Added a release-documentation policy and automated checks: runtime/API/data
   changes in a pull request must include documentation or changelog updates,
   and CI checks for known stale capability statements.
