@@ -87,6 +87,34 @@ Production access is through `https://admin-ai.bballstat.com`. The main flow is:
 
 The GUI runs long training in a dedicated background worker so the browser remains responsive. Production is never changed automatically by training.
 
+### Pianificazioni ricorrenti
+
+The **Pianificazioni** panel persists jobs in `"AI_Source"."AIModelScheduledJob"`
+and keeps execution history in `"AI_Source"."AIModelJobRun"`. It supports
+**Ogni X ore** and **Ogni giorno a un orario** in `Europe/Rome`, optional
+inclusive start/end dates selected from the calendar, and an enable/disable
+switch both on job creation and on each saved job. The end date is calendar-day
+inclusive; once it has passed the scheduler disables that job. See
+[`docs/SCHEDULER.md`](docs/SCHEDULER.md) for the complete task list and schema
+contract.
+
+For routine nightly data refreshes, configure one
+`refresh_context_seasonal` / `AI_Source.RefreshContextSeasonal` task for the
+season receiving new data, at a time after the upstream HoopmetricsEngine/ETL
+has committed the canonical source rows. This procedure already runs the
+Simulation, Training-serving and Scenario-serving refreshes for every discovered
+league/competition context in that season. Do not add three redundant jobs for
+the lower-level refresh procedures unless a specific partial rebuild is needed.
+A context refresh is not a model training, calibration or promotion.
+
+The **Model Releases → Refresh pannelli causali** buttons are separate manual
+maintenance actions. They rebuild the persisted team-switch or teammate-exposure
+observational cohorts across eligible completed league/competition contexts,
+write per-context counts/statuses and audit the run. They are not currently
+recurring scheduler task types and do not train or promote a model. Keep
+`causal_team_effect` partial until out-of-time, placebo, sensitivity, uncertainty
+and production-contract validation pass.
+
 ## CLI fallback: validate data
 
 ```bash
