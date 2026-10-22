@@ -87,7 +87,12 @@ _OPTIONAL_COLUMNS = {
     "lineup_stints": ("league_key", "season", "competition", "player_ids", "team_id", "opponent_team_id", "offense_player_id", "defense_player_id", "assignment_probability", "possessions", "points", "points_allowed", "turnovers_forced", "ortg", "drtg", "net_rtg"),
     "play_type_stats": ("player_id", "team_id", "opponent_team_id", "league_key", "season", "competition", "play_type", "possessions", "ppp", "ppp_allowed"),
     "shot_profiles": ("player_id", "team_id", "league_key", "season", "competition", "zone", "attempts", "fg_pct"),
-    "causal_panel": ("treatment", "next_outcome"),
+    "causal_panel": (
+        "treatment", "next_outcome", "source_type", "details", "global_id",
+        "teammate_global_id", "league_key", "competition", "baseline_bb_rating",
+        "minutes_pre", "usage_pre", "age_pre", "team_strength_pre",
+        "transition_season", "role_pre", "refreshed_at",
+    ),
 }
 
 _SCENARIO_FEEDS = {

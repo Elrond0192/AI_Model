@@ -318,6 +318,31 @@ def test_api_prefers_managed_bb_rating_release_over_legacy_sibling(monkeypatch, 
     assert loaded["loaded_path"] == managed
 
 
+def test_causal_panel_refresh_endpoint_uses_canonical_bb_rating_and_audit(monkeypatch):
+    from types import SimpleNamespace
+    payload = admin.CausalPanelRefreshPayload(
+        kind="team_switch", league="ITA1", competition="RS", through_season=2025
+    )
+    monkeypatch.setattr(admin.STATE, "data", {
+        "player_stats": object(), "league_dict": {1: {"league_key": "ITA1"}},
+        "players": object(), "leagues": object(),
+    })
+    monkeypatch.setattr(admin.STATE, "active_profile", "production")
+    monkeypatch.setattr(admin, "BBRatingEngine", lambda *args, **kwargs: object())
+    monkeypatch.setattr(admin, "ChatScenarioEngine", lambda *args, **kwargs: SimpleNamespace(
+        refresh_team_switch_causal_panel=lambda *args, **kwargs: {"status": "complete", "rows": 120}
+    ))
+    monkeypatch.setattr(admin, "StrictProductionEnsembleModel", lambda: object())
+    monkeypatch.setattr(admin, "get_engine", lambda url: object())
+    monkeypatch.setattr(admin, "profile_url", lambda name: "postgresql+psycopg://test")
+    audit = []
+    monkeypatch.setattr(admin, "_audit", lambda *args, **kwargs: audit.append(args))
+    result = admin.refresh_causal_panel(payload, {"username": "admin", "role": "admin", "token": "test"})
+    assert result["status"] == "complete"
+    assert result["kind"] == "team_switch"
+    assert audit and audit[0][1] == "causal_panel_refresh"
+
+
 def test_model_release_buttons_use_node_list_and_cancel_jobs_are_exposed():
     static = Path(admin.STATIC_ROOT)
     js = (static / "app.js").read_text(encoding="utf-8")

@@ -165,13 +165,51 @@ CREATE TABLE IF NOT EXISTS "AI_Source"."SimulationShotProfiles" (
     fg_pct double precision
 );
 
--- Intentionally schema-only until causal treatment/control identification is designed.
+-- Refresh-audited longitudinal causal evidence panel. Rows must be produced
+-- only from canonical BB-Rating outcomes and an explicit pre-treatment design;
+-- this schema does not itself make an observational comparison causal.
 CREATE TABLE IF NOT EXISTS "AI_Source"."SimulationCausalPanel" (
     treatment text,
     next_outcome double precision,
     source_type text,
-    details jsonb
+    details jsonb,
+    global_id text,
+    teammate_global_id text,
+    league_key text,
+    competition text,
+    baseline_bb_rating double precision,
+    minutes_pre double precision,
+    usage_pre double precision,
+    age_pre double precision,
+    team_strength_pre double precision,
+    transition_season integer,
+    role_pre text,
+    refreshed_at timestamptz NOT NULL DEFAULT now()
 );
+
+-- Evolve installations that already have the original schema-only table.
+ALTER TABLE "AI_Source"."SimulationCausalPanel"
+    ADD COLUMN IF NOT EXISTS global_id text,
+    ADD COLUMN IF NOT EXISTS teammate_global_id text,
+    ADD COLUMN IF NOT EXISTS league_key text,
+    ADD COLUMN IF NOT EXISTS competition text,
+    ADD COLUMN IF NOT EXISTS baseline_bb_rating double precision,
+    ADD COLUMN IF NOT EXISTS minutes_pre double precision,
+    ADD COLUMN IF NOT EXISTS usage_pre double precision,
+    ADD COLUMN IF NOT EXISTS age_pre double precision,
+    ADD COLUMN IF NOT EXISTS team_strength_pre double precision,
+    ADD COLUMN IF NOT EXISTS transition_season integer,
+    ADD COLUMN IF NOT EXISTS role_pre text,
+    ADD COLUMN IF NOT EXISTS refreshed_at timestamptz NOT NULL DEFAULT now();
+
+CREATE INDEX IF NOT EXISTS ix_simulation_causal_panel_context
+    ON "AI_Source"."SimulationCausalPanel"
+       (league_key, competition, transition_season, source_type);
+CREATE INDEX IF NOT EXISTS ix_simulation_causal_panel_player
+    ON "AI_Source"."SimulationCausalPanel" (global_id, transition_season);
+CREATE INDEX IF NOT EXISTS ix_simulation_causal_panel_teammate
+    ON "AI_Source"."SimulationCausalPanel"
+       (teammate_global_id, league_key, competition, transition_season);
 
 CREATE INDEX IF NOT EXISTS ix_simulation_pbp_context
     ON "AI_Source"."SimulationPbpEvents" (league_key, season, competition);

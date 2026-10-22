@@ -2,8 +2,7 @@
 
 ## Decision
 
-Do **not** promote `performance_attribution` or `causal_team_effect` from
-`partial` to `available` yet. The current implementation can provide:
+The descriptive `performance_attribution` capability is now `available` within a narrowed scope: decomposition and observed associations only. Keep `causal_team_effect` `partial` until causal identification and production validation pass. The implementation can provide:
 - canonical BB-Rating (1–100) history and mathematical score decomposition;
 - observed changes in minutes, usage and role;
 - associations between player-season BB-Rating and observed team context;
@@ -17,9 +16,7 @@ confounders, overlap and identifying assumptions are defensible.
 
 ## Current data readiness
 
-The repository has a schema for `AI_Source.SimulationCausalPanel`, but the
-seasonal source-refresh design explicitly leaves it unpopulated until a causal
-design is specified. The existing `causal_effect` scenario can fall back to a
+The `AI_Source.SimulationCausalPanel` contract now includes canonical focal-player identity, optional named-teammate identity, league/competition, pre-treatment BB-Rating, minutes, usage, age, team strength, role, transition season and refresh timestamp. An incremental migration preserves installations with the original schema-only table, and the data loader reads the expanded contract. The team-switch estimator builds an in-memory cohort from canonical player/team season sources. A separate guarded teammate-exposure cohort ATT estimator is implemented and wired to consume a persisted panel only when a named teammate is explicitly requested. Explicit `refresh_team_switch_causal_panel(...)` and `refresh_teammate_exposure_causal_panel(...)` maintenance entry points now build completed adjacent-season cohorts and persist them through the canonical BB-Rating engine and atomic writer. They are not scheduled or run automatically by chat; production permissions, refresh orchestration, persisted-row audit and out-of-time/placebo/sensitivity validation still need to be wired and verified. The table must not be treated as populated merely because its schema exists. The existing `causal_effect` scenario can fall back to a
 constructed next-season panel based on changes in minutes; this is not an
 acceptable source for team/teammate attribution and must not be reused as proof
 of the requested causal effect.
@@ -91,43 +88,37 @@ This is a candidate design, not a guarantee that observational data identify
 the effect. If key confounders are unavailable or overlap fails, the correct
 result is that the causal effect is not identified for that question.
 
-## Requirements before capability status changes
+## Capability scope and promotion gates
 
-### `performance_attribution` can become `available` only when
-- the decomposition and team/role/lineup evidence paths have contract tests;
-- each evidence layer returns an explicit outcome, source, sample size and
-  unavailable/insufficient state;
-- the causal teammate/team component either passes its identification gates or
-  is clearly optional and the capability definition is narrowed to descriptive
-  attribution. Do not silently equate association with attribution.
+### `performance_attribution` — available, descriptive scope
+- The capability is limited to observed BB-Rating decomposition, role/usage changes, team-context associations and descriptive lineup/team-Net-Rating comparisons.
+- Each optional evidence layer must expose its outcome, source, sample size and unavailable/insufficient state.
+- It must never describe an observed association as a cause. Requests for causal language must also invoke `causal_team_effect`.
 
-### `causal_team_effect` can become `available` only when
-- the declared estimand and treatment/outcome timeline are implemented;
-- the panel is populated from canonical, refresh-audited source relations;
-- the causal estimator and all diagnostics above are implemented and tested;
-- out-of-time and placebo tests pass prespecified acceptance thresholds;
-- production responses expose the estimate only when all mandatory gates pass.
+### `causal_team_effect` — remains partial
+- The initial team-switch cohort ATT is implemented, but the panel is currently built in memory and is not yet persisted or refresh-audited.
+- The estimate is cohort-level, observational and conditional on assumptions; it is not a named player's causal effect.
+- Promotion requires a persisted canonical panel, validated uncertainty, out-of-time and placebo tests, sensitivity/leave-one-team-season-out checks, prespecified thresholds, and production contract tests.
+- Teammate-specific causal attribution remains unavailable until a defensible treatment/exposure and outcome design is implemented and validated.
 
-A capability can be operationally available while a specific player's result is
-`insufficient_evidence`; the endpoint must still say so for that query.
+A capability can be operationally available while a specific player's result is `insufficient_evidence`; the endpoint must still say so for that query.
 
-## Implementation sequence
+## Implementation status
 
-1. Add a schema/versioned causal panel contract with canonical player/team
-   identities, treatment definition/date, outcome season, pre-treatment
-   covariates and source provenance. Validate panel uniqueness and temporal
-   ordering during refresh.
-2. Implement descriptive panel readiness/overlap/balance diagnostics first.
-3. Implement one estimand (recommended first: team-switch ATT on next completed
-   season BB-Rating) with a fixed comparison-cohort definition and out-of-time
-   tests.
-4. Add teammate exposure only after the data can define treatment before outcome
-   and avoid treating selected shared minutes as if randomized.
-5. Promote capability metadata only after the acceptance suite passes.
+- Implemented in basketball_ai/scenarios/causal_attribution.py: guarded cohort-level team-switch ATT using propensity and outcome models on pre-treatment BB-Rating, minutes, usage, age, team strength, role and transition season.
+- The in-memory builder uses canonical global player identity and the canonical BB-Rating engine only. It excludes the current calendar year as potentially in progress, requires adjacent completed seasons, and keeps one latest transition per player to avoid repeated-player pseudo-replication.
+- `performance_attribution` now includes an explicit adjacent-season descriptive decomposition: BB-Rating point change, team-context score change, minutes and usage changes, team switch and role change. It labels this as non-causal and does not assign percentages of responsibility to individual/team factors.
+- The estimator suppresses the estimate when treated/control counts, propensity overlap or weighted covariate balance fail. It returns diagnostics and an interval only when the gates pass. The estimate is explicitly cohort-level and conditional on observational assumptions.
+- This is an initial guarded estimator, not proof of causality and not a player-specific estimate. Its uncertainty calculation, calibration comparability, residual confounding and out-of-time/placebo performance still require validation against production data.
+
+## Remaining implementation sequence
+
+1. Persist a schema/versioned causal panel with canonical player/team identities, treatment date, outcome season, pre-treatment covariates, calibration release and source provenance; validate uniqueness and temporal ordering during refresh.
+2. Run rolling-origin/out-of-time, placebo, sensitivity and leave-one-team/season-out tests on real completed-season data with prespecified acceptance thresholds.
+3. Add teammate exposure only after treatment timing and selection are modeled without treating shared minutes as randomized.
+4. Promote causal_team_effect only after these tests pass. Until then its status remains partial.
 
 ## Immediate safety rule
 
-Until those gates pass, keep both capability statuses `partial`. Return the
-existing BB-Rating decomposition and observed associations, but explicitly say
-that the causal effect is not identified. Never call an observed difference
+The descriptive performance_attribution capability is now marked available because it is explicitly scoped to observed decomposition and associations, with causal claims excluded. Keep causal_team_effect marked partial. Return the existing BB-Rating decomposition and observed associations, and expose the cohort ATT only when its support and balance gates pass; explicitly state that this is not a player-specific causal effect and that causal identification remains conditional on observational assumptions. Never call an observed difference
 "caused by the team", "caused by the quintet" or "caused by a teammate".

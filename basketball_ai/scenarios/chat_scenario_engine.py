@@ -38,6 +38,11 @@ from basketball_ai.models.strict_production import (
 )
 from basketball_ai.scenarios.advanced_simulation_engine import AdvancedSimulationEngine
 from basketball_ai.scenarios.provenance import build_scenario_provenance
+from basketball_ai.scenarios.causal_attribution import (
+    estimate_team_switch_att,
+    estimate_teammate_exposure_att,
+    persist_causal_panel,
+)
 
 _PLAYER_METRICS = (
     "rating", "games_played", "minutes_per_game", "points", "rebounds", "assists",
@@ -265,6 +270,7 @@ class ChatScenarioEngine:
             "composite_scenario": self.advanced.composite,
             "causal_effect": self.advanced.causal_effect,
             "causal_team_effect": self._causal_team_effect,
+            "performance_attribution": self._causal_team_effect,
             "model_evidence": self._model_evidence,
         }
         if scenario not in dispatch:
@@ -1166,6 +1172,331 @@ class ChatScenarioEngine:
             "teammate_associations": teammate_associations,
         }
 
+    def _build_team_switch_causal_panel(self, source_league, competition, through_season):
+        """Build one latest completed transition per canonical player identity.
+
+        The outcome is always the canonical BB-Rating, never the source rating.
+        Current-calendar-year seasons are conservatively excluded as potentially
+        in progress. Treatment is an observed team switch between adjacent
+        completed seasons; this is observational cohort evidence, not a
+        player-specific counterfactual.
+        """
+        frame = self.data.get("player_stats", pd.DataFrame()).copy()
+        empty = pd.DataFrame()
+        required = {"player_id", "season", "league_id", "competition", "team_id"}
+        if frame.empty or not required.issubset(frame.columns):
+            return empty
+        frame["_year"] = frame["season"].map(_year)
+        frame["_league_int"] = frame["league_id"].map(_to_int)
+        frame["_comp"] = frame["competition"].map(normalize_competition)
+        completed_cutoff = min(int(through_season), int(pd.Timestamp.utcnow().year) - 1)
+        frame = frame[
+            (frame["_league_int"] == _to_int(source_league))
+            & (frame["_comp"] == normalize_competition(competition))
+            & (frame["_year"] <= completed_cutoff)
+        ].copy()
+        if frame.empty:
+            return empty
+
+        players_frame = self.data.get("players", pd.DataFrame())
+        if isinstance(players_frame, pd.DataFrame) and {"id", "global_id"}.issubset(players_frame.columns):
+            canonical_columns = ["id", "global_id"] + [column for column in ("birth_date", "age", "position") if column in players_frame.columns]
+            canonical = players_frame[canonical_columns].copy()
+            canonical["id"] = canonical["id"].map(_to_int)
+            canonical["global_id"] = canonical["global_id"].fillna("").astype(str).str.strip()
+            canonical = canonical[(canonical["id"].notna()) & (canonical["global_id"] != "")].drop_duplicates("id", keep="last")
+            identity_map = canonical.set_index("id")["global_id"]
+            frame["_global_id"] = frame["player_id"].map(_to_int).map(identity_map)
+            if "global_id" in frame.columns:
+                frame["_global_id"] = frame["_global_id"].fillna(frame["global_id"].fillna("").astype(str).str.strip())
+            meta_by_id = canonical.set_index("id").to_dict("index")
+        elif "global_id" in frame.columns:
+            frame["_global_id"] = frame["global_id"].fillna("").astype(str).str.strip()
+            meta_by_id = {}
+        else:
+            return empty
+        frame = frame[frame["_global_id"].fillna("").astype(str).str.strip() != ""].copy()
+        frame["_team_int"] = frame["team_id"].map(_to_int)
+        if frame.empty:
+            return empty
+
+        # Collapse legacy/canonical duplicate IDs and multi-row duplicates to one
+        # observed player-season, preferring the row with the greatest minutes.
+        if "minutes_per_game" in frame.columns:
+            frame["_minutes_sort"] = pd.to_numeric(frame["minutes_per_game"], errors="coerce").fillna(-1)
+            frame = frame.sort_values(["_global_id", "_year", "_minutes_sort"], kind="stable")
+        else:
+            frame = frame.sort_values(["_global_id", "_year"], kind="stable")
+        frame = frame.drop_duplicates(["_global_id", "_year"], keep="last")
+
+        team_stats = self.data.get("team_season_stats", pd.DataFrame()).copy()
+        if team_stats.empty or not {"team_id", "season", "league_id", "competition"}.issubset(team_stats.columns):
+            return empty
+        team_stats["_year"] = team_stats["season"].map(_year)
+        team_stats["_team_int"] = team_stats["team_id"].map(_to_int)
+        team_stats["_league_int"] = team_stats["league_id"].map(_to_int)
+        team_stats["_comp"] = team_stats["competition"].map(normalize_competition)
+        team_stats = team_stats[
+            (team_stats["_league_int"] == _to_int(source_league))
+            & (team_stats["_comp"] == normalize_competition(competition))
+            & (team_stats["_year"] <= completed_cutoff)
+        ].copy()
+
+        def team_strength(team_id, year):
+            candidates = team_stats[
+                (team_stats["_team_int"] == team_id) & (team_stats["_year"] == year)
+            ]
+            if candidates.empty:
+                return np.nan
+            team = candidates.iloc[-1]
+            net = _finite(team.get("net_rtg"), np.nan)
+            if math.isfinite(net):
+                return net
+            off = _finite(team.get("offensive_rating"), np.nan)
+            defense = _finite(team.get("defensive_rating"), np.nan)
+            return off - defense if math.isfinite(off) and math.isfinite(defense) else np.nan
+
+        def player_age(row, player_id, year):
+            direct = _finite(row.get("age"), np.nan)
+            if math.isfinite(direct) and 15 <= direct <= 60:
+                return direct
+            meta = meta_by_id.get(_to_int(player_id), {}) if isinstance(meta_by_id, dict) else {}
+            direct = _finite(meta.get("age"), np.nan) if isinstance(meta, dict) else np.nan
+            if math.isfinite(direct) and 15 <= direct <= 60:
+                return direct
+            birth = meta.get("birth_date") if isinstance(meta, dict) else None
+            try:
+                birth_year = pd.to_datetime(birth, errors="raise").year
+                age = float(year - birth_year)
+                return age if 15 <= age <= 60 else np.nan
+            except (TypeError, ValueError, OverflowError):
+                return np.nan
+
+        records = []
+        for global_id, group in frame.groupby("_global_id", sort=False):
+            group = group.sort_values("_year", kind="stable").reset_index(drop=True)
+            candidate_pairs = []
+            for idx in range(1, len(group)):
+                before = group.iloc[idx - 1]
+                after = group.iloc[idx]
+                year_before, year_after = int(before["_year"]), int(after["_year"])
+                if year_after != year_before + 1:
+                    continue
+                team_before, team_after = _to_int(before.get("_team_int")), _to_int(after.get("_team_int"))
+                if team_before is None or team_after is None:
+                    continue
+                candidate_pairs.append((before, after, year_before, year_after, team_before, team_after))
+            if not candidate_pairs:
+                continue
+            # Only score the latest valid transition for each player. Calling
+            # the canonical rating engine for every historical pair would repeat
+            # expensive work while the estimator accepts one row per identity.
+            before, after, year_before, year_after, team_before, team_after = candidate_pairs[-1]
+            bb_before = self._bb_rating_for_season(str(global_id), source_league, year_before, competition)
+            bb_after = self._bb_rating_for_season(str(global_id), source_league, year_after, competition)
+            if bb_before is None or bb_after is None:
+                continue
+            minutes = _finite(before.get("minutes_per_game"), np.nan)
+            usage = _ratio(before.get("usg_pct"), np.nan)
+            meta = meta_by_id.get(_to_int(before.get("player_id")), {}) if isinstance(meta_by_id, dict) else {}
+            role_value = next((
+                str(value).strip()
+                for value in (
+                    before.get("ruolo_combinato"),
+                    before.get("role"),
+                    before.get("position"),
+                    meta.get("position") if isinstance(meta, dict) else None,
+                )
+                if value is not None and not pd.isna(value) and str(value).strip()
+            ), "unknown")
+            records.append({
+                "global_id": str(global_id),
+                "league_key": str(self._league_key(source_league) or "").upper(),
+                "competition": normalize_competition(competition),
+                "transition_season": year_after,
+                "treatment": int(team_before != team_after),
+                "outcome": float(bb_after),
+                "baseline_bb_rating": float(bb_before),
+                "minutes_pre": minutes,
+                "usage_pre": usage,
+                "age_pre": player_age(before, _to_int(before.get("player_id")), year_before),
+                "team_strength_pre": team_strength(team_before, year_before),
+                "role_pre": role_value,
+            })
+        if not records:
+            return empty
+        panel = pd.DataFrame(records).sort_values(["global_id", "transition_season"], kind="stable")
+        panel = panel.drop_duplicates("global_id", keep="last").reset_index(drop=True)
+        return panel
+
+    def refresh_team_switch_causal_panel(
+        self, database_engine, *, source_league, competition: str, through_season: int
+    ) -> dict[str, Any]:
+        """Refresh persisted team-switch evidence for one league/competition.
+
+        This is an explicit maintenance operation, not a chat side effect. It
+        persists only completed transitions with canonical BB-Rating outcomes.
+        """
+        if self.bb_rating_engine is None:
+            return {"status": "not_written", "rows": 0, "reason": "canonical_bb_rating_engine_unavailable"}
+        league_key = str(self._league_key(source_league) or "").strip().upper()
+        if not league_key:
+            return {"status": "not_written", "rows": 0, "reason": "league_context_required"}
+        competition_key = normalize_competition(competition)
+        panel = self._build_team_switch_causal_panel(
+            source_league, competition_key, int(through_season)
+        )
+        if panel.empty:
+            return {"status": "not_written", "rows": 0, "reason": "no_supported_completed_transitions"}
+        return persist_causal_panel(
+            panel,
+            database_engine,
+            source_type="team_switch",
+            league_key=league_key,
+            competition=competition_key,
+        )
+
+    def _build_teammate_exposure_causal_panel(
+        self, source_league, competition, through_season, teammate_global_id: str
+    ) -> pd.DataFrame:
+        """Build one completed adjacent-season outcome row per canonical focal player."""
+        frame = self.data.get("player_stats", pd.DataFrame()).copy()
+        players_frame = self.data.get("players", pd.DataFrame()).copy()
+        team_stats = self.data.get("team_season_stats", pd.DataFrame()).copy()
+        if frame.empty or players_frame.empty or team_stats.empty:
+            return pd.DataFrame()
+        if not {"id", "global_id"}.issubset(players_frame.columns):
+            return pd.DataFrame()
+        canonical = players_frame[["id", "global_id"] + [
+            column for column in ("birth_date", "age", "position") if column in players_frame.columns
+        ]].copy()
+        canonical["id"] = canonical["id"].map(_to_int)
+        canonical["global_id"] = canonical["global_id"].fillna("").astype(str).str.strip()
+        canonical = canonical[(canonical["id"].notna()) & canonical["global_id"].ne("")].drop_duplicates("id")
+        teammate_rows = canonical[
+            canonical["global_id"].str.casefold().eq(str(teammate_global_id).strip().casefold())
+        ]
+        if teammate_rows.empty:
+            return pd.DataFrame()
+        teammate_id = _to_int(teammate_rows.iloc[0]["id"])
+        meta_by_id = canonical.set_index("id").to_dict("index")
+        frame["_year"] = frame["season"].map(_year)
+        frame["_league_int"] = frame["league_id"].map(_to_int)
+        frame["_comp"] = frame["competition"].map(normalize_competition)
+        cutoff = min(int(through_season), int(pd.Timestamp.utcnow().year) - 1)
+        frame = frame[
+            (frame["_league_int"] == _to_int(source_league))
+            & (frame["_comp"] == normalize_competition(competition))
+            & (frame["_year"] <= cutoff)
+        ].copy()
+        frame["_global_id"] = frame["player_id"].map(_to_int).map(canonical.set_index("id")["global_id"])
+        frame["_team_int"] = frame["team_id"].map(_to_int)
+        frame = frame[frame["_global_id"].fillna("").astype(str).ne("") & frame["_team_int"].notna()]
+        frame = frame.sort_values(["_global_id", "_year"], kind="stable").drop_duplicates(
+            ["_global_id", "_year"], keep="last"
+        )
+        if frame.empty:
+            return pd.DataFrame()
+        teammate_seasons = frame[frame["player_id"].map(_to_int).eq(teammate_id)].set_index("_year")
+        if teammate_seasons.empty:
+            return pd.DataFrame()
+        team_stats["_year"] = team_stats["season"].map(_year)
+        team_stats["_team_int"] = team_stats["team_id"].map(_to_int)
+        team_stats["_league_int"] = team_stats["league_id"].map(_to_int)
+        team_stats["_comp"] = team_stats["competition"].map(normalize_competition)
+        team_stats = team_stats[
+            (team_stats["_league_int"] == _to_int(source_league))
+            & (team_stats["_comp"] == normalize_competition(competition))
+            & (team_stats["_year"] <= cutoff)
+        ]
+
+        def team_strength(team_id, year):
+            rows = team_stats[(team_stats["_team_int"] == team_id) & (team_stats["_year"] == year)]
+            if rows.empty:
+                return np.nan
+            row = rows.iloc[-1]
+            net = _finite(row.get("net_rtg"), np.nan)
+            if math.isfinite(net):
+                return net
+            off, defense = _finite(row.get("offensive_rating"), np.nan), _finite(row.get("defensive_rating"), np.nan)
+            return off - defense if math.isfinite(off) and math.isfinite(defense) else np.nan
+
+        records = []
+        for focal_global_id, group in frame.groupby("_global_id", sort=False):
+            if str(focal_global_id).casefold() == str(teammate_global_id).strip().casefold():
+                continue
+            group = group.sort_values("_year", kind="stable").reset_index(drop=True)
+            pairs = [
+                (group.iloc[idx - 1], group.iloc[idx])
+                for idx in range(1, len(group))
+                if int(group.iloc[idx]["_year"]) == int(group.iloc[idx - 1]["_year"]) + 1
+            ]
+            if not pairs:
+                continue
+            before, after = pairs[-1]
+            before_year, after_year = int(before["_year"]), int(after["_year"])
+            teammate_after = teammate_seasons.loc[after_year] if after_year in teammate_seasons.index else None
+            if isinstance(teammate_after, pd.DataFrame):
+                teammate_after = teammate_after.iloc[-1]
+            team_after = _to_int(after.get("_team_int"))
+            teammate_team_after = _to_int(teammate_after.get("_team_int")) if isinstance(teammate_after, pd.Series) else None
+            baseline = self._bb_rating_for_season(str(focal_global_id), source_league, before_year, competition)
+            outcome = self._bb_rating_for_season(str(focal_global_id), source_league, after_year, competition)
+            if baseline is None or outcome is None or team_after is None:
+                continue
+            focal_id = _to_int(before.get("player_id"))
+            meta = meta_by_id.get(focal_id, {})
+            age = _finite(before.get("age"), np.nan)
+            if not math.isfinite(age):
+                age = _finite(meta.get("age"), np.nan)
+            if not math.isfinite(age):
+                try:
+                    age = float(before_year - pd.to_datetime(meta.get("birth_date"), errors="raise").year)
+                except (TypeError, ValueError, OverflowError):
+                    age = np.nan
+            role = next((str(value).strip() for value in (
+                before.get("ruolo_combinato"), before.get("role"), before.get("position"), meta.get("position")
+            ) if value is not None and not pd.isna(value) and str(value).strip()), "unknown")
+            records.append({
+                "global_id": str(focal_global_id),
+                "teammate_global_id": str(teammate_global_id).strip(),
+                "league_key": str(self._league_key(source_league) or "").upper(),
+                "competition": normalize_competition(competition),
+                "transition_season": after_year,
+                "treatment": int(teammate_team_after is not None and team_after == teammate_team_after),
+                "outcome": float(outcome),
+                "baseline_bb_rating": float(baseline),
+                "minutes_pre": _finite(before.get("minutes_per_game"), np.nan),
+                "usage_pre": _ratio(before.get("usg_pct"), np.nan),
+                "age_pre": age,
+                "team_strength_pre": team_strength(_to_int(before.get("_team_int")), before_year),
+                "role_pre": role,
+            })
+        if not records:
+            return pd.DataFrame()
+        return pd.DataFrame(records).drop_duplicates("global_id", keep="last").reset_index(drop=True)
+
+    def refresh_teammate_exposure_causal_panel(
+        self, database_engine, *, source_league, competition: str,
+        through_season: int, teammate_global_id: str,
+    ) -> dict[str, Any]:
+        """Build and persist a named-teammate exposure cohort for one context."""
+        if self.bb_rating_engine is None:
+            return {"status": "not_written", "rows": 0, "reason": "canonical_bb_rating_engine_unavailable"}
+        league_key = str(self._league_key(source_league) or "").strip().upper()
+        if not league_key or not str(teammate_global_id).strip():
+            return {"status": "not_written", "rows": 0, "reason": "league_and_teammate_identity_required"}
+        competition_key = normalize_competition(competition)
+        panel = self._build_teammate_exposure_causal_panel(
+            source_league, competition_key, int(through_season), str(teammate_global_id)
+        )
+        if panel.empty:
+            return {"status": "not_written", "rows": 0, "reason": "no_supported_completed_teammate_transitions"}
+        return persist_causal_panel(
+            panel, database_engine, source_type="teammate_exposure",
+            league_key=league_key, competition=competition_key,
+        )
+
     def _causal_team_effect(self, spec, players, teams, source_league, target_league):
         """Measure BB-Rating association with team context; do not claim causality."""
         del teams, target_league
@@ -1433,7 +1764,112 @@ class ChatScenarioEngine:
                 "reason": f"Optional lineup evidence could not be evaluated: {str(exc)[:240]}",
             }
 
+        cohort_switch_estimate = {
+            "available": False,
+            "estimand": "average_treatment_effect_on_treated_team_switchers",
+            "effect_bb_rating_points": None,
+            "confidence_interval_95": None,
+            "identification": "unavailable",
+            "reason": "causal_panel_not_built",
+        }
+        parameters = spec.get("parameters", {}) or {}
+        raw_question_keys = parameters.get("question_keys")
+        if not isinstance(raw_question_keys, (list, tuple)):
+            raw_question_keys = [parameters.get("question_key", "")]
+        requested_question_keys = {str(key).strip().lower() for key in raw_question_keys}
+        causal_estimate_requested = (
+            str(spec.get("scenario", "")).strip().lower() == "causal_team_effect"
+            or "causal_team_effect" in requested_question_keys
+            or bool(parameters.get("include_cohort_team_switch_att", False))
+        )
+        teammate_exposure_estimate = {
+            "available": False,
+            "estimand": "observational_teammate_exposure_ATT",
+            "effect_bb_rating_points": None,
+            "confidence_interval_95": None,
+            "identification": "unavailable",
+            "reason": "named_teammate_not_requested",
+        }
+        if causal_estimate_requested:
+            try:
+                causal_panel = self._build_team_switch_causal_panel(
+                    source_league, competition, season
+                )
+                cohort_switch_estimate = estimate_team_switch_att(causal_panel)
+            except (ValueError, KeyError, TypeError, IndexError, np.linalg.LinAlgError) as exc:
+                cohort_switch_estimate = {
+                    "available": False,
+                    "estimand": "average_treatment_effect_on_treated_team_switchers",
+                    "effect_bb_rating_points": None,
+                    "confidence_interval_95": None,
+                    "identification": "unavailable",
+                    "reason": "causal_panel_build_failed:" + str(exc)[:180],
+                }
+            teammate_global_id = str(parameters.get("teammate_global_id", "")).strip()
+            if teammate_global_id:
+                stored_panel = self.data.get("causal_panel", pd.DataFrame())
+                if isinstance(stored_panel, pd.DataFrame) and not stored_panel.empty:
+                    teammate_panel = stored_panel.copy()
+                    if "next_outcome" in teammate_panel.columns and "outcome" not in teammate_panel.columns:
+                        teammate_panel = teammate_panel.rename(columns={"next_outcome": "outcome"})
+                    if "treatment" in teammate_panel.columns:
+                        teammate_panel["treatment"] = pd.to_numeric(teammate_panel["treatment"], errors="coerce")
+                    teammate_panel = teammate_panel[
+                        teammate_panel.get("source_type", pd.Series(index=teammate_panel.index, dtype=object))
+                        .astype(str).eq("teammate_exposure")
+                    ] if "source_type" in teammate_panel.columns else teammate_panel.iloc[0:0]
+                    teammate_panel = teammate_panel[
+                        teammate_panel.get("league_key", pd.Series(index=teammate_panel.index, dtype=object))
+                        .astype(str).str.upper().eq(str(self._league_key(source_league)).upper())
+                    ] if "league_key" in teammate_panel.columns else teammate_panel.iloc[0:0]
+                    teammate_panel = teammate_panel[
+                        teammate_panel.get("competition", pd.Series(index=teammate_panel.index, dtype=object))
+                        .astype(str).str.upper().eq(normalize_competition(competition))
+                    ] if "competition" in teammate_panel.columns else teammate_panel.iloc[0:0]
+                    teammate_exposure_estimate = estimate_teammate_exposure_att(
+                        teammate_panel, teammate_global_id=teammate_global_id
+                    )
+                else:
+                    teammate_exposure_estimate["reason"] = "persisted_teammate_panel_empty_or_unavailable"
+        else:
+            cohort_switch_estimate["reason"] = "cohort_estimate_not_requested_for_descriptive_attribution"
+
         latest = history.iloc[-1]
+        previous = history.iloc[-2] if len(history) >= 2 else None
+        observed_change_decomposition = {
+            "status": "available_descriptive" if previous is not None else "insufficient_history",
+            "method": "adjacent_observed_season_change_decomposition",
+            "is_causal": False,
+            "bb_rating_change_points": (
+                int(latest["bb_rating"]) - int(previous["bb_rating"])
+                if previous is not None else None
+            ),
+            "team_context_score_change": (
+                round(float(latest["team_context_score"]) - float(previous["team_context_score"]), 4)
+                if previous is not None else None
+            ),
+            "minutes_per_game_change": (
+                round(float(latest["minutes_per_game"]) - float(previous["minutes_per_game"]), 2)
+                if previous is not None
+                and math.isfinite(_finite(latest.get("minutes_per_game"), np.nan))
+                and math.isfinite(_finite(previous.get("minutes_per_game"), np.nan))
+                else None
+            ),
+            "usage_change_percentage_points": (
+                round((float(latest["usg_pct"]) - float(previous["usg_pct"])) * 100.0, 2)
+                if previous is not None
+                and math.isfinite(_finite(latest.get("usg_pct"), np.nan))
+                and math.isfinite(_finite(previous.get("usg_pct"), np.nan))
+                else None
+            ),
+            "team_changed": bool(latest["team_id"] != previous["team_id"]) if previous is not None else None,
+            "role_changed": bool(str(latest["role"]) != str(previous["role"])) if previous is not None else None,
+            "from_season": int(previous["season"]) if previous is not None else None,
+            "to_season": int(latest["season"]) if previous is not None else None,
+            "interpretation": (
+                "Descrive fattori osservati che cambiano insieme al BB-Rating; non assegna quote causali né percentuali di responsabilità."
+            ),
+        }
         if correlation is None:
             association_label = "insufficient_evidence"
         elif correlation >= 0.35:
@@ -1451,6 +1887,16 @@ class ChatScenarioEngine:
             "Le differenze per compagno sono associazioni del Net Rating di squadra nei possessi condivisi rispetto a quelli senza quel compagno, non stime del valore individuale o di un effetto causale.",
             "L'effetto causale resta non identificato senza un controfattuale difendibile e un controllo esplicito dei confondenti.",
         ]
+        if cohort_switch_estimate.get("available"):
+            limitations.append(
+                "È disponibile una stima osservazionale media per una coorte di giocatori che cambiano squadra; non è una stima causale specifica per questo giocatore."
+            )
+        else:
+            limitations.append(
+                "La stima media di coorte per il cambio squadra non è esposta perché i requisiti di campione, sovrapposizione o bilanciamento non sono soddisfatti: "
+                + str(cohort_switch_estimate.get("reason", "evidenza insufficiente"))
+                + "."
+            )
         if len(switches) < 2:
             limitations.append(
                 "Ci sono pochi cambi di squadra osservati per distinguere con affidabilità il contesto dalla variabilità individuale."
@@ -1470,6 +1916,8 @@ class ChatScenarioEngine:
                 "through_season": season,
                 "causal_identification": "unavailable",
                 "causal_effect": None,
+                "team_switch_cohort_att": cohort_switch_estimate,
+                "teammate_exposure_cohort_att": teammate_exposure_estimate,
                 "association": {
                     "label": association_label,
                     "bb_rating_vs_team_context_correlation": round(correlation, 3) if correlation is not None else None,
@@ -1492,6 +1940,7 @@ class ChatScenarioEngine:
                     "role": str(latest["role"]),
                 },
                 "team_switches": switches[-8:],
+                "observed_change_decomposition": observed_change_decomposition,
                 "lineup_context_association": lineup_context_association,
                 "observations": int(len(history)),
                 "excluded_seasons_without_canonical_bb_rating": sorted(set(unavailable_bb_rating_seasons)),

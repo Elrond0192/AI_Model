@@ -123,6 +123,22 @@ def test_ai_source_projects_all_native_advance_stats_clutch_fields():
         assert f"as {field}" in sql
 
 
+def test_causal_panel_has_longitudinal_and_audit_contract():
+    sql = SERVING_SQL.read_text(encoding="utf-8").lower()
+    for column in (
+        "global_id text", "teammate_global_id text", "league_key text",
+        "competition text", "baseline_bb_rating double precision",
+        "minutes_pre double precision", "usage_pre double precision",
+        "age_pre double precision", "team_strength_pre double precision",
+        "transition_season integer", "role_pre text", "refreshed_at timestamptz",
+    ):
+        assert column in sql
+    assert 'alter table "ai_source"."simulationcausalpanel"' in sql
+    assert "ix_simulation_causal_panel_context" in sql
+    assert "ix_simulation_causal_panel_teammate" in sql
+    assert "does not itself make an observational comparison causal" in sql
+
+
 def test_ai_source_does_not_own_simulation_feeds():
     sql = SOURCE_SQL.read_text(encoding="utf-8").lower()
     assert "c.relname like 'simulation%'" not in sql
