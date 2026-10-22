@@ -39,7 +39,7 @@ For season-over-season comparisons, the public rating is always the canonical BB
 
 ## Causal attribution readiness
 
-The implementation gate, proposed estimands, panel requirements, identification diagnostics and promotion criteria for `performance_attribution` / `causal_team_effect` are specified in [`CAUSAL_PLAYER_ATTRIBUTION_ROADMAP.md`](CAUSAL_PLAYER_ATTRIBUTION_ROADMAP.md). Keep both capabilities `partial` until the defined causal design is implemented and passes out-of-time, balance/overlap, placebo and sensitivity checks. The existing lineup comparisons remain descriptive and must not be presented as causal effects.
+The implementation gate, proposed estimands, panel requirements, identification diagnostics and promotion criteria for `performance_attribution` / `causal_team_effect` are specified in [`CAUSAL_PLAYER_ATTRIBUTION_ROADMAP.md`](CAUSAL_PLAYER_ATTRIBUTION_ROADMAP.md). `performance_attribution` is available only for descriptive decomposition and observed associations; `causal_team_effect` remains `partial` until the defined causal design passes out-of-time, balance/overlap, placebo, sensitivity and production-contract checks. The Model Releases page provides explicit manual refresh actions for the persisted observational panels; these operations do not train/promote models and do not make causal estimates validated. Lineup comparisons remain descriptive and must not be presented as causal effects.
 
 ## Design rule
 
