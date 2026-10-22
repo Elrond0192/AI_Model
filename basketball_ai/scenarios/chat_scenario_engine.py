@@ -1527,15 +1527,16 @@ class ChatScenarioEngine:
             source_year = rows["_year"].max()
             rows = rows[rows["_year"] == source_year]
             competition_key = normalize_competition(competition)
-            preference = [competition_key, "TOT", "RS"]
+            preference = list(dict.fromkeys([competition_key, "TOT", "RS"]))
             preferred = rows[rows["_comp"].isin(preference)].copy()
-            if not preferred.empty:
-                preferred["_comp_priority"] = preferred["_comp"].map(
-                    {key: index for index, key in enumerate(preference)}
-                ).fillna(len(preference))
-                rows = preferred.sort_values(
-                    ["_comp_priority"], kind="stable"
-                )
+            if preferred.empty:
+                return np.nan
+            preferred["_comp_priority"] = preferred["_comp"].map(
+                {key: index for index, key in enumerate(preference)}
+            ).fillna(len(preference))
+            rows = preferred.sort_values(
+                ["_comp_priority"], kind="stable"
+            )
             row = rows.iloc[0]
             net = _finite(row.get("net_rtg"), np.nan)
             if math.isfinite(net):
