@@ -50,10 +50,10 @@ def check_current_contract() -> list[str]:
         "daily wall-clock mode": "Daily at a time",
         "Rome timezone": "Europe/Rome",
         "inclusive start/end bounds": "Both boundaries are inclusive",
-        "activation switch": "enable/disable",
+        "activation switch": "activation switch",
         "seasonal refresh task": "refresh_context_seasonal",
-        "model training boundary": "does not imply",
-        "causal refresh boundary": "not keys in the recurring scheduler",
+        "model training boundary": "does not mean",
+        "causal refresh boundary": "not one of the recurring scheduler task types",
     }
     for label, phrase in required_scheduler_terms.items():
         if phrase.lower() not in scheduler.lower():
@@ -119,7 +119,7 @@ def check_current_contract() -> list[str]:
         errors.append("CHANGELOG.md must include the scheduler release entry")
     if "causal-panel" not in changelog.lower():
         errors.append("CHANGELOG.md must include the causal-panel refresh release entry")
-    if "same release change" not in contributor.lower():
+    if "same release change" not in " ".join(contributor.lower().split()):
         errors.append("CONTRIBUTING.md must require docs/changelog updates in the release change")
 
     return errors
