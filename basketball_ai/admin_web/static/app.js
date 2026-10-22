@@ -816,8 +816,7 @@ async function renderAiJobs(){
     if(job.task_key==='refresh_context_seasonal')return 'Tutte le leghe · tutte le competizioni';
     if(params.all_leagues)return 'Tutte le leghe · tutte le competizioni';
     const leagues=Array.isArray(params.leagues)?params.leagues:(params.league?[params.league]:[]);
-    const competition=params.competition?' · '+params.competition:' · tutte le competizioni';
-    return (leagues.length?leagues.join(', '):'Tutte le leghe')+competition;
+    return (leagues.length?leagues.join(', '):'Tutte le leghe')+' · tutte le competizioni';
   };
   const refreshSchedules=async()=>{
     const data=await api('/admin-api/scheduler/jobs');
