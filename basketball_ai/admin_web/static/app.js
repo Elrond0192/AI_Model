@@ -104,27 +104,43 @@ function updateTop(o){$('#top-db').textContent=o.database||'not selected';$('#to
 
 async function renderAiJobs(){
   const errorNode=$('#ai-jobs-error');
-  const renderJob=(selector,stateSelector,job,label)=>{
-    const status=String(job?.status||'idle').toLowerCase();
-    const state=$('#'+stateSelector);
-    if(state){state.textContent=status==='idle'?'Pronto':status==='running'?'In esecuzione':status==='queued'?'In coda':status==='complete'?'Completato':status==='failed'?'Errore':status==='cancelled'?'Annullato':status;state.className='status-badge '+(['running','queued'].includes(status)?'warning':status==='failed'?'danger':status==='complete'?'success':'');}
-    const node=$('#'+selector);
-    if(node)node.innerHTML=summaryRows([
-      ['Fase',job?.stage||'—'],
-      ['Avvio',job?.started_at||'—'],
-      ['Ultimo aggiornamento',job?.finished_at||'—'],
-      ['Dettaglio',job?.message||'Nessuna esecuzione registrata']
-    ])+(job?.error?'<p class="form-error">'+esc(job.error)+'</p>':'')+progressMarkup(job);
-    return {label,status,started_at:job?.started_at||null,finished_at:job?.finished_at||null,message:job?.message||'',error:job?.error||null};
+  const scheduleForm=$('#ai-jobs-schedule-form');
+  const taskFields=()=>{
+    const task=scheduleForm.task_key.value;
+    const params={};
+    if(['refresh_context_seasonal','refresh_simulation_sources','refresh_scenario_serving','refresh_training_serving'].includes(task)){
+      params.season=Number(scheduleForm.season.value);
+    }
+    if(['refresh_simulation_sources','refresh_scenario_serving','refresh_training_serving'].includes(task))params.league=scheduleForm.league.value.trim().toUpperCase();
+    if(['refresh_scenario_serving','refresh_training_serving'].includes(task))params.competition=scheduleForm.competition.value.trim().toUpperCase();
+    return params;
   };
+  const refreshSchedules=async()=>{
+    const data=await api('/admin-api/scheduler/jobs');
+    $('#ai-jobs-schedule-list').innerHTML=(data.jobs||[]).map(job=>'<div class="summary-row"><span><strong>'+esc(job.name)+'</strong><br><small>'+esc(job.task_key)+' · ogni '+esc(Math.round(job.interval_minutes/60))+' h · prossimo: '+esc(job.next_run_at||'—')+'</small></span><span>'+esc(job.last_status||'scheduled')+' <button class="btn btn-secondary btn-small" data-toggle-schedule="'+job.job_id+'">'+(job.enabled?'Pausa':'Riprendi')+'</button> <button class="btn btn-danger btn-small" data-delete-schedule="'+job.job_id+'">Elimina</button></span></div>').join('')||'<p class="microcopy">Nessuna pianificazione configurata.</p>';
+    $('#ai-jobs-run-history').innerHTML=(data.runs||[]).map(run=>'<div class="summary-row"><span>'+esc(run.task_key)+' · '+esc(run.started_at||'—')+'</span><strong>'+esc(run.status)+(run.error?' · '+esc(run.error):'')+'</strong></div>').join('')||'<p class="microcopy">Nessuna esecuzione registrata.</p>';
+    $$('[data-toggle-schedule]').forEach(button=>button.addEventListener('click',async()=>{button.disabled=true;try{await api('/admin-api/scheduler/jobs/'+button.dataset.toggleSchedule+'/toggle',{method:'POST',body:{}});await refreshSchedules();}catch(e){toast(e.message,'error');button.disabled=false;}}));
+    $$('[data-delete-schedule]').forEach(button=>button.addEventListener('click',async()=>{if(!confirm('Eliminare questa pianificazione?'))return;button.disabled=true;try{await api('/admin-api/scheduler/jobs/'+button.dataset.deleteSchedule,{method:'DELETE'});await refreshSchedules();}catch(e){toast(e.message,'error');button.disabled=false;}}));
+  };
+  $('#ai-jobs-schedule-refresh')?.addEventListener('click',()=>refreshSchedules().catch(e=>toast(e.message,'error')));
+  scheduleForm?.addEventListener('submit',async event=>{
+    event.preventDefault();
+    const task=scheduleForm.task_key.value;
+    const parameters=taskFields();
+    const required=task==='refresh_context_seasonal'?['season']:task==='refresh_simulation_sources'?['league','season']:['refresh_scenario_serving','refresh_training_serving'].includes(task)?['league','season','competition']:[];
+    if(required.some(key=>!parameters[key]||parameters[key]<2000&&key==='season')){toast('Completa i parametri richiesti per la procedura SQL','error');return;}
+    const button=$('button[type="submit"]',scheduleForm);button.disabled=true;
+    try{
+      await api('/admin-api/scheduler/jobs',{method:'POST',body:{name:scheduleForm.name.value.trim(),task_key:task,interval_minutes:Number(scheduleForm.interval_hours.value)*60,parameters}});
+      toast('Pianificazione salvata');scheduleForm.reset();scheduleForm.interval_hours.value='24';await refreshSchedules();
+    }catch(e){toast('Salvataggio pianificazione non riuscito: '+e.message,'error');}
+    finally{button.disabled=false;}
+  });
+  try{await refreshSchedules();}catch(e){if(errorNode)errorNode.textContent='Scheduler non disponibile: applica la migrazione ai_scenario_serving.sql e verifica i permessi PostgreSQL. '+e.message;}
   const refresh=async()=>{
     if(errorNode)errorNode.textContent='';
     try{
-      const [prediction,rating,future]=await Promise.all([
-        api('/admin-api/bb-rating-prediction'),
-        api('/admin-api/bb-rating'),
-        api('/admin-api/future-performance')
-      ]);
+      const [prediction,rating,future]=await Promise.all([api('/admin-api/bb-rating-prediction'),api('/admin-api/bb-rating'),api('/admin-api/future-performance')]);
       const jobs=[
         renderJob('ai-job-prediction-detail','ai-job-prediction-state',prediction.job||{},'BB Prediction Model'),
         renderJob('ai-job-rating-detail','ai-job-rating-state',rating.job||{},'BB-Rating'),
@@ -135,8 +151,7 @@ async function renderAiJobs(){
     }catch(e){if(errorNode)errorNode.textContent='Impossibile caricare lo stato dei job: '+e.message;}
   };
   const launch=async(buttonId,path,label)=>{
-    const button=$('#'+buttonId);if(!button)return;
-    button.disabled=true;
+    const button=$('#'+buttonId);if(!button)return;button.disabled=true;
     try{const result=await api(path,{method:'POST',body:{}});toast(result.message||label+' avviato');await refresh();}
     catch(e){toast('Avvio '+label+' non riuscito: '+e.message,'error');}
     finally{button.disabled=false;}
