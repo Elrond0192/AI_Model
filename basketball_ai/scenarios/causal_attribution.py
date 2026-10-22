@@ -308,18 +308,25 @@ def persist_causal_panel(
     persisted = frame[columns].copy()
     persisted["treatment"] = persisted["treatment"].astype(int).astype(str)
     persisted["details"] = persisted["details"].map(json.loads)
+    teammate_ids = (
+        frame["teammate_global_id"].dropna().astype(str).str.strip().unique().tolist()
+        if "teammate_global_id" in frame.columns else []
+    )
+    teammate_scope = teammate_ids[0] if len(teammate_ids) == 1 else None
     try:
         with engine.begin() as connection:
             connection.execute(
                 text(
                     'DELETE FROM "AI_Source"."SimulationCausalPanel" '
                     'WHERE source_type = :source_type AND league_key = :league_key '
-                    'AND competition = :competition'
+                    'AND competition = :competition '
+                    'AND (:teammate_global_id IS NULL OR teammate_global_id = :teammate_global_id)'
                 ),
                 {
                     "source_type": source_type.strip(),
                     "league_key": league_key.strip().upper(),
                     "competition": competition.strip().upper(),
+                    "teammate_global_id": teammate_scope,
                 },
             )
             persisted.to_sql(
