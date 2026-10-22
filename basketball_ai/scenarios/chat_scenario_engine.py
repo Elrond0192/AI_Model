@@ -41,6 +41,7 @@ from basketball_ai.scenarios.provenance import build_scenario_provenance
 from basketball_ai.scenarios.causal_attribution import (
     estimate_team_switch_att,
     estimate_teammate_exposure_att,
+    persist_causal_panel,
 )
 
 _PLAYER_METRICS = (
@@ -1309,6 +1310,8 @@ class ChatScenarioEngine:
             ), "unknown")
             records.append({
                 "global_id": str(global_id),
+                "league_key": str(self._league_key(source_league) or "").upper(),
+                "competition": normalize_competition(competition),
                 "transition_season": year_after,
                 "treatment": int(team_before != team_after),
                 "outcome": float(bb_after),
@@ -1324,6 +1327,33 @@ class ChatScenarioEngine:
         panel = pd.DataFrame(records).sort_values(["global_id", "transition_season"], kind="stable")
         panel = panel.drop_duplicates("global_id", keep="last").reset_index(drop=True)
         return panel
+
+    def refresh_team_switch_causal_panel(
+        self, database_engine, *, source_league, competition: str, through_season: int
+    ) -> dict[str, Any]:
+        """Refresh persisted team-switch evidence for one league/competition.
+
+        This is an explicit maintenance operation, not a chat side effect. It
+        persists only completed transitions with canonical BB-Rating outcomes.
+        """
+        if self.bb_rating_engine is None:
+            return {"status": "not_written", "rows": 0, "reason": "canonical_bb_rating_engine_unavailable"}
+        league_key = str(self._league_key(source_league) or "").strip().upper()
+        if not league_key:
+            return {"status": "not_written", "rows": 0, "reason": "league_context_required"}
+        competition_key = normalize_competition(competition)
+        panel = self._build_team_switch_causal_panel(
+            source_league, competition_key, int(through_season)
+        )
+        if panel.empty:
+            return {"status": "not_written", "rows": 0, "reason": "no_supported_completed_transitions"}
+        return persist_causal_panel(
+            panel,
+            database_engine,
+            source_type="team_switch",
+            league_key=league_key,
+            competition=competition_key,
+        )
 
     def _causal_team_effect(self, spec, players, teams, source_league, target_league):
         """Measure BB-Rating association with team context; do not claim causality."""
