@@ -458,7 +458,7 @@ async function renderModelReleases(){
     const league=$('#causal-refresh-league').value.trim().toUpperCase();
     const competition=$('#causal-refresh-competition').value.trim().toUpperCase();
     const through_season=Number(causalSeason.value);
-    const teammate_global_id=$('#causal-refresh-teammate').value.trim();
+    const teammate_global_id=$('#causal-refresh-teammate-id').value.trim();
     if(!league||!competition||!Number.isInteger(through_season)){toast('Lega, competizione e stagione sono obbligatorie','error');return;}
     if(kind==='teammate_exposure'&&!teammate_global_id){toast('Inserisci il Global ID canonico del compagno','error');return;}
     const buttons=[$('#causal-refresh-team-switch'),$('#causal-refresh-teammate')];
