@@ -185,3 +185,49 @@ def estimate_team_switch_att(panel: pd.DataFrame) -> dict[str, Any]:
         }
     except (ValueError, np.linalg.LinAlgError) as exc:
         return _unavailable("estimator_failed:" + str(exc)[:160], rows=n, treated=nt, control=nc)
+
+
+def estimate_teammate_exposure_att(
+    panel: pd.DataFrame,
+    *,
+    teammate_global_id: str | None = None,
+) -> dict[str, Any]:
+    """Estimate an observational cohort ATT for a named teammate exposure.
+
+    Each row represents a focal player's transition to the next completed
+    season. Treatment must be encoded as 1 when the named teammate joined/shared
+    the focal player's team in the pre-defined exposure window, and 0 for a
+    comparable eligible control. Outcome must be canonical next-season BB-Rating
+    (1-100). This function deliberately refuses lineup Net Rating as an outcome.
+    """
+    required = _REQUIRED | {"teammate_global_id", "league_key", "competition"}
+    if not isinstance(panel, pd.DataFrame) or panel.empty:
+        return _unavailable("teammate_panel_empty")
+    missing = sorted(required - set(panel.columns))
+    if missing:
+        return _unavailable("teammate_panel_missing_columns:" + ",".join(missing), rows=len(panel))
+    frame = panel.copy()
+    if teammate_global_id:
+        frame = frame[
+            frame["teammate_global_id"].astype(str).str.strip().str.casefold()
+            == str(teammate_global_id).strip().casefold()
+        ].copy()
+    if frame.empty:
+        return _unavailable("named_teammate_not_in_panel")
+    # Do not pool league/competition scales or treatment definitions.
+    contexts = frame[["league_key", "competition"]].dropna().drop_duplicates()
+    if len(contexts) != 1:
+        return _unavailable("teammate_panel_mixes_league_or_competition", rows=len(frame))
+    # Reuse the guarded estimator, while keeping teammate identity in the
+    # treatment definition and the result separate from team-switch ATT.
+    result = estimate_team_switch_att(frame)
+    result["estimand"] = "observational_teammate_exposure_ATT"
+    result["treatment"] = "predefined_named_teammate_exposure_between_completed_seasons"
+    result["teammate_global_id"] = str(teammate_global_id) if teammate_global_id else None
+    result["outcome"] = "next_observed_season_canonical_bb_rating_1_100"
+    result["limitations"] = list(result.get("limitations", [])) + [
+        "This is a cohort-level observational teammate-exposure estimate, not the named focal player's individual causal effect.",
+        "Treatment definition, temporal ordering and within-context positivity must be verified before interpretation.",
+        "Shared minutes, lineup Net Rating and team outcomes are not substitutes for the focal player's canonical BB-Rating outcome.",
+    ]
+    return result
