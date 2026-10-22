@@ -239,8 +239,13 @@
             <option value="bb_rating_calibration">Calibrazione BB-Rating</option>
             <option value="future_performance_training">Training Future Performance</option>
           </select></label>
-          <label>Intervallo (ore)<input name="interval_hours" type="number" min="1" max="8760" value="24" required></label>
-          <label>Stagione<input name="season" type="number" min="2000" max="2100" value="2025"></label>
+          <label>Modalità di pianificazione<select name="schedule_mode" required><option value="interval">Ogni X ore</option><option value="daily">Ogni giorno a un orario</option></select></label>
+          <label id="ai-schedule-interval-field">Intervallo (ore)<input name="interval_hours" type="number" min="1" max="8760" value="24" required></label>
+          <label id="ai-schedule-daily-time-field" class="hidden">Orario giornaliero (Europe/Rome)<input name="daily_time" type="time" value="02:00"></label>
+          <label>Data inizio (facoltativa)<input name="start_date" type="date"></label>
+          <label>Data fine (facoltativa)<input name="end_date" type="date"></label>
+          <label class="schedule-switch-field"><span>Attiva pianificazione subito</span><span class="schedule-switch"><input name="enabled" type="checkbox" checked aria-label="Attiva pianificazione subito"><span class="schedule-switch-track" aria-hidden="true"></span></span></label>
+          <label>Stagione<input name="season" type="number" min="2000" max="2100" value="2026"></label>
           <div id="ai-schedule-league-field" class="schedule-league-field">
             <label class="schedule-league-label" for="ai-schedule-league-toggle">Leghe</label>
             <div id="ai-schedule-league-picker" class="schedule-league-picker">
@@ -334,8 +339,8 @@
         <section class="panel"><div class="panel-heading"><h2>Future Performance</h2></div><div id="release-future-performance"></div><div class="button-row"><button class="btn btn-primary release-promote" data-model="future-performance">Promuovi candidate</button><button class="btn btn-danger release-rollback" data-model="future-performance">Rollback</button></div></section>
       </div>
       <section class="panel">
-        <div class="panel-heading"><div><h2>Refresh pannelli causali</h2><p class="microcopy">Operazioni dati della PR #76. Aggiornano le coorti osservazionali; non eseguono training e non promuovono modelli.</p></div></div>
-        <p class="microcopy">Ogni pulsante aggiorna automaticamente tutte le leghe e tutte le competizioni attualmente presenti nei dati canonici, usando per ciascun contesto l'ultima stagione completata. L'operazione è solo un refresh delle coorti osservazionali: non esegue training e non promuove modelli.</p>
+        <div class="panel-heading"><h2>Refresh pannelli causali</h2></div>
+        <p class="microcopy">Aggiorna tutte le leghe e le competizioni presenti nei dati canonici, usando per ciascun contesto l'ultima stagione completata.</p>
         <div class="button-row">
           <button id="causal-refresh-team-switch" class="btn btn-secondary">Aggiorna team-switch · tutte le leghe</button>
           <button id="causal-refresh-teammate" class="btn btn-secondary">Aggiorna teammate exposure · tutte le leghe</button>
