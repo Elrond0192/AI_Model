@@ -1314,6 +1314,11 @@ CREATE TABLE IF NOT EXISTS "AI_Source"."AIModelScheduledJob" (
     )),
     parameters jsonb NOT NULL DEFAULT '{}'::jsonb,
     interval_minutes integer NOT NULL CHECK (interval_minutes >= 60),
+    schedule_mode text NOT NULL DEFAULT 'interval' CHECK (schedule_mode IN ('interval','daily')),
+    daily_time time,
+    timezone_name text NOT NULL DEFAULT 'Europe/Rome',
+    start_date date,
+    end_date date,
     enabled boolean NOT NULL DEFAULT true,
     next_run_at timestamptz NOT NULL,
     last_run_at timestamptz,
@@ -1323,6 +1328,15 @@ CREATE TABLE IF NOT EXISTS "AI_Source"."AIModelScheduledJob" (
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now()
 );
+
+-- Online migration for databases that already have the scheduler table.
+ALTER TABLE "AI_Source"."AIModelScheduledJob"
+    ADD COLUMN IF NOT EXISTS schedule_mode text NOT NULL DEFAULT 'interval',
+    ADD COLUMN IF NOT EXISTS daily_time time,
+    ADD COLUMN IF NOT EXISTS timezone_name text NOT NULL DEFAULT 'Europe/Rome',
+    ADD COLUMN IF NOT EXISTS start_date date,
+    ADD COLUMN IF NOT EXISTS end_date date;
+
 CREATE INDEX IF NOT EXISTS ix_ai_model_scheduled_job_due
     ON "AI_Source"."AIModelScheduledJob" (enabled, next_run_at);
 
