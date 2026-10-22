@@ -270,6 +270,7 @@ class ChatScenarioEngine:
             "composite_scenario": self.advanced.composite,
             "causal_effect": self.advanced.causal_effect,
             "causal_team_effect": self._causal_team_effect,
+            "performance_attribution": self._causal_team_effect,
             "model_evidence": self._model_evidence,
         }
         if scenario not in dispatch:
