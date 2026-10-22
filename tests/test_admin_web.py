@@ -500,7 +500,7 @@ def test_helpers_and_static_assets(monkeypatch, tmp_path):
     assert "const {keepAlive=false,...requestOptions}=options;" in api_body
     assert "if(!keepAlive)App.controllers.add(controller);" in api_body
     assert "if(!requestOptions.signal&&!keepAlive)fetchOptions.signal=controller.signal;" in api_body
-    assert 'src="/assets/app.js?v=2.6.9"' in html
+    assert 'src="/assets/app.js?v=2.6.10"' in html
     assert 'class="dashboard-footer"' not in html
     assert "Stati e percentuali provengono dalle API operative." not in html
     assert "<footer>© AI Model Control Center v2.6.0</footer>" in html
@@ -625,6 +625,9 @@ def test_helpers_and_static_assets(monkeypatch, tmp_path):
     assert 'id="causal-refresh-teammate"' in releases_page
     assert 'id="causal-refresh-progress"' in releases_page
     assert 'id="causal-refresh-cancel"' in releases_page
+    assert 'id="causal-teammate-diagnose"' in releases_page
+    assert 'id="causal-teammate-diagnostics-result"' in releases_page
+    assert 'id="causal-teammate-diagnostic-download"' in releases_page
     assert "/admin-api/causal-panels/refresh-all/cancel" in js
     assert "causalProgress.innerHTML=progressMarkup(job)" in js
     assert 'id="causal-refresh-league"' not in releases_page
@@ -632,6 +635,51 @@ def test_helpers_and_static_assets(monkeypatch, tmp_path):
     assert 'id="causal-refresh-season"' not in releases_page
     assert 'id="causal-refresh-teammate-id"' not in releases_page
     assert "/admin-api/causal-panels/refresh-all" in js
+    assert "/admin-api/causal-panels/teammate-support-diagnostics" in js
+def test_teammate_support_gate_status_enforces_raw_support_and_identity_integrity():
+    assert admin._teammate_support_gate_status({
+        "eligible_rows": 75, "treated": 25, "control": 50,
+        "missing_focal_identity_rows": 0, "duplicate_focal_rows": 0,
+    }) == "raw_support_passed_pending_diagnostics"
+    assert admin._teammate_support_gate_status({
+        "eligible_rows": 200, "treated": 12, "control": 188,
+        "missing_focal_identity_rows": 0, "duplicate_focal_rows": 0,
+    }) == "insufficient_treated_control_support"
+    assert admin._teammate_support_gate_status({
+        "eligible_rows": 200, "treated": 40, "control": 160,
+        "missing_focal_identity_rows": 0, "duplicate_focal_rows": 1,
+    }) == "identity_integrity_failed"
+
+
+def test_teammate_support_diagnostics_endpoint_and_csv_download(monkeypatch):
+    report_bytes = b"teammate_global_id,league_key,competition,transition_season,status\\n"
+    summary = {
+        "panel_rows": 100, "groups_total": 2, "groups_raw_support_passed": 0,
+        "groups_diagnostics_evaluated": 0, "groups_with_statistical_gates_passed": 0,
+        "status_counts": {"insufficient_treated_control_support": 2},
+    }
+    monkeypatch.setattr(admin.STATE, "active_profile", "production")
+    monkeypatch.setattr(
+        admin, "_build_teammate_support_diagnostics",
+        lambda profile: {"summary": summary, "csv_bytes": report_bytes},
+    )
+    audit = []
+    monkeypatch.setattr(admin, "_audit", lambda *args, **kwargs: audit.append(args))
+    admin.CAUSAL_SUPPORT_REPORTS.clear()
+
+    result = admin.run_teammate_support_diagnostics({"username": "analyst", "role": "analyst"})
+    assert result["ok"] is True
+    assert result["summary"] == summary
+    assert result["download_url"].endswith(".csv")
+    report_id = result["report_id"]
+    response = admin.download_teammate_support_diagnostics_csv(
+        report_id, {"username": "analyst", "role": "analyst"}
+    )
+    assert response.body == report_bytes
+    assert "text/csv" in response.media_type
+    assert audit and audit[0][1] == "teammate_exposure_support_diagnostics"
+
+
 def test_causal_bulk_refresh_cancel_requests_cooperative_stop(monkeypatch):
     admin.CAUSAL_REFRESH_CANCEL_EVENT.clear()
     with admin.CAUSAL_REFRESH_LOCK:
@@ -1885,7 +1933,7 @@ def test_login_form_uses_post_and_versioned_assets():
     html = (static_root / "index.html").read_text(encoding="utf-8")
     js = (static_root / "app.js").read_text(encoding="utf-8")
     assert 'id="login-form" class="login-card" method="post" action="/admin-api/login"' in html
-    assert '/assets/app.js?v=2.6.9' in html
+    assert '/assets/app.js?v=2.6.10' in html
     assert "URLSearchParams(window.location.search).get('login')" in js
 
 
@@ -1900,4 +1948,4 @@ def test_admin_navigation_uses_query_all_for_repeated_elements():
     assert "$$('.jump',root).forEach" in js
     assert "function activateNav(page){$('.nav-item').forEach" not in js
     assert "function showApp(user){App.user=user;$('#login-screen').classList.add('hidden');$('#app-shell').classList.remove('hidden');$('#user-name').textContent=user.username;$('#user-role').textContent=user.role==='admin'?'Administrator':user.role;$('#user-avatar').textContent=(user.username||'A')[0].toUpperCase();$('.admin-only').forEach" not in js
-    assert '/assets/app.js?v=2.6.9' in html
+    assert '/assets/app.js?v=2.6.10' in html
