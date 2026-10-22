@@ -286,6 +286,20 @@
         <section class="panel"><div class="panel-heading"><h2>BB-Rating</h2></div><div id="release-bb-rating"></div><div class="button-row"><button class="btn btn-primary release-promote" data-model="bb-rating">Promuovi candidate</button><button class="btn btn-danger release-rollback" data-model="bb-rating">Rollback</button></div></section>
         <section class="panel"><div class="panel-heading"><h2>Future Performance</h2></div><div id="release-future-performance"></div><div class="button-row"><button class="btn btn-primary release-promote" data-model="future-performance">Promuovi candidate</button><button class="btn btn-danger release-rollback" data-model="future-performance">Rollback</button></div></section>
       </div>
+      <section class="panel">
+        <div class="panel-heading"><div><h2>Refresh pannelli causali</h2><p class="microcopy">Operazioni dati della PR #76. Aggiornano le coorti osservazionali; non eseguono training e non promuovono modelli.</p></div></div>
+        <div class="form-grid causal-refresh-form">
+          <label>Lega<input id="causal-refresh-league" value="ITA1" maxlength="32" required></label>
+          <label>Competizione<input id="causal-refresh-competition" value="RS" maxlength="16" required></label>
+          <label>Ultima stagione completata<input id="causal-refresh-season" type="number" min="2000" max="2100" required></label>
+          <label class="span-2">Global ID compagno (solo per teammate exposure)<input id="causal-refresh-teammate" maxlength="128" placeholder="Global ID canonico del compagno"></label>
+        </div>
+        <div class="button-row">
+          <button id="causal-refresh-team-switch" class="btn btn-secondary">Refresh team-switch</button>
+          <button id="causal-refresh-teammate" class="btn btn-secondary">Refresh teammate exposure</button>
+        </div>
+        <div id="causal-refresh-result" class="microcopy" role="status">Nessun refresh causale eseguito in questa sessione.</div>
+      </section>
       <section class="panel"><div class="panel-heading"><h2>Release operation result</h2></div><div id="model-release-result" class="microcopy">Nessuna operazione eseguita.</div></section>
     </section>
   </template>
