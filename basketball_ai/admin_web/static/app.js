@@ -453,28 +453,55 @@ async function renderModelReleases(){
     catch(e){toast(e.message,'error');start.disabled=false;}
   };
   $('#model-releases-refresh').onclick=()=>renderModelReleases().catch(e=>toast(e.message,'error'));
-  const causalSeason=$('#causal-refresh-season');
-  if(causalSeason&&!causalSeason.value)causalSeason.value=String(new Date().getUTCFullYear()-1);
-  const runCausalRefresh=async(kind)=>{
-    const league=$('#causal-refresh-league').value.trim().toUpperCase();
-    const competition=$('#causal-refresh-competition').value.trim().toUpperCase();
-    const through_season=Number(causalSeason.value);
-    const teammate_global_id=$('#causal-refresh-teammate-id').value.trim();
-    if(!league||!competition||!Number.isInteger(through_season)){toast('Lega, competizione e stagione sono obbligatorie','error');return;}
-    if(kind==='teammate_exposure'&&!teammate_global_id){toast('Inserisci il Global ID canonico del compagno','error');return;}
-    const buttons=[$('#causal-refresh-team-switch'),$('#causal-refresh-teammate')];
-    buttons.forEach(button=>button.disabled=true);
-    const resultNode=$('#causal-refresh-result');
-    resultNode.textContent='Refresh in esecuzione…';
+
+  const causalButtons=[$('#causal-refresh-team-switch'),$('#causal-refresh-teammate')].filter(Boolean);
+  const causalResult=$('#causal-refresh-result');
+  const showCausalJob=job=>{
+    if(!causalResult||!job)return;
+    const lines=[job.message||'Refresh causale in attesa.'];
+    if(job.stage)lines.unshift(job.stage+(Number.isFinite(Number(job.progress))?' · '+Number(job.progress)+'%':''));
+    if(job.summary){
+      const s=job.summary;
+      lines.push('Contesti: '+(s.contexts_total??0)+' · aggiornati: '+(s.contexts_refreshed??0)+' · senza coorte: '+(s.contexts_skipped??0)+' · errori: '+(s.contexts_failed??0)+' · righe scritte: '+(s.rows_written??0));
+    }
+    if(job.error)lines.push('Errore: '+job.error);
+    const issues=(job.results||[]).filter(row=>row.status==='failed'||row.status==='not_written');
+    if(issues.length)lines.push('Contesti con anomalie:\n'+issues.slice(0,12).map(row=>row.league+'/'+row.competition+' ('+row.through_season+'): '+(row.reason||row.status)).join('\n'));
+    causalResult.textContent=lines.join('\n');
+    const active=['queued','running'].includes(job.status);
+    causalButtons.forEach(button=>button.disabled=active);
+  };
+  const pollCausalJob=async()=>{
+    const job=await api('/admin-api/causal-panels/refresh-all');
+    showCausalJob(job);
+    return job;
+  };
+  const runCausalRefresh=async kind=>{
+    if(causalButtons.some(button=>button.disabled))return;
+    causalButtons.forEach(button=>button.disabled=true);
+    if(causalResult)causalResult.textContent='Avvio del refresh globale…';
     try{
-      const result=await api('/admin-api/causal-panels/refresh',{method:'POST',body:{kind,league,competition,through_season,teammate_global_id:kind==='teammate_exposure'?teammate_global_id:null}});
-      resultNode.textContent=JSON.stringify(result,null,2);
-      toast(result.status==='complete'?'Refresh pannello causale completato':'Refresh completato senza pannello utilizzabile',result.status==='complete'?'success':'error');
-    }catch(e){resultNode.textContent=e.message;toast('Refresh causale non riuscito: '+e.message,'error');}
-    finally{buttons.forEach(button=>button.disabled=false);}
+      const started=await api('/admin-api/causal-panels/refresh-all',{method:'POST',body:{kind}});
+      let job=started.job||{};
+      showCausalJob(job);
+      while(['queued','running'].includes(job.status)){
+        await new Promise(resolve=>setTimeout(resolve,1500));
+        job=await pollCausalJob();
+      }
+      if(job.status==='complete')toast('Refresh causale completato su tutte le leghe e competizioni','success');
+      else if(job.status==='partial')toast('Refresh causale concluso con alcuni errori; controlla il dettaglio','error');
+      else toast('Refresh causale non completato: '+(job.error||job.message||'errore'),'error');
+    }catch(e){
+      if(causalResult)causalResult.textContent='Refresh causale non riuscito: '+e.message;
+      toast('Refresh causale non riuscito: '+e.message,'error');
+    }finally{
+      try{await pollCausalJob();}catch(_){}
+    }
   };
   $('#causal-refresh-team-switch')?.addEventListener('click',()=>runCausalRefresh('team_switch'));
   $('#causal-refresh-teammate')?.addEventListener('click',()=>runCausalRefresh('teammate_exposure'));
+  pollCausalJob().catch(()=>{});
+
 
   $$('.release-promote').forEach(button=>{
     const model=button.dataset.model;
@@ -714,60 +741,120 @@ $$('.nav-item').forEach(b=>b.addEventListener('click',()=>navigate(b.dataset.pag
 async function renderAiJobs(){
   const errorNode=$('#ai-jobs-error');
   const scheduleForm=$('#ai-jobs-schedule-form');
+  const leagueField=$('#ai-schedule-league-field');
+  const leagueOptions=$('#ai-schedule-league-options');
+
+  const selectedLeagues=()=>{
+    const allBox=$('#ai-schedule-all-leagues');
+    if(allBox?.checked)return ['ALL'];
+    return $$('input[name="schedule_league"]:checked',leagueOptions).map(input=>input.value);
+  };
+  const syncLeagueSelection=()=>{
+    const allBox=$('#ai-schedule-all-leagues');
+    const boxes=$('input[name="schedule_league"]',leagueOptions);
+    if(!allBox)return;
+    boxes.forEach(input=>{input.disabled=allBox.checked;});
+  };
+  const loadScheduleOptions=async(preserveSelection=false)=>{
+    const previousSelection=preserveSelection?selectedLeagues():['ALL'];
+    const data=await api('/admin-api/scheduler/options');
+    const leagues=(data.leagues||[]).map(value=>String(value).toUpperCase()).filter(Boolean);
+    if(!leagueOptions)return;
+    const allSelected=previousSelection.includes('ALL')||previousSelection.length===0;
+    leagueOptions.innerHTML=
+      '<label class="schedule-league-option schedule-league-all"><input id="ai-schedule-all-leagues" type="checkbox" '+(allSelected?'checked':'')+'> <span><strong>Tutte</strong><small>Tutte le leghe attualmente presenti</small></span></label>'+
+      leagues.map(league=>'<label class="schedule-league-option"><input type="checkbox" name="schedule_league" value="'+esc(league)+'" '+(!allSelected&&previousSelection.includes(league)?'checked':'')+'> <span><strong>'+esc(league)+'</strong></span></label>').join('');
+    $('#ai-schedule-all-leagues')?.addEventListener('change',()=>{
+      if($('#ai-schedule-all-leagues')?.checked){
+        $$('input[name="schedule_league"]',leagueOptions).forEach(input=>{input.checked=false;});
+      }
+      syncLeagueSelection();
+    });
+    $$('input[name="schedule_league"]',leagueOptions).forEach(input=>input.addEventListener('change',()=>{
+      if(input.checked&&$('#ai-schedule-all-leagues'))$('#ai-schedule-all-leagues').checked=false;
+      syncLeagueSelection();
+    }));
+    syncLeagueSelection();
+  };
+  const syncScheduleFields=()=>{
+    const task=scheduleForm?.task_key.value||'';
+    const needsLeague=['refresh_simulation_sources','refresh_scenario_serving','refresh_training_serving'].includes(task);
+    if(leagueField)leagueField.classList.toggle('hidden',!needsLeague);
+  };
   const taskFields=()=>{
     const task=scheduleForm.task_key.value;
     const params={};
     if(['refresh_context_seasonal','refresh_simulation_sources','refresh_scenario_serving','refresh_training_serving'].includes(task)){
       params.season=Number(scheduleForm.season.value);
     }
-    if(['refresh_simulation_sources','refresh_scenario_serving','refresh_training_serving'].includes(task))params.league=scheduleForm.league.value.trim().toUpperCase();
-    if(['refresh_scenario_serving','refresh_training_serving'].includes(task))params.competition=scheduleForm.competition.value.trim().toUpperCase();
+    if(['refresh_simulation_sources','refresh_scenario_serving','refresh_training_serving'].includes(task)){
+      params.leagues=selectedLeagues();
+    }
     return params;
   };
   const refreshSchedules=async()=>{
     const data=await api('/admin-api/scheduler/jobs');
-    $('#ai-jobs-schedule-list').innerHTML=(data.jobs||[]).map(job=>'<div class="summary-row"><span><strong>'+esc(job.name)+'</strong><br><small>'+esc(job.task_key)+' · ogni '+esc(Math.round(job.interval_minutes/60))+' h · prossimo: '+esc(job.next_run_at||'—')+'</small></span><span>'+esc(job.last_status||'scheduled')+' <button class="btn btn-secondary btn-small" data-toggle-schedule="'+job.job_id+'">'+(job.enabled?'Pausa':'Riprendi')+'</button> <button class="btn btn-danger btn-small" data-delete-schedule="'+job.job_id+'">Elimina</button></span></div>').join('')||'<p class="microcopy">Nessuna pianificazione configurata.</p>';
-    $('#ai-jobs-run-history').innerHTML=(data.runs||[]).map(run=>'<div class="summary-row"><span>'+esc(run.task_key)+' · '+esc(run.started_at||'—')+'</span><strong>'+esc(run.status)+(run.error?' · '+esc(run.error):'')+'</strong></div>').join('')||'<p class="microcopy">Nessuna esecuzione registrata.</p>';
-    $$('[data-toggle-schedule]').forEach(button=>button.addEventListener('click',async()=>{button.disabled=true;try{await api('/admin-api/scheduler/jobs/'+button.dataset.toggleSchedule+'/toggle',{method:'POST',body:{}});await refreshSchedules();}catch(e){toast(e.message,'error');button.disabled=false;}}));
-    $$('[data-delete-schedule]').forEach(button=>button.addEventListener('click',async()=>{if(!confirm('Eliminare questa pianificazione?'))return;button.disabled=true;try{await api('/admin-api/scheduler/jobs/'+button.dataset.deleteSchedule,{method:'DELETE'});await refreshSchedules();}catch(e){toast(e.message,'error');button.disabled=false;}}));
+    $('#ai-jobs-schedule-list').innerHTML=(data.jobs||[]).map(job=>{
+      const parameters=job.parameters&&typeof job.parameters==='object'?job.parameters:{};
+      const leagueSummary=Array.isArray(parameters.leagues)?(parameters.leagues.includes('ALL')?'Tutte le leghe':parameters.leagues.join(', ')):(parameters.league||'');
+      const compSummary=parameters.competition?' · legacy '+esc(parameters.competition):' · tutte le competizioni presenti';
+      const paramsSummary=leagueSummary?' · '+esc(leagueSummary)+compSummary:'';
+      const status=job.last_status||'programmato';
+      const error=job.last_error?' · '+esc(job.last_error):'';
+      return '<div class="summary-row"><span><strong>'+esc(job.name)+'</strong><br><small>'+esc(job.task_key)+' · ogni '+esc(Math.round(job.interval_minutes/60))+' h'+paramsSummary+' · prossimo: '+esc(job.next_run_at||'—')+error+'</small></span><span>'+esc(status)+' <button class="btn btn-secondary btn-small" data-toggle-schedule="'+job.job_id+'">'+(job.enabled?'Pausa':'Riprendi')+'</button> <button class="btn btn-danger btn-small" data-delete-schedule="'+job.job_id+'">Elimina</button></span></div>';
+    }).join('')||'<p class="microcopy">Nessuna pianificazione configurata.</p>';
+    $('#ai-jobs-run-history').innerHTML=(data.runs||[]).map(run=>{
+      const details=run.result&&typeof run.result==='object'?run.result:{};
+      const count=details.contexts_total!==undefined?' · '+(details.contexts_completed||0)+'/'+details.contexts_total+' contesti':'';
+      return '<div class="summary-row"><span>'+esc(run.task_key)+' · '+esc(run.started_at||'—')+count+'</span><strong>'+esc(run.status)+(run.error?' · '+esc(run.error):'')+'</strong></div>';
+    }).join('')||'<p class="microcopy">Nessuna esecuzione registrata.</p>';
+    $$('[data-toggle-schedule]').forEach(button=>button.addEventListener('click',async()=>{
+      button.disabled=true;
+      try{await api('/admin-api/scheduler/jobs/'+button.dataset.toggleSchedule+'/toggle',{method:'POST',body:{}});await refreshSchedules();}
+      catch(e){toast(e.message,'error');button.disabled=false;}
+    }));
+    $$('[data-delete-schedule]').forEach(button=>button.addEventListener('click',async()=>{
+      if(!confirm('Eliminare questa pianificazione?'))return;
+      button.disabled=true;
+      try{await api('/admin-api/scheduler/jobs/'+button.dataset.deleteSchedule,{method:'DELETE'});await refreshSchedules();}
+      catch(e){toast(e.message,'error');button.disabled=false;}
+    }));
   };
   $('#ai-jobs-schedule-refresh')?.addEventListener('click',()=>refreshSchedules().catch(e=>toast(e.message,'error')));
+  $('#ai-jobs-refresh')?.addEventListener('click',()=>Promise.all([refreshSchedules(),loadScheduleOptions(true)]).catch(e=>toast(e.message,'error')));
+  scheduleForm?.task_key.addEventListener('change',syncScheduleFields);
   scheduleForm?.addEventListener('submit',async event=>{
     event.preventDefault();
     const task=scheduleForm.task_key.value;
     const parameters=taskFields();
-    const required=task==='refresh_context_seasonal'?['season']:task==='refresh_simulation_sources'?['league','season']:['refresh_scenario_serving','refresh_training_serving'].includes(task)?['league','season','competition']:[];
-    if(required.some(key=>!parameters[key]||parameters[key]<2000&&key==='season')){toast('Completa i parametri richiesti per la procedura SQL','error');return;}
-    const button=$('button[type="submit"]',scheduleForm);button.disabled=true;
+    if(['refresh_context_seasonal','refresh_simulation_sources','refresh_scenario_serving','refresh_training_serving'].includes(task)){
+      if(!Number.isInteger(parameters.season)||parameters.season<2000||parameters.season>2100){toast('Seleziona una stagione valida','error');return;}
+    }
+    if(['refresh_simulation_sources','refresh_scenario_serving','refresh_training_serving'].includes(task)&&!parameters.leagues?.length){
+      toast('Seleziona Tutte le leghe oppure almeno una lega','error');return;
+    }
+    const button=$('button[type="submit"]',scheduleForm);
+    button.disabled=true;
     try{
-      await api('/admin-api/scheduler/jobs',{method:'POST',body:{name:scheduleForm.name.value.trim(),task_key:task,interval_minutes:Number(scheduleForm.interval_hours.value)*60,parameters}});
-      toast('Pianificazione salvata');scheduleForm.reset();scheduleForm.interval_hours.value='24';await refreshSchedules();
+      await api('/admin-api/scheduler/jobs',{method:'POST',body:{
+        name:scheduleForm.name.value.trim(),task_key:task,
+        interval_minutes:Number(scheduleForm.interval_hours.value)*60,parameters
+      }});
+      toast('Pianificazione salvata');
+      scheduleForm.reset();
+      scheduleForm.interval_hours.value='24';
+      await loadScheduleOptions();
+      syncScheduleFields();
+      await refreshSchedules();
     }catch(e){toast('Salvataggio pianificazione non riuscito: '+e.message,'error');}
     finally{button.disabled=false;}
   });
-  try{await refreshSchedules();}catch(e){if(errorNode)errorNode.textContent='Scheduler non disponibile: applica la migrazione ai_scenario_serving.sql e verifica i permessi PostgreSQL. '+e.message;}
-  const refresh=async()=>{
-    if(errorNode)errorNode.textContent='';
-    try{
-      const [prediction,rating,future]=await Promise.all([api('/admin-api/bb-rating-prediction'),api('/admin-api/bb-rating'),api('/admin-api/future-performance')]);
-      const jobs=[
-        renderJob('ai-job-prediction-detail','ai-job-prediction-state',prediction.job||{},'BB Prediction Model'),
-        renderJob('ai-job-rating-detail','ai-job-rating-state',rating.job||{},'BB-Rating'),
-        renderJob('ai-job-future-detail','ai-job-future-state',future.job||{},'Future Performance')
-      ];
-      const history=$('#ai-jobs-history');
-      if(history)history.innerHTML=jobs.map(job=>'<div class="summary-row"><span>'+esc(job.label)+'</span><strong>'+esc(job.status)+' · '+esc(job.finished_at||job.started_at||'nessuna esecuzione')+'</strong></div>').join('');
-    }catch(e){if(errorNode)errorNode.textContent='Impossibile caricare lo stato dei job: '+e.message;}
-  };
-  const launch=async(buttonId,path,label)=>{
-    const button=$('#'+buttonId);if(!button)return;button.disabled=true;
-    try{const result=await api(path,{method:'POST',body:{}});toast(result.message||label+' avviato');await refresh();}
-    catch(e){toast('Avvio '+label+' non riuscito: '+e.message,'error');}
-    finally{button.disabled=false;}
-  };
-  $('#ai-jobs-refresh')?.addEventListener('click',refresh);
-  $('#ai-job-prediction-run')?.addEventListener('click',()=>launch('ai-job-prediction-run','/admin-api/bb-rating-prediction/train','BB Prediction Model'));
-  $('#ai-job-rating-run')?.addEventListener('click',()=>launch('ai-job-rating-run','/admin-api/bb-rating/calibrate','calibrazione BB-Rating'));
-  $('#ai-job-future-run')?.addEventListener('click',()=>launch('ai-job-future-run','/admin-api/future-performance/train','Future Performance'));
-  await refresh();
+  try{
+    await loadScheduleOptions();
+    syncScheduleFields();
+    await refreshSchedules();
+  }catch(e){
+    if(errorNode)errorNode.textContent='Scheduler non disponibile: verifica la connessione PostgreSQL e i permessi sulle tabelle canoniche. '+e.message;
+  }
 }
+

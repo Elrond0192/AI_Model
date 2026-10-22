@@ -488,6 +488,20 @@ def test_teammate_exposure_panel_uses_canonical_bb_rating_and_roster_context():
     assert 1 <= focal_alpha["outcome"] <= 100
     assert "rating" not in panel.columns
 
+    # A global refresh should emit the equivalent named slice for every
+    # eligible teammate in this league/competition, in one context build.
+    all_teammates = engine._build_teammate_exposure_causal_panel(
+        10, "RS", 2024, None
+    )
+    assert not all_teammates.empty
+    assert {"PLAYER-1", "PLAYER-2", "PLAYER-3"}.issubset(set(all_teammates["teammate_global_id"]))
+    assert not all_teammates.duplicated(["global_id", "transition_season", "teammate_global_id"]).any()
+    batch_named = all_teammates[all_teammates["teammate_global_id"] == "PLAYER-2"].sort_values("global_id")
+    single_named = panel.sort_values("global_id")
+    assert batch_named[["global_id", "transition_season", "treatment", "outcome"]].reset_index(drop=True).equals(
+        single_named[["global_id", "transition_season", "treatment", "outcome"]].reset_index(drop=True)
+    )
+
 
 def test_causal_team_effect_uses_canonical_bb_rating_and_controls_role_minutes_usage():
     data = _analysis_data()

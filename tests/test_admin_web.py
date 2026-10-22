@@ -343,6 +343,88 @@ def test_causal_panel_refresh_endpoint_uses_canonical_bb_rating_and_audit(monkey
     assert audit and audit[0][1] == "causal_panel_refresh"
 
 
+def test_causal_refresh_contexts_enumerate_all_league_competitions(monkeypatch):
+    data = {
+        "player_stats": pd.DataFrame([
+            {"league_id": 1, "league_key": "ITA1", "competition": "RS", "season": 2022},
+            {"league_id": 1, "league_key": "ITA1", "competition": "RS", "season": 2023},
+            {"league_id": 1, "league_key": "ITA1", "competition": "RS", "season": 2024},
+            {"league_id": 1, "league_key": "ITA1", "competition": "PO", "season": 2022},
+            {"league_id": 1, "league_key": "ITA1", "competition": "PO", "season": 2023},
+            {"league_id": 2, "league_key": "ITA2", "competition": "RS", "season": 2022},
+            {"league_id": 2, "league_key": "ITA2", "competition": "RS", "season": 2023},
+            {"league_id": 2, "league_key": "ITA2", "competition": "RS", "season": 2024},
+        ])
+    }
+    monkeypatch.setattr(admin, "_season_lifecycle", lambda: {
+        "2022": {"status": "complete"},
+        "2023": {"status": "complete"},
+        "2024": {"status": "in_progress"},
+    })
+
+    contexts = admin._causal_refresh_contexts(data)
+    actual = {(row["league"], row["competition"]): row["through_season"] for row in contexts}
+    assert actual == {("ITA1", "RS"): 2023, ("ITA1", "PO"): 2023, ("ITA2", "RS"): 2023}
+    assert len(contexts) == 3
+
+
+def test_schedule_validation_accepts_all_or_multiple_leagues_without_competition():
+    all_leagues = admin._validate_schedule_parameters(
+        "refresh_scenario_serving", {"season": 2025, "leagues": ["ALL"]}
+    )
+    assert all_leagues == {"season": 2025, "leagues": ["ALL"]}
+
+    selected = admin._validate_schedule_parameters(
+        "refresh_training_serving", {"season": "2024", "leagues": ["ita1", "ita2", "ITA1"]}
+    )
+    assert selected == {"season": 2024, "leagues": ["ITA1", "ITA2"]}
+    assert "competition" not in selected
+
+    with pytest.raises(HTTPException) as missing:
+        admin._validate_schedule_parameters("refresh_scenario_serving", {"season": 2025})
+    assert "Seleziona Tutte" in missing.value.detail
+    with pytest.raises(HTTPException) as mixed_all:
+        admin._validate_schedule_parameters(
+            "refresh_training_serving", {"season": 2025, "leagues": ["ALL", "ITA1"]}
+        )
+    assert "'ALL' non può" in mixed_all.value.detail
+
+
+def test_scheduled_refresh_expands_selected_leagues_to_every_available_competition(monkeypatch):
+    calls = []
+
+    class FakeConnection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+        def execute(self, statement, parameters):
+            calls.append((str(statement), dict(parameters)))
+
+    class FakeEngine:
+        def begin(self):
+            return FakeConnection()
+
+    engine = FakeEngine()
+    contexts = [("ITA1", "RS"), ("ITA1", "PO"), ("ITA2", "RS")]
+    monkeypatch.setattr(admin, "_scheduler_engine", lambda: engine)
+    monkeypatch.setattr(admin, "_available_source_contexts", lambda _: contexts)
+
+    status, result = admin._execute_scheduled_task(
+        "refresh_scenario_serving", {"season": 2025, "leagues": ["ITA1"]}, "admin"
+    )
+    assert status == "complete"
+    assert result["contexts_total"] == 2
+    assert result["contexts_completed"] == 2
+    assert result["contexts_failed"] == 0
+    assert {(row["league"], row["competition"]) for row in result["operations"]} == {
+        ("ITA1", "RS"), ("ITA1", "PO")
+    }
+    assert {parameters["competition"] for _, parameters in calls} == {"RS", "PO"}
+
+
 def test_model_release_buttons_use_node_list_and_cancel_jobs_are_exposed():
     static = Path(admin.STATIC_ROOT)
     js = (static / "app.js").read_text(encoding="utf-8")
@@ -409,7 +491,7 @@ def test_helpers_and_static_assets(monkeypatch, tmp_path):
     assert "const {keepAlive=false,...requestOptions}=options;" in api_body
     assert "if(!keepAlive)App.controllers.add(controller);" in api_body
     assert "if(!requestOptions.signal&&!keepAlive)fetchOptions.signal=controller.signal;" in api_body
-    assert 'src="/assets/app.js?v=2.6.2"' in html
+    assert 'src="/assets/app.js?v=2.6.3"' in html
     assert 'class="dashboard-footer"' not in html
     assert "Stati e percentuali provengono dalle API operative." not in html
     assert "<footer>© AI Model Control Center v2.6.0</footer>" in html
@@ -442,7 +524,7 @@ def test_helpers_and_static_assets(monkeypatch, tmp_path):
     assert "future-performance-overview-icon" not in html
     assert ".dashboard-v2 .dashboard-section-eyebrow i" in css
     assert ".dashboard-v2 .dashboard-section-eyebrow svg" not in css
-    assert 'href="/assets/app.css?v=2.6.5"' in html
+    assert 'href="/assets/app.css?v=2.6.6"' in html
     # Phosphor files live under STATIC_ROOT/assets/phosphor, while STATIC_ROOT is mounted at /assets.
     assert 'href="/assets/assets/phosphor/regular/style.css"' in html
     assert 'href="/assets/assets/phosphor/fill/style.css"' in html
@@ -504,10 +586,39 @@ def test_helpers_and_static_assets(monkeypatch, tmp_path):
     assert "if(page==='ai-jobs')await renderAiJobs()" in js
     assert "/admin-api/bb-rating-prediction/train" in js
     assert "/admin-api/bb-rating/calibrate" in js
-    assert "/admin-api/future-performance/train" in js
+    assert "/admin-api/future-performance/train" in future_js
     assert '"AI_Source"."AIModelScheduledJob"' in (Path(admin.__file__).parents[1] / "data" / "ai_scenario_serving.sql").read_text(encoding="utf-8")
     assert "/admin-api/scheduler/jobs" in js
     assert "refresh_context_seasonal" in js
+    jobs_start = html.index('<template id="page-ai-jobs">')
+    jobs_end = html.index("</template>", jobs_start)
+    jobs_page = html[jobs_start:jobs_end]
+    assert "<h1>Pianificazione</h1>" in jobs_page
+    assert "Pianificazione AI_Model" not in jobs_page
+    assert '<h2>BB Prediction Model</h2>' not in jobs_page
+    assert '<h2>Calibrazione BB-Rating</h2>' not in jobs_page
+    assert '<h2>Future Performance</h2>' not in jobs_page
+    assert 'id="ai-job-prediction-run"' not in jobs_page
+    assert 'id="ai-job-rating-run"' not in jobs_page
+    assert 'id="ai-job-future-run"' not in jobs_page
+    assert "Pianificazioni ricorrenti" in jobs_page
+    assert 'id="ai-schedule-all-leagues"' in jobs_page
+    assert 'name="schedule_league"' in js
+    assert ("$" * 2 + "('input[name=\"schedule_league\"]',leagueOptions).forEach") in js
+    assert "loadScheduleOptions(true)" in js
+    assert 'name="competition"' not in jobs_page
+    assert 'name="league"' not in jobs_page
+    assert "/admin-api/scheduler/options" in js
+    releases_start = html.index('<template id="page-model-releases">')
+    releases_end = html.index("</template>", releases_start)
+    releases_page = html[releases_start:releases_end]
+    assert 'id="causal-refresh-team-switch"' in releases_page
+    assert 'id="causal-refresh-teammate"' in releases_page
+    assert 'id="causal-refresh-league"' not in releases_page
+    assert 'id="causal-refresh-competition"' not in releases_page
+    assert 'id="causal-refresh-season"' not in releases_page
+    assert 'id="causal-refresh-teammate-id"' not in releases_page
+    assert "/admin-api/causal-panels/refresh-all" in js
 def test_bb_rating_status_reads_calibration_artifacts(monkeypatch, tmp_path):
     _reset_state()
     root = tmp_path / "models_saved"
