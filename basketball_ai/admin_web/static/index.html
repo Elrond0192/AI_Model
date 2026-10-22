@@ -350,6 +350,11 @@
         </div>
         <div id="causal-refresh-progress"></div>
         <div id="causal-refresh-result" class="microcopy" role="status">Nessun refresh causale eseguito in questa sessione.</div>
+        <div class="button-row">
+          <button id="causal-teammate-diagnose" class="btn btn-primary">Valida supporto teammate exposure</button>
+          <a id="causal-teammate-diagnostic-download" class="btn btn-secondary hidden" href="#" download>Scarica report CSV</a>
+        </div>
+        <div id="causal-teammate-diagnostics-result" class="microcopy" role="status">Diagnostica supporto non ancora eseguita.</div>
       </section>
       <section class="panel"><div class="panel-heading"><h2>Release operation result</h2></div><div id="model-release-result" class="microcopy">Nessuna operazione eseguita.</div></section>
     </section>
@@ -489,7 +494,7 @@
     </section>
   </template>
 
-  <script src="/assets/app.js?v=2.6.9" defer></script>
+  <script src="/assets/app.js?v=2.6.10" defer></script>
 </body>
 </html>
 
