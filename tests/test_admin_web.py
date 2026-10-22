@@ -380,12 +380,14 @@ def test_schedule_validation_accepts_all_or_multiple_leagues_without_competition
     assert selected == {"season": 2024, "leagues": ["ITA1", "ITA2"]}
     assert "competition" not in selected
 
-    with pytest.raises(HTTPException, match="Seleziona Tutte"):
+    with pytest.raises(HTTPException) as missing:
         admin._validate_schedule_parameters("refresh_scenario_serving", {"season": 2025})
-    with pytest.raises(HTTPException, match="'ALL' non può"):
+    assert "Seleziona Tutte" in missing.value.detail
+    with pytest.raises(HTTPException) as mixed_all:
         admin._validate_schedule_parameters(
             "refresh_training_serving", {"season": 2025, "leagues": ["ALL", "ITA1"]}
         )
+    assert "'ALL' non può" in mixed_all.value.detail
 
 
 def test_scheduled_refresh_expands_selected_leagues_to_every_available_competition(monkeypatch):
