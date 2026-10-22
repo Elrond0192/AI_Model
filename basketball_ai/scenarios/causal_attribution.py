@@ -320,7 +320,8 @@ def persist_causal_panel(
                     'DELETE FROM "AI_Source"."SimulationCausalPanel" '
                     'WHERE source_type = :source_type AND league_key = :league_key '
                     'AND competition = :competition '
-                    'AND (:teammate_global_id IS NULL OR teammate_global_id = :teammate_global_id)'
+                    'AND (CAST(:teammate_global_id AS text) IS NULL '
+                    'OR teammate_global_id = CAST(:teammate_global_id AS text))'
                 ),
                 {
                     "source_type": source_type.strip(),
