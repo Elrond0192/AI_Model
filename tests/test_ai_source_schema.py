@@ -290,7 +290,7 @@ def test_scenario_serving_owns_and_rebuilds_simulation_sources():
     assert 'call "ai_source"."refreshsimulationsources"(sim_ctx.league_key, sim_ctx.season)' in sql
     assert "unknown_two_point" in sql
     assert "unknown_three_point" in sql
-    assert "simulationcausalpanel remains empty" in sql
+    assert "simulationcausalpanel is refreshed separately by the explicit guarded model releases cohort-refresh action" in sql
     assert 'create index if not exists ix_simulation_pbp_context' in sql
 
 
