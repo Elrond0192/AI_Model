@@ -102,8 +102,17 @@ schema owner with
 `psql -v ON_ERROR_STOP=1 -d YOUR_DATABASE -f basketball_ai/data/ai_scenario_serving.sql`.
 The web process does not run DDL at request time: the script performs the
 idempotent migration and grants runtime DML only on the two scheduler metadata
-tables and their sequences. If the console cannot preflight the schema/rights,
-it returns HTTP 503 with the PostgreSQL detail rather than a generic 500.
+tables and their sequences. The same SQL contract grants the explicit guarded
+Model Releases causal refresh DML only on `AI_Source.SimulationCausalPanel`;
+canonical player/team facts remain read-only. If the console cannot preflight the
+schema/rights, it returns HTTP 503 with the PostgreSQL detail rather than a generic 500.
+
+The Model Releases causal cohort refresh displays the same progress bar as BB
+Prediction Model and can be stopped with **Interrompi refresh**. Cancellation is
+cooperative: the in-flight league/competition context is allowed to finish, then
+the worker stops at the next safe context boundary. Database write failures count
+as errors, not as an empty cohort. After a release that changes causal-panel schema
+or grants, rerun `ai_scenario_serving.sql` as the database/schema owner.
 
 For routine nightly data refreshes, configure one
 `refresh_context_seasonal` / `AI_Source.RefreshContextSeasonal` task for the

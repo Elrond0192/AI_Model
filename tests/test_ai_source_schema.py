@@ -243,6 +243,15 @@ def test_scheduler_runtime_write_access_is_limited_to_scheduler_metadata():
     assert 'grant all privileges on all tables in schema "ai_source" to ai_model' not in sql
 
 
+def test_causal_panel_runtime_grants_support_guarded_persisted_refresh():
+    sql = SERVING_SQL.read_text(encoding="utf-8").lower()
+    assert '"ai_source"."simulationcausalpanel"' in sql
+    assert "grant select, insert, update, delete on table" in sql
+    assert "'ai_model'" in sql
+    assert "'hm_admin'" in sql
+    assert "'hm_local_workers'" in sql
+
+
 def test_ai_source_uses_native_typed_columns_for_row_transforms():
     sql = SOURCE_SQL.read_text(encoding="utf-8").lower()
     assert "pg_temp.ai_expr" in sql

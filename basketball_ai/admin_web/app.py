@@ -148,6 +148,7 @@ STATE = AdminState()
 
 CAUSAL_REFRESH_LOCK = threading.RLock()
 CAUSAL_REFRESH_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="ai-admin-causal-refresh")
+CAUSAL_REFRESH_CANCEL_EVENT = threading.Event()
 CAUSAL_REFRESH_JOB: dict[str, Any] = {
     "status": "idle",
     "kind": None,
@@ -157,6 +158,7 @@ CAUSAL_REFRESH_JOB: dict[str, Any] = {
     "results": [],
     "summary": None,
     "error": None,
+    "cancel_requested": False,
     "started_at": None,
     "finished_at": None,
 }
@@ -2390,6 +2392,18 @@ def _run_causal_panel_refresh_all(kind: str, actor: str, active_profile: str, da
         )
     database_engine = None
     try:
+        if CAUSAL_REFRESH_CANCEL_EVENT.is_set():
+            with CAUSAL_REFRESH_LOCK:
+                CAUSAL_REFRESH_JOB.update(
+                    status="cancelled", stage="Interrotto dall'operatore", progress=0,
+                    message="Refresh annullato prima dell'avvio dei contesti.",
+                    cancel_requested=False, finished_at=_utcnow(),
+                    summary={"contexts_total": 0, "contexts_processed": 0,
+                             "contexts_refreshed": 0, "contexts_skipped": 0,
+                             "contexts_failed": 0, "rows_written": 0},
+                )
+            _audit(actor, "causal_panel_refresh_all_cancelled", kind, "Cancelled before first context")
+            return
         contexts = _causal_refresh_contexts(data)
         if not contexts:
             raise RuntimeError("Non ci sono contesti con almeno due stagioni e una stagione completata.")
@@ -2408,7 +2422,11 @@ def _run_causal_panel_refresh_all(kind: str, actor: str, active_profile: str, da
             )
         _audit(actor, "causal_panel_refresh_all_started", kind, json.dumps({"contexts": len(contexts)}))
 
+        interrupted = False
         for index, context in enumerate(contexts, start=1):
+            if CAUSAL_REFRESH_CANCEL_EVENT.is_set():
+                interrupted = True
+                break
             try:
                 if kind == "team_switch":
                     result = scenario_engine.refresh_team_switch_causal_panel(
@@ -2430,6 +2448,10 @@ def _run_causal_panel_refresh_all(kind: str, actor: str, active_profile: str, da
                 total_rows += rows_written
                 if status in {"complete", "written", "refreshed"}:
                     refreshed += 1
+                elif status in {"failed", "error"}:
+                    # Persistence failures (including PostgreSQL privileges) must
+                    # not be reported as an empty/unavailable cohort.
+                    exceptions += 1
                 else:
                     skipped += 1
                 entry = {
@@ -2466,23 +2488,48 @@ def _run_causal_panel_refresh_all(kind: str, actor: str, active_profile: str, da
                     },
                 )
 
+        interrupted = interrupted or CAUSAL_REFRESH_CANCEL_EVENT.is_set()
         summary = {
             "contexts_total": len(contexts),
+            "contexts_processed": len(results),
             "contexts_refreshed": refreshed,
             "contexts_skipped": skipped,
             "contexts_failed": exceptions,
             "rows_written": total_rows,
         }
-        final_status = "failed" if exceptions == len(contexts) else ("partial" if exceptions else "complete")
+        final_status = (
+            "cancelled" if interrupted else
+            "failed" if exceptions == len(contexts) else
+            "partial" if exceptions else "complete"
+        )
+        final_progress = (
+            min(99, 2 + int(len(results) / len(contexts) * 97))
+            if interrupted else 100
+        )
+        if interrupted:
+            final_stage = "Interrotto dall'operatore"
+            final_message = (
+                f"Refresh interrotto dopo {len(results)} di {len(contexts)} contesti; "
+                f"{refreshed} aggiornati, {skipped} senza coorte utilizzabile, "
+                f"{exceptions} errori; {total_rows} righe scritte."
+            )
+        else:
+            final_stage = "Completato" if final_status == "complete" else "Terminato con anomalie"
+            final_message = (
+                f"Refresh concluso: {refreshed} contesti aggiornati, {skipped} senza coorte utilizzabile, "
+                f"{exceptions} errori; {total_rows} righe scritte."
+            )
         with CAUSAL_REFRESH_LOCK:
             CAUSAL_REFRESH_JOB.update(
-                status=final_status, stage="Completato" if final_status == "complete" else "Terminato con anomalie",
-                progress=100, message=(
-                    f"Refresh concluso: {refreshed} contesti aggiornati, {skipped} senza coorte utilizzabile, "
-                    f"{exceptions} errori; {total_rows} righe scritte."
-                ), summary=summary, finished_at=_utcnow(),
+                status=final_status, stage=final_stage,
+                progress=final_progress, message=final_message,
+                summary=summary, cancel_requested=False, finished_at=_utcnow(),
             )
-        _audit(actor, "causal_panel_refresh_all_finished", kind, json.dumps(summary))
+        audit_action = (
+            "causal_panel_refresh_all_cancelled" if interrupted
+            else "causal_panel_refresh_all_finished"
+        )
+        _audit(actor, audit_action, kind, json.dumps(summary))
     except Exception as exc:
         error = _safe_error(exc)
         with CAUSAL_REFRESH_LOCK:
@@ -2513,10 +2560,11 @@ def start_causal_panel_refresh_all(
     with CAUSAL_REFRESH_LOCK:
         if CAUSAL_REFRESH_JOB.get("status") in {"queued", "running"}:
             raise HTTPException(status_code=409, detail="Un refresh causale globale è già in esecuzione.")
+        CAUSAL_REFRESH_CANCEL_EVENT.clear()
         CAUSAL_REFRESH_JOB.update(
             status="queued", kind=payload.kind, stage="In coda", progress=0,
             message="Refresh globale accodato.", results=[], summary=None, error=None,
-            started_at=_utcnow(), finished_at=None,
+            cancel_requested=False, started_at=_utcnow(), finished_at=None,
         )
         CAUSAL_REFRESH_EXECUTOR.submit(
             _run_causal_panel_refresh_all, payload.kind, user["username"], active_profile, data
@@ -2530,6 +2578,33 @@ def get_causal_panel_refresh_all(user: dict[str, str] = Depends(_operator)) -> d
     del user
     with CAUSAL_REFRESH_LOCK:
         return json.loads(json.dumps(CAUSAL_REFRESH_JOB, default=str))
+
+
+@app.post("/admin-api/causal-panels/refresh-all/cancel")
+def cancel_causal_panel_refresh_all(user: dict[str, str] = Depends(_csrf)) -> dict[str, Any]:
+    with CAUSAL_REFRESH_LOCK:
+        if CAUSAL_REFRESH_JOB.get("status") not in {"queued", "running"}:
+            raise HTTPException(status_code=409, detail="Nessun refresh causale attivo da interrompere.")
+        if not CAUSAL_REFRESH_CANCEL_EVENT.is_set():
+            CAUSAL_REFRESH_CANCEL_EVENT.set()
+            CAUSAL_REFRESH_JOB.update(
+                cancel_requested=True,
+                message=(
+                    "Interruzione richiesta: il refresh terminerà il contesto attualmente in corso "
+                    "e poi si fermerà al prossimo checkpoint sicuro."
+                ),
+            )
+        snapshot = json.loads(json.dumps(CAUSAL_REFRESH_JOB, default=str))
+    _audit(
+        user["username"], "causal_panel_refresh_all_cancel_requested",
+        str(snapshot.get("kind") or ""), json.dumps({"status": snapshot.get("status")}),
+    )
+    return {
+        "ok": True,
+        "status": "cancellation_requested",
+        "message": "Interruzione richiesta; il contesto attualmente in corso verrà concluso prima di fermarsi.",
+        "job": snapshot,
+    }
 
 
 @app.get("/admin-api/model-releases")

@@ -622,11 +622,93 @@ def test_helpers_and_static_assets(monkeypatch, tmp_path):
     releases_page = html[releases_start:releases_end]
     assert 'id="causal-refresh-team-switch"' in releases_page
     assert 'id="causal-refresh-teammate"' in releases_page
+    assert 'id="causal-refresh-progress"' in releases_page
+    assert 'id="causal-refresh-cancel"' in releases_page
+    assert "/admin-api/causal-panels/refresh-all/cancel" in js
+    assert "causalProgress.innerHTML=progressMarkup(job)" in js
     assert 'id="causal-refresh-league"' not in releases_page
     assert 'id="causal-refresh-competition"' not in releases_page
     assert 'id="causal-refresh-season"' not in releases_page
     assert 'id="causal-refresh-teammate-id"' not in releases_page
     assert "/admin-api/causal-panels/refresh-all" in js
+def test_causal_bulk_refresh_cancel_requests_cooperative_stop(monkeypatch):
+    admin.CAUSAL_REFRESH_CANCEL_EVENT.clear()
+    with admin.CAUSAL_REFRESH_LOCK:
+        admin.CAUSAL_REFRESH_JOB.update(
+            status="running", kind="team_switch", cancel_requested=False,
+            progress=20, message="In corso",
+        )
+    audit = []
+    monkeypatch.setattr(admin, "_audit", lambda *args, **kwargs: audit.append(args))
+    try:
+        result = admin.cancel_causal_panel_refresh_all(
+            {"username": "admin", "role": "admin", "token": "test"}
+        )
+        assert result["ok"] is True
+        assert result["status"] == "cancellation_requested"
+        assert admin.CAUSAL_REFRESH_CANCEL_EVENT.is_set()
+        assert result["job"]["cancel_requested"] is True
+        assert audit and audit[-1][1] == "causal_panel_refresh_all_cancel_requested"
+    finally:
+        admin.CAUSAL_REFRESH_CANCEL_EVENT.clear()
+        with admin.CAUSAL_REFRESH_LOCK:
+            admin.CAUSAL_REFRESH_JOB.update(
+                status="idle", kind=None, cancel_requested=False, progress=0,
+                message="Nessun refresh causale eseguito.", results=[], summary=None,
+                error=None, started_at=None, finished_at=None,
+            )
+
+
+def test_causal_bulk_refresh_worker_stops_at_safe_context_boundary(monkeypatch):
+    from types import SimpleNamespace
+
+    contexts = [
+        {"league_id": i, "league": f"ITA{i}", "competition": "RS", "through_season": 2025}
+        for i in range(1, 4)
+    ]
+    calls = []
+
+    class FakeScenarioEngine:
+        def refresh_team_switch_causal_panel(self, *_args, **_kwargs):
+            calls.append("context")
+            admin.CAUSAL_REFRESH_CANCEL_EVENT.set()
+            return {"status": "refreshed", "rows": 3}
+
+    admin.CAUSAL_REFRESH_CANCEL_EVENT.clear()
+    monkeypatch.setattr(admin, "_causal_refresh_contexts", lambda _data: contexts)
+    monkeypatch.setattr(admin, "BBRatingEngine", lambda *_args, **_kwargs: object())
+    monkeypatch.setattr(admin, "ChatScenarioEngine", lambda *_args, **_kwargs: FakeScenarioEngine())
+    monkeypatch.setattr(admin, "StrictProductionEnsembleModel", lambda: object())
+    monkeypatch.setattr(admin, "get_engine", lambda _url: SimpleNamespace(dispose=lambda: None))
+    monkeypatch.setattr(admin, "profile_url", lambda _profile: "postgresql+psycopg://test")
+    monkeypatch.setattr(admin, "_audit", lambda *args, **kwargs: None)
+    with admin.CAUSAL_REFRESH_LOCK:
+        admin.CAUSAL_REFRESH_JOB.update(
+            status="queued", kind="team_switch", progress=0, cancel_requested=False,
+            message="Refresh globale accodato.", results=[], summary=None, error=None,
+            started_at=admin._utcnow(), finished_at=None,
+        )
+    try:
+        admin._run_causal_panel_refresh_all(
+            "team_switch", "admin", "production",
+            {"player_stats": object(), "players": None, "leagues": None},
+        )
+        with admin.CAUSAL_REFRESH_LOCK:
+            job = dict(admin.CAUSAL_REFRESH_JOB)
+        assert len(calls) == 1
+        assert job["status"] == "cancelled"
+        assert job["summary"]["contexts_processed"] == 1
+        assert job["progress"] < 100
+    finally:
+        admin.CAUSAL_REFRESH_CANCEL_EVENT.clear()
+        with admin.CAUSAL_REFRESH_LOCK:
+            admin.CAUSAL_REFRESH_JOB.update(
+                status="idle", kind=None, cancel_requested=False, progress=0,
+                message="Nessun refresh causale eseguito.", results=[], summary=None,
+                error=None, started_at=None, finished_at=None,
+            )
+
+
 def test_bb_rating_status_reads_calibration_artifacts(monkeypatch, tmp_path):
     _reset_state()
     root = tmp_path / "models_saved"

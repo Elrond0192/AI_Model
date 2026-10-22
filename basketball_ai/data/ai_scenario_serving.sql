@@ -1354,8 +1354,8 @@ CREATE TABLE IF NOT EXISTS "AI_Source"."AIModelJobRun" (
 CREATE INDEX IF NOT EXISTS ix_ai_model_job_run_started
     ON "AI_Source"."AIModelJobRun" (started_at DESC);
 
--- The runtime role may mutate scheduler metadata only. Canonical player/team
--- statistics and other AI_Source tables remain read-only to the application.
+-- The runtime role may mutate scheduler metadata and the causal panel used by
+-- the explicit guarded Model Releases refresh. Canonical facts remain read-only.
 DO $grant_ai_model_scheduler$
 DECLARE
     requested_role text := NULLIF(
@@ -1367,6 +1367,7 @@ BEGIN
     FOREACH scheduler_role IN ARRAY ARRAY[
         'ai_model',
         'hm_admin',
+        'hm_local_workers',
         requested_role
     ]
     LOOP
@@ -1384,7 +1385,8 @@ BEGIN
             EXECUTE format(
                 'GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE
                     "AI_Source"."AIModelScheduledJob",
-                    "AI_Source"."AIModelJobRun"
+                    "AI_Source"."AIModelJobRun",
+                    "AI_Source"."SimulationCausalPanel"
                  TO %I',
                 scheduler_role
             );
@@ -1396,7 +1398,7 @@ BEGIN
                 scheduler_role
             );
             RAISE NOTICE
-                'AI_Model scheduler table/sequence access granted to role %',
+                'AI_Model scheduler/causal-panel table access granted to role %',
                 scheduler_role;
         END IF;
     END LOOP;

@@ -346,7 +346,9 @@
         <div class="button-row">
           <button id="causal-refresh-team-switch" class="btn btn-secondary">Aggiorna team-switch · tutte le leghe</button>
           <button id="causal-refresh-teammate" class="btn btn-secondary">Aggiorna teammate exposure · tutte le leghe</button>
+          <button id="causal-refresh-cancel" class="btn btn-danger hidden" disabled>Interrompi refresh</button>
         </div>
+        <div id="causal-refresh-progress"></div>
         <div id="causal-refresh-result" class="microcopy" role="status">Nessun refresh causale eseguito in questa sessione.</div>
       </section>
       <section class="panel"><div class="panel-heading"><h2>Release operation result</h2></div><div id="model-release-result" class="microcopy">Nessuna operazione eseguita.</div></section>
@@ -487,7 +489,7 @@
     </section>
   </template>
 
-  <script src="/assets/app.js?v=2.6.4" defer></script>
+  <script src="/assets/app.js?v=2.6.5" defer></script>
 </body>
 </html>
 

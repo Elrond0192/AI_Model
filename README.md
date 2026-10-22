@@ -98,9 +98,10 @@ GRANT SELECT, INSERT, UPDATE ON ALL TABLES IN SCHEMA "AI" TO ai_model;
 ```
 
 Keep canonical source facts read-only and do not expose PostgreSQL 5432 publicly.
-The `ai_scenario_serving.sql` contract grants the runtime role narrowly scoped
-CRUD rights only to the two scheduler metadata tables and their sequences; do not
-replace these grants with schema-wide write access.
+The `ai_scenario_serving.sql` contract grants narrowly scoped CRUD rights only
+to the two scheduler metadata tables and the guarded `SimulationCausalPanel`,
+plus the scheduler sequences; do not replace these grants with schema-wide write
+access. Canonical player/team facts remain read-only to the runtime.
 
 ## 3. Docker -> PostgreSQL host
 

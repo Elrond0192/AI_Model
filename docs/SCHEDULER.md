@@ -85,9 +85,11 @@ that changes this contract, reapply `basketball_ai/data/ai_scenario_serving.sql`
 as the PostgreSQL schema/table owner (normally `hm_admin`) so its idempotent
 migration adds `schedule_mode`, `daily_time`, `timezone_name`, `start_date`
 and `end_date` without deleting existing jobs. The same script grants
-`ai_model` (and the configured `app.ai_source_read_role`, when supplied)
-`SELECT/INSERT/UPDATE/DELETE` only on the two scheduler metadata tables, plus
-usage on their sequences; it does not grant write access to canonical statistics.
+`ai_model`, `hm_admin`, `hm_local_workers` and the configured
+`app.ai_source_read_role` (when supplied) `SELECT/INSERT/UPDATE/DELETE` on the
+two scheduler metadata tables and the guarded `SimulationCausalPanel`, plus
+usage on the scheduler sequences. It does not grant write access to canonical
+player/team statistics.
 The runtime preflights `PlayerCompetitionStats` and both scheduler tables and
 returns HTTP 503 with the PostgreSQL detail if the schema or grants are missing.
 

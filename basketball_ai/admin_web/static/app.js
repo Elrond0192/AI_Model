@@ -468,8 +468,17 @@ async function renderModelReleases(){
 
   const causalButtons=[$('#causal-refresh-team-switch'),$('#causal-refresh-teammate')].filter(Boolean);
   const causalResult=$('#causal-refresh-result');
+  const causalProgress=$('#causal-refresh-progress');
+  const causalCancel=$('#causal-refresh-cancel');
   const showCausalJob=job=>{
     if(!causalResult||!job)return;
+    if(causalProgress)causalProgress.innerHTML=progressMarkup(job);
+    const active=['queued','running'].includes(job.status);
+    if(causalCancel){
+      causalCancel.classList.toggle('hidden',!active);
+      causalCancel.disabled=!active||!!job.cancel_requested;
+      causalCancel.textContent=job.cancel_requested?'Interruzione richiesta…':'Interrompi refresh';
+    }
     const lines=[job.message||'Refresh causale in attesa.'];
     if(job.stage)lines.unshift(job.stage+(Number.isFinite(Number(job.progress))?' · '+Number(job.progress)+'%':''));
     if(job.summary){
@@ -512,6 +521,17 @@ async function renderModelReleases(){
   };
   $('#causal-refresh-team-switch')?.addEventListener('click',()=>runCausalRefresh('team_switch'));
   $('#causal-refresh-teammate')?.addEventListener('click',()=>runCausalRefresh('teammate_exposure'));
+  causalCancel?.addEventListener('click',async()=>{
+    causalCancel.disabled=true;
+    try{
+      const result=await api('/admin-api/causal-panels/refresh-all/cancel',{method:'POST',body:{}});
+      showCausalJob(result.job||await pollCausalJob());
+      toast(result.message||'Interruzione refresh richiesta');
+    }catch(e){
+      toast(e.message,'error');
+      causalCancel.disabled=false;
+    }
+  });
   pollCausalJob().catch(()=>{});
 
 

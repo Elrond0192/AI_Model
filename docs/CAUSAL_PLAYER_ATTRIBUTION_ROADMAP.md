@@ -117,7 +117,8 @@ result is that the causal effect is not identified for that question.
 
 ### `causal_team_effect` — remains partial
 - The guarded team-switch ATT and persisted-panel refresh path are implemented. The operator can refresh all eligible canonical contexts from Model Releases; the resulting cohort is observational, not a named player's causal effect.
-- The bulk refresh records per-context status/counts and writes audit events, but production database migration/permissions, data coverage and row invariants still need to be checked in the deployment environment.
+- The bulk refresh records per-context status/counts, exposes a 0–100 progress bar and allows cooperative operator cancellation at the next context boundary; it writes audit events and never promotes a model.
+- `ai_scenario_serving.sql` grants the configured runtime roles SELECT/INSERT/UPDATE/DELETE on `SimulationCausalPanel` for the guarded persistence path only. Apply that SQL with the schema owner after this release; canonical player/team statistics remain read-only.
 - Promotion requires validated uncertainty and calibration comparability, out-of-time and placebo tests, sensitivity/leave-one-team-season-out checks, prespecified thresholds, and production contract tests.
 - A guarded teammate-exposure estimator and bulk refresh path now exist, but teammate-specific causal attribution remains partial until its treatment/exposure design and estimates pass empirical validation. Do not represent implementation presence as validated causality.
 
@@ -134,8 +135,9 @@ A capability can be operationally available while a specific player's result is 
 ## Remaining validation sequence
 
 1. On the deployment database, apply/verify the incremental `SimulationCausalPanel`
-   migration and the required table/procedure permissions. Run both bulk refresh
-   actions and verify persisted rows, unique player transitions, temporal ordering,
+   migration and the required table/procedure permissions by rerunning
+   `basketball_ai/data/ai_scenario_serving.sql` as the PostgreSQL schema owner (normally
+   `hm_admin`). Run both bulk refresh actions and verify persisted rows, unique player transitions, temporal ordering,
    per-context status and audit history.
 2. Run rolling-origin/out-of-time, placebo, sensitivity and leave-one-team/season-out
    tests on real completed-season data with prespecified acceptance thresholds.

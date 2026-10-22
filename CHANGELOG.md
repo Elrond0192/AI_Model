@@ -7,6 +7,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 ### Fixed
+- Added a BB Prediction Model-style progress bar and a cooperative stop control to
+  the global causal-panel refresh. Cancellation stops at a safe context boundary;
+  persistence permission failures are now counted as errors rather than missing cohorts.
+- Granted the runtime roles scoped DML on `AI_Source.SimulationCausalPanel` through
+  the schema-owner SQL contract, fixing persisted cohort refresh permission failures.
 - Reset the main document and content scroll positions to the top on every page
   navigation. Serialized the initial overview render and PostgreSQL auto-load on
   login/session restore, then refreshes overview from the loaded state to avoid
