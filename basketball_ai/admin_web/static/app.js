@@ -751,10 +751,8 @@ async function renderAiJobs(){
   };
   const syncLeagueSelection=()=>{
     const allBox=$('#ai-schedule-all-leagues');
-    const boxes=$$('input[name="schedule_league"]',leagueOptions);
+    const boxes=$('input[name="schedule_league"]',leagueOptions);
     if(!allBox)return;
-    if(boxes.some(input=>input.checked))allBox.checked=false;
-    if(!boxes.some(input=>input.checked)&&!allBox.checked)allBox.checked=true;
     boxes.forEach(input=>{input.disabled=allBox.checked;});
   };
   const loadScheduleOptions=async()=>{
@@ -764,8 +762,16 @@ async function renderAiJobs(){
     leagueOptions.innerHTML=
       '<label class="schedule-league-option schedule-league-all"><input id="ai-schedule-all-leagues" type="checkbox" checked> <span><strong>Tutte</strong><small>Tutte le leghe attualmente presenti</small></span></label>'+
       leagues.map(league=>'<label class="schedule-league-option"><input type="checkbox" name="schedule_league" value="'+esc(league)+'"> <span><strong>'+esc(league)+'</strong></span></label>').join('');
-    $('#ai-schedule-all-leagues')?.addEventListener('change',syncLeagueSelection);
-    $$('input[name="schedule_league"]',leagueOptions).forEach(input=>input.addEventListener('change',syncLeagueSelection));
+    $('#ai-schedule-all-leagues')?.addEventListener('change',()=>{
+      if($('#ai-schedule-all-leagues')?.checked){
+        $('input[name="schedule_league"]',leagueOptions).forEach(input=>{input.checked=false;});
+      }
+      syncLeagueSelection();
+    });
+    $('input[name="schedule_league"]',leagueOptions).forEach(input=>input.addEventListener('change',()=>{
+      if(input.checked&&$('#ai-schedule-all-leagues'))$('#ai-schedule-all-leagues').checked=false;
+      syncLeagueSelection();
+    }));
     syncLeagueSelection();
   };
   const syncScheduleFields=()=>{
