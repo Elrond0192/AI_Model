@@ -903,7 +903,7 @@ async function renderAiJobs(){
     button.disabled=true;
     try{
       await api('/admin-api/scheduler/jobs',{method:'POST',body:{
-        name:scheduleForm.name.value.trim(),task_key:task,
+        name:scheduleForm.elements.namedItem('name').value.trim(),task_key:task,
         interval_minutes:scheduleMode==='daily'?1440:intervalHours*60,
         schedule_mode:scheduleMode,
         daily_time:scheduleMode==='daily'?scheduleForm.daily_time.value:null,
