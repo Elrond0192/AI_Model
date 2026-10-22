@@ -147,6 +147,13 @@ A capability can be operationally available while a specific player's result is 
 4. Promote `causal_team_effect` beyond partial only after all empirical, uncertainty,
    database-contract and production-readiness gates pass.
 
+### Teammate exposure support diagnostics
+
+- Model Releases now offers an explicit diagnostic of the persisted `teammate_exposure` panel grouped by `teammate_global_id × league_key × competition × transition_season`; it does not pool a named teammate across seasons to make a small cohort appear larger.
+- The report checks canonical focal identity integrity, complete-case covariates and the existing minimum gates (60 complete rows, at least 20 treated and 20 controls). Only groups that pass those raw gates proceed to propensity overlap and weighted-covariate-balance evaluation.
+- At most 50 raw-supported groups are fitted in one run to bound operational cost. Any raw-supported groups beyond that cap are explicitly marked not evaluated; the CSV is the audit detail. No effect estimate is published by this diagnostic.
+- Even groups that pass the statistical gates remain observational. The treatment may represent sharing a team in the outcome season rather than a newly acquired teammate; temporal treatment definition, calibration comparability, out-of-time/placebo and sensitivity checks remain required. Keep `causal_team_effect` partial.
+
 ## Immediate safety rule
 
 The descriptive performance_attribution capability is now marked available because it is explicitly scoped to observed decomposition and associations, with causal claims excluded. Keep causal_team_effect marked partial. Return the existing BB-Rating decomposition and observed associations, and expose the cohort ATT only when its support and balance gates pass; explicitly state that this is not a player-specific causal effect and that causal identification remains conditional on observational assumptions. Never call an observed difference
