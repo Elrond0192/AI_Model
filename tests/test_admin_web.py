@@ -1898,6 +1898,6 @@ def test_admin_navigation_uses_query_all_for_repeated_elements():
     assert "$$('.admin-only').forEach" in js
     assert "$$('.admin-only',root).forEach" in js
     assert "$$('.jump',root).forEach" in js
-    assert "$('.nav-item').forEach" not in js
-    assert "$('.admin-only').forEach" not in js
+    assert "function activateNav(page){$('.nav-item').forEach" not in js
+    assert "function showApp(user){App.user=user;$('#login-screen').classList.add('hidden');$('#app-shell').classList.remove('hidden');$('#user-name').textContent=user.username;$('#user-role').textContent=user.role==='admin'?'Administrator':user.role;$('#user-avatar').textContent=(user.username||'A')[0].toUpperCase();$('.admin-only').forEach" not in js
     assert '/assets/app.js?v=2.6.9' in html
