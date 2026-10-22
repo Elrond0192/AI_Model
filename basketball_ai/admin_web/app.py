@@ -2979,10 +2979,13 @@ def _execute_scheduled_task(task_key: str, parameters: dict[str, Any], actor: st
         "operations": operations[-250:],
         "failures": failures[-100:],
     }
-    if failures and not operations:
-        return "failed", result
     if failures:
-        return "partial", result
+        # AIModelJobRun constrains status to running/complete/submitted/failed.
+        # Keep the detailed partial counts in result JSON without writing an
+        # unsupported status that would break the scheduler transaction.
+        result["completion_state"] = "partial" if operations else "failed"
+        return "failed", result
+    result["completion_state"] = "complete"
     return "complete", result
 
 
