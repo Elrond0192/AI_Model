@@ -156,6 +156,7 @@ QUESTION_CAPABILITIES: tuple[QuestionCapability, ...] = (
             "team_context_association",
             "team_switch_analysis",
             "team_switch_cohort_att",
+            "teammate_exposure_cohort_att",
             "bb_rating_context_adjustment",
             "lineup_context_association",
             "observed_teammate_lineup_associations",
@@ -167,6 +168,7 @@ QUESTION_CAPABILITIES: tuple[QuestionCapability, ...] = (
             "team_context",
             "team_switches",
             "team_switch_cohort_att_with_overlap_balance_and_uncertainty",
+            "named_teammate_exposure_att_when_audited_panel_exists",
             "minutes",
             "usage",
             "observed_role",
@@ -178,6 +180,7 @@ QUESTION_CAPABILITIES: tuple[QuestionCapability, ...] = (
             "TeamCompetitionStats in the requested league and competition",
             "BB-Rating history from the canonical BB-Rating engine",
             "Completed adjacent player-seasons with canonical global identity, team IDs, prior role/usage/minutes, age and prior team strength for the cohort ATT",
+            "Persisted teammate exposure panel with canonical BB-Rating outcome, explicit treatment window and refresh provenance; not yet populated by a production refresh job",
         ),
         optional_data=(
             "ScenarioLineupStats sourced from SimulationLineupStints",
