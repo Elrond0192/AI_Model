@@ -778,11 +778,11 @@ async function renderAiJobs(){
   const selectedLeagues=()=>{
     const allBox=$('#ai-schedule-all-leagues');
     if(allBox?.checked)return ['ALL'];
-    return $('input[name="schedule_league"]:checked',leagueOptions).map(input=>input.value);
+    return $$('input[name="schedule_league"]:checked',leagueOptions).map(input=>input.value);
   };
   const syncLeagueSelection=()=>{
     const allBox=$('#ai-schedule-all-leagues');
-    const boxes=$('input[name="schedule_league"]',leagueOptions);
+    const boxes=$$('input[name="schedule_league"]',leagueOptions);
     if(!allBox)return;
     boxes.forEach(input=>{input.disabled=allBox.checked;});
     const selected=boxes.filter(input=>input.checked).map(input=>input.value);
@@ -802,11 +802,11 @@ async function renderAiJobs(){
       leagues.map(league=>'<label class="schedule-league-option"><input type="checkbox" name="schedule_league" value="'+esc(league)+'" '+(!allSelected&&previousSelection.includes(league)?'checked':'')+'> <span><strong>'+esc(league)+'</strong></span></label>').join('');
     $('#ai-schedule-all-leagues')?.addEventListener('change',()=>{
       if($('#ai-schedule-all-leagues')?.checked){
-        $('input[name="schedule_league"]',leagueOptions).forEach(input=>{input.checked=false;});
+        $$('input[name="schedule_league"]',leagueOptions).forEach(input=>{input.checked=false;});
       }
       syncLeagueSelection();
     });
-    $('input[name="schedule_league"]',leagueOptions).forEach(input=>input.addEventListener('change',()=>{
+    $$('input[name="schedule_league"]',leagueOptions).forEach(input=>input.addEventListener('change',()=>{
       if(input.checked&&$('#ai-schedule-all-leagues'))$('#ai-schedule-all-leagues').checked=false;
       syncLeagueSelection();
     }));
