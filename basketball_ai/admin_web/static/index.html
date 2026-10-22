@@ -50,6 +50,7 @@
           <button class="nav-item" data-page="scenarios"><span class="nav-icon"><i class="ph ph-flask"></i></span><span>Scenario Lab</span></button>
         </div>
         <div class="nav-group"><div class="nav-group-label">OPERATIONS</div>
+          <button class="nav-item" data-page="ai-jobs"><span class="nav-icon"><i class="ph ph-calendar-check"></i></span><span>Pianificazione AI_Model</span></button>
           <button class="nav-item" data-page="data"><span class="nav-icon"><i class="ph ph-database"></i></span><span>Dati e snapshot</span></button>
           <button class="nav-item" data-page="health"><span class="nav-icon"><i class="ph ph-heartbeat"></i></span><span>API e salute</span></button>
           <button class="nav-item" data-page="diagnostics"><span class="nav-icon"><i class="ph ph-stethoscope"></i></span><span>Diagnostica API</span></button>
@@ -212,6 +213,41 @@
       <section class="panel"><div class="panel-heading"><h2>Storico pronto per il modello</h2><button id="refresh-snapshots" class="btn btn-small btn-secondary">Aggiorna</button></div><p class="microcopy">Uno snapshot è una copia immutabile dei dati core storici. Prepararlo non allena il modello e non legge play-by-play.</p><div id="snapshots-list" class="profile-list"></div></section>
       <section class="panel"><div class="panel-heading"><h2>Stato delle stagioni</h2><button id="refresh-lifecycle" class="btn btn-small btn-secondary">Aggiorna</button></div><p class="microcopy">Segna una stagione <strong>Completa</strong> solo quando AdvancedStats e risultati finali sono definitivi. Il training esclude automaticamente le stagioni <strong>In corso</strong>; resta bloccato solo in presenza di stagioni non classificate o <strong>Bloccate</strong>.</p><div id="season-lifecycle-list" class="profile-list"></div></section>
       <section class="panel contract-panel"><div class="panel-heading"><h2>Contratto dati canonical</h2></div><div class="contract-tags"><span>"AI_Source"."Leagues"</span><span>"AI_Source"."Teams"</span><span>"AI_Source"."Players"</span><span>player_competition_stats</span><span>team_competition_stats</span><span>immutable training snapshot</span><span>scenario_* serving</span></div></section>
+    </section>
+  </template>
+
+  <template id="page-ai-jobs">
+    <section class="page">
+      <div class="page-heading action-heading">
+        <div><h1>Pianificazione AI_Model</h1><p>Controllo dei job di training e calibrazione appartenenti ad AI_Model. I processi di SeasonalContext e AdvancedStats restano in HoopmetricsEngine.</p></div>
+        <button id="ai-jobs-refresh" class="btn btn-secondary btn-small"><i class="ph ph-arrows-clockwise"></i> Aggiorna stato</button>
+      </div>
+      <section class="panel">
+        <div class="panel-heading"><h2>Stato pianificazioni</h2><span class="registry-badge">Scheduler ricorrente non ancora attivo</span></div>
+        <p class="microcopy">Questa sezione centralizza l'accesso e il monitoraggio dei job AI_Model. Al momento consente l'avvio manuale tramite le pipeline esistenti; gli orari ricorrenti saranno attivabili quando il servizio scheduler persistente sarà collegato al backend.</p>
+      </section>
+      <div class="split-grid">
+        <section class="panel">
+          <div class="panel-heading"><h2>BB Prediction Model</h2><span id="ai-job-prediction-state" class="status-badge">—</span></div>
+          <p class="microcopy">Training del modello che predice il BB-Rating canonico 1–100. Il candidato non diventa production senza validazione e promozione esplicita.</p>
+          <div id="ai-job-prediction-detail" class="summary-list"></div>
+          <div class="button-row"><button id="ai-job-prediction-run" class="btn btn-primary btn-small">Avvia training</button><button class="btn btn-secondary btn-small jump" data-page="model-releases">Release e validazione</button></div>
+        </section>
+        <section class="panel">
+          <div class="panel-heading"><h2>Calibrazione BB-Rating</h2><span id="ai-job-rating-state" class="status-badge">—</span></div>
+          <p class="microcopy">Aggiorna la calibrazione e gli artefatti BB-Rating. Non modifica il Prediction Model.</p>
+          <div id="ai-job-rating-detail" class="summary-list"></div>
+          <div class="button-row"><button id="ai-job-rating-run" class="btn btn-primary btn-small">Avvia calibrazione</button><button class="btn btn-secondary btn-small jump" data-page="bb-rating">Dettagli BB-Rating</button></div>
+        </section>
+        <section class="panel">
+          <div class="panel-heading"><h2>Future Performance</h2><span id="ai-job-future-state" class="status-badge">—</span></div>
+          <p class="microcopy">Training del modello statistico season-ahead, indipendente dal BB Prediction Model.</p>
+          <div id="ai-job-future-detail" class="summary-list"></div>
+          <div class="button-row"><button id="ai-job-future-run" class="btn btn-primary btn-small">Avvia training</button><button class="btn btn-secondary btn-small jump" data-page="future-performance">Dettagli modello</button></div>
+        </section>
+      </div>
+      <section class="panel"><div class="panel-heading"><h2>Storico esecuzioni</h2></div><p class="microcopy">Sono mostrati gli ultimi stati disponibili dalle pipeline esistenti. Uno storico persistente comune, con pianificazioni, retry e audit, richiede il backend scheduler.</p><div id="ai-jobs-history" class="summary-list"></div></section>
+      <div id="ai-jobs-error" class="microcopy" role="status"></div>
     </section>
   </template>
 
