@@ -7,10 +7,13 @@ player-specific causal effect.
 from __future__ import annotations
 
 import math
+import json
 from typing import Any
 
 import numpy as np
 import pandas as pd
+from sqlalchemy import text
+from sqlalchemy.dialects.postgresql import JSONB
 from sklearn.linear_model import LinearRegression, LogisticRegression
 from sklearn.preprocessing import StandardScaler
 
@@ -231,3 +234,112 @@ def estimate_teammate_exposure_att(
         "Shared minutes, lineup Net Rating and team outcomes are not substitutes for the focal player's canonical BB-Rating outcome.",
     ]
     return result
+
+
+def persist_causal_panel(
+    panel: pd.DataFrame,
+    engine: Any,
+    *,
+    source_type: str,
+    league_key: str,
+    competition: str,
+) -> dict[str, Any]:
+    """Atomically replace one auditable source/context slice of the causal panel.
+
+    The caller must supply outcomes already produced by the canonical BB-Rating
+    engine and a pre-registered treatment/control definition. No native source
+    rating fallback is accepted. This helper persists evidence; it does not
+    validate causal identification or automatically schedule a refresh.
+    """
+    if not isinstance(panel, pd.DataFrame) or panel.empty:
+        return {"status": "not_written", "rows": 0, "reason": "panel_empty"}
+    if not source_type.strip() or not league_key.strip() or not competition.strip():
+        return {"status": "not_written", "rows": 0, "reason": "context_required"}
+    required = _REQUIRED | {"league_key", "competition"}
+    missing = sorted(required - set(panel.columns))
+    if missing:
+        return {
+            "status": "not_written", "rows": 0,
+            "reason": "panel_missing_columns:" + ",".join(missing),
+        }
+    frame = panel.copy()
+    if "rating" in frame.columns or "native_rating" in frame.columns:
+        return {
+            "status": "not_written", "rows": 0,
+            "reason": "native_rating_columns_forbidden_use_canonical_bb_rating",
+        }
+    frame["global_id"] = frame["global_id"].astype(str).str.strip()
+    frame["league_key"] = frame["league_key"].astype(str).str.strip().str.upper()
+    frame["competition"] = frame["competition"].astype(str).str.strip().str.upper()
+    frame = frame[
+        (frame["league_key"] == league_key.strip().upper())
+        & (frame["competition"] == competition.strip().upper())
+    ].copy()
+    if frame.empty:
+        return {"status": "not_written", "rows": 0, "reason": "context_has_no_rows"}
+    frame["treatment"] = pd.to_numeric(frame["treatment"], errors="coerce")
+    frame["outcome"] = pd.to_numeric(frame["outcome"], errors="coerce")
+    if not frame["treatment"].isin([0, 1]).all():
+        return {"status": "not_written", "rows": 0, "reason": "treatment_must_be_binary"}
+    if frame["global_id"].eq("").any() or frame["global_id"].isna().any():
+        return {"status": "not_written", "rows": 0, "reason": "canonical_global_id_required"}
+    if frame["outcome"].isna().any() or not frame["outcome"].between(1, 100).all():
+        return {"status": "not_written", "rows": 0, "reason": "canonical_bb_rating_outcome_required"}
+    if frame.duplicated(["global_id", "transition_season"]).any():
+        return {"status": "not_written", "rows": 0, "reason": "duplicate_player_transition"}
+    frame["source_type"] = source_type.strip()
+    frame["next_outcome"] = frame["outcome"].astype(float)
+    frame["details"] = frame.apply(
+        lambda row: json.dumps({
+            "estimand": source_type.strip(),
+            "identification": "observational_assumptions_required",
+        }),
+        axis=1,
+    )
+    frame["refreshed_at"] = pd.Timestamp.now(tz="UTC")
+    if "teammate_global_id" not in frame.columns:
+        frame["teammate_global_id"] = None
+    columns = [
+        "treatment", "next_outcome", "source_type", "details", "global_id",
+        "teammate_global_id", "league_key", "competition", "baseline_bb_rating",
+        "minutes_pre", "usage_pre", "age_pre", "team_strength_pre",
+        "transition_season", "role_pre", "refreshed_at",
+    ]
+    persisted = frame[columns].copy()
+    persisted["treatment"] = persisted["treatment"].astype(int).astype(str)
+    persisted["details"] = persisted["details"].map(json.loads)
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    'DELETE FROM "AI_Source"."SimulationCausalPanel" '
+                    'WHERE source_type = :source_type AND league_key = :league_key '
+                    'AND competition = :competition'
+                ),
+                {
+                    "source_type": source_type.strip(),
+                    "league_key": league_key.strip().upper(),
+                    "competition": competition.strip().upper(),
+                },
+            )
+            persisted.to_sql(
+                "SimulationCausalPanel",
+                connection,
+                schema="AI_Source",
+                if_exists="append",
+                index=False,
+                method="multi",
+                dtype={"details": JSONB},
+            )
+    except Exception as exc:
+        return {
+            "status": "failed", "rows": 0,
+            "reason": "causal_panel_persist_failed:" + str(exc)[:240],
+        }
+    return {
+        "status": "refreshed",
+        "rows": int(len(persisted)),
+        "source_type": source_type.strip(),
+        "league_key": league_key.strip().upper(),
+        "competition": competition.strip().upper(),
+    }
