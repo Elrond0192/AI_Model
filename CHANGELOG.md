@@ -7,6 +7,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 ### Added
+- Extended teammate-exposure diagnostics with row-level missingness counts and percentages for identities, treatment, outcome and every model covariate, globally and per teammate/context group. This separates low raw treatment support from complete-case attrition before any estimator threshold is changed.
 - Added a Model Releases diagnostic for the persisted teammate-exposure panel, grouped by named teammate, league, competition and transition season. It reports complete-case treated/control support, duplicate/missing identities, propensity overlap and weighted covariate balance for up to 50 raw-supported groups per run, with a downloadable CSV; passing statistical gates remains observational and does not promote `causal_team_effect`.
 
 ### Fixed
