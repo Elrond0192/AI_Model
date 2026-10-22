@@ -62,7 +62,7 @@ async function api(path,options={}){
 }
 
 function showLogin(){App.controllers.forEach(controller=>controller.abort());App.controllers.clear();App.user=null;$('#app-shell').classList.add('hidden');$('#login-screen').classList.remove('hidden');}
-function showApp(user){App.user=user;$('#login-screen').classList.add('hidden');$('#app-shell').classList.remove('hidden');$('#user-name').textContent=user.username;$('#user-role').textContent=user.role==='admin'?'Administrator':user.role;$('#user-avatar').textContent=(user.username||'A')[0].toUpperCase();$('.admin-only').forEach(el=>el.classList.toggle('hidden',user.role!=='admin'));}
+function showApp(user){App.user=user;$('#login-screen').classList.add('hidden');$('#app-shell').classList.remove('hidden');$('#user-name').textContent=user.username;$('#user-role').textContent=user.role==='admin'?'Administrator':user.role;$('#user-avatar').textContent=(user.username||'A')[0].toUpperCase();$$('.admin-only').forEach(el=>el.classList.toggle('hidden',user.role!=='admin'));}
 
 async function enterBackOffice(user){
   showApp(user);
@@ -82,7 +82,7 @@ async function enterBackOffice(user){
 function updateClock(){const d=new Date();$('#top-utc').textContent=d.toISOString().replace('T',' ').slice(0,19);}
 setInterval(updateClock,1000);updateClock();
 
-function activateNav(page){$('.nav-item').forEach(b=>b.classList.toggle('active',b.dataset.page===page));}
+function activateNav(page){$$('.nav-item').forEach(b=>b.classList.toggle('active',b.dataset.page===page));}
 function scrollPageToTop(){
   const containers=[document.scrollingElement,document.documentElement,document.body,$('.main-area'),root];
   containers.forEach(element=>{
@@ -90,7 +90,7 @@ function scrollPageToTop(){
   });
   if(typeof window.scrollTo==='function')window.scrollTo(0,0);
 }
-function mountTemplate(page){const t=$(`#page-${page}`);if(!t){root.innerHTML='<div class="loading">Pagina non disponibile</div>';return;}root.replaceChildren(t.content.cloneNode(true));$('.admin-only',root).forEach(el=>el.classList.toggle('hidden',App.user?.role!=='admin'));$('.jump',root).forEach(b=>b.addEventListener('click',()=>navigate(b.dataset.page)));}
+function mountTemplate(page){const t=$(`#page-${page}`);if(!t){root.innerHTML='<div class="loading">Pagina non disponibile</div>';return;}root.replaceChildren(t.content.cloneNode(true));$$('.admin-only',root).forEach(el=>el.classList.toggle('hidden',App.user?.role!=='admin'));$$('.jump',root).forEach(b=>b.addEventListener('click',()=>navigate(b.dataset.page)));}
 async function navigate(page){
   if(['training','backtests','registry'].includes(page))page='model-releases';
   if(!document.getElementById('page-'+page))page='overview';
@@ -568,7 +568,7 @@ async function renderModelReleases(){
 }
 
 function chartSvg(points){if(!points||points.length<1)return empty('⌁','Dati non disponibili','I fold walk-forward appariranno dopo il training.');const vals=points.map(p=>Number(p.rmse)).filter(Number.isFinite);if(!vals.length)return '';const min=Math.min(...vals),max=Math.max(...vals),range=Math.max(max-min,.001),w=640,h=210,pad=34;const coords=points.map((p,i)=>{const x=pad+(i*(w-pad*2)/Math.max(1,points.length-1));const y=h-pad-((Number(p.rmse)-min)/range)*(h-pad*2);return{x,y,p};});return `<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none"><line class="chart-grid-line" x1="${pad}" y1="${h-pad}" x2="${w-pad}" y2="${h-pad}"/><line class="chart-grid-line" x1="${pad}" y1="${pad}" x2="${w-pad}" y2="${pad}"/><polyline class="chart-line" points="${coords.map(c=>`${c.x},${c.y}`).join(' ')}"/>${coords.map(c=>`<circle class="chart-dot" cx="${c.x}" cy="${c.y}" r="5"/><text class="chart-label" x="${c.x}" y="${h-9}" text-anchor="middle">${esc(c.p.target_season??'')}</text>`).join('')}</svg>`;}
-async function renderBacktests(){const d=await api('/admin-api/backtests'),r=d.report||{},o=r.overall||{},q=d.quality||{};$('#backtest-kpis').innerHTML=[kpi('⌁','Ensemble RMSE',fmt(o.rmse),'<span>OOT</span>'),kpi('↗','Base RMSE',fmt(r.base_rmse),'<span>XGBoost base</span>','green'),kpi('◫','Persistence RMSE',fmt(r.persistence_rmse),'<span>previous season</span>','violet'),kpi('◎','Interval coverage',pct(o.interval_coverage),'<span>conformal</span>','orange')].join('');$('#backtest-chart').innerHTML=chartSvg(q.folds||[]);$('#backtest-summary').innerHTML=d.candidate?.run_id?summaryRows([['Run ID',shortId(d.candidate.run_id)],['Samples',o.n??'—'],['Competitions',q.competitions??'—'],['Valid',r.valid?'Yes':'No']]):empty('▤','Nessun candidate','Completa un training run per ispezionare il report.','Avvia training','training');const comps=Object.entries(r.by_competition||{});$('#competition-body').innerHTML=comps.length?comps.map(([name,m])=>`<tr><td><strong>${esc(name)}</strong></td><td>${esc(m.n??'—')}</td><td>${esc(fmt(m.rmse))}</td><td>${esc(fmt(m.mae))}</td><td>${esc(fmt(m.bias))}</td><td>${esc(pct(m.interval_coverage))}</td></tr>`).join(''):'<tr><td colspan="6" class="muted-inline">Nessuna metrica per competition disponibile.</td></tr>';$$('.jump',root).forEach(b=>b.addEventListener('click',()=>navigate(b.dataset.page)));}
+async function renderBacktests(){const d=await api('/admin-api/backtests'),r=d.report||{},o=r.overall||{},q=d.quality||{};$('#backtest-kpis').innerHTML=[kpi('⌁','Ensemble RMSE',fmt(o.rmse),'<span>OOT</span>'),kpi('↗','Base RMSE',fmt(r.base_rmse),'<span>XGBoost base</span>','green'),kpi('◫','Persistence RMSE',fmt(r.persistence_rmse),'<span>previous season</span>','violet'),kpi('◎','Interval coverage',pct(o.interval_coverage),'<span>conformal</span>','orange')].join('');$('#backtest-chart').innerHTML=chartSvg(q.folds||[]);$('#backtest-summary').innerHTML=d.candidate?.run_id?summaryRows([['Run ID',shortId(d.candidate.run_id)],['Samples',o.n??'—'],['Competitions',q.competitions??'—'],['Valid',r.valid?'Yes':'No']]):empty('▤','Nessun candidate','Completa un training run per ispezionare il report.','Avvia training','training');const comps=Object.entries(r.by_competition||{});$('#competition-body').innerHTML=comps.length?comps.map(([name,m])=>`<tr><td><strong>${esc(name)}</strong></td><td>${esc(m.n??'—')}</td><td>${esc(fmt(m.rmse))}</td><td>${esc(fmt(m.mae))}</td><td>${esc(fmt(m.bias))}</td><td>${esc(pct(m.interval_coverage))}</td></tr>`).join(''):'<tr><td colspan="6" class="muted-inline">Nessuna metrica per competition disponibile.</td></tr>';$$$('.jump',root).forEach(b=>b.addEventListener('click',()=>navigate(b.dataset.page)));}
 
 function csvValues(value){return String(value||'').split(',').map(v=>v.trim()).filter(Boolean);}
 const scenarioSelections={player:[],team:[]};

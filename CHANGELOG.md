@@ -7,6 +7,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 ### Fixed
+- Fixed admin navigation after login: repeated `.nav-item`, `.admin-only` and `.jump` controls now use `querySelectorAll` before `forEach`, preventing a runtime TypeError from blocking the shell and menu. Bumped the JavaScript asset version to `2.6.9` and added a regression test.
 - Fixed the JavaScript syntax error that prevented the admin console scripts, including the login handler, from running; separated causal refresh button state from the existing job-state variable and bumped static asset cache versions.
 - Prevented login credentials from being submitted in URL query strings: the form now uses POST, the backend safely handles a native form POST fallback with clean redirects, and admin assets are cache-busted.
 - Added a BB Prediction Model-style progress bar and a cooperative stop control to

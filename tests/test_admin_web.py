@@ -1885,5 +1885,19 @@ def test_login_form_uses_post_and_versioned_assets():
     html = (static_root / "index.html").read_text(encoding="utf-8")
     js = (static_root / "app.js").read_text(encoding="utf-8")
     assert 'id="login-form" class="login-card" method="post" action="/admin-api/login"' in html
-    assert '/assets/app.js?v=2.6.8' in html
+    assert '/assets/app.js?v=2.6.9' in html
     assert "URLSearchParams(window.location.search).get('login')" in js
+
+
+def test_admin_navigation_uses_query_all_for_repeated_elements():
+    static_root = Path(admin.__file__).with_name("static")
+    html = (static_root / "index.html").read_text(encoding="utf-8")
+    js = (static_root / "app.js").read_text(encoding="utf-8")
+
+    assert "function activateNav(page){$$('.nav-item').forEach" in js
+    assert "$$('.admin-only').forEach" in js
+    assert "$$('.admin-only',root).forEach" in js
+    assert "$$('.jump',root).forEach" in js
+    assert "$('.nav-item').forEach" not in js
+    assert "$('.admin-only').forEach" not in js
+    assert '/assets/app.js?v=2.6.9' in html
