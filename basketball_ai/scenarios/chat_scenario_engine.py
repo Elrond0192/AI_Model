@@ -1450,12 +1450,6 @@ class ChatScenarioEngine:
             if not requested_teammate_id:
                 return pd.DataFrame()
 
-        team_by_global_year = {
-            (str(row["_global_id"]), int(row["_year"])): _nullable_int(row["_team_int"])
-            for row in frame.to_dict("records")
-            if pd.notna(row.get("_year")) and _nullable_int(row.get("_team_int")) is not None
-        }
-
         # Resolve the source team's canonical global identity once. In some
         # populated deployments the player-stat and team-stat team_id values
         # are not aligned even though both source rows carry the same global ID.
@@ -1478,6 +1472,19 @@ class ChatScenarioEngine:
             frame["_team_global_id"] = direct_team_global.where(
                 direct_team_global.ne(""), frame["_team_global_id"]
             ).str.casefold()
+
+        # Use canonical identity when available so aliases/local numeric IDs do
+        # not make a continuing relationship look like a newly added teammate.
+        frame["_team_key"] = "local:" + frame["_team_int"].astype("Int64").astype(str)
+        has_global = frame["_team_global_id"].fillna("").astype(str).str.strip().ne("")
+        frame.loc[has_global, "_team_key"] = (
+            "global:" + frame.loc[has_global, "_team_global_id"].astype(str).str.strip().str.casefold()
+        )
+        team_by_global_year = {
+            (str(row["_global_id"]), int(row["_year"])): str(row["_team_key"])
+            for row in frame.to_dict("records")
+            if pd.notna(row.get("_year")) and str(row.get("_team_key", "")).strip()
+        }
 
         team_stats["_year"] = team_stats["season"].map(_nullable_year)
         team_stats["_team_int"] = team_stats["team_id"].map(_nullable_int)
@@ -1563,7 +1570,8 @@ class ChatScenarioEngine:
             before, after = pairs[-1]
             before_year, after_year = int(before["_year"]), int(after["_year"])
             team_after = _nullable_int(after.get("_team_int"))
-            if team_after is None:
+            team_after_key = str(after.get("_team_key", "")).strip()
+            if team_after is None or not team_after_key:
                 continue
             baseline = self._bb_rating_for_season(focal_global_id, source_league, before_year, competition)
             outcome = self._bb_rating_for_season(focal_global_id, source_league, after_year, competition)
@@ -1615,7 +1623,7 @@ class ChatScenarioEngine:
                     value for value in active_teammate_ids
                     if value.casefold() == requested_teammate_id
                 ]
-            team_before = _nullable_int(before.get("_team_int"))
+            team_before_key = str(before.get("_team_key", "")).strip()
             for named_teammate_id in active_teammate_ids:
                 if named_teammate_id.casefold() == focal_global_id.casefold():
                     continue
@@ -1626,7 +1634,7 @@ class ChatScenarioEngine:
                 # this pair cannot establish whether the relationship is new.
                 if teammate_team_before is None or teammate_team_after is None:
                     continue
-                was_teammate_before = team_before is not None and team_before == teammate_team_before
+                was_teammate_before = bool(team_before_key) and team_before_key == teammate_team_before
                 # Continuing teammate relationships are already exposed at
                 # baseline and must not be mislabeled as treatment initiations
                 # or mixed into the no-new-exposure control group.
@@ -1635,7 +1643,7 @@ class ChatScenarioEngine:
                 records.append({
                     **common,
                     "teammate_global_id": named_teammate_id,
-                    "treatment": int(team_after == teammate_team_after),
+                    "treatment": int(team_after_key == teammate_team_after),
                 })
         if not records:
             return pd.DataFrame()
