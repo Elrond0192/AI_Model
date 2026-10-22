@@ -604,6 +604,9 @@ def test_helpers_and_static_assets(monkeypatch, tmp_path):
     assert "Pianificazioni ricorrenti" in jobs_page
     assert 'id="ai-schedule-all-leagues"' in jobs_page
     assert 'name="schedule_league"' in js
+    assert "$('input[name=\"schedule_league\"]',leagueOptions).forEach" in js
+    assert "$('input[name=\"schedule_league\"]',leagueOptions).forEach" not in js
+    assert "loadScheduleOptions(true)" in js
     assert 'name="competition"' not in jobs_page
     assert 'name="league"' not in jobs_page
     assert "/admin-api/scheduler/options" in js
