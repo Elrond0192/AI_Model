@@ -533,7 +533,7 @@ def test_helpers_and_static_assets(monkeypatch, tmp_path):
     assert "future-performance-overview-icon" not in html
     assert ".dashboard-v2 .dashboard-section-eyebrow i" in css
     assert ".dashboard-v2 .dashboard-section-eyebrow svg" not in css
-    assert 'href="/assets/app.css?v=2.6.6"' in html
+    assert 'href="/assets/app.css?v=2.6.8"' in html
     # Phosphor files live under STATIC_ROOT/assets/phosphor, while STATIC_ROOT is mounted at /assets.
     assert 'href="/assets/assets/phosphor/regular/style.css"' in html
     assert 'href="/assets/assets/phosphor/fill/style.css"' in html
