@@ -471,6 +471,24 @@ def test_player_intelligence_composes_multiple_question_keys():
     }
 
 
+def test_teammate_exposure_panel_uses_canonical_bb_rating_and_roster_context():
+    engine = _engine()
+    engine.data["players"]["global_id"] = engine.data["players"]["id"].map(lambda value: f"PLAYER-{int(value)}")
+    panel = engine._build_teammate_exposure_causal_panel(
+        10, "RS", 2024, "PLAYER-2"
+    )
+    assert not panel.empty
+    assert set(panel["teammate_global_id"]) == {"PLAYER-2"}
+    assert set(panel["league_key"]) == {"A"}
+    assert set(panel["competition"]) == {"RS"}
+    focal_alpha = panel[panel["global_id"] == "PLAYER-1"].iloc[0]
+    focal_gamma = panel[panel["global_id"] == "PLAYER-3"].iloc[0]
+    assert focal_alpha["treatment"] == 1
+    assert focal_gamma["treatment"] == 0
+    assert 1 <= focal_alpha["outcome"] <= 100
+    assert "rating" not in panel.columns
+
+
 def test_causal_team_effect_uses_canonical_bb_rating_and_controls_role_minutes_usage():
     data = _analysis_data()
     for player_id, player in data["player_dict"].items():
