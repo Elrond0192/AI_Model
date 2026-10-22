@@ -548,6 +548,39 @@ def test_teammate_exposure_panel_uses_canonical_bb_rating_and_roster_context():
     )
 
 
+def test_teammate_exposure_estimator_accepts_pooled_seasons_without_player_repeats():
+    from basketball_ai.scenarios.causal_attribution import estimate_teammate_exposure_att
+
+    rows = []
+    for index in range(80):
+        baseline_index = index % 40
+        treatment = 1 if index < 40 else 0
+        rows.append({
+            "global_id": f"FOCAL-{index}",
+            "teammate_global_id": "TEAMMATE-X",
+            "league_key": "EL",
+            "competition": "RS",
+            "transition_season": 2020 + (baseline_index % 5),
+            "treatment": treatment,
+            "outcome": 60.0 + (baseline_index % 7) + 1.5 * treatment,
+            "baseline_bb_rating": 50.0 + (baseline_index % 10),
+            "minutes_pre": 20.0 + (baseline_index % 12),
+            "usage_pre": 0.15 + (baseline_index % 5) * 0.01,
+            "age_pre": 20.0 + (baseline_index % 15),
+            "team_strength_pre": -4.0 + (baseline_index % 9),
+            "role_pre": ("guard", "wing", "big")[baseline_index % 3],
+        })
+    result = estimate_teammate_exposure_att(
+        pd.DataFrame(rows), teammate_global_id="TEAMMATE-X"
+    )
+    assert result["available"] is True
+    assert result["estimand"] == "observational_teammate_exposure_ATT"
+    assert result["treatment"] == "newly_observed_shared_team_relationship_between_completed_seasons"
+    assert result["diagnostics"]["rows"] == 80
+    assert result["diagnostics"]["treated"] == 40
+    assert result["diagnostics"]["control"] == 40
+
+
 def test_teammate_exposure_resolves_team_strength_by_global_identity():
     engine = _engine()
     data = engine.data
