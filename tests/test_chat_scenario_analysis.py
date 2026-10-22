@@ -474,6 +474,29 @@ def test_player_intelligence_composes_multiple_question_keys():
 def test_teammate_exposure_panel_uses_canonical_bb_rating_and_roster_context():
     engine = _engine()
     engine.data["players"]["global_id"] = engine.data["players"]["id"].map(lambda value: f"PLAYER-{int(value)}")
+
+    # A player with only an old historical row must not be included as a
+    # control in later transition seasons.
+    historical_only = engine.data["player_stats"].iloc[0].copy()
+    historical_only["player_id"] = 999
+    historical_only["team_id"] = 999
+    historical_only["league_id"] = 10
+    historical_only["season"] = 2000
+    historical_only["competition"] = "RS"
+    if "global_id" in historical_only.index:
+        historical_only["global_id"] = "PLAYER-HIST"
+    engine.data["player_stats"] = pd.concat(
+        [engine.data["player_stats"], pd.DataFrame([historical_only])],
+        ignore_index=True,
+    )
+    engine.data["players"] = pd.concat(
+        [
+            engine.data["players"],
+            pd.DataFrame([{"id": 999, "global_id": "PLAYER-HIST"}]),
+        ],
+        ignore_index=True,
+    )
+
     panel = engine._build_teammate_exposure_causal_panel(
         10, "RS", 2024, "PLAYER-2"
     )
@@ -496,6 +519,7 @@ def test_teammate_exposure_panel_uses_canonical_bb_rating_and_roster_context():
     assert not all_teammates.empty
     assert {"PLAYER-1", "PLAYER-2", "PLAYER-3"}.issubset(set(all_teammates["teammate_global_id"]))
     assert not all_teammates.duplicated(["global_id", "transition_season", "teammate_global_id"]).any()
+    assert "PLAYER-HIST" not in set(all_teammates["teammate_global_id"])
     batch_named = all_teammates[all_teammates["teammate_global_id"] == "PLAYER-2"].sort_values("global_id")
     single_named = panel.sort_values("global_id")
     assert batch_named[["global_id", "transition_season", "treatment", "outcome"]].reset_index(drop=True).equals(
