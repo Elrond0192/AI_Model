@@ -3050,6 +3050,20 @@ def _start_scheduler_worker() -> None:
         threading.Thread(target=_scheduler_loop, name="ai-model-scheduler", daemon=True).start()
 
 
+@app.get("/admin-api/scheduler/options")
+def scheduler_options(user: dict[str, str] = Depends(_operator)) -> dict[str, Any]:
+    del user
+    engine = _scheduler_engine()
+    contexts = _available_source_contexts(engine)
+    by_league: dict[str, list[str]] = {}
+    for league, competition in contexts:
+        by_league.setdefault(league, []).append(competition)
+    return {
+        "leagues": sorted(by_league),
+        "competitions": {league: sorted(set(values)) for league, values in by_league.items()},
+    }
+
+
 @app.get("/admin-api/scheduler/jobs")
 def list_scheduled_jobs(user: dict[str, str] = Depends(_operator)) -> dict[str, Any]:
     del user
