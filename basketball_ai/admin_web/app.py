@@ -2245,6 +2245,192 @@ def start_bb_rating_prediction(user: dict[str, str] = Depends(_csrf)) -> dict[st
     return {"ok": True, "profile": active_profile, "job": current}
 
 
+
+class ScheduleJobPayload(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    task_key: str = Field(pattern="^(refresh_context_seasonal|refresh_simulation_sources|refresh_scenario_serving|refresh_training_serving|bb_prediction_training|bb_rating_calibration|future_performance_training)$")
+    interval_minutes: int = Field(ge=60, le=525600)
+    enabled: bool = True
+    parameters: dict[str, Any] = Field(default_factory=dict)
+
+
+SCHEDULED_TASKS = {
+    "refresh_context_seasonal": {"required": {"season"}, "allowed": {"season"}},
+    "refresh_simulation_sources": {"required": {"league", "season"}, "allowed": {"league", "season"}},
+    "refresh_scenario_serving": {"required": {"league", "season", "competition"}, "allowed": {"league", "season", "competition"}},
+    "refresh_training_serving": {"required": {"league", "season", "competition"}, "allowed": {"league", "season", "competition"}},
+    "bb_prediction_training": {"required": set(), "allowed": set()},
+    "bb_rating_calibration": {"required": set(), "allowed": set()},
+    "future_performance_training": {"required": set(), "allowed": set()},
+}
+
+
+def _validate_schedule_parameters(task_key: str, parameters: dict[str, Any]) -> dict[str, Any]:
+    spec = SCHEDULED_TASKS[task_key]
+    if set(parameters) - spec["allowed"]:
+        raise HTTPException(status_code=400, detail="Parametri non previsti per il job selezionato")
+    if spec["required"] - set(parameters):
+        raise HTTPException(status_code=400, detail="Parametri mancanti: " + ", ".join(sorted(spec["required"] - set(parameters))))
+    if "season" in parameters and not 2000 <= int(parameters["season"]) <= 2100:
+        raise HTTPException(status_code=400, detail="Stagione non valida")
+    if "league" in parameters and not re.fullmatch(r"[A-Za-z0-9_]{2,32}", str(parameters["league"])):
+        raise HTTPException(status_code=400, detail="Codice lega non valido")
+    if "competition" in parameters and not re.fullmatch(r"[A-Za-z0-9_]{1,16}", str(parameters["competition"])):
+        raise HTTPException(status_code=400, detail="Competizione non valida")
+    return parameters
+
+
+def _scheduler_engine():
+    with STATE.lock:
+        profile = STATE.active_profile
+    if not profile:
+        raise RuntimeError("Nessun profilo PostgreSQL selezionato")
+    return get_engine(profile_url(profile))
+
+
+def _execute_scheduled_task(task_key: str, parameters: dict[str, Any], actor: str) -> tuple[str, dict[str, Any]]:
+    if task_key in {"bb_prediction_training", "bb_rating_calibration", "future_performance_training"}:
+        endpoint = {
+            "bb_prediction_training": start_bb_rating_prediction,
+            "bb_rating_calibration": start_bb_rating_calibration,
+            "future_performance_training": start_future_performance_training,
+        }[task_key]
+        response = endpoint({"username": actor, "role": "admin", "token": "scheduler"})
+        return "submitted", {"message": response.get("message", "Job di training inviato"), "job": response.get("job", {})}
+    engine = _scheduler_engine()
+    with engine.begin() as connection:
+        if task_key == "refresh_context_seasonal":
+            connection.execute(text('CALL "AI_Source"."RefreshContextSeasonal"(:season)'), {"season": int(parameters["season"])})
+        elif task_key == "refresh_simulation_sources":
+            connection.execute(text('CALL "AI_Source"."RefreshSimulationSources"(:league, :season)'), {"league": str(parameters["league"]).upper(), "season": int(parameters["season"])})
+        elif task_key == "refresh_scenario_serving":
+            connection.execute(text('CALL "AI_Source"."RefreshScenarioServing"(:league, :season, :competition)'), {"league": str(parameters["league"]).upper(), "season": int(parameters["season"]), "competition": str(parameters["competition"]).upper()})
+        elif task_key == "refresh_training_serving":
+            connection.execute(text('CALL "AI_Source"."RefreshTrainingServing"(:league, :season, :competition)'), {"league": str(parameters["league"]).upper(), "season": int(parameters["season"]), "competition": str(parameters["competition"]).upper()})
+    return "complete", {"message": "Procedura SQL completata", "task_key": task_key, "parameters": parameters}
+
+
+def _run_due_scheduled_job() -> bool:
+    try:
+        engine = _scheduler_engine()
+        with engine.begin() as connection:
+            row = connection.execute(text('''
+                SELECT job_id, name, task_key, parameters, interval_minutes, created_by
+                  FROM "AI_Source"."AIModelScheduledJob"
+                 WHERE enabled AND next_run_at <= now()
+                 ORDER BY next_run_at, job_id
+                 FOR UPDATE SKIP LOCKED LIMIT 1
+            ''')).mappings().first()
+            if not row:
+                return False
+            params = row["parameters"] if isinstance(row["parameters"], dict) else json.loads(row["parameters"] or "{}")
+            run_id = connection.execute(text('''
+                INSERT INTO "AI_Source"."AIModelJobRun"(job_id, task_key, parameters, status)
+                VALUES (:job_id, :task_key, CAST(:parameters AS jsonb), 'running')
+                RETURNING run_id
+            '''), {"job_id": row["job_id"], "task_key": row["task_key"], "parameters": json.dumps(params)}).scalar_one()
+            connection.execute(text('''
+                UPDATE "AI_Source"."AIModelScheduledJob"
+                   SET next_run_at = now() + make_interval(mins => interval_minutes),
+                       last_run_at = now(), last_status = 'running', last_error = NULL, updated_at = now()
+                 WHERE job_id = :job_id
+            '''), {"job_id": row["job_id"]})
+        try:
+            status, result = _execute_scheduled_task(str(row["task_key"]), params, str(row["created_by"] or "scheduler"))
+            error = None
+        except Exception as exc:
+            status, result, error = "failed", {}, _safe_error(exc)
+        with engine.begin() as connection:
+            connection.execute(text('''
+                UPDATE "AI_Source"."AIModelJobRun"
+                   SET status=:status, finished_at=now(), result=CAST(:result AS jsonb), error=:error
+                 WHERE run_id=:run_id
+            '''), {"status": status, "result": json.dumps(result, default=str), "error": error, "run_id": run_id})
+            connection.execute(text('''
+                UPDATE "AI_Source"."AIModelScheduledJob"
+                   SET last_status=:status, last_error=:error, updated_at=now()
+                 WHERE job_id=:job_id
+            '''), {"status": status, "error": error, "job_id": row["job_id"]})
+        return True
+    except Exception:
+        # Missing migration, unavailable DB, or transient connection failure:
+        # retry on the next poll without breaking admin API startup.
+        return False
+
+
+def _scheduler_loop() -> None:
+    while True:
+        try:
+            _run_due_scheduled_job()
+        except Exception:
+            pass
+        time.sleep(15)
+
+
+@app.on_event("startup")
+def _start_scheduler_worker() -> None:
+    if not getattr(STATE, "_scheduler_thread_started", False):
+        STATE._scheduler_thread_started = True
+        threading.Thread(target=_scheduler_loop, name="ai-model-scheduler", daemon=True).start()
+
+
+@app.get("/admin-api/scheduler/jobs")
+def list_scheduled_jobs(user: dict[str, str] = Depends(_operator)) -> dict[str, Any]:
+    del user
+    engine = _scheduler_engine()
+    with engine.connect() as connection:
+        jobs = connection.execute(text('SELECT * FROM "AI_Source"."AIModelScheduledJob" ORDER BY job_id')).mappings().all()
+        runs = connection.execute(text('SELECT * FROM "AI_Source"."AIModelJobRun" ORDER BY started_at DESC LIMIT 100')).mappings().all()
+    def serialise(row):
+        return {key: (value.isoformat() if hasattr(value, "isoformat") else value) for key, value in dict(row).items()}
+    return {"jobs": [serialise(row) for row in jobs], "runs": [serialise(row) for row in runs], "tasks": sorted(SCHEDULED_TASKS)}
+
+
+@app.post("/admin-api/scheduler/jobs")
+def create_scheduled_job(payload: ScheduleJobPayload, user: dict[str, str] = Depends(_csrf)) -> dict[str, Any]:
+    parameters = _validate_schedule_parameters(payload.task_key, payload.parameters)
+    engine = _scheduler_engine()
+    with engine.begin() as connection:
+        row = connection.execute(text('''
+            INSERT INTO "AI_Source"."AIModelScheduledJob"
+                (name, task_key, parameters, interval_minutes, enabled, next_run_at, created_by)
+            VALUES (:name, :task_key, CAST(:parameters AS jsonb), :interval_minutes, :enabled,
+                    now() + make_interval(mins => :interval_minutes), :created_by)
+            RETURNING job_id, name, task_key, parameters, interval_minutes, enabled, next_run_at
+        '''), {"name": payload.name, "task_key": payload.task_key, "parameters": json.dumps(parameters),
+               "interval_minutes": payload.interval_minutes, "enabled": payload.enabled, "created_by": user["username"]}).mappings().one()
+    _audit(user["username"], "schedule_created", str(row["job_id"]), json.dumps(dict(row), default=str))
+    return {"ok": True, "job": {key: (value.isoformat() if hasattr(value, "isoformat") else value) for key, value in dict(row).items()}}
+
+
+@app.post("/admin-api/scheduler/jobs/{job_id}/toggle")
+def toggle_scheduled_job(job_id: int, user: dict[str, str] = Depends(_csrf)) -> dict[str, Any]:
+    engine = _scheduler_engine()
+    with engine.begin() as connection:
+        row = connection.execute(text('''
+            UPDATE "AI_Source"."AIModelScheduledJob"
+               SET enabled = NOT enabled, updated_at=now(),
+                   next_run_at = CASE WHEN NOT enabled THEN now() + make_interval(mins => interval_minutes) ELSE next_run_at END
+             WHERE job_id=:job_id
+             RETURNING job_id, enabled
+        '''), {"job_id": job_id}).mappings().first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Pianificazione non trovata")
+    _audit(user["username"], "schedule_toggled", str(job_id), str(row["enabled"]))
+    return {"ok": True, "job_id": job_id, "enabled": row["enabled"]}
+
+
+@app.delete("/admin-api/scheduler/jobs/{job_id}")
+def delete_scheduled_job(job_id: int, user: dict[str, str] = Depends(_csrf)) -> dict[str, Any]:
+    engine = _scheduler_engine()
+    with engine.begin() as connection:
+        result = connection.execute(text('DELETE FROM "AI_Source"."AIModelScheduledJob" WHERE job_id=:job_id'), {"job_id": job_id})
+    if not result.rowcount:
+        raise HTTPException(status_code=404, detail="Pianificazione non trovata")
+    _audit(user["username"], "schedule_deleted", str(job_id), "")
+    return {"ok": True, "job_id": job_id}
+
+
 @app.get("/admin-api/model-releases")
 def model_releases(user: dict[str, str] = Depends(_operator)) -> dict[str, Any]:
     del user
