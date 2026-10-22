@@ -500,7 +500,7 @@ def test_helpers_and_static_assets(monkeypatch, tmp_path):
     assert "const {keepAlive=false,...requestOptions}=options;" in api_body
     assert "if(!keepAlive)App.controllers.add(controller);" in api_body
     assert "if(!requestOptions.signal&&!keepAlive)fetchOptions.signal=controller.signal;" in api_body
-    assert 'src="/assets/app.js?v=2.6.10"' in html
+    assert 'src="/assets/app.js?v=2.6.11"' in html
     assert 'class="dashboard-footer"' not in html
     assert "Stati e percentuali provengono dalle API operative." not in html
     assert "<footer>© AI Model Control Center v2.6.0</footer>" in html
@@ -636,6 +636,8 @@ def test_helpers_and_static_assets(monkeypatch, tmp_path):
     assert 'id="causal-refresh-teammate-id"' not in releases_page
     assert "/admin-api/causal-panels/refresh-all" in js
     assert "/admin-api/causal-panels/teammate-support-diagnostics" in js
+    assert "missingness_by_field" in js
+    assert "Valori mancanti/non validi per campo" in js
 def test_teammate_support_gate_status_enforces_raw_support_and_identity_integrity():
     assert admin._teammate_support_gate_status({
         "eligible_rows": 75, "treated": 25, "control": 50,
@@ -657,6 +659,9 @@ def test_teammate_support_diagnostics_endpoint_and_csv_download(monkeypatch):
         "panel_rows": 100, "groups_total": 2, "groups_raw_support_passed": 0,
         "groups_diagnostics_evaluated": 0, "groups_with_statistical_gates_passed": 0,
         "status_counts": {"insufficient_treated_control_support": 2},
+        "missingness_by_field": {
+            "missing_team_strength_pre_rows": {"rows": 90, "percent": 90.0},
+        },
     }
     monkeypatch.setattr(admin.STATE, "active_profile", "production")
     monkeypatch.setattr(
@@ -1933,7 +1938,7 @@ def test_login_form_uses_post_and_versioned_assets():
     html = (static_root / "index.html").read_text(encoding="utf-8")
     js = (static_root / "app.js").read_text(encoding="utf-8")
     assert 'id="login-form" class="login-card" method="post" action="/admin-api/login"' in html
-    assert '/assets/app.js?v=2.6.10' in html
+    assert '/assets/app.js?v=2.6.11' in html
     assert "URLSearchParams(window.location.search).get('login')" in js
 
 
@@ -1948,4 +1953,4 @@ def test_admin_navigation_uses_query_all_for_repeated_elements():
     assert "$$('.jump',root).forEach" in js
     assert "function activateNav(page){$('.nav-item').forEach" not in js
     assert "function showApp(user){App.user=user;$('#login-screen').classList.add('hidden');$('#app-shell').classList.remove('hidden');$('#user-name').textContent=user.username;$('#user-role').textContent=user.role==='admin'?'Administrator':user.role;$('#user-avatar').textContent=(user.username||'A')[0].toUpperCase();$('.admin-only').forEach" not in js
-    assert '/assets/app.js?v=2.6.10' in html
+    assert '/assets/app.js?v=2.6.11' in html
