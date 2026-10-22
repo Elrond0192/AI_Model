@@ -473,7 +473,7 @@ async function renderModelReleases(){
   };
   $('#model-releases-refresh').onclick=()=>renderModelReleases().catch(e=>toast(e.message,'error'));
 
-  const causalButtons=[$('#causal-refresh-team-switch'),$('#causal-refresh-teammate')].filter(Boolean);
+  const causalButtons=[$('#causal-refresh-team-switch'),$('#causal-refresh-teammate'),$('#causal-teammate-diagnose')].filter(Boolean);
   const causalResult=$('#causal-refresh-result');
   const causalProgress=$('#causal-refresh-progress');
   const causalCancel=$('#causal-refresh-cancel');
@@ -526,6 +526,64 @@ async function renderModelReleases(){
       try{await pollCausalJob();}catch(_){}
     }
   };
+  const causalTeammateDiagnosticsResult=$('#causal-teammate-diagnostics-result');
+  const causalTeammateDiagnosticsDownload=$('#causal-teammate-diagnostic-download');
+  const runTeammateSupportDiagnostics=async()=>{
+    if(causalButtons.some(button=>button.disabled))return;
+    causalButtons.forEach(button=>button.disabled=true);
+    if(causalTeammateDiagnosticsResult)causalTeammateDiagnosticsResult.textContent='Verifica supporto, overlap e bilanciamento per compagno/lega/competizione/stagione…';
+    if(causalTeammateDiagnosticsDownload){
+      causalTeammateDiagnosticsDownload.classList.add('hidden');
+      causalTeammateDiagnosticsDownload.href='#';
+    }
+    try{
+      const report=await api('/admin-api/causal-panels/teammate-support-diagnostics',{method:'POST',body:{}});
+      const s=report.summary||{};
+      const lines=[
+        'Righe persistite: '+(s.panel_rows??0)+' · gruppi distinti: '+(s.groups_total??0),
+        'Righe complete per il modello: '+(s.total_eligible_complete_case_rows??0)+' · righe escluse: '+(s.total_excluded_complete_case_rows??0),
+        'Gruppi con supporto grezzo sufficiente (≥60 righe, ≥20 trattati, ≥20 controlli): '+(s.groups_raw_support_passed??0),
+        'Gruppi con gate statistici superati: '+(s.groups_with_statistical_gates_passed??0)+' · diagnostiche eseguite: '+(s.groups_diagnostics_evaluated??0),
+        'Gruppi non valutati per limite operativo: '+(s.groups_not_evaluated_due_limit??0),
+        'Gruppi con problemi di integrità delle identità: '+(s.groups_with_identity_integrity_issues??0),
+        'Righe non classificabili per contesto incompleto: '+(s.unclassified_panel_rows??0),
+        'Ultimo refresh: '+(s.last_refresh||'non disponibile')
+      ];
+      const statusCounts=s.status_counts||{};
+      const statuses=Object.entries(statusCounts).sort((a,b)=>b[1]-a[1]).map(([name,count])=>name+': '+count);
+      if(statuses.length)lines.push('Esiti: '+statuses.join(' · '));
+      const best=s.best_supported_groups||[];
+      if(best.length){
+        lines.push('Gruppi con più trattati:');
+        best.slice(0,8).forEach(row=>{
+          let detail=String(row.teammate_global_id||'ID sconosciuto')+' · '+String(row.league_key||'?')+'/'+String(row.competition||'?')+' '+String(row.transition_season||'?');
+          detail+=' — trattati '+(row.treated??0)+' / controlli '+(row.control??0)+' — '+String(row.status||'n/d');
+          if(row.propensity_overlap_share!==null&&row.propensity_overlap_share!==undefined)detail+=' — overlap '+(Number(row.propensity_overlap_share)*100).toFixed(1)+'%';
+          if(row.max_abs_smd_after!==null&&row.max_abs_smd_after!==undefined)detail+=' — max |SMD| '+Number(row.max_abs_smd_after).toFixed(3);
+          lines.push(detail);
+        });
+      }
+      if(s.interpretation)lines.push(s.interpretation);
+      if(causalTeammateDiagnosticsResult)causalTeammateDiagnosticsResult.textContent=lines.join('\n');
+      if(causalTeammateDiagnosticsDownload&&report.download_url){
+        causalTeammateDiagnosticsDownload.href=report.download_url;
+        causalTeammateDiagnosticsDownload.classList.remove('hidden');
+      }
+      const passed=Number(s.groups_with_statistical_gates_passed||0);
+      toast(
+        passed>0
+          ? 'Diagnostica completata: alcuni gruppi superano i gate statistici, ma restano osservazionali.'
+          : 'Diagnostica completata: nessun gruppo ha superato tutti i gate statistici.',
+        passed>0?'success':'error'
+      );
+    }catch(e){
+      if(causalTeammateDiagnosticsResult)causalTeammateDiagnosticsResult.textContent='Diagnostica non riuscita: '+e.message;
+      toast('Diagnostica teammate exposure non riuscita: '+e.message,'error');
+    }finally{
+      try{await pollCausalJob();}catch(_){causalButtons.forEach(button=>button.disabled=false);}
+    }
+  };
+  $('#causal-teammate-diagnose')?.addEventListener('click',runTeammateSupportDiagnostics);
   $('#causal-refresh-team-switch')?.addEventListener('click',()=>runCausalRefresh('team_switch'));
   $('#causal-refresh-teammate')?.addEventListener('click',()=>runCausalRefresh('teammate_exposure'));
   causalCancel?.addEventListener('click',async()=>{
