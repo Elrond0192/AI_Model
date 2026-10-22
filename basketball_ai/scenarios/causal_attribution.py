@@ -285,7 +285,10 @@ def persist_causal_panel(
         return {"status": "not_written", "rows": 0, "reason": "canonical_global_id_required"}
     if frame["outcome"].isna().any() or not frame["outcome"].between(1, 100).all():
         return {"status": "not_written", "rows": 0, "reason": "canonical_bb_rating_outcome_required"}
-    if frame.duplicated(["global_id", "transition_season"]).any():
+    identity_columns = ["global_id", "transition_season"]
+    if source_type.strip() == "teammate_exposure":
+        identity_columns.append("teammate_global_id")
+    if frame.duplicated(identity_columns).any():
         return {"status": "not_written", "rows": 0, "reason": "duplicate_player_transition"}
     frame["source_type"] = source_type.strip()
     frame["next_outcome"] = frame["outcome"].astype(float)
