@@ -1660,11 +1660,22 @@ def test_scheduled_serving_refresh_respects_multiple_selected_leagues(monkeypatc
 
     status, result = admin._execute_scheduled_task(
         "refresh_training_serving",
-        {"season": 2025, "all_leagues": False, "leagues": ["ITA1", "EL"]},
+        # A saved legacy schedule may still carry a competition parameter.
+        # The current contract deliberately ignores it and refreshes all competitions.
+        {"season": 2025, "all_leagues": False, "leagues": ["ITA1", "EL"], "competition": "RS"},
         "admin",
     )
 
     assert status == "complete"
     assert len(result["contexts"]) == 4
     assert {call[1]["league"] for call in engine.calls} == {"EL", "ITA1"}
+    assert {call[1]["competition"] for call in engine.calls} == {"RS", "PO"}
     assert all(call[1]["league"] != "ESP1" for call in engine.calls)
+
+
+def test_new_schedule_contract_rejects_competition_filter():
+    with pytest.raises(HTTPException):
+        admin._validate_schedule_parameters(
+            "refresh_training_serving",
+            {"season": 2025, "all_leagues": True, "competition": "RS"},
+        )
