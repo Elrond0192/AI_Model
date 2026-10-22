@@ -308,7 +308,13 @@ def persist_causal_panel(
         # can distinguish identity/context gaps from missing source metrics.
         # This uses the existing JSONB details column; no schema migration needed.
         diagnostic = row.get("_team_strength_diagnostic")
-        if source_type.strip() == "teammate_exposure" and isinstance(diagnostic, dict):
+        if (
+            source_type.strip() == "teammate_exposure"
+            and isinstance(diagnostic, dict)
+            and pd.isna(row.get("team_strength_pre"))
+        ):
+            # Only persist the extra payload for missing values to limit JSONB
+            # overhead on the much larger set of complete rows.
             details["team_strength_pre_diagnostic"] = diagnostic
         return json.dumps(details)
 
