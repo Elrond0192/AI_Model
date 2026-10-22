@@ -6,6 +6,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ---
 
 ## [Unreleased]
+### Added
+- Added a Model Releases diagnostic for the persisted teammate-exposure panel, grouped by named teammate, league, competition and transition season. It reports complete-case treated/control support, duplicate/missing identities, propensity overlap and weighted covariate balance for up to 50 raw-supported groups per run, with a downloadable CSV; passing statistical gates remains observational and does not promote `causal_team_effect`.
+
 ### Fixed
 - Corrected teammate-exposure panel construction: treatment/control candidates are now restricted to players with observed statistics in each focal transition's outcome season. Previously, every player ever observed in historical data could be counted as a control even when inactive in that season, artificially inflating the control count. Existing persisted panels must be rebuilt with the bulk teammate-exposure refresh after deployment.
 - Added a regression test proving that a historical-only player is excluded from later-season teammate-exposure controls.
