@@ -57,6 +57,9 @@ from basketball_ai.admin_web.model_lifecycle import (
     promote_model,
     rollback_model,
 )
+from basketball_ai.bb_rating.engine import BBRatingEngine
+from basketball_ai.scenarios.chat_scenario_engine import ChatScenarioEngine
+from basketball_ai.models.strict_production import StrictProductionEnsembleModel
 from basketball_ai.models.promote import (
     MAX_SEGMENT_REGRESSION_PCT,
     MIN_BACKTEST_SAMPLES,
@@ -2245,7 +2248,6 @@ def start_bb_rating_prediction(user: dict[str, str] = Depends(_csrf)) -> dict[st
     return {"ok": True, "profile": active_profile, "job": current}
 
 
-
 class CausalPanelRefreshPayload(BaseModel):
     kind: str = Field(pattern="^(team_switch|teammate_exposure)$")
     league: str = Field(min_length=2, max_length=32, pattern=r"^[A-Za-z0-9_]+$")
@@ -2302,7 +2304,6 @@ def refresh_causal_panel(payload: CausalPanelRefreshPayload, user: dict[str, str
     except Exception as exc:
         _audit(actor, "causal_panel_refresh_failed", payload.kind, str(exc))
         raise HTTPException(status_code=500, detail=f"Refresh pannello causale fallito: {exc}") from exc
-
 
 
 class ScheduleJobPayload(BaseModel):
@@ -2489,6 +2490,8 @@ def delete_scheduled_job(job_id: int, user: dict[str, str] = Depends(_csrf)) -> 
         raise HTTPException(status_code=404, detail="Pianificazione non trovata")
     _audit(user["username"], "schedule_deleted", str(job_id), "")
     return {"ok": True, "job_id": job_id}
+
+
 
 
 @app.get("/admin-api/model-releases")
