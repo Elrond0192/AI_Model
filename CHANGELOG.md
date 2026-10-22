@@ -7,6 +7,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 ### Fixed
+- Reset the main document and content scroll positions to the top on every page
+  navigation. Serialized the initial overview render and PostgreSQL auto-load on
+  login/session restore, then refreshes overview from the loaded state to avoid
+  concurrent renders racing and leaving the dashboard blank or stale.
 - Fixed scheduler HTTP 500s for restricted PostgreSQL runtime roles: the web
   process now validates access without attempting privileged runtime `ALTER TABLE`
   operations, and the serving SQL grants CRUD only on scheduler metadata tables

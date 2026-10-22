@@ -59,11 +59,15 @@ function showApp(user){App.user=user;$('#login-screen').classList.add('hidden');
 
 async function enterBackOffice(user){
   showApp(user);
-  void navigate('overview');
+  // Finish the first render before auto-load starts: this avoids two concurrent
+  // overview renders racing over the same DOM after login/session restoration.
+  await navigate('overview');
   let result=null,error=null;
   try{result=await api('/admin-api/auto-load',{method:'POST',body:{},keepAlive:true});}
   catch(e){error=e.message;}
-  if(App.user&&App.page==='overview')await navigate('overview');
+  // Auto-load updates the backend state/snapshot. Refresh only if the same
+  // authenticated session is still active and the operator stayed on overview.
+  if(App.user===user&&App.page==='overview')await navigate('overview');
   if(result?.loaded)toast(`Dati aggiornati da ${result.profile}: ${fmtInt(result.summary?.player_rows)} righe giocatore`);
   else if(result?.message)toast(result.message,'error');
   else if(error)toast('Caricamento automatico dal DB non riuscito: '+error,'error');
@@ -71,8 +75,15 @@ async function enterBackOffice(user){
 function updateClock(){const d=new Date();$('#top-utc').textContent=d.toISOString().replace('T',' ').slice(0,19);}
 setInterval(updateClock,1000);updateClock();
 
-function activateNav(page){$$('.nav-item').forEach(b=>b.classList.toggle('active',b.dataset.page===page));}
-function mountTemplate(page){const t=$(`#page-${page}`);if(!t){root.innerHTML='<div class="loading">Pagina non disponibile</div>';return;}root.replaceChildren(t.content.cloneNode(true));$$('.admin-only',root).forEach(el=>el.classList.toggle('hidden',App.user?.role!=='admin'));$$('.jump',root).forEach(b=>b.addEventListener('click',()=>navigate(b.dataset.page)));}
+function activateNav(page){$('.nav-item').forEach(b=>b.classList.toggle('active',b.dataset.page===page));}
+function scrollPageToTop(){
+  const containers=[document.scrollingElement,document.documentElement,document.body,$('.main-area'),root];
+  containers.forEach(element=>{
+    if(element){element.scrollTop=0;element.scrollLeft=0;}
+  });
+  if(typeof window.scrollTo==='function')window.scrollTo(0,0);
+}
+function mountTemplate(page){const t=$(`#page-${page}`);if(!t){root.innerHTML='<div class="loading">Pagina non disponibile</div>';return;}root.replaceChildren(t.content.cloneNode(true));$('.admin-only',root).forEach(el=>el.classList.toggle('hidden',App.user?.role!=='admin'));$('.jump',root).forEach(b=>b.addEventListener('click',()=>navigate(b.dataset.page)));}
 async function navigate(page){
   if(['training','backtests','registry'].includes(page))page='model-releases';
   if(!document.getElementById('page-'+page))page='overview';
@@ -85,6 +96,7 @@ async function navigate(page){
   App.page=page;
   activateNav(page);
   mountTemplate(page);
+  scrollPageToTop();
   try{
     if(page==='overview')await renderOverview();
     if(page==='data')await renderData();

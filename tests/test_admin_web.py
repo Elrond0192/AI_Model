@@ -484,16 +484,22 @@ def test_helpers_and_static_assets(monkeypatch, tmp_path):
     enter_start = js.index("async function enterBackOffice(user){")
     enter_end = js.index("function updateClock()", enter_start)
     enter_body = js[enter_start:enter_end]
-    assert enter_body.index("void navigate('overview')") < enter_body.index("api('/admin-api/auto-load'")
-    assert "if(App.user&&App.page==='overview')await navigate('overview')" in enter_body
+    assert enter_body.index("await navigate('overview')") < enter_body.index("api('/admin-api/auto-load'")
+    assert "if(App.user===user&&App.page==='overview')await navigate('overview')" in enter_body
     assert "keepAlive:true" in enter_body
+    assert "function scrollPageToTop()" in js
+    navigate_start = js.index("async function navigate(page){")
+    navigate_end = js.index("function kpi(", navigate_start)
+    navigate_body = js[navigate_start:navigate_end]
+    assert "mountTemplate(page);" in navigate_body
+    assert "scrollPageToTop();" in navigate_body
     api_start = js.index("async function api(path,options={}){")
     api_end = js.index("function showLogin()", api_start)
     api_body = js[api_start:api_end]
     assert "const {keepAlive=false,...requestOptions}=options;" in api_body
     assert "if(!keepAlive)App.controllers.add(controller);" in api_body
     assert "if(!requestOptions.signal&&!keepAlive)fetchOptions.signal=controller.signal;" in api_body
-    assert 'src="/assets/app.js?v=2.6.3"' in html
+    assert 'src="/assets/app.js?v=2.6.4"' in html
     assert 'class="dashboard-footer"' not in html
     assert "Stati e percentuali provengono dalle API operative." not in html
     assert "<footer>© AI Model Control Center v2.6.0</footer>" in html
