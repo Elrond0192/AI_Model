@@ -453,28 +453,75 @@ async function renderModelReleases(){
     catch(e){toast(e.message,'error');start.disabled=false;}
   };
   $('#model-releases-refresh').onclick=()=>renderModelReleases().catch(e=>toast(e.message,'error'));
-  const causalSeason=$('#causal-refresh-season');
-  if(causalSeason&&!causalSeason.value)causalSeason.value=String(new Date().getUTCFullYear()-1);
-  const runCausalRefresh=async(kind)=>{
-    const league=$('#causal-refresh-league').value.trim().toUpperCase();
-    const competition=$('#causal-refresh-competition').value.trim().toUpperCase();
-    const through_season=Number(causalSeason.value);
-    const teammate_global_id=$('#causal-refresh-teammate-id').value.trim();
-    if(!league||!competition||!Number.isInteger(through_season)){toast('Lega, competizione e stagione sono obbligatorie','error');return;}
-    if(kind==='teammate_exposure'&&!teammate_global_id){toast('Inserisci il Global ID canonico del compagno','error');return;}
-    const buttons=[$('#causal-refresh-team-switch'),$('#causal-refresh-teammate')];
-    buttons.forEach(button=>button.disabled=true);
-    const resultNode=$('#causal-refresh-result');
-    resultNode.textContent='Refresh in esecuzione…';
+  const causalButtons=[$('#causal-refresh-team-switch'),$('#causal-refresh-teammate')].filter(Boolean);
+  const causalResult=$('#causal-refresh-result');
+  let activeCausalJobId=null;
+  const renderCausalProgress=job=>{
+    if(!causalResult||!job)return;
+    const title=job.kind==='team_switch'?'Team-switch':'Teammate exposure';
+    const state=job.status==='queued'?'In coda':job.status==='running'?'In esecuzione':job.status==='complete'?'Completato':job.status==='partial'?'Completato con errori':job.status==='failed'?'Fallito':job.stage||'Pronto';
+    const progress=Number.isFinite(Number(job.progress))?Math.max(0,Math.min(100,Number(job.progress))):0;
+    const lines=[title+' · '+state,progress+'% ('+String(job.completed_units||0)+'/'+String(job.total_units||0)+' operazioni)',job.message||''];
+    if(job.current_context)lines.push('Contesto: '+job.current_context);
+    if(job.errors?.length)lines.push('Primi errori: '+job.errors.slice(0,3).map(x=>(x.context||'')+' '+(x.error||'')).join(' · '));
+    causalResult.textContent=lines.filter(Boolean).join('\n');
+    causalResult.dataset.status=job.status||'idle';
+    const busy=['queued','running'].includes(job.status);
+    causalButtons.forEach(button=>{button.disabled=busy;});
+  };
+  const pollCausalRefresh=async(jobId,notify=true)=>{
+    activeCausalJobId=jobId;
+    while(activeCausalJobId===jobId){
+      let job;
+      try{
+        const response=await api('/admin-api/causal-panels/refresh-all/'+encodeURIComponent(jobId));
+        job=response.job;
+      }catch(e){
+        if(causalResult)causalResult.textContent='Impossibile leggere lo stato del refresh: '+e.message;
+        activeCausalJobId=null;
+        causalButtons.forEach(button=>{button.disabled=false;});
+        return;
+      }
+      renderCausalProgress(job);
+      if(!['queued','running'].includes(job.status)){
+        activeCausalJobId=null;
+        causalButtons.forEach(button=>{button.disabled=false;});
+        if(notify)toast(job.message||'Refresh causale terminato',job.status==='complete'?'success':'error');
+        return;
+      }
+      await new Promise(resolve=>window.setTimeout(resolve,1500));
+    }
+  };
+  const runCausalRefresh=async kind=>{
+    if(activeCausalJobId)return;
+    causalButtons.forEach(button=>{button.disabled=true;});
+    if(causalResult)causalResult.textContent='Avvio refresh automatico su tutte le leghe e competizioni…';
     try{
-      const result=await api('/admin-api/causal-panels/refresh',{method:'POST',body:{kind,league,competition,through_season,teammate_global_id:kind==='teammate_exposure'?teammate_global_id:null}});
-      resultNode.textContent=JSON.stringify(result,null,2);
-      toast(result.status==='complete'?'Refresh pannello causale completato':'Refresh completato senza pannello utilizzabile',result.status==='complete'?'success':'error');
-    }catch(e){resultNode.textContent=e.message;toast('Refresh causale non riuscito: '+e.message,'error');}
-    finally{buttons.forEach(button=>button.disabled=false);}
+      const response=await api('/admin-api/causal-panels/refresh-all',{method:'POST',body:{kind}});
+      const job=response.job;
+      renderCausalProgress(job);
+      if(job?.job_id)await pollCausalRefresh(job.job_id,true);
+      else{
+        if(causalResult)causalResult.textContent='Il server non ha restituito un ID per il job causale.';
+        causalButtons.forEach(button=>{button.disabled=false;});
+      }
+    }catch(e){
+      if(causalResult)causalResult.textContent=e.message;
+      toast('Avvio refresh causale non riuscito: '+e.message,'error');
+      causalButtons.forEach(button=>{button.disabled=false;});
+    }
   };
   $('#causal-refresh-team-switch')?.addEventListener('click',()=>runCausalRefresh('team_switch'));
   $('#causal-refresh-teammate')?.addEventListener('click',()=>runCausalRefresh('teammate_exposure'));
+  if(causalResult){
+    api('/admin-api/causal-panels/refresh-all').then(response=>{
+      const job=response.job;
+      if(job&&job.job_id){
+        renderCausalProgress(job);
+        if(['queued','running'].includes(job.status))pollCausalRefresh(job.job_id,false);
+      }
+    }).catch(()=>{});
+  }
 
   $$('.release-promote').forEach(button=>{
     const model=button.dataset.model;
