@@ -1297,6 +1297,62 @@ END;
 $grant_ai_source_serving$;
 
 
+
+-- The allow-listed refresh procedures execute as the caller (not SECURITY
+-- DEFINER), so the scheduler/operator role needs DML on their physical derived
+-- stores. Keep canonical input facts and upstream Pbp/Anagrafiche/Analisi relations read-only.
+DO $grant_ai_model_refresh_writes$
+DECLARE
+    requested_role text := NULLIF(
+        btrim(current_setting('app.ai_source_read_role', true)),
+        ''
+    );
+    refresh_role text;
+BEGIN
+    FOREACH refresh_role IN ARRAY ARRAY[
+        'ai_model',
+        'hm_admin',
+        'hm_local_workers',
+        requested_role
+    ]
+    LOOP
+        CONTINUE WHEN refresh_role IS NULL OR btrim(refresh_role) = '';
+
+        IF EXISTS (
+            SELECT 1
+              FROM pg_catalog.pg_roles
+             WHERE rolname = refresh_role
+        ) THEN
+            EXECUTE format(
+                'GRANT USAGE ON SCHEMA "AI_Source" TO %I',
+                refresh_role
+            );
+            EXECUTE format(
+                'GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE
+                    "AI_Source"."TrainingPlayerCompetitionStats",
+                    "AI_Source"."TrainingTeamCompetitionStats",
+                    "AI_Source"."ScenarioPlayTypeStats",
+                    "AI_Source"."ScenarioShotProfiles",
+                    "AI_Source"."ScenarioDefenderMatchups",
+                    "AI_Source"."ScenarioLineupStats",
+                    "AI_Source"."SimulationPbpEvents",
+                    "AI_Source"."SimulationLineupStints",
+                    "AI_Source"."SimulationPlayTypeStats",
+                    "AI_Source"."SimulationShotProfiles",
+                    "AI_Source"."SimulationSourceRefreshState",
+                    "AI_Source"."ServingRefreshState"
+                 TO %I',
+                refresh_role
+            );
+            RAISE NOTICE
+                'AI_Model seasonal refresh write access granted to role %',
+                refresh_role;
+        END IF;
+    END LOOP;
+END;
+$grant_ai_model_refresh_writes$;
+
+
 -- Persistent scheduler for repeatable AI_Model jobs. One-time schema/diagnostic
 -- scripts are deliberately excluded; only idempotent refresh procedures and
 -- explicit model lifecycle tasks are schedulable.

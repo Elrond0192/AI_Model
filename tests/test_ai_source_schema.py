@@ -473,3 +473,39 @@ def test_postgres_loader_builds_competition_lookups():
     assert data["player_dict"][20]["name"] == "Player"
     assert data["league_teams"] == {1: [10]}
     assert data["team_season_dict"][(10, 1, 2025, "RS")]["pace"] == 75.0
+
+
+def test_seasonal_refresh_runtime_has_dml_only_on_derived_serving_tables():
+    sql = SERVING_SQL.read_text(encoding="utf-8").lower()
+    start = sql.index("do $grant_ai_model_refresh_writes$")
+    end = sql.index("$grant_ai_model_refresh_writes$;", start)
+    grants = sql[start:end]
+
+    for table in (
+        "trainingplayercompetitionstats",
+        "trainingteamcompetitionstats",
+        "scenarioplaytypestats",
+        "scenarioshotprofiles",
+        "scenariodefendermatchups",
+        "scenariolineupstats",
+        "simulationpbpevents",
+        "simulationlineupstints",
+        "simulationplaytypestats",
+        "simulationshotprofiles",
+        "simulationsourcerefreshstate",
+        "servingrefreshstate",
+    ):
+        assert f'"ai_source"."{table}"' in grants
+
+    assert "grant select, insert, update, delete on table" in grants
+    assert "'ai_model'" in grants
+    assert "'hm_admin'" in grants
+    assert "'hm_local_workers'" in grants
+    assert "requested_role" in grants
+    for canonical in (
+        '"ai_source"."players"',
+        '"ai_source"."teams"',
+        '"ai_source"."playercompetitionstats"',
+        '"ai_source"."teamcompetitionstats"',
+    ):
+        assert canonical not in grants

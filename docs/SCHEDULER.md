@@ -88,8 +88,12 @@ and `end_date` without deleting existing jobs. The same script grants
 `ai_model`, `hm_admin`, `hm_local_workers` and the configured
 `app.ai_source_read_role` (when supplied) `SELECT/INSERT/UPDATE/DELETE` on the
 two scheduler metadata tables and the guarded `SimulationCausalPanel`, plus
-usage on the scheduler sequences. It does not grant write access to canonical
-player/team statistics.
+usage on the scheduler sequences. It also grants `SELECT/INSERT/UPDATE/DELETE`
+on physical derived stores maintained by `RefreshSimulationSources`,
+`RefreshTrainingServing`, `RefreshScenarioServing` and `RefreshContextSeasonal`
+(including `SimulationPbpEvents` and `ServingRefreshState`), because these
+procedures execute with invoker permissions. Canonical player/team facts and
+upstream PBP/anagraphic/analysis inputs remain read-only to this runtime role.
 The runtime preflights `PlayerCompetitionStats` and both scheduler tables and
 returns HTTP 503 with the PostgreSQL detail if the schema or grants are missing.
 
