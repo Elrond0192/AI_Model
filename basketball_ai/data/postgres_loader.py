@@ -121,6 +121,7 @@ _REQUIRED_COLUMNS: dict[str, set[str]] = {
         "season",
         "league_id",
         "league_key",
+        "team_global_id",
         "games_played",
         "minutes_per_game",
         "points",
