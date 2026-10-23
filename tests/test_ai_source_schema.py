@@ -59,6 +59,11 @@ def test_competition_schema_preserves_player_and_team_contexts():
     assert "advancedstats_player_" in sql
     assert "advancedstatsteam_" in sql
     assert "games_started" in sql
+    player_projection = sql.split(
+        "-- canonical playercompetitionstats", 1
+    )[1].split("-- canonical teamcompetitionstats", 1)[0]
+    assert "coalesce(direct_team_global_id, fallback_team_global_id)" in player_projection
+    assert "as team_global_id" in player_projection
 
 
 def test_competition_schema_keeps_tot_separate_from_rs():
@@ -393,7 +398,7 @@ def _valid_frames():
             [
                 {
                     "player_id": 20, "season": 2025, "league_id": 1,
-                    "league_key": "ITA1", "games_played": 20,
+                    "league_key": "ITA1", "team_global_id": "T10", "games_played": 20,
                     "minutes_per_game": 25.0, "points": 10.0,
                     "rating": 6.5, "competition": "RS",
                 }
@@ -426,6 +431,14 @@ def test_postgres_loader_contract_requires_global_ids():
     data = _valid_frames()
     data["players"] = data["players"].drop(columns=["global_id"])
     with pytest.raises(RuntimeError, match="global_id"):
+        _validate_contract(data, "ai_source")
+
+
+def test_postgres_loader_requires_player_team_global_identity():
+    from basketball_ai.data.postgres_loader import _validate_contract
+    data = _valid_frames()
+    data["player_stats"] = data["player_stats"].drop(columns=["team_global_id"])
+    with pytest.raises(RuntimeError, match="team_global_id"):
         _validate_contract(data, "ai_source")
 
 

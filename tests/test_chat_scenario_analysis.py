@@ -1461,3 +1461,41 @@ def test_teammate_exposure_records_reason_when_team_strength_metrics_are_missing
     assert diagnostic["reason"] == "team_strength_metrics_missing"
     assert diagnostic["match_method"] == "team_id"
 
+def test_teammate_exposure_uses_canonical_team_global_id_when_local_ids_differ():
+    engine = _engine()
+    data = engine.data
+    data["players"]["global_id"] = data["players"]["id"].map(
+        lambda value: f"PLAYER-{int(value)}"
+    )
+
+    canonical_teams = {101: "TEAM-RED", 102: "TEAM-BLUE"}
+    data["teams"]["global_id"] = data["teams"]["id"].map(canonical_teams)
+
+    # Alpha switches from team 101 to 102. The player source carries the
+    # canonical identity while local team IDs in the team-stat feed differ.
+    move = (
+        (data["player_stats"]["player_id"] == 1)
+        & (data["player_stats"]["season"].astype(int) == 2024)
+        & (data["player_stats"]["competition"].astype(str).str.upper() == "RS")
+    )
+    data["player_stats"].loc[move, "team_id"] = 102
+    data["player_stats"]["team_global_id"] = data["player_stats"]["team_id"].map(
+        canonical_teams
+    )
+
+    data["team_season_stats"]["team_id"] = (
+        data["team_season_stats"]["team_id"].astype(int) + 1000
+    )
+    data["team_season_stats"]["global_id"] = data["team_season_stats"]["team_id"].map(
+        {1101: "TEAM-RED", 1102: "TEAM-BLUE"}
+    )
+
+    panel = engine._build_teammate_exposure_causal_panel(10, "RS", 2024, None)
+    focal_alpha = panel[panel["global_id"] == "PLAYER-1"]
+    assert not focal_alpha.empty
+    assert focal_alpha["team_strength_pre"].notna().all()
+    assert focal_alpha["team_strength_pre"].eq(1.0).all()
+    assert focal_alpha["_team_strength_diagnostic"].map(
+        lambda item: item["match_method"]
+    ).eq("global_id").all()
+
