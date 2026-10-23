@@ -164,3 +164,18 @@ The diagnostic also reports overlapping missing-value counts and percentages for
 
 The descriptive performance_attribution capability is now marked available because it is explicitly scoped to observed decomposition and associations, with causal claims excluded. Keep causal_team_effect marked partial. Return the existing BB-Rating decomposition and observed associations, and expose the cohort ATT only when its support and balance gates pass; explicitly state that this is not a player-specific causal effect and that causal identification remains conditional on observational assumptions. Never call an observed difference
 "caused by the team", "caused by the quintet" or "caused by a teammate".
+
+
+### Propensity-overlap failure diagnostics
+
+The pooled teammate-exposure report now preserves the exact overlap-gate failure
+reasons for each evaluated cohort. A failed cohort still reports the stable
+status `propensity_overlap_failed`, while `diagnostics_reason` and the CSV/API
+detail distinguish a common-support share below 80%, fewer than 20 treated rows
+inside support, and fewer than 20 control rows inside support. The report also
+includes arm-specific retained counts/shares, counts below 0.05 and above 0.95,
+and propensity-score p05/p50/p95 quantiles for treated and control rows. These
+are diagnostic additions only: the 0.05–0.95 score bounds, 80% common-support
+gate and 20-per-arm minimum are unchanged. Do not weaken gates based only on
+these diagnostics; use them to decide whether cohort construction, covariates
+or treatment definition need review. `causal_team_effect` remains partial.

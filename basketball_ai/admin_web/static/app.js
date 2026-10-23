@@ -552,6 +552,15 @@ async function renderModelReleases(){
       const statusCounts=s.status_counts||{};
       const statuses=Object.entries(statusCounts).sort((a,b)=>b[1]-a[1]).map(([name,count])=>name+': '+count);
       if(statuses.length)lines.push('Esiti: '+statuses.join(' · '));
+      const overlapReasonLabels={
+        'overlap_share_below_0.80':'meno dell’80% dei propensity score nel supporto comune',
+        treated_overlap_below_20:'meno di 20 trattati nel supporto comune',
+        control_overlap_below_20:'meno di 20 controlli nel supporto comune'
+      };
+      const overlapFailureCounts=s.overlap_failure_reason_counts||{};
+      const overlapFailureSummary=Object.entries(overlapFailureCounts).sort((a,b)=>b[1]-a[1])
+        .map(([reason,count])=>(overlapReasonLabels[reason]||reason)+': '+count+' gruppi');
+      if(overlapFailureSummary.length)lines.push('Dettaglio gate propensity overlap: '+overlapFailureSummary.join(' · '));
       const missingness=s.missingness_by_field||{};
       const missingnessLabels={
         missing_baseline_bb_rating_rows:'BB-Rating baseline',
@@ -604,6 +613,17 @@ async function renderModelReleases(){
           detail+=' — stagioni '+(row.first_transition_season??'?')+'–'+(row.last_transition_season??'?')+' ('+(row.transition_seasons??0)+' in totale)';
           detail+=' — trattati '+(row.treated??0)+' / controlli '+(row.control??0)+' — '+String(row.status||'n/d');
           if(row.propensity_overlap_share!==null&&row.propensity_overlap_share!==undefined)detail+=' — overlap '+(Number(row.propensity_overlap_share)*100).toFixed(1)+'%';
+          if(row.overlap_treated_kept!==null&&row.overlap_treated_kept!==undefined&&row.overlap_control_kept!==null&&row.overlap_control_kept!==undefined){
+            detail+=' — supporto comune: trattati '+row.overlap_treated_kept+'/'+(row.treated??'?')+', controlli '+row.overlap_control_kept+'/'+(row.control??'?');
+          }
+          if(row.propensity_treated_p05!==null&&row.propensity_treated_p05!==undefined&&row.propensity_treated_p50!==null&&row.propensity_treated_p50!==undefined&&row.propensity_treated_p95!==null&&row.propensity_treated_p95!==undefined){
+            detail+=' — PS trattati p05/p50/p95 '+[row.propensity_treated_p05,row.propensity_treated_p50,row.propensity_treated_p95].map(v=>Number(v).toFixed(3)).join('/');
+          }
+          if(row.propensity_control_p05!==null&&row.propensity_control_p05!==undefined&&row.propensity_control_p50!==null&&row.propensity_control_p50!==undefined&&row.propensity_control_p95!==null&&row.propensity_control_p95!==undefined){
+            detail+=' — PS controlli p05/p50/p95 '+[row.propensity_control_p05,row.propensity_control_p50,row.propensity_control_p95].map(v=>Number(v).toFixed(3)).join('/');
+          }
+          const groupFailures=String(row.overlap_failure_reasons||'').split(';').filter(Boolean);
+          if(groupFailures.length)detail+=' — motivo overlap: '+groupFailures.map(reason=>overlapReasonLabels[reason]||reason).join(', ');
           if(row.max_abs_smd_after!==null&&row.max_abs_smd_after!==undefined)detail+=' — max |SMD| '+Number(row.max_abs_smd_after).toFixed(3);
           lines.push(detail);
         });
