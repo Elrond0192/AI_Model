@@ -7,6 +7,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 ### Added
+- Added per-row diagnostics for missing pre-treatment team strength in teammate-exposure panels. Model Releases now distinguishes identity-match failures, absent pre-treatment team seasons, incompatible competition contexts, stale team data, and unavailable rating metrics; older persisted rows are explicitly flagged for refresh. This is diagnostic-only and does not relax causal support, overlap, or balance gates.
 - Extended teammate-exposure diagnostics with row-level missingness counts and percentages for identities, treatment, outcome and every model covariate, globally and per teammate/context group. This separates low raw treatment support from complete-case attrition before any estimator threshold is changed.
 - Added a Model Releases diagnostic for the persisted teammate-exposure panel, pooled by named teammate × league × competition across eligible transitions (while retaining season coverage in the CSV). It reports complete-case treated/control support, identity integrity, propensity overlap and weighted covariate balance for up to 50 raw-supported cohorts per run; passing gates remains observational and does not promote `causal_team_effect`.
 - Redefined teammate treatment as a newly observed shared-team relationship between adjacent completed seasons. Continuing relationships and pairs without an observed teammate baseline team are excluded from the initiation cohort; treatment is not inferred from outcome-season co-membership alone.

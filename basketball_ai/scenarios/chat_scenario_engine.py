@@ -1514,48 +1514,101 @@ class ChatScenarioEngine:
         ]
 
         def team_strength(team_id, year, team_global_id=None):
-            # Strength is a pre-treatment team-level covariate, not a player
-            # split statistic. Prefer the exact player competition, then season
-            # total and regular season. If that team context is unavailable,
-            # only use the latest prior team-season; never look forward.
+            """Return pre-treatment team strength plus an auditable missingness reason."""
             normalized_global = str(team_global_id or "").strip().casefold()
             rows = pd.DataFrame()
+            match_method = "none"
+
             if normalized_global and "_team_global_id" in team_stats.columns:
                 rows = team_stats[
                     team_stats["_team_global_id"].fillna("").astype(str).str.casefold()
                     == normalized_global
                 ]
-            # Preserve exact canonical-ID matching as a compatibility fallback.
+                if not rows.empty:
+                    match_method = "global_id"
+
+            # Local numeric IDs are only a fallback when canonical lookup finds no rows.
+            # This preserves the existing identity preference without silently switching
+            # to a potentially unrelated local ID when canonical rows exist elsewhere.
             if rows.empty and team_id is not None:
                 rows = team_stats[team_stats["_team_int"] == team_id]
-            rows = rows[rows["_year"] <= year]
+                if not rows.empty:
+                    match_method = "team_id"
+
+            def unavailable(reason, **extra):
+                diagnostic = {
+                    "status": "missing",
+                    "reason": reason,
+                    "match_method": match_method,
+                    "team_global_id_available": bool(normalized_global),
+                    "source_rows_matched": int(len(rows)),
+                }
+                diagnostic.update(extra)
+                return np.nan, diagnostic
+
             if rows.empty:
-                return np.nan
+                return unavailable(
+                    "no_team_stats_identity_match" if normalized_global or team_id is not None
+                    else "team_identity_unavailable"
+                )
+
+            rows = rows[rows["_year"].notna() & (rows["_year"] <= year)]
+            if rows.empty:
+                return unavailable("no_pre_treatment_team_season")
 
             competition_key = normalize_competition(competition)
             preference = list(dict.fromkeys([competition_key, "TOT", "RS"]))
             preferred = rows[rows["_comp"].isin(preference)].copy()
             if preferred.empty:
-                return np.nan
-            source_year = preferred["_year"].max()
-            # A one-season lag is tolerable for a source with shifted/missing
-            # competition splits; older team context is too stale to stand in
-            # for a pre-treatment covariate and remains missing.
+                return unavailable(
+                    "no_compatible_competition_row",
+                    available_competitions=sorted(
+                        {str(value) for value in rows["_comp"].dropna().tolist()}
+                    ),
+                )
+
+            source_year = int(preferred["_year"].max())
             if source_year < year - 1:
-                return np.nan
+                return unavailable(
+                    "team_context_older_than_one_season",
+                    source_year=source_year,
+                )
+
             preferred = preferred[preferred["_year"] == source_year].copy()
             preferred["_comp_priority"] = preferred["_comp"].map(
                 {key: index for index, key in enumerate(preference)}
             ).fillna(len(preference))
-            rows = preferred.sort_values(
-                ["_comp_priority"], kind="stable"
-            )
-            row = rows.iloc[0]
+            row = preferred.sort_values(["_comp_priority"], kind="stable").iloc[0]
+            source_competition = str(row.get("_comp", "") or "")
             net = _finite(row.get("net_rtg"), np.nan)
             if math.isfinite(net):
-                return net
-            off, defense = _finite(row.get("offensive_rating"), np.nan), _finite(row.get("defensive_rating"), np.nan)
-            return off - defense if math.isfinite(off) and math.isfinite(defense) else np.nan
+                return net, {
+                    "status": "available",
+                    "reason": "net_rtg",
+                    "match_method": match_method,
+                    "source_year": source_year,
+                    "source_competition": source_competition,
+                }
+
+            off = _finite(row.get("offensive_rating"), np.nan)
+            defense = _finite(row.get("defensive_rating"), np.nan)
+            if math.isfinite(off) and math.isfinite(defense):
+                return off - defense, {
+                    "status": "available",
+                    "reason": "offensive_minus_defensive_rating",
+                    "match_method": match_method,
+                    "source_year": source_year,
+                    "source_competition": source_competition,
+                }
+
+            return unavailable(
+                "team_strength_metrics_missing",
+                source_year=source_year,
+                source_competition=source_competition,
+                has_net_rtg=math.isfinite(net),
+                has_offensive_rating=math.isfinite(off),
+                has_defensive_rating=math.isfinite(defense),
+            )
 
         records = []
         for focal_global_id, group in frame.groupby("_global_id", sort=False):
@@ -1592,6 +1645,11 @@ class ChatScenarioEngine:
             role = next((str(value).strip() for value in (
                 before.get("ruolo_combinato"), before.get("role"), before.get("position"), meta.get("position")
             ) if value is not None and not pd.isna(value) and str(value).strip()), "unknown")
+            team_strength_pre, team_strength_diagnostic = team_strength(
+                _nullable_int(before.get("_team_int")),
+                before_year,
+                before.get("_team_global_id"),
+            )
             common = {
                 "global_id": focal_global_id,
                 "league_key": str(self._league_key(source_league) or "").upper(),
@@ -1602,11 +1660,8 @@ class ChatScenarioEngine:
                 "minutes_pre": _finite(before.get("minutes_per_game"), np.nan),
                 "usage_pre": _ratio(before.get("usg_pct"), np.nan),
                 "age_pre": age,
-                "team_strength_pre": team_strength(
-                    _nullable_int(before.get("_team_int")),
-                    before_year,
-                    before.get("_team_global_id"),
-                ),
+                "team_strength_pre": team_strength_pre,
+                "_team_strength_diagnostic": team_strength_diagnostic,
                 "role_pre": role,
             }
             # Controls must be drawn only from players with observations in

@@ -577,6 +577,25 @@ async function renderModelReleases(){
           lines.push('• '+missingnessLabels[key]+': '+Number(value.rows||0).toLocaleString('it-IT')+' ('+Number(value.percent||0).toFixed(2)+'%)');
         });
       }
+      const strengthReasons=s.team_strength_missing_reasons||[];
+      if(strengthReasons.length){
+        const reasonLabels={
+          no_team_stats_identity_match:'nessuna riga squadra abbinata per identità',
+          team_identity_unavailable:'identità della squadra pre-trattamento non disponibile',
+          no_pre_treatment_team_season:'nessuna stagione squadra pre-trattamento disponibile',
+          no_compatible_competition_row:'nessun contesto competizione/TOT/RS compatibile',
+          team_context_older_than_one_season:'dato squadra più vecchio di un anno',
+          team_strength_metrics_missing:'riga squadra trovata, ma Net Rating e ORtg/DRtg mancanti',
+          diagnostic_missing_refresh_required:'diagnostica assente: eseguire refresh con la versione aggiornata'
+        };
+        lines.push('Motivi delle righe senza forza squadra pre-trattamento:');
+        strengthReasons.slice(0,8).forEach(item=>{
+          const label=reasonLabels[item.reason]||String(item.reason||'motivo sconosciuto');
+          const method=String(item.match_method||'metodo ignoto');
+          lines.push('• '+label+' ['+method+']: '+Number(item.rows||0).toLocaleString('it-IT')+
+            ' ('+Number(item.percent_of_missing||0).toFixed(2)+'% dei mancanti)');
+        });
+      }
       const best=s.best_supported_groups||[];
       if(best.length){
         lines.push('Gruppi con più trattati:');

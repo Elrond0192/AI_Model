@@ -2448,6 +2448,27 @@ def _build_teammate_support_diagnostics(active_profile: str) -> dict[str, Any]:
                 WHERE source_type = 'teammate_exposure'
                 '''
             )).mappings().one())
+            team_strength_missing_reasons = [
+                dict(row) for row in connection.execute(text(
+                    '''
+                    SELECT
+                        COALESCE(
+                            NULLIF(details->'team_strength_pre_diagnostic'->>'reason', ''),
+                            'diagnostic_missing_refresh_required'
+                        ) AS reason,
+                        COALESCE(
+                            NULLIF(details->'team_strength_pre_diagnostic'->>'match_method', ''),
+                            'unknown'
+                        ) AS match_method,
+                        COUNT(*) AS rows
+                    FROM "AI_Source"."SimulationCausalPanel"
+                    WHERE source_type = 'teammate_exposure'
+                      AND team_strength_pre IS NULL
+                    GROUP BY 1, 2
+                    ORDER BY COUNT(*) DESC, reason, match_method
+                    '''
+                )).mappings().all()
+            ]
             aggregate_sql = text(
                 '''
                 WITH panel AS (
@@ -2715,6 +2736,19 @@ def _build_teammate_support_diagnostics(active_profile: str) -> dict[str, Any]:
                     "status_counts": status_counts,
                     "total_eligible_complete_case_rows": int(report["eligible_rows"].sum()),
                     "total_excluded_complete_case_rows": int(report["excluded_complete_case_rows"].sum()),
+                    "team_strength_missing_reasons": [
+                        {
+                            "reason": str(row.get("reason") or "unknown"),
+                            "match_method": str(row.get("match_method") or "unknown"),
+                            "rows": int(row.get("rows", 0) or 0),
+                            "percent_of_missing": round(
+                                100.0 * int(row.get("rows", 0) or 0)
+                                / max(int(missingness_row.get("missing_team_strength_pre_rows", 0) or 0), 1),
+                                2,
+                            ),
+                        }
+                        for row in team_strength_missing_reasons
+                    ],
                     "missingness_by_field": {
                         field: {
                             "rows": int(missingness_row.get(field, 0) or 0),

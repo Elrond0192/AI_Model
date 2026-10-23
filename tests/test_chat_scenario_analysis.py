@@ -1429,3 +1429,35 @@ def test_causal_panel_builders_skip_nullable_ids_and_seasons():
     assert not teammate.empty
     assert team_switch["transition_season"].notna().all()
     assert teammate["transition_season"].notna().all()
+
+def test_teammate_exposure_records_reason_when_team_strength_metrics_are_missing():
+    engine = _engine()
+    data = engine.data
+    data["players"]["global_id"] = data["players"]["id"].map(lambda value: f"PLAYER-{int(value)}")
+
+    # Make Alpha move from team 101 to 102 so the fixture contains newly observed
+    # teammate exposures, and remove all eligible strength metrics for Alpha's
+    # baseline team-season.
+    move = (
+        (data["player_stats"]["player_id"] == 1)
+        & (data["player_stats"]["season"].astype(int) == 2024)
+        & (data["player_stats"]["competition"].astype(str).str.upper() == "RS")
+    )
+    data["player_stats"].loc[move, "team_id"] = 102
+    missing_strength = (
+        (data["team_season_stats"]["team_id"] == 101)
+        & (data["team_season_stats"]["season"].astype(int) == 2023)
+    )
+    for column in ("net_rtg", "offensive_rating", "defensive_rating"):
+        data["team_season_stats"].loc[missing_strength, column] = None
+
+    panel = engine._build_teammate_exposure_causal_panel(10, "RS", 2024, None)
+    assert not panel.empty
+    focal_alpha = panel[panel["global_id"] == "PLAYER-1"]
+    assert not focal_alpha.empty
+    assert focal_alpha["team_strength_pre"].isna().all()
+    diagnostic = focal_alpha.iloc[0]["_team_strength_diagnostic"]
+    assert diagnostic["status"] == "missing"
+    assert diagnostic["reason"] == "team_strength_metrics_missing"
+    assert diagnostic["match_method"] == "team_id"
+

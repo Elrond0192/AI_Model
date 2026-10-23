@@ -298,14 +298,27 @@ def persist_causal_panel(
         if source_type.strip() == "teammate_exposure"
         else "team_switch_between_adjacent_completed_seasons"
     )
-    frame["details"] = frame.apply(
-        lambda row: json.dumps({
+    def build_panel_details(row):
+        details = {
             "estimand": source_type.strip(),
             "treatment_definition": treatment_definition,
             "identification": "observational_assumptions_required",
-        }),
-        axis=1,
-    )
+        }
+        # Keep the reason attached to the persisted cohort row so the operator
+        # can distinguish identity/context gaps from missing source metrics.
+        # This uses the existing JSONB details column; no schema migration needed.
+        diagnostic = row.get("_team_strength_diagnostic")
+        if (
+            source_type.strip() == "teammate_exposure"
+            and isinstance(diagnostic, dict)
+            and pd.isna(row.get("team_strength_pre"))
+        ):
+            # Only persist the extra payload for missing values to limit JSONB
+            # overhead on the much larger set of complete rows.
+            details["team_strength_pre_diagnostic"] = diagnostic
+        return json.dumps(details)
+
+    frame["details"] = frame.apply(build_panel_details, axis=1)
     frame["refreshed_at"] = pd.Timestamp.now(tz="UTC")
     if "teammate_global_id" not in frame.columns:
         frame["teammate_global_id"] = None
