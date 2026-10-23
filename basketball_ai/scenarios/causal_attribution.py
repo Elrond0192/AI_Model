@@ -298,6 +298,7 @@ def persist_causal_panel(
         if source_type.strip() == "teammate_exposure"
         else "team_switch_between_adjacent_completed_seasons"
     )
+
     def build_panel_details(row):
         details = {
             "estimand": source_type.strip(),
