@@ -553,7 +553,7 @@ async function renderModelReleases(){
       const statuses=Object.entries(statusCounts).sort((a,b)=>b[1]-a[1]).map(([name,count])=>name+': '+count);
       if(statuses.length)lines.push('Esiti: '+statuses.join(' · '));
       const overlapReasonLabels={
-        overlap_share_below_0.80:'meno dell’80% dei propensity score nel supporto comune',
+        'overlap_share_below_0.80':'meno dell’80% dei propensity score nel supporto comune',
         treated_overlap_below_20:'meno di 20 trattati nel supporto comune',
         control_overlap_below_20:'meno di 20 controlli nel supporto comune'
       };
