@@ -1224,6 +1224,7 @@ BEGIN
              ' || pg_temp.ai_stable_id('player','player_global_id') || ' AS player_id,
              season,
              ' || pg_temp.ai_stable_id('team','coalesce(direct_team_global_id, fallback_team_global_id)') || ' AS team_id,
+             NULLIF(BTRIM(coalesce(direct_team_global_id, fallback_team_global_id)), '''') AS team_global_id,
              ' || pg_temp.ai_stable_id('league','league_key') || ' AS league_id,
              coalesce(games, 0)::integer AS games_played,
              CASE WHEN coalesce(games,0)>0 THEN coalesce(minutes_total,0)/games ELSE 0 END AS minutes_per_game,
