@@ -110,10 +110,67 @@ def estimate_team_switch_att(panel: pd.DataFrame) -> dict[str, Any]:
         propensity_model.fit(x_scaled, t)
         propensity = propensity_model.predict_proba(x_scaled)[:, 1]
         # Do not clip propensity and pretend that a lack of overlap is solved.
-        in_overlap = (propensity >= 0.05) & (propensity <= 0.95)
+        overlap_lower = 0.05
+        overlap_upper = 0.95
+        required_overlap_share = 0.80
+        required_per_arm = 20
+        in_overlap = (propensity >= overlap_lower) & (propensity <= overlap_upper)
         overlap_share = float(in_overlap.mean())
-        if overlap_share < 0.80 or int((in_overlap & (t == 1)).sum()) < 20 or int((in_overlap & (t == 0)).sum()) < 20:
-            return _unavailable("propensity_overlap_failed", rows=n, treated=nt, control=nc)
+        treated_overlap_count = int((in_overlap & (t == 1)).sum())
+        control_overlap_count = int((in_overlap & (t == 0)).sum())
+        overlap_failure_reasons: list[str] = []
+        if overlap_share < required_overlap_share:
+            overlap_failure_reasons.append("overlap_share_below_0.80")
+        if treated_overlap_count < required_per_arm:
+            overlap_failure_reasons.append("treated_overlap_below_20")
+        if control_overlap_count < required_per_arm:
+            overlap_failure_reasons.append("control_overlap_below_20")
+        if overlap_failure_reasons:
+            def arm_diagnostics(arm: int) -> dict[str, Any]:
+                scores = propensity[t == arm]
+                arm_overlap = in_overlap[t == arm]
+                below = scores < overlap_lower
+                above = scores > overlap_upper
+                quantiles = {
+                    name: round(float(np.quantile(scores, q)), 5)
+                    for name, q in (
+                        ("min", 0.0), ("p01", 0.01), ("p05", 0.05),
+                        ("p25", 0.25), ("p50", 0.50), ("p75", 0.75),
+                        ("p95", 0.95), ("p99", 0.99), ("max", 1.0),
+                    )
+                } if len(scores) else {}
+                return {
+                    "rows": int(len(scores)),
+                    "within_overlap": int(arm_overlap.sum()),
+                    "within_overlap_share": round(float(arm_overlap.mean()), 5) if len(scores) else 0.0,
+                    "below_lower": int(below.sum()),
+                    "below_lower_share": round(float(below.mean()), 5) if len(scores) else 0.0,
+                    "above_upper": int(above.sum()),
+                    "above_upper_share": round(float(above.mean()), 5) if len(scores) else 0.0,
+                    "quantiles": quantiles,
+                }
+
+            return _unavailable("propensity_overlap_failed", rows=n, treated=nt, control=nc) | {
+                "diagnostics": {
+                    "rows": n,
+                    "treated": nt,
+                    "control": nc,
+                    "propensity_overlap_share": round(overlap_share, 5),
+                    "propensity_overlap": {
+                        "lower_bound": overlap_lower,
+                        "upper_bound": overlap_upper,
+                        "required_overlap_share": required_overlap_share,
+                        "required_per_arm": required_per_arm,
+                        "rows_in_overlap": int(in_overlap.sum()),
+                        "rows_excluded_from_overlap": int((~in_overlap).sum()),
+                        "treated_in_overlap": treated_overlap_count,
+                        "control_in_overlap": control_overlap_count,
+                        "failure_reasons": overlap_failure_reasons,
+                        "treated": arm_diagnostics(1),
+                        "control": arm_diagnostics(0),
+                    },
+                },
+            }
 
         frame = frame.loc[in_overlap].reset_index(drop=True)
         x_scaled = x_scaled[in_overlap]

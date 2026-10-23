@@ -642,6 +642,10 @@ def test_helpers_and_static_assets(monkeypatch, tmp_path):
     assert "first_transition_season" in js
     assert "aggregando le transizioni per compagno/lega/competizione" in js
     assert "Valori mancanti/non validi per campo" in js
+    assert "overlap_failure_reason_counts" in js
+    assert "overlap_treated_kept" in js
+    assert "propensity_treated_p05" in js
+    assert "Dettaglio gate propensity overlap" in js
 def test_teammate_support_gate_status_enforces_raw_support_and_identity_integrity():
     assert admin._teammate_support_gate_status({
         "eligible_rows": 75, "treated": 25, "control": 50,

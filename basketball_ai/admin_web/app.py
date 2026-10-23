@@ -2559,6 +2559,13 @@ def _build_teammate_support_diagnostics(active_profile: str) -> dict[str, Any]:
                 "missing_team_strength_pre_rows", "invalid_outcome_rows", "last_refresh",
                 "status", "diagnostics_evaluated", "diagnostics_reason",
                 "propensity_overlap_share", "max_abs_smd_after",
+                "overlap_rows_kept", "overlap_treated_kept", "overlap_control_kept",
+                "overlap_treated_share", "overlap_control_share",
+                "treated_ps_below_lower", "treated_ps_above_upper",
+                "control_ps_below_lower", "control_ps_above_upper",
+                "propensity_treated_p05", "propensity_treated_p50", "propensity_treated_p95",
+                "propensity_control_p05", "propensity_control_p50", "propensity_control_p95",
+                "overlap_failure_reasons",
             ]
             if not aggregate_rows:
                 empty_csv = pd.DataFrame(columns=columns).to_csv(index=False).encode("utf-8-sig")
@@ -2597,6 +2604,16 @@ def _build_teammate_support_diagnostics(active_profile: str) -> dict[str, Any]:
             report["diagnostics_reason"] = ""
             report["propensity_overlap_share"] = pd.NA
             report["max_abs_smd_after"] = pd.NA
+            for column in (
+                "overlap_rows_kept", "overlap_treated_kept", "overlap_control_kept",
+                "overlap_treated_share", "overlap_control_share",
+                "treated_ps_below_lower", "treated_ps_above_upper",
+                "control_ps_below_lower", "control_ps_above_upper",
+                "propensity_treated_p05", "propensity_treated_p50", "propensity_treated_p95",
+                "propensity_control_p05", "propensity_control_p50", "propensity_control_p95",
+            ):
+                report[column] = pd.NA
+            report["overlap_failure_reasons"] = ""
             report["status"] = report.apply(
                 lambda row: _teammate_support_gate_status(row.to_dict()), axis=1
             )
@@ -2671,15 +2688,38 @@ def _build_teammate_support_diagnostics(active_profile: str) -> dict[str, Any]:
                             status = str(result.get("reason") or "estimator_unavailable")
                         report.at[index, "status"] = status
                         report.at[index, "diagnostics_evaluated"] = True
-                        report.at[index, "diagnostics_reason"] = (
-                            "" if result.get("available") else status
-                        )
                         overlap = diagnostics.get("propensity_overlap_share")
                         max_smd = diagnostics.get("max_abs_smd_after")
                         if overlap is not None:
                             report.at[index, "propensity_overlap_share"] = float(overlap)
                         if max_smd is not None:
                             report.at[index, "max_abs_smd_after"] = float(max_smd)
+
+                        overlap_detail = diagnostics.get("propensity_overlap")
+                        if isinstance(overlap_detail, dict):
+                            report.at[index, "overlap_rows_kept"] = overlap_detail.get("rows_in_overlap", pd.NA)
+                            report.at[index, "overlap_treated_kept"] = overlap_detail.get("treated_in_overlap", pd.NA)
+                            report.at[index, "overlap_control_kept"] = overlap_detail.get("control_in_overlap", pd.NA)
+                            reasons = overlap_detail.get("failure_reasons") or []
+                            report.at[index, "overlap_failure_reasons"] = ";".join(str(item) for item in reasons)
+                            treated_ps = overlap_detail.get("treated") or {}
+                            control_ps = overlap_detail.get("control") or {}
+                            report.at[index, "overlap_treated_share"] = treated_ps.get("within_overlap_share", pd.NA)
+                            report.at[index, "overlap_control_share"] = control_ps.get("within_overlap_share", pd.NA)
+                            report.at[index, "treated_ps_below_lower"] = treated_ps.get("below_lower", pd.NA)
+                            report.at[index, "treated_ps_above_upper"] = treated_ps.get("above_upper", pd.NA)
+                            report.at[index, "control_ps_below_lower"] = control_ps.get("below_lower", pd.NA)
+                            report.at[index, "control_ps_above_upper"] = control_ps.get("above_upper", pd.NA)
+                            for arm_name, arm_diagnostics in (("treated", treated_ps), ("control", control_ps)):
+                                quantiles = arm_diagnostics.get("quantiles") or {}
+                                for quantile in ("p05", "p50", "p95"):
+                                    report.at[index, f"propensity_{arm_name}_{quantile}"] = quantiles.get(quantile, pd.NA)
+                            reason_text = ";".join(str(item) for item in reasons)
+                        else:
+                            reason_text = ""
+                        report.at[index, "diagnostics_reason"] = (
+                            "" if result.get("available") else (reason_text or status)
+                        )
 
             for index in raw_candidates[CAUSAL_SUPPORT_DIAGNOSTIC_GROUP_LIMIT:]:
                 report.at[index, "status"] = "not_evaluated_diagnostic_limit"
@@ -2693,6 +2733,10 @@ def _build_teammate_support_diagnostics(active_profile: str) -> dict[str, Any]:
                 str(key): int(value)
                 for key, value in report["status"].value_counts(dropna=False).items()
             }
+            overlap_failure_reason_counts: dict[str, int] = {}
+            for raw_reasons in report["overlap_failure_reasons"].fillna("").astype(str):
+                for reason in filter(None, (item.strip() for item in raw_reasons.split(";"))):
+                    overlap_failure_reason_counts[reason] = overlap_failure_reason_counts.get(reason, 0) + 1
             raw_support_passed = len(raw_candidates)
             evaluated = min(raw_support_passed, CAUSAL_SUPPORT_DIAGNOSTIC_GROUP_LIMIT)
             gates_passed = int((report["status"] == "statistical_gates_passed_observational_only").sum())
@@ -2713,7 +2757,13 @@ def _build_teammate_support_diagnostics(active_profile: str) -> dict[str, Any]:
                         "transition_seasons", "first_transition_season", "last_transition_season",
                         "panel_rows", "eligible_rows", "treated", "control", "status",
                         "diagnostics_evaluated", "propensity_overlap_share", "max_abs_smd_after",
-                        "diagnostics_reason",
+                        "diagnostics_reason", "overlap_rows_kept", "overlap_treated_kept",
+                        "overlap_control_kept", "overlap_treated_share", "overlap_control_share",
+                        "treated_ps_below_lower", "treated_ps_above_upper",
+                        "control_ps_below_lower", "control_ps_above_upper",
+                        "propensity_treated_p05", "propensity_treated_p50", "propensity_treated_p95",
+                        "propensity_control_p05", "propensity_control_p50", "propensity_control_p95",
+                        "overlap_failure_reasons",
                     }
                 }
                 best_groups.append(item)
@@ -2734,6 +2784,7 @@ def _build_teammate_support_diagnostics(active_profile: str) -> dict[str, Any]:
                     "groups_with_statistical_gates_passed": gates_passed,
                     "diagnostic_group_limit": CAUSAL_SUPPORT_DIAGNOSTIC_GROUP_LIMIT,
                     "status_counts": status_counts,
+                    "overlap_failure_reason_counts": overlap_failure_reason_counts,
                     "total_eligible_complete_case_rows": int(report["eligible_rows"].sum()),
                     "total_excluded_complete_case_rows": int(report["excluded_complete_case_rows"].sum()),
                     "team_strength_missing_reasons": [
