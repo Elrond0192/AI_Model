@@ -6,6 +6,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ---
 
 ## [Unreleased]
+### Fixed
+- Corrected the missing blank line in the causal panel persistence helper; no runtime behavior changes.
 ### Added
 - Added per-row diagnostics for missing pre-treatment team strength in teammate-exposure panels. Model Releases now distinguishes identity-match failures, absent pre-treatment team seasons, incompatible competition contexts, stale team data, and unavailable rating metrics; older persisted rows are explicitly flagged for refresh. This is diagnostic-only and does not relax causal support, overlap, or balance gates.
 - Extended teammate-exposure diagnostics with row-level missingness counts and percentages for identities, treatment, outcome and every model covariate, globally and per teammate/context group. This separates low raw treatment support from complete-case attrition before any estimator threshold is changed.
