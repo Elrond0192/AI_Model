@@ -7,6 +7,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 ### Fixed
+- Preserve the canonical `team_global_id` on each `PlayerCompetitionStats` row and require it in the PostgreSQL loader contract. Teammate-exposure causal refresh now resolves pre-treatment team strength by that explicit identity even when local numeric team IDs differ between player and team-stat sources.
+### Fixed
 - Corrected the missing blank line in the causal panel persistence helper; no runtime behavior changes.
 ### Added
 - Added per-row diagnostics for missing pre-treatment team strength in teammate-exposure panels. Model Releases now distinguishes identity-match failures, absent pre-treatment team seasons, incompatible competition contexts, stale team data, and unavailable rating metrics; older persisted rows are explicitly flagged for refresh. This is diagnostic-only and does not relax causal support, overlap, or balance gates.
